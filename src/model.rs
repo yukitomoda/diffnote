@@ -54,7 +54,22 @@ pub struct GitSource {
 pub enum Source {
     Git(GitSource),
     /// A plain directory, compared against the bundle's previous snapshot.
-    Files,
+    /// `base` is that snapshot's tree digest (`None` for the first one); the
+    /// head tree's digest is the revision's own `digest`.
+    Files {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<String>,
+    },
+}
+
+impl Source {
+    /// The (base, head) revision ids a revision with this `digest` compares.
+    pub fn revisions(&self, digest: &str) -> (Option<String>, Option<String>) {
+        match self {
+            Source::Git(g) => (Some(g.base.clone()), Some(g.head.clone())),
+            Source::Files { base } => (base.clone(), Some(digest.to_string())),
+        }
+    }
 }
 
 /// A few lines of frozen source text kept alongside an anchor so a comment
@@ -69,61 +84,80 @@ pub struct Context {
     pub after: Vec<String>,
 }
 
-/// Optional, non-authoritative enrichment. Never required for correctness:
-/// the anchor must stand on its own, without a git repository behind it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SourceHint {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub git_target_commit: Option<String>,
-}
-
-/// Where a comment points. `Global`/`File`/`Hunk` are positional only (their
-/// validity isn't re-checked against source drift in v1 — see `anchor::resolve`,
-/// which treats them as always current). Only `Span` (a single line or a
-/// range on one side of one file) carries the frozen context and digest
-/// needed to relocate or freeze-display it later; `Line`-level annotation
-/// comments are just a `Span` with `line_start == line_end`.
+/// Where a comment points, always expressed against the two revisions of
+/// the diff it was written on: `base` (before) and `head` (after). A `None`
+/// side means that revision has no such thing (a file that was added has no
+/// base file; a review of a first commit has no base revision).
+///
+/// Whether a line was "added" or "removed" is deliberately *not* stored: it
+/// follows from which side has content at the position (an addition is an
+/// empty `base` range plus a non-empty `head` one), and from the diff.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "scope", rename_all = "lowercase")]
 pub enum Anchor {
-    Global,
-    File {
-        file: String,
-    },
-    Hunk {
-        file: String,
-        hunk_index: usize,
-    },
-    Span {
-        file: String,
-        side: Side,
-        line_start: u32,
-        line_end: u32,
-        context: Context,
-        /// Digest (`sha256:...`) of the full text of `file` on `side` that
-        /// this anchor was captured against. If it matches the file's
-        /// current digest on that side (see `Revision::files`),
-        /// re-anchoring can be skipped entirely.
-        origin_file_digest: String,
-        #[serde(default, skip_serializing_if = "is_default_source_hint")]
-        source_hint: SourceHint,
-        /// A range comment's `>[`..`>]` markers can wrap removed lines
-        /// *and* context/added lines at once; `side`/`line_start`/`line_end`
-        /// above are always the new-side range (preferred since that's what
-        /// re-anchoring searches against), and this is the old-side
-        /// sub-range it also covered, kept purely so the initial (and any
-        /// still-`current`, non-relocated) rendering highlights the removed
-        /// lines too instead of silently dropping them. `None` for a
-        /// single-side range/line comment. Always cleared (`None`) on
-        /// relocation -- there's nothing to search for on the old side in a
-        /// future diff, since removed content is gone by definition.
+    /// The change as a whole. `base`/`head` identify the two revisions
+    /// (commit id for git reviews, tree digest for directory reviews).
+    Global {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        old_range: Option<(u32, u32)>,
+        base: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        head: Option<String>,
+    },
+    /// A whole file: its base and head versions (the paths differ on a
+    /// rename, and one side is absent for an added/deleted file).
+    File {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<FileRef>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        head: Option<FileRef>,
+    },
+    /// Lines of a file. At least one side has a non-empty range.
+    Span {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<SideAnchor>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        head: Option<SideAnchor>,
     },
 }
 
-fn is_default_source_hint(hint: &SourceHint) -> bool {
-    hint.git_target_commit.is_none()
+/// One version of one file: its path and the digest of its full text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileRef {
+    pub file: String,
+    pub digest: String,
+}
+
+/// A range of lines in one version of one file, with the frozen text needed
+/// to find it again after the file moves on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SideAnchor {
+    pub file: String,
+    /// Digest (`sha256:...`) of the full text of `file` on this side. If it
+    /// equals the digest of the version being viewed, re-anchoring can be
+    /// skipped entirely.
+    pub digest: String,
+    /// First line of the range (1-based). With an empty `context.target`
+    /// this is instead the line an insertion point sits *before*.
+    pub start: u32,
+    /// `context.target` is the text of the range, so its length is the
+    /// range's length; empty means an insertion/deletion point.
+    pub context: Context,
+}
+
+impl SideAnchor {
+    /// Number of lines in the range (0 for an insertion point).
+    pub fn len(&self) -> u32 {
+        self.context.target.len() as u32
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.context.target.is_empty()
+    }
+
+    /// Last line of a non-empty range.
+    pub fn end(&self) -> u32 {
+        self.start + self.len().saturating_sub(1)
+    }
 }
 
 /// The digests of one file touched by a revision's diff, keyed by the same

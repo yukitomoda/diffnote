@@ -42,7 +42,6 @@ pub fn render(
 
     let mut global: Vec<&Thread> = Vec::new();
     let mut by_file: HashMap<String, Vec<&Thread>> = HashMap::new();
-    let mut by_hunk: HashMap<(String, usize), Vec<&Thread>> = HashMap::new();
     // Where a thread's card is drawn: keyed by the *last* line of its range.
     let mut by_line: HashMap<(String, Side, u32), Vec<&Thread>> = HashMap::new();
     // Every line covered by a Span anchor's range, and *which* thread(s)
@@ -58,7 +57,6 @@ pub fn render(
         match anchor::resolve_placement(&thread.anchor, diff, current_files, new_files) {
             Placement::Global => global.push(thread),
             Placement::File(file) => by_file.entry(file).or_default().push(thread),
-            Placement::Hunk(file, idx) => by_hunk.entry((file, idx)).or_default().push(thread),
             Placement::Line {
                 file,
                 side,
@@ -106,7 +104,6 @@ pub fn render(
     for key in by_file
         .keys()
         .chain(outdated.keys())
-        .chain(by_hunk.keys().map(|(f, _)| f))
         .chain(by_line.keys().map(|(f, _, _)| f))
     {
         if seen.insert(key.clone()) {
@@ -125,7 +122,7 @@ pub fn render(
     body.push_str(r#"<nav class="diffnote-filelist"><ul>"#);
     for key in &file_order {
         let count = by_file.get(key).map_or(0, Vec::len)
-            + diff_file_comment_count(key, &by_hunk, &by_line)
+            + diff_file_comment_count(key, &by_line)
             + outdated.get(key).map_or(0, Vec::len);
         body.push_str(&format!(
             r##"<li><a href="#file-{id}">{name}</a>{badge}</li>"##,
@@ -153,7 +150,6 @@ pub fn render(
             anchor::find_file(diff, key),
             key,
             by_file.get(key).map(Vec::as_slice).unwrap_or(&[]),
-            &by_hunk,
             &by_line,
             &highlighted,
             &color_of,
@@ -168,19 +164,13 @@ pub fn render(
 
 fn diff_file_comment_count(
     file: &str,
-    by_hunk: &HashMap<(String, usize), Vec<&Thread>>,
     by_line: &HashMap<(String, Side, u32), Vec<&Thread>>,
 ) -> usize {
-    by_hunk
+    by_line
         .iter()
-        .filter(|((f, _), _)| f == file)
+        .filter(|((f, _, _), _)| f == file)
         .map(|(_, v)| v.len())
-        .sum::<usize>()
-        + by_line
-            .iter()
-            .filter(|((f, _, _), _)| f == file)
-            .map(|(_, v)| v.len())
-            .sum::<usize>()
+        .sum()
 }
 
 fn file_key(file_diff: &FileDiff) -> String {
@@ -196,7 +186,6 @@ fn render_file(
     file_diff: Option<&FileDiff>,
     key: &str,
     file_threads: &[&Thread],
-    by_hunk: &HashMap<(String, usize), Vec<&Thread>>,
     by_line: &HashMap<(String, Side, u32), Vec<&Thread>>,
     highlighted: &HashMap<(String, Side, u32), Vec<Ulid>>,
     color_of: &HashMap<Ulid, usize>,
@@ -206,7 +195,7 @@ fn render_file(
 ) -> String {
     let mut out = String::new();
     let comment_count = file_threads.len()
-        + diff_file_comment_count(key, by_hunk, by_line)
+        + diff_file_comment_count(key, by_line)
         + outdated_threads.len();
     let open_attr = if comment_count > 0 { " open" } else { "" };
     let is_binary = file_diff.is_some_and(|f| f.is_binary);
@@ -233,15 +222,13 @@ fn render_file(
         Some(file_diff) if !file_diff.hunks.is_empty() => {
             let syntax = guess_syntax(key, syntax_set);
             out.push_str(r#"<div class="diffnote-diff-scroll"><table class="diffnote-diff">"#);
-            for (idx, hunk) in file_diff.hunks.iter().enumerate() {
+            for hunk in &file_diff.hunks {
                 out.push_str(&render_hunk(
                     key,
-                    idx,
                     hunk,
                     syntax,
                     syntax_set,
                     theme,
-                    by_hunk,
                     by_line,
                     highlighted,
                     color_of,
@@ -267,12 +254,10 @@ fn render_file(
 #[allow(clippy::too_many_arguments)]
 fn render_hunk(
     file: &str,
-    hunk_idx: usize,
     hunk: &Hunk,
     syntax: &SyntaxReference,
     syntax_set: &SyntaxSet,
     theme: &Theme,
-    by_hunk: &HashMap<(String, usize), Vec<&Thread>>,
     by_line: &HashMap<(String, Side, u32), Vec<&Thread>>,
     highlighted: &HashMap<(String, Side, u32), Vec<Ulid>>,
     color_of: &HashMap<Ulid, usize>,
@@ -286,11 +271,6 @@ fn render_hunk(
         hunk.new_lines,
         escape_html(hunk.section_heading.as_deref().unwrap_or(""))
     ));
-    if let Some(threads) = by_hunk.get(&(file.to_string(), hunk_idx)) {
-        for t in threads {
-            out.push_str(&thread_row(t, color_of));
-        }
-    }
 
     let mut highlighter = HighlightLines::new(syntax, theme);
     for line in &hunk.lines {
@@ -395,21 +375,12 @@ fn thread_row(t: &Thread, color_of: &HashMap<Ulid, usize>) -> String {
 /// show a range comment's extent.
 fn range_label(anchor: &Anchor) -> String {
     match anchor {
-        Anchor::Global => String::new(),
-        Anchor::File { .. } => String::new(),
-        Anchor::Hunk { .. } => String::new(),
-        Anchor::Span {
-            line_start,
-            line_end,
-            ..
-        } if line_start == line_end => {
-            format!("(L{line_start})")
-        }
-        Anchor::Span {
-            line_start,
-            line_end,
-            ..
-        } => format!("(L{line_start}\u{2013}L{line_end})"),
+        Anchor::Global { .. } | Anchor::File { .. } => String::new(),
+        Anchor::Span { base, head } => match head.as_ref().filter(|h| !h.is_empty()).or(base.as_ref()) {
+            Some(side) if side.len() == 1 => format!("(L{})", side.start),
+            Some(side) if side.len() > 1 => format!("(L{}\u{2013}L{})", side.start, side.end()),
+            _ => String::new(),
+        },
     }
 }
 
@@ -451,7 +422,10 @@ fn render_thread_html(t: &Thread, color_of: &HashMap<Ulid, usize>) -> String {
 fn render_outdated(t: &Thread, color_of: &HashMap<Ulid, usize>) -> String {
     let mut out = String::new();
     out.push_str(r#"<div class="diffnote-outdated__entry">"#);
-    if let Anchor::Span { context, .. } = &t.anchor {
+    if let Anchor::Span { base, head } = &t.anchor
+        && let Some(side) = head.as_ref().filter(|h| !h.is_empty()).or(base.as_ref())
+    {
+        let context = &side.context;
         out.push_str(r#"<pre class="diffnote-outdated__snippet">"#);
         for line in context
             .before

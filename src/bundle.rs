@@ -227,7 +227,7 @@ mod tests {
             id: ulid::Ulid::new(),
             created_at: OffsetDateTime::now_utc(),
             digest: digest.to_string(),
-            source: Source::Files,
+            source: Source::Files { base: None },
             snapshot_mode,
             files: Vec::new(),
         })

@@ -40,7 +40,7 @@
 //! persist it as the new authoritative anchor for future re-anchoring runs.
 
 use crate::diff::{FileDiff, UnifiedDiff};
-use crate::model::{Anchor, Context, FileDigest, Side};
+use crate::model::{Anchor, Context, FileDigest, Side, SideAnchor};
 
 pub const DEFAULT_SIMILARITY_THRESHOLD: f32 = 0.6;
 
@@ -50,7 +50,7 @@ pub enum Resolution {
     /// file's current digest already matched the anchor's own digest).
     Current,
     /// Found elsewhere with reasonable confidence; not yet human-confirmed.
-    Relocated(Anchor),
+    Relocated(SideAnchor),
     /// No confident match; the thread is shown frozen, not placed inline.
     Outdated,
 }
@@ -96,34 +96,35 @@ pub fn corpus_from_diff_hunks(file: &FileDiff, side: Side) -> Vec<CorpusLine> {
     out
 }
 
-/// Builds a `Context` snapshot for a freshly-created `Span` anchor: finds
-/// `line_start..=line_end` in `corpus` and grabs up to `context_lines` on
-/// each side. Returns `None` if the range isn't present (or isn't
-/// line-number-contiguous) in `corpus` -- callers get this from the same
-/// parsed diff the comment was just written against, so that should never
-/// happen in practice.
-pub fn context_for_line_range(
+/// Builds the `Context` for a freshly-created side anchor covering `len`
+/// lines from `start` in `corpus`, with up to `context_lines` around it. A
+/// `len` of 0 is an insertion point before line `start`: no target, just
+/// the lines around it. Returns `None` if a non-empty range isn't present
+/// (or isn't line-number-contiguous) in `corpus` -- callers get this from
+/// the same parsed diff the comment was just written against, so that
+/// should never happen in practice.
+pub fn context_for_span(
     corpus: &[CorpusLine],
-    line_start: u32,
-    line_end: u32,
+    start: u32,
+    len: u32,
     context_lines: u32,
 ) -> Option<Context> {
-    let start_idx = corpus.iter().position(|l| l.line == line_start)?;
-    let end_idx = corpus.iter().position(|l| l.line == line_end)?;
-    if end_idx < start_idx {
+    let n = context_lines as usize;
+    if len == 0 {
+        let idx = corpus
+            .iter()
+            .position(|l| l.line >= start)
+            .unwrap_or(corpus.len());
+        return Some(extract_context(corpus, idx, 0, n, n));
+    }
+    let start_idx = corpus.iter().position(|l| l.line == start)?;
+    let len = len as usize;
+    if start_idx + len > corpus.len()
+        || !(0..len).all(|k| corpus[start_idx + k].line == start + k as u32)
+    {
         return None;
     }
-    let match_len = end_idx - start_idx + 1;
-    if !(0..match_len).all(|k| corpus[start_idx + k].line == line_start + k as u32) {
-        return None;
-    }
-    Some(extract_context(
-        corpus,
-        start_idx,
-        match_len,
-        context_lines as usize,
-        context_lines as usize,
-    ))
+    Some(extract_context(corpus, start_idx, len, n, n))
 }
 
 /// The digest of `file` on `side` in the revision described by `files`, if
@@ -139,36 +140,28 @@ pub fn digest_for<'a>(files: &'a [FileDigest], file: &str, side: Side) -> Option
     }
 }
 
-/// `current_file_digest` is the digest of the anchor's file on its side in
-/// the version being viewed, when known. `None` (unknown) never
-/// short-circuits, and a relocated anchor then records an empty origin
-/// digest, so it is simply re-matched next time.
+/// Re-finds one side of an anchor in `corpus`. `current_file_digest` is the
+/// digest of that side's file in the version being viewed, when known;
+/// `None` (unknown) never short-circuits, and a relocated anchor then
+/// records an empty digest, so it is simply re-matched next time.
+///
+/// An insertion/deletion point (empty target) has no text of its own to
+/// search for, so it is only ever `Current` (digest match) or `Outdated`
+/// here; callers place such a change through the other side of the anchor.
 pub fn resolve(
-    anchor: &Anchor,
+    side: &SideAnchor,
     current_file_digest: Option<&str>,
     corpus: &[CorpusLine],
 ) -> Resolution {
-    // Global/File/Hunk anchors are positional only -- v1 doesn't re-verify
-    // that the file/hunk they name still exists, so they're always current.
-    let Anchor::Span {
-        file,
-        side,
-        line_start: anchor_line_start,
-        line_end: anchor_line_end,
-        context,
-        origin_file_digest,
-        source_hint,
-        old_range: _,
-    } = anchor
-    else {
-        return Resolution::Current;
-    };
-
-    if current_file_digest == Some(origin_file_digest.as_str()) {
+    if current_file_digest == Some(side.digest.as_str()) {
         return Resolution::Current;
     }
 
+    let context = &side.context;
     let target = &context.target;
+    if target.is_empty() {
+        return Resolution::Outdated;
+    }
     let exact = find_exact_matches(corpus, target);
     let (chosen, is_exact) = match exact.as_slice() {
         [] => (
@@ -186,13 +179,12 @@ pub fn resolve(
         return Resolution::Outdated;
     };
 
-    let line_start = corpus[start_idx].line;
-    let line_end = corpus[start_idx + target.len() - 1].line;
+    let start = corpus[start_idx].line;
     // Only an *exact* match at the original position means nothing at all
     // changed. A fuzzy match landing on the same line numbers still means
     // the content itself drifted, so it must still be reported (and its
     // context refreshed) as Relocated, not silently treated as Current.
-    if is_exact && line_start == *anchor_line_start && line_end == *anchor_line_end {
+    if is_exact && start == side.start {
         return Resolution::Current;
     }
 
@@ -203,18 +195,11 @@ pub fn resolve(
         context.before.len(),
         context.after.len(),
     );
-    Resolution::Relocated(Anchor::Span {
-        file: file.clone(),
-        side: *side,
-        line_start,
-        line_end,
+    Resolution::Relocated(SideAnchor {
+        file: side.file.clone(),
+        digest: current_file_digest.unwrap_or_default().to_string(),
+        start,
         context: new_context,
-        origin_file_digest: current_file_digest.unwrap_or_default().to_string(),
-        source_hint: source_hint.clone(),
-        // The old side has nothing to search for in the new diff -- removed
-        // content is gone by definition, so a relocation can't tell where
-        // it "moved" to. Dropped rather than carried through stale.
-        old_range: None,
     })
 }
 
@@ -392,28 +377,28 @@ pub(crate) fn extract_context(
 pub enum Placement {
     Global,
     File(String),
-    Hunk(String, usize),
     Line {
         file: String,
+        /// The side the card is drawn on: the head side when the anchor
+        /// still has text there, else the base side (a deleted range).
         side: Side,
         line_start: u32,
         line_end: u32,
-        /// The old-side sub-range this range also covers, if any -- see
-        /// `Anchor::Span::old_range`. Always `None` when `relocated` is
-        /// `Some`, since a relocation can't carry it through.
+        /// The base-side range the anchor also covers when `side` is
+        /// `New` (e.g. a replaced block), so both get highlighted.
         old_range: Option<(u32, u32)>,
-        /// `Some(new_anchor)` if this position came from a `Relocated`
-        /// guess (not yet human-confirmed); `None` if the anchor's
-        /// original position matched exactly (nothing to accept/reject).
+        /// `Some(new_anchor)` if a side came from a `Relocated` guess (not
+        /// yet human-confirmed); `None` if every side matched where it was
+        /// recorded (nothing to accept/reject).
         relocated: Option<Anchor>,
     },
     /// Anchor is a `Span` but couldn't be confidently placed in `diff`.
     Outdated {
         file: String,
     },
-    /// Tier 1 found the anchor's text in the file, but not on a line the
-    /// diff shows, so it can't be drawn inline. Distinct from `Outdated`
-    /// (the text still exists); shown in the same unplaced section.
+    /// The text still exists, but not on a line the diff shows, so it can't
+    /// be drawn inline. Distinct from `Outdated`; shown in the same
+    /// unplaced section.
     OutsideDiff {
         file: String,
     },
@@ -425,11 +410,68 @@ pub fn find_file<'a>(diff: &'a UnifiedDiff, file: &str) -> Option<&'a FileDiff> 
         .find(|f| f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file))
 }
 
+/// What became of one side of a `Span` anchor in the diff being viewed.
+enum SideState {
+    /// No such side, or an insertion/deletion point with no text to place.
+    Absent,
+    Placed {
+        start: u32,
+        end: u32,
+        relocated: Option<SideAnchor>,
+    },
+    /// Found, but not on lines the diff shows.
+    Outside,
+    Outdated,
+}
+
+fn place_side(
+    side: &SideAnchor,
+    which: Side,
+    file_diff: &FileDiff,
+    current_files: &[FileDigest],
+    new_files: &crate::files::Tree,
+) -> SideState {
+    if side.is_empty() {
+        return SideState::Absent;
+    }
+    let full_text = match which {
+        Side::New => file_diff
+            .new_path
+            .as_deref()
+            .and_then(|p| new_files.get(p))
+            .and_then(|b| std::str::from_utf8(b).ok()),
+        Side::Old => None,
+    };
+    let visible = corpus_from_diff_hunks(file_diff, which);
+    let corpus = match full_text {
+        Some(text) => corpus_from_file_text(text),
+        None => visible.clone(),
+    };
+    let current = digest_for(current_files, &side.file, which);
+    let (start, end, relocated) = match resolve(side, current, &corpus) {
+        Resolution::Outdated => return SideState::Outdated,
+        Resolution::Current => (side.start, side.end(), None),
+        Resolution::Relocated(a) => (a.start, a.end(), Some(a)),
+    };
+    if !(start..=end).all(|l| visible.iter().any(|v| v.line == l)) {
+        return SideState::Outside;
+    }
+    SideState::Placed {
+        start,
+        end,
+        relocated,
+    }
+}
+
 /// `new_files` holds the full new-side content of the version being viewed
 /// (from the bundle's snapshot, or read at edit time), keyed by path. A
-/// `Side::New` anchor whose file is in it is searched against the whole
-/// file (Tier 1); everything else falls back to the diff's own visible
-/// lines (Tier 2).
+/// head-side range whose file is in it is searched against the whole file
+/// (Tier 1); everything else falls back to the diff's own visible lines
+/// (Tier 2).
+///
+/// A `Span` is drawn on its head side when that still resolves, else on its
+/// base side. If a side moved, the returned `relocated` anchor carries the
+/// new position of that side and keeps the other as recorded.
 pub fn resolve_placement(
     anchor: &Anchor,
     diff: &UnifiedDiff,
@@ -437,88 +479,65 @@ pub fn resolve_placement(
     new_files: &crate::files::Tree,
 ) -> Placement {
     match anchor {
-        Anchor::Global => Placement::Global,
-        Anchor::File { file } => Placement::File(file.clone()),
-        Anchor::Hunk { file, hunk_index } => Placement::Hunk(file.clone(), *hunk_index),
-        Anchor::Span { file, side, .. } => {
-            let Some(file_diff) = find_file(diff, file) else {
-                return Placement::Outdated { file: file.clone() };
+        Anchor::Global { .. } => Placement::Global,
+        Anchor::File { base, head } => {
+            Placement::File(head.as_ref().or(base.as_ref()).map(|f| f.file.clone()).unwrap_or_default())
+        }
+        Anchor::Span { base, head } => {
+            let label = head.as_ref().or(base.as_ref()).map(|s| s.file.clone()).unwrap_or_default();
+            let file_diff = [head, base]
+                .into_iter()
+                .flatten()
+                .find_map(|s| find_file(diff, &s.file));
+            let Some(file_diff) = file_diff else {
+                return Placement::Outdated { file: label };
             };
-            let full_text = match side {
-                Side::New => file_diff
-                    .new_path
-                    .as_deref()
-                    .and_then(|p| new_files.get(p))
-                    .and_then(|b| std::str::from_utf8(b).ok()),
-                Side::Old => None,
-            };
-            let corpus = match full_text {
-                Some(text) => corpus_from_file_text(text),
-                None => corpus_from_diff_hunks(file_diff, *side),
-            };
-            let current = digest_for(current_files, file, *side);
-            let resolution = resolve(anchor, current, &corpus);
-            if full_text.is_some() {
-                let placed = match &resolution {
-                    Resolution::Current => Some(anchor),
-                    Resolution::Relocated(a) => Some(a),
-                    Resolution::Outdated => None,
+            let head_state = head.as_ref().map_or(SideState::Absent, |s| {
+                place_side(s, Side::New, file_diff, current_files, new_files)
+            });
+            let base_state = base.as_ref().map_or(SideState::Absent, |s| {
+                place_side(s, Side::Old, file_diff, current_files, new_files)
+            });
+
+            let relocated = |h: &SideState, b: &SideState| {
+                let moved = |st: &SideState| match st {
+                    SideState::Placed { relocated, .. } => relocated.clone(),
+                    _ => None,
                 };
-                if let Some(Anchor::Span {
-                    line_start,
-                    line_end,
-                    ..
-                }) = placed
-                {
-                    let visible = corpus_from_diff_hunks(file_diff, Side::New);
-                    if !(*line_start..=*line_end).all(|l| visible.iter().any(|v| v.line == l)) {
-                        return Placement::OutsideDiff { file: file.clone() };
-                    }
+                let (rh, rb) = (moved(h), moved(b));
+                if rh.is_none() && rb.is_none() {
+                    return None;
                 }
-            }
-            match resolution {
-                Resolution::Outdated => Placement::Outdated { file: file.clone() },
-                Resolution::Current => {
-                    let Anchor::Span {
-                        file,
-                        side,
-                        line_start,
-                        line_end,
-                        old_range,
-                        ..
-                    } = anchor
-                    else {
-                        unreachable!()
-                    };
-                    Placement::Line {
-                        file: file.clone(),
-                        side: *side,
-                        line_start: *line_start,
-                        line_end: *line_end,
-                        old_range: *old_range,
-                        relocated: None,
-                    }
+                Some(Anchor::Span {
+                    base: rb.or_else(|| base.clone()),
+                    head: rh.or_else(|| head.clone()),
+                })
+            };
+
+            match (&head_state, &base_state) {
+                (SideState::Placed { start, end, .. }, b) => Placement::Line {
+                    file: head.as_ref().map(|s| s.file.clone()).unwrap_or(label),
+                    side: Side::New,
+                    line_start: *start,
+                    line_end: *end,
+                    old_range: match b {
+                        SideState::Placed { start, end, .. } => Some((*start, *end)),
+                        _ => None,
+                    },
+                    relocated: relocated(&head_state, &base_state),
+                },
+                (_, SideState::Placed { start, end, .. }) => Placement::Line {
+                    file: base.as_ref().map(|s| s.file.clone()).unwrap_or(label),
+                    side: Side::Old,
+                    line_start: *start,
+                    line_end: *end,
+                    old_range: None,
+                    relocated: relocated(&head_state, &base_state),
+                },
+                (SideState::Outside, _) | (_, SideState::Outside) => {
+                    Placement::OutsideDiff { file: label }
                 }
-                Resolution::Relocated(new_anchor) => {
-                    let Anchor::Span {
-                        ref file,
-                        side,
-                        line_start,
-                        line_end,
-                        ..
-                    } = new_anchor
-                    else {
-                        unreachable!("resolve() only relocates Span anchors")
-                    };
-                    Placement::Line {
-                        file: file.clone(),
-                        side,
-                        line_start,
-                        line_end,
-                        old_range: None,
-                        relocated: Some(new_anchor.clone()),
-                    }
-                }
+                _ => Placement::Outdated { file: label },
             }
         }
     }
@@ -527,8 +546,7 @@ pub fn resolve_placement(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::SourceHint;
-
+    
     fn corpus(lines: &[(u32, &str)]) -> Vec<CorpusLine> {
         lines
             .iter()
@@ -539,7 +557,7 @@ mod tests {
             .collect()
     }
 
-    fn anchor(line_start: u32, line_end: u32, target: &[&str]) -> Anchor {
+    fn anchor(line_start: u32, line_end: u32, target: &[&str]) -> SideAnchor {
         anchor_with(
             line_start,
             line_end,
@@ -557,20 +575,24 @@ mod tests {
         target: &[&str],
         after: Vec<String>,
         digest: &str,
-    ) -> Anchor {
-        Anchor::Span {
+    ) -> SideAnchor {
+        let _ = line_end; // the range's length is `target.len()`
+        SideAnchor {
             file: "src/lib.rs".to_string(),
-            side: Side::New,
-            line_start,
-            line_end,
+            digest: digest.to_string(),
+            start: line_start,
             context: Context {
                 before,
                 target: target.iter().map(|s| s.to_string()).collect(),
                 after,
             },
-            origin_file_digest: digest.to_string(),
-            source_hint: SourceHint::default(),
-            old_range: None,
+        }
+    }
+
+    fn span(head: SideAnchor) -> Anchor {
+        Anchor::Span {
+            base: None,
+            head: Some(head),
         }
     }
 
@@ -608,19 +630,17 @@ mod tests {
         // Originally at line 5, the content now sits at line 11.
         let a = anchor(5, 5, &["  self.value"]);
         let resolved = resolve(&a, Some("new-digest"), &c);
-        let Resolution::Relocated(Anchor::Span {
-            line_start,
-            line_end,
-            origin_file_digest,
+        let Resolution::Relocated(SideAnchor {
+            start,
+            digest,
             context,
             ..
         }) = resolved
         else {
             panic!("expected Relocated, got something else");
         };
-        assert_eq!(line_start, 11);
-        assert_eq!(line_end, 11);
-        assert_eq!(origin_file_digest, "new-digest");
+        assert_eq!(start, 11);
+        assert_eq!(digest, "new-digest");
         assert_eq!(context.target, vec!["  self.value".to_string()]);
     }
 
@@ -644,12 +664,12 @@ mod tests {
             Vec::new(),
             "old-digest",
         );
-        let Resolution::Relocated(Anchor::Span { line_start, .. }) =
+        let Resolution::Relocated(SideAnchor { start, .. }) =
             resolve(&a, Some("new-digest"), &c)
         else {
             panic!("expected Relocated");
         };
-        assert_eq!(line_start, 5);
+        assert_eq!(start, 5);
     }
 
     #[test]
@@ -671,15 +691,12 @@ mod tests {
             (4, "    }"),
         ]);
         let a = anchor(2, 2, &["    fn baz(&self) -> i32 {"]);
-        let Resolution::Relocated(Anchor::Span {
-            line_start,
-            context,
-            ..
-        }) = resolve(&a, Some("new-digest"), &c)
+        let Resolution::Relocated(SideAnchor { start, context, .. }) =
+            resolve(&a, Some("new-digest"), &c)
         else {
             panic!("expected Relocated");
         };
-        assert_eq!(line_start, 2);
+        assert_eq!(start, 2);
         assert_eq!(
             context.target,
             vec!["    fn baz(&self, factor: i32) -> i32 {".to_string()]
@@ -697,33 +714,35 @@ mod tests {
     }
 
     #[test]
-    fn global_file_and_hunk_anchors_are_always_current() {
-        // v1 doesn't re-verify that a named file/hunk still exists; an
-        // empty corpus proves resolve() isn't even trying to search.
+    fn an_insertion_point_is_current_by_digest_but_never_searched() {
+        let mut a = anchor(3, 3, &[]);
+        a.context.before = vec!["x".to_string()];
+        let c = corpus(&[(1, "x"), (2, "y")]);
+        assert_eq!(resolve(&a, Some("old-digest"), &c), Resolution::Current);
+        assert_eq!(resolve(&a, Some("new-digest"), &c), Resolution::Outdated);
+    }
+
+    #[test]
+    fn global_and_file_anchors_are_placed_without_searching() {
+        let diff = crate::diff::parse(TIER1_DIFF).unwrap();
+        let global = Anchor::Global {
+            base: None,
+            head: Some("rev".into()),
+        };
         assert_eq!(
-            resolve(&Anchor::Global, Some("any-digest"), &[]),
-            Resolution::Current
+            resolve_placement(&global, &diff, &[], &Default::default()),
+            Placement::Global
         );
+        let file = Anchor::File {
+            base: None,
+            head: Some(crate::model::FileRef {
+                file: "gone.rs".into(),
+                digest: "d".into(),
+            }),
+        };
         assert_eq!(
-            resolve(
-                &Anchor::File {
-                    file: "gone.rs".to_string()
-                },
-                Some("any-digest"),
-                &[]
-            ),
-            Resolution::Current
-        );
-        assert_eq!(
-            resolve(
-                &Anchor::Hunk {
-                    file: "gone.rs".to_string(),
-                    hunk_index: 99
-                },
-                Some("any-digest"),
-                &[]
-            ),
-            Resolution::Current
+            resolve_placement(&file, &diff, &[], &Default::default()),
+            Placement::File("gone.rs".into())
         );
     }
 
@@ -804,20 +823,29 @@ mod tests {
     }
 
     #[test]
-    fn context_for_line_range_grabs_surrounding_lines() {
+    fn context_for_span_grabs_surrounding_lines() {
         let c = corpus_from_file_text("a\nb\nc\nd\ne\nf\ng\n");
-        let ctx = context_for_line_range(&c, 4, 5, 2).expect("range should be found");
+        let ctx = context_for_span(&c, 4, 2, 2).expect("range should be found");
         assert_eq!(ctx.before, vec!["b".to_string(), "c".to_string()]);
         assert_eq!(ctx.target, vec!["d".to_string(), "e".to_string()]);
         assert_eq!(ctx.after, vec!["f".to_string(), "g".to_string()]);
     }
 
     #[test]
-    fn context_for_line_range_is_none_when_the_range_is_not_present() {
+    fn context_for_span_of_an_insertion_point_has_only_the_lines_around_it() {
+        let c = corpus_from_file_text("a\nb\nc\nd\n");
+        let ctx = context_for_span(&c, 3, 0, 1).unwrap();
+        assert_eq!(ctx.before, vec!["b".to_string()]);
+        assert!(ctx.target.is_empty());
+        assert_eq!(ctx.after, vec!["c".to_string()]);
+    }
+
+    #[test]
+    fn context_for_span_is_none_when_the_range_is_not_present() {
         let c = corpus(&[(1, "a"), (2, "b"), (10, "c")]);
         // Lines 2 and 10 exist individually but aren't contiguous.
-        assert_eq!(context_for_line_range(&c, 2, 10, 1), None);
-        assert_eq!(context_for_line_range(&c, 5, 6, 1), None);
+        assert_eq!(context_for_span(&c, 2, 9, 1), None);
+        assert_eq!(context_for_span(&c, 5, 2, 1), None);
     }
 
     #[test]
@@ -868,7 +896,7 @@ mod tests {
     fn full_text_finds_a_line_the_diff_shows_only_partially() {
         let diff = crate::diff::parse(TIER1_DIFF).unwrap();
         // `l3` used to be line 2; the new hunk shows it at line 3.
-        let a = anchor(2, 2, &["l3"]);
+        let a = span(anchor(2, 2, &["l3"]));
         for files in [tier1_files(), Default::default()] {
             let p = resolve_placement(&a, &diff, &[], &files);
             let Placement::Line {
@@ -887,7 +915,7 @@ mod tests {
     #[test]
     fn text_present_only_outside_the_hunks_is_outside_the_diff_not_outdated() {
         let diff = crate::diff::parse(TIER1_DIFF).unwrap();
-        let a = anchor(8, 8, &["l8"]);
+        let a = span(anchor(8, 8, &["l8"]));
         // The diff alone can't see line 8: nothing to say but "outdated".
         assert_eq!(
             resolve_placement(&a, &diff, &[], &Default::default()),
@@ -903,7 +931,7 @@ mod tests {
             }
         );
         // Genuinely gone stays outdated even with the full file.
-        let gone = anchor(8, 8, &["completely different"]);
+        let gone = span(anchor(8, 8, &["completely different"]));
         assert!(matches!(
             resolve_placement(&gone, &diff, &[], &tier1_files()),
             Placement::Outdated { .. }

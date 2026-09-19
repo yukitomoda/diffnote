@@ -58,30 +58,34 @@ pub enum ThreadRef {
     Existing(Ulid),
 }
 
+/// A run of lines in one version of a file. `len == 0` is an insertion
+/// point: `start` is the line the (absent) text would sit *before*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineSpan {
+    pub start: u32,
+    pub len: u32,
+}
+
+impl LineSpan {
+    fn new(start: u32, len: u32) -> Self {
+        Self { start, len }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnchorScope {
     Global,
     File {
         file: String,
     },
-    Hunk {
+    /// What the diff position covers on each side. A context line is a
+    /// one-line span on both; an added line an empty `base` and a one-line
+    /// `head`; a removed line the reverse; a hunk or `>[`..`>]` range the
+    /// whole run on both sides. Never empty on both.
+    Span {
         file: String,
-        hunk_index: usize,
-    },
-    Line {
-        file: String,
-        side: Side,
-        line: u32,
-    },
-    Range {
-        file: String,
-        side: Side,
-        line_start: u32,
-        line_end: u32,
-        /// The old-side sub-range this range also covered, if it wrapped
-        /// both removed and new-side (context/added) lines -- see the
-        /// matching field on `model::Anchor::Span`.
-        old_range: Option<(u32, u32)>,
+        base: LineSpan,
+        head: LineSpan,
     },
 }
 
@@ -389,34 +393,15 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                         .ok_or_else(|| err(line_no, format!("range '{id}' was never opened")))?;
                     warn_unused_range(&mut unused_range, &mut warnings);
                     unused_range = Some((id.to_string(), line_no));
-                    // Prefer the new side (matches every other scope's
-                    // preference), but a range spanning only removed lines
-                    // never advances `new_no` -- fall back to the old side
-                    // rather than erroring, since the range isn't actually
-                    // empty, just old-side-only. A range that advances
-                    // *both* (removed lines followed by context/added ones)
-                    // keeps its old-side span too, so it isn't silently
-                    // dropped from rendering/highlighting.
-                    let new_advanced = new_no > start.start_new_line;
-                    let old_advanced = old_no > start.start_old_line;
-                    current_scope = if new_advanced {
-                        AnchorScope::Range {
-                            file: start.file,
-                            side: Side::New,
-                            line_start: start.start_new_line,
-                            line_end: new_no - 1,
-                            old_range: old_advanced.then(|| (start.start_old_line, old_no - 1)),
-                        }
-                    } else if old_advanced {
-                        AnchorScope::Range {
-                            file: start.file,
-                            side: Side::Old,
-                            line_start: start.start_old_line,
-                            line_end: old_no - 1,
-                            old_range: None,
-                        }
-                    } else {
+                    let base = LineSpan::new(start.start_old_line, old_no - start.start_old_line);
+                    let head = LineSpan::new(start.start_new_line, new_no - start.start_new_line);
+                    if base.len == 0 && head.len == 0 {
                         return Err(err(line_no, format!("range '{id}' is empty")));
+                    }
+                    current_scope = AnchorScope::Span {
+                        file: start.file,
+                        base,
+                        head,
                     };
                 }
                 Sigil::RenderedHeader(header) => {
@@ -594,7 +579,6 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
             let file = current_file
                 .as_ref()
                 .ok_or_else(|| err(line_no, "hunk header outside of a file"))?;
-            let hunk_index = file.hunks.len();
             let file_lbl = file_label(file);
             let (old_start, old_lines, new_start, new_lines, section_heading) =
                 diff::parse_hunk_header(raw_line, line_no).map_err(from_diff_err)?;
@@ -608,9 +592,13 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                 section_heading,
                 lines: Vec::new(),
             });
-            current_scope = AnchorScope::Hunk {
+            // A side with no lines has its `start` one *before* the point
+            // (git's convention), unlike ours (the line it sits before).
+            let side = |start: u32, len: u32| LineSpan::new(if len == 0 { start + 1 } else { start }, len);
+            current_scope = AnchorScope::Span {
                 file: file_lbl,
-                hunk_index,
+                base: side(old_start, old_lines),
+                head: side(new_start, new_lines),
             };
             continue;
         }
@@ -644,10 +632,10 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                     new_line: Some(new_no),
                     no_newline_at_eof: false,
                 };
-                current_scope = AnchorScope::Line {
+                current_scope = AnchorScope::Span {
                     file: file_lbl,
-                    side: Side::New,
-                    line: new_no,
+                    base: LineSpan::new(old_no, 1),
+                    head: LineSpan::new(new_no, 1),
                 };
                 old_no += 1;
                 new_no += 1;
@@ -661,10 +649,10 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                     new_line: Some(new_no),
                     no_newline_at_eof: false,
                 };
-                current_scope = AnchorScope::Line {
+                current_scope = AnchorScope::Span {
                     file: file_lbl,
-                    side: Side::New,
-                    line: new_no,
+                    base: LineSpan::new(old_no, 0),
+                    head: LineSpan::new(new_no, 1),
                 };
                 new_no += 1;
                 l
@@ -677,10 +665,10 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                     new_line: None,
                     no_newline_at_eof: false,
                 };
-                current_scope = AnchorScope::Line {
+                current_scope = AnchorScope::Span {
                     file: file_lbl,
-                    side: Side::Old,
-                    line: old_no,
+                    base: LineSpan::new(old_no, 1),
+                    head: LineSpan::new(new_no, 0),
                 };
                 old_no += 1;
                 l
@@ -761,7 +749,6 @@ pub fn render_for_edit(
 ) -> (String, Vec<(Ulid, Anchor)>) {
     let mut global: Vec<&Thread> = Vec::new();
     let mut by_file: HashMap<String, Vec<&Thread>> = HashMap::new();
-    let mut by_hunk: HashMap<(String, usize), Vec<&Thread>> = HashMap::new();
     let mut by_line: ByLine = HashMap::new();
     let mut outdated: HashMap<String, Vec<&Thread>> = HashMap::new();
     let mut auto_relocated: Vec<(Ulid, Anchor)> = Vec::new();
@@ -770,7 +757,6 @@ pub fn render_for_edit(
         match anchor::resolve_placement(&thread.anchor, diff, current_files, new_files) {
             Placement::Global => global.push(thread),
             Placement::File(file) => by_file.entry(file).or_default().push(thread),
-            Placement::Hunk(file, idx) => by_hunk.entry((file, idx)).or_default().push(thread),
             Placement::Line {
                 file,
                 side,
@@ -807,7 +793,6 @@ pub fn render_for_edit(
     }
 
     let mut current_file: Option<String> = None;
-    let mut hunk_idx: usize = 0;
     let mut file_has_hunks = false;
     let mut old_no: u32 = 0;
     let mut new_no: u32 = 0;
@@ -818,7 +803,6 @@ pub fn render_for_edit(
 
         if raw_line.starts_with("diff --git ") {
             current_file = None;
-            hunk_idx = 0;
             file_has_hunks = false;
             continue;
         }
@@ -835,7 +819,6 @@ pub fn render_for_edit(
         }
         if let Some((old_path, new_path)) = diff::parse_binary_line(raw_line) {
             current_file = new_path.or(old_path);
-            hunk_idx = 0;
             file_has_hunks = false;
             if let Some(f) = &current_file
                 && let Some(ts) = by_file.get(f)
@@ -849,7 +832,6 @@ pub fn render_for_edit(
         if raw_line.starts_with("--- ") {
             if current_file.is_none() || file_has_hunks {
                 current_file = None;
-                hunk_idx = 0;
                 file_has_hunks = false;
             }
             continue;
@@ -871,14 +853,6 @@ pub fn render_for_edit(
                 new_no = new_start;
             }
             file_has_hunks = true;
-            if let Some(f) = &current_file
-                && let Some(ts) = by_hunk.get(&(f.clone(), hunk_idx))
-            {
-                for t in ts {
-                    render_thread_block(&mut out, t, false);
-                }
-            }
-            hunk_idx += 1;
             continue;
         }
         if raw_line.starts_with('\\') {
@@ -951,7 +925,7 @@ fn render_rendered_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Context, SourceHint};
+    use crate::model::Context;
 
     const BASE: &str = "\
 diff --git a/src/lib.rs b/src/lib.rs
@@ -990,10 +964,10 @@ index 83db48f..bf269c9 100644
         };
         assert_eq!(
             *scope,
-            AnchorScope::Line {
+            AnchorScope::Span {
                 file: "src/lib.rs".to_string(),
-                side: Side::New,
-                line: 15,
+                base: LineSpan::new(13, 0),
+                head: LineSpan::new(15, 1),
             }
         );
         assert_eq!(
@@ -1018,11 +992,11 @@ index 83db48f..bf269c9 100644
             // both sibling threads anchor there.
             assert_eq!(
                 *scope,
-                AnchorScope::Line {
-                    file: "src/lib.rs".to_string(),
-                    side: Side::New,
-                    line: 17,
-                }
+                AnchorScope::Span {
+                file: "src/lib.rs".to_string(),
+                base: LineSpan::new(13, 1),
+                head: LineSpan::new(17, 1),
+            }
             );
         }
     }
@@ -1098,12 +1072,10 @@ index 83db48f..bf269c9 100644
         };
         assert_eq!(
             *scope,
-            AnchorScope::Range {
+            AnchorScope::Span {
                 file: "src/lib.rs".to_string(),
-                side: Side::New,
-                line_start: 15,
-                line_end: 16,
-                old_range: None,
+                base: LineSpan::new(13, 0),
+                head: LineSpan::new(15, 2),
             }
         );
         assert_eq!(body.as_deref(), Some("範囲コメント"));
@@ -1132,12 +1104,10 @@ diff --git a/f.rs b/f.rs
         };
         assert_eq!(
             *scope,
-            AnchorScope::Range {
+            AnchorScope::Span {
                 file: "f.rs".to_string(),
-                side: Side::New,
-                line_start: 1,
-                line_end: 10,
-                old_range: Some((1, 10)),
+                base: LineSpan::new(1, 10),
+                head: LineSpan::new(1, 10),
             }
         );
     }
@@ -1166,12 +1136,10 @@ diff --git a/f.rs b/f.rs
         };
         assert_eq!(
             *scope,
-            AnchorScope::Range {
+            AnchorScope::Span {
                 file: "f.rs".to_string(),
-                side: Side::New,
-                line_start: 1,
-                line_end: 1,
-                old_range: Some((1, 2)),
+                base: LineSpan::new(1, 2),
+                head: LineSpan::new(1, 1),
             }
         );
         assert_eq!(body.as_deref(), Some("削除と追加をまたぐ範囲コメント"));
@@ -1202,19 +1170,17 @@ diff --git a/f.rs b/f.rs
         };
         assert_eq!(
             *scope,
-            AnchorScope::Range {
+            AnchorScope::Span {
                 file: "f.rs".to_string(),
-                side: Side::Old,
-                line_start: 2,
-                line_end: 3,
-                old_range: None,
+                base: LineSpan::new(2, 2),
+                head: LineSpan::new(2, 0),
             }
         );
         assert_eq!(body.as_deref(), Some("削除された範囲へのコメント"));
     }
 
     #[test]
-    fn positional_anchor_levels_global_file_and_hunk() {
+    fn positional_anchor_levels_global_file_and_hunk_span() {
         let text = "\
 > diff全体へのコメント
 
@@ -1250,9 +1216,10 @@ diff --git a/f.rs b/f.rs
         };
         assert_eq!(
             *scope,
-            AnchorScope::Hunk {
+            AnchorScope::Span {
                 file: "f.rs".to_string(),
-                hunk_index: 0
+                base: LineSpan::new(1, 1),
+                head: LineSpan::new(1, 1),
             }
         );
     }
@@ -1382,20 +1349,24 @@ diff --git a/f.rs b/f.rs
         }
     }
 
-    fn span(line_start: u32, line_end: u32, target: &str, origin_file_digest: &str) -> Anchor {
-        Anchor::Span {
+    fn side(start: u32, target: &[&str], digest: &str) -> crate::model::SideAnchor {
+        crate::model::SideAnchor {
             file: "src/lib.rs".to_string(),
-            side: Side::New,
-            line_start,
-            line_end,
+            digest: digest.to_string(),
+            start,
             context: Context {
                 before: Vec::new(),
-                target: vec![target.to_string()],
+                target: target.iter().map(|t| t.to_string()).collect(),
                 after: Vec::new(),
             },
-            origin_file_digest: origin_file_digest.to_string(),
-            source_hint: SourceHint::default(),
-            old_range: None,
+        }
+    }
+
+    /// A head-side-only span (an added line, in these tests).
+    fn span(line_start: u32, _line_end: u32, target: &str, origin_file_digest: &str) -> Anchor {
+        Anchor::Span {
+            base: None,
+            head: Some(side(line_start, &[target], origin_file_digest)),
         }
     }
 
@@ -1419,19 +1390,30 @@ diff --git a/f.rs b/f.rs
         let line_id = Ulid::new();
 
         let threads = vec![
-            thread_with(global_id, Anchor::Global, "global comment"),
+            thread_with(
+                global_id,
+                Anchor::Global {
+                    base: None,
+                    head: Some("rev".to_string()),
+                },
+                "global comment",
+            ),
             thread_with(
                 file_id,
                 Anchor::File {
-                    file: "src/lib.rs".to_string(),
+                    base: None,
+                    head: Some(crate::model::FileRef {
+                        file: "src/lib.rs".to_string(),
+                        digest: "d".to_string(),
+                    }),
                 },
                 "file comment",
             ),
             thread_with(
                 hunk_id,
-                Anchor::Hunk {
-                    file: "src/lib.rs".to_string(),
-                    hunk_index: 0,
+                Anchor::Span {
+                    base: Some(side(10, &["    fn bar(&self) -> i32 {"], "old")),
+                    head: Some(side(10, &["    fn bar(&self) -> i32 {"], digest)),
                 },
                 "hunk comment",
             ),
@@ -1461,11 +1443,13 @@ diff --git a/f.rs b/f.rs
             "file comment must render between +++ and the first hunk"
         );
 
+        // A hunk comment is a span over the hunk's lines now, drawn after
+        // the last of them like any range comment.
         let hunk_pos = rendered.find(&format!(">#@{hunk_id}")).unwrap();
         let bar_pos = rendered.find("fn bar(&self)").unwrap();
         assert!(
-            at_pos < hunk_pos && hunk_pos < bar_pos,
-            "hunk comment must render between the hunk header and its first content line"
+            at_pos < bar_pos && bar_pos < hunk_pos,
+            "a span comment must render after its lines"
         );
 
         let line_pos = rendered.find(&format!(">#@{line_id}")).unwrap();
@@ -1601,7 +1585,11 @@ diff --git a/t.txt b/t.txt
         let threads = vec![thread_with(
             id,
             Anchor::File {
-                file: "img.bin".to_string(),
+                base: None,
+                head: Some(crate::model::FileRef {
+                    file: "img.bin".to_string(),
+                    digest: "d".to_string(),
+                }),
             },
             "about the image",
         )];

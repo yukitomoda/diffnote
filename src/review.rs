@@ -151,7 +151,10 @@ mod tests {
             parent: None,
             author: "you@example.com".to_string(),
             created_at: OffsetDateTime::now_utc(),
-            anchor: Some(Anchor::Global),
+            anchor: Some(Anchor::Global {
+                base: None,
+                head: None,
+            }),
             body: "hello".to_string(),
         };
         let content = format!(
