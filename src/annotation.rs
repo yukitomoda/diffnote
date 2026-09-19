@@ -756,6 +756,7 @@ pub fn render_for_edit(
     diff_text: &str,
     diff: &UnifiedDiff,
     current_files: &[crate::model::FileDigest],
+    new_files: &crate::files::Tree,
     threads: &[Thread],
 ) -> (String, Vec<(Ulid, Anchor)>) {
     let mut global: Vec<&Thread> = Vec::new();
@@ -766,7 +767,7 @@ pub fn render_for_edit(
     let mut auto_relocated: Vec<(Ulid, Anchor)> = Vec::new();
 
     for thread in threads {
-        match anchor::resolve_placement(&thread.anchor, diff, current_files) {
+        match anchor::resolve_placement(&thread.anchor, diff, current_files, new_files) {
             Placement::Global => global.push(thread),
             Placement::File(file) => by_file.entry(file).or_default().push(thread),
             Placement::Hunk(file, idx) => by_hunk.entry((file, idx)).or_default().push(thread),
@@ -786,7 +787,7 @@ pub fn render_for_edit(
                     .or_default()
                     .push((thread, moved));
             }
-            Placement::Outdated { file } => outdated.entry(file).or_default().push(thread),
+            Placement::Outdated { file } | Placement::OutsideDiff { file } => outdated.entry(file).or_default().push(thread),
         }
     }
 
@@ -1441,7 +1442,7 @@ diff --git a/f.rs b/f.rs
             ),
         ];
 
-        let (rendered, auto_relocated) = render_for_edit(BASE, &diff, &files_at(digest), &threads);
+        let (rendered, auto_relocated) = render_for_edit(BASE, &diff, &files_at(digest), &Default::default(), &threads);
         assert!(auto_relocated.is_empty());
         assert!(!rendered.contains("[moved]"));
 
@@ -1492,6 +1493,7 @@ diff --git a/f.rs b/f.rs
             BASE,
             &diff,
             &files_at("current-digest"),
+            &Default::default(),
             std::slice::from_ref(&thread),
         );
 
@@ -1522,6 +1524,7 @@ diff --git a/f.rs b/f.rs
             BASE,
             &diff,
             &files_at("current-digest"),
+            &Default::default(),
             std::slice::from_ref(&thread),
         );
 
@@ -1548,6 +1551,7 @@ diff --git a/f.rs b/f.rs
             BASE,
             &diff,
             &files_at("same-digest"),
+            &Default::default(),
             std::slice::from_ref(&thread),
         );
         let annotated = format!("{rendered}>> 承知しました\n");
@@ -1601,7 +1605,7 @@ diff --git a/t.txt b/t.txt
             },
             "about the image",
         )];
-        let (rendered, _) = render_for_edit(WITH_BINARY, &diff, &[], &threads);
+        let (rendered, _) = render_for_edit(WITH_BINARY, &diff, &[], &Default::default(), &threads);
         let lines: Vec<&str> = rendered.lines().collect();
         let at = lines
             .iter()

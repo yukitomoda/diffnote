@@ -117,7 +117,12 @@ fn cmd_export(review_path: PathBuf, output_path: PathBuf) -> Result<()> {
 
     let parsed_diff = diffnote::diff::parse(&diff_text).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let html = diffnote::html::render(&loaded.events, &parsed_diff, &revision.files);
+    let html = diffnote::html::render(
+        &loaded.events,
+        &parsed_diff,
+        &revision.files,
+        &loaded.snapshot_files(&revision.digest),
+    );
     std::fs::write(&output_path, html)
         .with_context(|| format!("failed to write {}", output_path.display()))?;
     println!("Wrote {}", output_path.display());
@@ -133,6 +138,9 @@ struct Input {
     diff_text: String,
     /// Per-file digests of the files the diff touches.
     files: Vec<diffnote::model::FileDigest>,
+    /// Full new-side content of the files the diff touches, for Tier 1
+    /// re-anchoring.
+    new_files: diffnote::files::Tree,
     source: diffnote::model::Source,
     /// The revision's digest (see `Revision::digest`).
     digest: String,
@@ -151,11 +159,15 @@ fn git_input(targets: &[String]) -> Result<Input> {
     let parsed = diffnote::diff::parse(&diff_text).map_err(|e| anyhow::anyhow!("{e}"))?;
     let head_tree = repo.ls_tree(&range.head)?;
     let files = file_digests(&repo, &repo.ls_tree(&range.base)?, &head_tree, &parsed)?;
+    let new_files = snapshot_files(&repo, bundle::SnapshotMode::Changed, &head_tree, &parsed)?
+        .into_iter()
+        .collect();
     Ok(Input {
         digest: digest(&diff_text),
         tree_size: head_tree.iter().map(|e| e.size).sum(),
         source: diffnote::model::Source::Git(range),
         files,
+        new_files,
         forced_snapshot_mode: None,
         snapshot_files: Box::new(move |mode| snapshot_files(&repo, mode, &head_tree, &parsed)),
         diff_text,
@@ -183,6 +195,7 @@ fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Resu
         tree_size: current.values().map(|b| b.len() as u64).sum(),
         source: diffnote::model::Source::Files,
         files,
+        new_files: current.clone(),
         forced_snapshot_mode: Some(bundle::SnapshotMode::Full),
         snapshot_files: Box::new(move |_| Ok(current.into_iter().collect())),
         diff_text,
@@ -255,6 +268,7 @@ fn cmd_edit(
     let Input {
         diff_text,
         files,
+        new_files,
         source,
         digest: diff_digest,
         forced_snapshot_mode,
@@ -277,7 +291,13 @@ fn cmd_edit(
     let (temp_text, auto_relocated) = if existing_threads.is_empty() {
         (diff_text.clone(), Vec::new())
     } else {
-        annotation::render_for_edit(&diff_text, &parsed_diff, &files, &existing_threads)
+        annotation::render_for_edit(
+            &diff_text,
+            &parsed_diff,
+            &files,
+            &new_files,
+            &existing_threads,
+        )
     };
 
     let temp_dir = tempfile::tempdir().context("failed to create a temp directory")?;

@@ -5,12 +5,11 @@
 //! builds a [`CorpusLine`] search space with one of the two constructors
 //! and picks between them per the design's two tiers:
 //!
-//! - **Tier 1** — [`corpus_from_file_text`]: the target file is readable on
-//!   disk (git repo or not), so the full current file text is searched.
-//!   Only meaningful for `Side::New` anchors — there is generally no
-//!   reliable full "old version" of a file available without git history,
-//!   so `Side::Old` anchors always use Tier 2 below, even when the file is
-//!   on disk. This is a known v1 limitation.
+//! - **Tier 1** — [`corpus_from_file_text`]: the full new-side text of the
+//!   file is known (a bundle snapshot, or read at edit time), so all of it
+//!   is searched. Only for `Side::New` anchors: snapshots hold the new side
+//!   only, so `Side::Old` anchors always use Tier 2 below. A match that
+//!   lands outside every hunk is [`Placement::OutsideDiff`], not outdated.
 //! - **Tier 2** — [`corpus_from_diff_hunks`]: only a bare new diff/patch is
 //!   available, so the search is restricted to that diff's own visible
 //!   context/added/removed lines for the relevant side.
@@ -412,6 +411,12 @@ pub enum Placement {
     Outdated {
         file: String,
     },
+    /// Tier 1 found the anchor's text in the file, but not on a line the
+    /// diff shows, so it can't be drawn inline. Distinct from `Outdated`
+    /// (the text still exists); shown in the same unplaced section.
+    OutsideDiff {
+        file: String,
+    },
 }
 
 pub fn find_file<'a>(diff: &'a UnifiedDiff, file: &str) -> Option<&'a FileDiff> {
@@ -420,10 +425,16 @@ pub fn find_file<'a>(diff: &'a UnifiedDiff, file: &str) -> Option<&'a FileDiff> 
         .find(|f| f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file))
 }
 
+/// `new_files` holds the full new-side content of the version being viewed
+/// (from the bundle's snapshot, or read at edit time), keyed by path. A
+/// `Side::New` anchor whose file is in it is searched against the whole
+/// file (Tier 1); everything else falls back to the diff's own visible
+/// lines (Tier 2).
 pub fn resolve_placement(
     anchor: &Anchor,
     diff: &UnifiedDiff,
     current_files: &[FileDigest],
+    new_files: &crate::files::Tree,
 ) -> Placement {
     match anchor {
         Anchor::Global => Placement::Global,
@@ -433,9 +444,39 @@ pub fn resolve_placement(
             let Some(file_diff) = find_file(diff, file) else {
                 return Placement::Outdated { file: file.clone() };
             };
-            let corpus = corpus_from_diff_hunks(file_diff, *side);
+            let full_text = match side {
+                Side::New => file_diff
+                    .new_path
+                    .as_deref()
+                    .and_then(|p| new_files.get(p))
+                    .and_then(|b| std::str::from_utf8(b).ok()),
+                Side::Old => None,
+            };
+            let corpus = match full_text {
+                Some(text) => corpus_from_file_text(text),
+                None => corpus_from_diff_hunks(file_diff, *side),
+            };
             let current = digest_for(current_files, file, *side);
-            match resolve(anchor, current, &corpus) {
+            let resolution = resolve(anchor, current, &corpus);
+            if full_text.is_some() {
+                let placed = match &resolution {
+                    Resolution::Current => Some(anchor),
+                    Resolution::Relocated(a) => Some(a),
+                    Resolution::Outdated => None,
+                };
+                if let Some(Anchor::Span {
+                    line_start,
+                    line_end,
+                    ..
+                }) = placed
+                {
+                    let visible = corpus_from_diff_hunks(file_diff, Side::New);
+                    if !(*line_start..=*line_end).all(|l| visible.iter().any(|v| v.line == l)) {
+                        return Placement::OutsideDiff { file: file.clone() };
+                    }
+                }
+            }
+            match resolution {
                 Resolution::Outdated => Placement::Outdated { file: file.clone() },
                 Resolution::Current => {
                     let Anchor::Span {
@@ -807,5 +848,65 @@ mod tests {
         // Matched by search instead; at the same place, so still Current --
         // but through the search path, not the digest shortcut.
         assert_eq!(resolve(&a, None, &c), Resolution::Current);
+    }
+    const TIER1_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,4 @@
+ l1
++l2
+ l3
+ l4
+";
+
+    fn tier1_files() -> crate::files::Tree {
+        let text: String = (1..=10).map(|n| format!("l{n}\n")).collect();
+        [("src/lib.rs".to_string(), text.into_bytes())].into()
+    }
+
+    #[test]
+    fn full_text_finds_a_line_the_diff_shows_only_partially() {
+        let diff = crate::diff::parse(TIER1_DIFF).unwrap();
+        // `l3` used to be line 2; the new hunk shows it at line 3.
+        let a = anchor(2, 2, &["l3"]);
+        for files in [tier1_files(), Default::default()] {
+            let p = resolve_placement(&a, &diff, &[], &files);
+            let Placement::Line {
+                line_start,
+                relocated,
+                ..
+            } = p
+            else {
+                panic!("{p:?}")
+            };
+            assert_eq!(line_start, 3);
+            assert!(relocated.is_some());
+        }
+    }
+
+    #[test]
+    fn text_present_only_outside_the_hunks_is_outside_the_diff_not_outdated() {
+        let diff = crate::diff::parse(TIER1_DIFF).unwrap();
+        let a = anchor(8, 8, &["l8"]);
+        // The diff alone can't see line 8: nothing to say but "outdated".
+        assert_eq!(
+            resolve_placement(&a, &diff, &[], &Default::default()),
+            Placement::Outdated {
+                file: "src/lib.rs".into()
+            }
+        );
+        // With the full file it is found, but there is no hunk to draw it in.
+        assert_eq!(
+            resolve_placement(&a, &diff, &[], &tier1_files()),
+            Placement::OutsideDiff {
+                file: "src/lib.rs".into()
+            }
+        );
+        // Genuinely gone stays outdated even with the full file.
+        let gone = anchor(8, 8, &["completely different"]);
+        assert!(matches!(
+            resolve_placement(&gone, &diff, &[], &tier1_files()),
+            Placement::Outdated { .. }
+        ));
     }
 }
