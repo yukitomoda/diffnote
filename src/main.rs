@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use diffnote::digest::digest;
 use diffnote::model::{Anchor, Event};
-use diffnote::{anchor, annotation, bundle, review};
+use diffnote::{annotation, bundle, review};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use time::OffsetDateTime;
@@ -326,14 +326,14 @@ fn cmd_edit(
     // it. annotation::render_for_edit reconstructs it line-by-line instead,
     // which is fine for round-trip but an unnecessary risk (e.g. a possible
     // trailing-newline mismatch) when there's nothing to interleave anyway.
+    let mut blobs = loaded.blobs();
+    for bytes in new_files.values().chain(base_files.values()) {
+        blobs.add(bytes);
+    }
+    bundle::link_revision_files(&mut blobs, &files);
     let (temp_text, auto_relocated) = if existing_threads.is_empty() {
         (diff_text.clone(), Vec::new())
     } else {
-        let mut blobs = loaded.blobs();
-        for bytes in new_files.values().chain(base_files.values()) {
-            blobs.add(bytes);
-        }
-        bundle::link_revision_files(&mut blobs, &files);
         annotation::render_for_edit(
             &diff_text,
             &parsed_diff,
@@ -446,7 +446,7 @@ fn cmd_edit(
                     let target_id = Ulid::from_string(id_str).map_err(|_| {
                         anyhow::anyhow!("'>!reanchor {id_str}': not a valid thread id")
                     })?;
-                    let new_anchor = build_anchor(scope, &parsed.diff, &files, &revisions, 3)?;
+                    let new_anchor = diffnote::create::build_anchor(scope, &parsed.diff, &files, &revisions, &blobs, 3)?;
                     new_events.push(Event::Reanchor {
                         parent: target_id,
                         author: author.clone(),
@@ -459,7 +459,7 @@ fn cmd_edit(
 
                 let id = Ulid::new();
                 thread_ids.push(id);
-                let comment_anchor = build_anchor(scope, &parsed.diff, &files, &revisions, 3)?;
+                let comment_anchor = diffnote::create::build_anchor(scope, &parsed.diff, &files, &revisions, &blobs, 3)?;
                 new_events.push(Event::Comment {
                     id,
                     parent: None,
@@ -674,85 +674,6 @@ fn describe_anchor(anchor: Option<&Anchor>) -> String {
             (Some(b), _) => format!("{} (削除)", span(b)),
             _ => "?".to_string(),
         },
-    }
-}
-
-fn build_anchor(
-    scope: &annotation::AnchorScope,
-    parsed_diff: &diffnote::diff::UnifiedDiff,
-    files: &[diffnote::model::FileDigest],
-    revisions: &(Option<String>, Option<String>),
-    context_lines: u32,
-) -> Result<Anchor> {
-    use annotation::AnchorScope;
-    let file_entry = |file: &str| {
-        files
-            .iter()
-            .find(|f| f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file))
-    };
-    match scope {
-        AnchorScope::Global => Ok(Anchor::Global {
-            base: revisions.0.clone(),
-            head: revisions.1.clone(),
-        }),
-        AnchorScope::File { file } => {
-            let entry = file_entry(file);
-            let make = |path: Option<&String>, digest: Option<&String>| {
-                path.map(|p| diffnote::model::FileRef {
-                    file: p.clone(),
-                    digest: digest.cloned().unwrap_or_default(),
-                })
-            };
-            Ok(match entry {
-                Some(e) => Anchor::File {
-                    base: make(e.old_path.as_ref(), e.old.as_ref()),
-                    head: make(e.new_path.as_ref(), e.new.as_ref()),
-                },
-                None => Anchor::File {
-                    base: None,
-                    head: make(Some(&file.clone()), None),
-                },
-            })
-        }
-        AnchorScope::Span { file, base, head } => {
-            let file_diff = parsed_diff
-                .files
-                .iter()
-                .find(|f| {
-                    f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file)
-                })
-                .ok_or_else(|| {
-                    anyhow::anyhow!("internal error: file '{file}' not found in the parsed diff")
-                })?;
-            let side = |which: diffnote::model::Side,
-                        path: Option<&String>,
-                        span: &annotation::LineSpan|
-             -> Result<Option<diffnote::model::SideAnchor>> {
-                let Some(path) = path else { return Ok(None) };
-                let corpus = anchor::corpus_from_diff_hunks(file_diff, which);
-                let context =
-                    anchor::context_for_span(&corpus, span.start, span.len, context_lines)
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "internal error: could not locate {path}:{}+{} in the parsed diff",
-                                span.start,
-                                span.len
-                            )
-                        })?;
-                Ok(Some(diffnote::model::SideAnchor {
-                    file: path.clone(),
-                    digest: anchor::digest_for(files, path, which)
-                        .unwrap_or_default()
-                        .to_string(),
-                    start: span.start,
-                    context,
-                }))
-            };
-            Ok(Anchor::Span {
-                base: side(diffnote::model::Side::Old, file_diff.old_path.as_ref(), base)?,
-                head: side(diffnote::model::Side::New, file_diff.new_path.as_ref(), head)?,
-            })
-        }
     }
 }
 

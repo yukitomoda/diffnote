@@ -116,7 +116,7 @@ pub fn context_for_span(
             .iter()
             .position(|l| l.line >= start)
             .unwrap_or(corpus.len());
-        return Some(extract_context(corpus, idx, 0, n, n));
+        return Some(extract_context(corpus, idx, 0, n, n, start));
     }
     let start_idx = corpus.iter().position(|l| l.line == start)?;
     let len = len as usize;
@@ -125,7 +125,7 @@ pub fn context_for_span(
     {
         return None;
     }
-    Some(extract_context(corpus, start_idx, len, n, n))
+    Some(extract_context(corpus, start_idx, len, n, n, start))
 }
 
 /// The digest of `file` on `side` in the revision described by `files`, if
@@ -195,6 +195,7 @@ pub fn resolve(
         target.len(),
         context.before.len(),
         context.after.len(),
+        start,
     );
     Resolution::Relocated(SideAnchor {
         file: side.file.clone(),
@@ -235,6 +236,7 @@ pub fn resolve_with_texts(
             side.context.target.len(),
             side.context.before.len(),
             side.context.after.len(),
+            start,
         );
         // Same place and same text: nothing moved. An in-place edit keeps
         // the position but not the text, so it is still reported (and its
@@ -433,27 +435,40 @@ fn find_best_fuzzy_match(
         .map(|(idx, _)| idx)
 }
 
+/// The context around the `match_len` lines starting at corpus index
+/// `match_start` (an insertion point when 0), whose first line -- or the line
+/// the point sits before -- is number `first_line`. Only lines that are
+/// really adjacent in the file count: a corpus built from a diff's hunks has
+/// gaps, and the far side of a gap is not "the line before".
 pub(crate) fn extract_context(
     corpus: &[CorpusLine],
     match_start: usize,
     match_len: usize,
     before_n: usize,
     after_n: usize,
+    first_line: u32,
 ) -> Context {
-    let before_start = match_start.saturating_sub(before_n);
-    let before = corpus[before_start..match_start]
-        .iter()
-        .map(|l| l.content.clone())
-        .collect();
+    let mut before = Vec::new();
+    let (mut idx, mut want) = (match_start, first_line);
+    while before.len() < before_n && idx > 0 && corpus[idx - 1].line + 1 == want {
+        before.push(corpus[idx - 1].content.clone());
+        want = corpus[idx - 1].line;
+        idx -= 1;
+    }
+    before.reverse();
+
     let target = corpus[match_start..match_start + match_len]
         .iter()
         .map(|l| l.content.clone())
         .collect();
-    let after_end = (match_start + match_len + after_n).min(corpus.len());
-    let after = corpus[match_start + match_len..after_end]
-        .iter()
-        .map(|l| l.content.clone())
-        .collect();
+
+    let mut after = Vec::new();
+    let (mut idx, mut want) = (match_start + match_len, first_line + match_len as u32);
+    while after.len() < after_n && idx < corpus.len() && corpus[idx].line == want {
+        after.push(corpus[idx].content.clone());
+        idx += 1;
+        want += 1;
+    }
     Context {
         before,
         target,
@@ -1153,5 +1168,41 @@ mod tests {
         };
         assert_eq!(moved.start, 3);
         assert!(moved.context.target.is_empty());
+    }
+
+    #[test]
+    fn context_never_reaches_across_a_gap_in_the_corpus() {
+        // Two hunks: lines 1-3 and 10-12.
+        let c = corpus(&[
+            (1, "a"),
+            (2, "b"),
+            (3, "c"),
+            (10, "j"),
+            (11, "k"),
+            (12, "l"),
+        ]);
+        let ctx = context_for_span(&c, 3, 1, 3).unwrap();
+        assert_eq!(ctx.before, vec!["a".to_string(), "b".to_string()]);
+        assert!(ctx.after.is_empty(), "{:?}", ctx.after);
+        let ctx = context_for_span(&c, 10, 1, 3).unwrap();
+        assert!(ctx.before.is_empty(), "{:?}", ctx.before);
+        assert_eq!(ctx.after, vec!["k".to_string(), "l".to_string()]);
+    }
+
+    #[test]
+    fn an_insertion_point_needs_its_neighbours_to_really_be_adjacent() {
+        let c = corpus(&[(1, "a"), (2, "b"), (10, "j"), (11, "k")]);
+        // Before line 3: line 2 is right there, but line 3 is not shown.
+        let ctx = context_for_span(&c, 3, 0, 2).unwrap();
+        assert_eq!(ctx.before, vec!["a".to_string(), "b".to_string()]);
+        assert!(ctx.after.is_empty());
+        // Before line 10: line 10 follows, but line 9 is not shown.
+        let ctx = context_for_span(&c, 10, 0, 2).unwrap();
+        assert!(ctx.before.is_empty());
+        assert_eq!(ctx.after, vec!["j".to_string(), "k".to_string()]);
+        // Past the last line shown.
+        let ctx = context_for_span(&c, 12, 0, 2).unwrap();
+        assert_eq!(ctx.before, vec!["j".to_string(), "k".to_string()]);
+        assert!(ctx.after.is_empty());
     }
 }
