@@ -333,6 +333,7 @@ fn cmd_edit(
         for bytes in new_files.values().chain(base_files.values()) {
             blobs.add(bytes);
         }
+        bundle::link_revision_files(&mut blobs, &files);
         annotation::render_for_edit(
             &diff_text,
             &parsed_diff,

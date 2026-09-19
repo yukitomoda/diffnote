@@ -83,6 +83,9 @@ impl Loaded {
                 blobs.add(bytes);
             }
         }
+        for revision in self.revisions() {
+            link_revision_files(&mut blobs, &revision.files);
+        }
         blobs
     }
 
@@ -105,6 +108,15 @@ impl Loaded {
     /// from under it.
     pub fn snapshot_mode(&self) -> Option<SnapshotMode> {
         self.revisions().next().map(|r| r.snapshot_mode)
+    }
+}
+
+/// Links each file's old and new version, as a revision took one to the other.
+pub fn link_revision_files(blobs: &mut crate::digest::Blobs, files: &[crate::model::FileDigest]) {
+    for f in files {
+        if let (Some(old), Some(new)) = (&f.old, &f.new) {
+            blobs.link(old, new);
+        }
     }
 }
 
