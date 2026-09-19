@@ -46,12 +46,6 @@ pub struct GitSource {
     pub spec: String,
 }
 
-/// Old bundles (from before `Meta` carried `snapshot_mode`) implicitly
-/// behaved like `Changed`, the only mode that existed at the time.
-fn default_snapshot_mode() -> SnapshotMode {
-    SnapshotMode::Changed
-}
-
 /// A few lines of frozen source text kept alongside an anchor so a comment
 /// stays meaningful even if the file it points at can no longer be found
 /// (see re-anchoring in the `anchor` module).
@@ -95,10 +89,11 @@ pub enum Anchor {
         line_start: u32,
         line_end: u32,
         context: Context,
-        /// Digest of the diff this anchor was captured against. If it
-        /// matches the diff currently being viewed, re-anchoring can be
-        /// skipped entirely.
-        origin_diff_digest: String,
+        /// Digest (`sha256:...`) of the full text of `file` on `side` that
+        /// this anchor was captured against. If it matches the file's
+        /// current digest on that side (see `Revision::files`),
+        /// re-anchoring can be skipped entirely.
+        origin_file_digest: String,
         #[serde(default, skip_serializing_if = "is_default_source_hint")]
         source_hint: SourceHint,
         /// A range comment's `>[`..`>]` markers can wrap removed lines
@@ -120,6 +115,37 @@ fn is_default_source_hint(hint: &SourceHint) -> bool {
     hint.git_target_commit.is_none()
 }
 
+/// The digests of one file touched by a revision's diff, keyed by the same
+/// paths as the diff's `---`/`+++` lines (`None` = no such side, i.e. the
+/// file was added or deleted). Lets a viewer tell whether a comment's
+/// origin file text is still what's in front of it, without needing the
+/// source snapshot itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileDigest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Revision {
+    pub id: Ulid,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    /// Digest (`sha256:...`) of the diff text; also the key of this
+    /// revision's `diffs/`/`sources/` entries in the bundle.
+    pub digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git: Option<GitSource>,
+    pub snapshot_mode: SnapshotMode,
+    pub files: Vec<FileDigest>,
+}
+
 /// One line of the JSONL document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -128,15 +154,14 @@ pub enum Event {
         version: u32,
         #[serde(with = "time::serde::rfc3339")]
         created_at: OffsetDateTime,
-        diff_digest: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        git: Option<GitSource>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         description: Option<String>,
         context_lines: u32,
-        #[serde(default = "default_snapshot_mode")]
-        snapshot_mode: SnapshotMode,
     },
+    /// A version of the reviewed content that some edit session was made
+    /// against. Appended the first time a session that adds anything sees a
+    /// diff (by `digest`) the bundle hasn't recorded yet.
+    Revision(Revision),
     /// A thread root (`parent: None`, carries an `anchor`) or a reply
     /// (`parent: Some(root_id)`, no `anchor` — threading is flat, like a
     /// GitHub PR review thread, not an arbitrary tree).

@@ -92,19 +92,17 @@ fn main() -> Result<()> {
 fn cmd_export(review_path: PathBuf, output_path: PathBuf) -> Result<()> {
     let loaded = bundle::load(&review_path)?;
 
-    // Render against the bundle's own most recently captured diff -- the
-    // one diff guaranteed to match what's in known_digests.
-    let Some((_, diff_text)) = loaded.latest_diff() else {
+    // Render against the bundle's own most recently recorded revision.
+    let Some((revision, diff_text)) = loaded.latest_revision() else {
         anyhow::bail!(
             "{} has no captured diff yet; run `diffnote edit` first",
             review_path.display()
         );
     };
 
-    let diff_digest = digest(&diff_text);
     let parsed_diff = diffnote::diff::parse(&diff_text).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let html = diffnote::html::render(&loaded.events, &parsed_diff, &diff_digest);
+    let html = diffnote::html::render(&loaded.events, &parsed_diff, &revision.files);
     std::fs::write(&output_path, html)
         .with_context(|| format!("failed to write {}", output_path.display()))?;
     println!("Wrote {}", output_path.display());
@@ -125,6 +123,8 @@ fn cmd_edit(
     }
     let diff_digest = digest(&diff_text);
     let parsed_diff = diffnote::diff::parse(&diff_text).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let head_tree = repo.ls_tree(&range.head)?;
+    let files = file_digests(&repo, &repo.ls_tree(&range.base)?, &head_tree, &parsed_diff)?;
 
     let loaded = bundle::load(&review_path)?;
     let existing_events = &loaded.events;
@@ -137,7 +137,7 @@ fn cmd_edit(
     let (temp_text, auto_relocated) = if existing_threads.is_empty() {
         (diff_text.clone(), Vec::new())
     } else {
-        annotation::render_for_edit(&diff_text, &parsed_diff, &diff_digest, &existing_threads)
+        annotation::render_for_edit(&diff_text, &parsed_diff, &files, &existing_threads)
     };
 
     let temp_dir = tempfile::tempdir().context("failed to create a temp directory")?;
@@ -205,14 +205,8 @@ fn cmd_edit(
         new_events.push(Event::Meta {
             version: 1,
             created_at: OffsetDateTime::now_utc(),
-            diff_digest: diff_digest.clone(),
-            git: Some(range.clone()),
             description: None,
             context_lines: 3,
-            // Placeholder -- patched below, once the effective mode for
-            // this (guaranteed, since we're mid-first-ever-Meta) snapshot
-            // is actually resolved, to whatever that turns out to be.
-            snapshot_mode: bundle::SnapshotMode::Full,
         });
     }
 
@@ -245,7 +239,7 @@ fn cmd_edit(
                     let target_id = Ulid::from_string(id_str).map_err(|_| {
                         anyhow::anyhow!("'>!reanchor {id_str}': not a valid thread id")
                     })?;
-                    let new_anchor = build_anchor(scope, &parsed.diff, &diff_digest, 3)?;
+                    let new_anchor = build_anchor(scope, &parsed.diff, &files, 3)?;
                     new_events.push(Event::Reanchor {
                         parent: target_id,
                         author: author.clone(),
@@ -258,7 +252,7 @@ fn cmd_edit(
 
                 let id = Ulid::new();
                 thread_ids.push(id);
-                let comment_anchor = build_anchor(scope, &parsed.diff, &diff_digest, 3)?;
+                let comment_anchor = build_anchor(scope, &parsed.diff, &files, 3)?;
                 new_events.push(Event::Comment {
                     id,
                     parent: None,
@@ -322,31 +316,31 @@ fn cmd_edit(
         return Ok(());
     }
 
-    // Only snapshot a not-yet-seen digest when this session actually
-    // produced something -- an idle "opened it, looked, closed it" pass
-    // shouldn't grow the bundle.
-    let new_snapshot = if loaded.known_digests.contains(&diff_digest) {
+    // Only record a not-yet-seen diff when this session actually produced
+    // something -- an idle "opened it, looked, closed it" pass shouldn't
+    // grow the bundle.
+    let new_snapshot = if loaded.has_revision(&diff_digest) {
         None
     } else {
-        let tree = repo.ls_tree(&range.head)?;
-        let snapshot_mode = resolve_snapshot_mode(snapshot_override, loaded.snapshot_mode(), &tree);
-        // If this session also just created the bundle's first-ever Meta
-        // event above, that pushed a placeholder mode -- fix it up to the
-        // mode actually resolved now, so it's what future sessions default
-        // to (see `Loaded::snapshot_mode`), not whatever the placeholder
-        // happened to be.
-        if let Some(Event::Meta {
-            snapshot_mode: m, ..
-        }) = new_events
-            .iter_mut()
-            .find(|e| matches!(e, Event::Meta { .. }))
-        {
-            *m = snapshot_mode;
-        }
+        let snapshot_mode =
+            resolve_snapshot_mode(snapshot_override, loaded.snapshot_mode(), &head_tree);
+        // Right after Meta if this session creates it, else first.
+        let at = usize::from(matches!(new_events.first(), Some(Event::Meta { .. })));
+        new_events.insert(
+            at,
+            Event::Revision(diffnote::model::Revision {
+                id: Ulid::new(),
+                created_at: OffsetDateTime::now_utc(),
+                digest: diff_digest.clone(),
+                git: Some(range.clone()),
+                snapshot_mode,
+                files: files.clone(),
+            }),
+        );
         Some(bundle::NewSnapshot {
             digest: diff_digest.clone(),
             diff_text: diff_text.clone(),
-            files: snapshot_files(&repo, snapshot_mode, &tree, &parsed_diff)?,
+            files: snapshot_files(&repo, snapshot_mode, &head_tree, &parsed_diff)?,
         })
     };
 
@@ -374,15 +368,16 @@ fn cmd_show(review_path: PathBuf) -> Result<()> {
     }
     for event in &events {
         match event {
-            Event::Meta {
-                diff_digest,
-                git,
-                context_lines,
-                ..
-            } => {
+            Event::Meta { context_lines, .. } => {
+                println!("[meta] context_lines={context_lines}");
+            }
+            Event::Revision(r) => {
                 println!(
-                    "[meta] diff_digest={diff_digest} git={} context_lines={context_lines}",
-                    git.as_ref().map_or("-", |g| g.spec.as_str())
+                    "[revision] {} digest={} git={} snapshot={:?}",
+                    r.id,
+                    r.digest,
+                    r.git.as_ref().map_or("-", |g| g.spec.as_str()),
+                    r.snapshot_mode
                 );
             }
             Event::Comment {
@@ -462,7 +457,7 @@ fn describe_anchor(anchor: Option<&Anchor>) -> String {
 fn build_anchor(
     scope: &annotation::AnchorScope,
     parsed_diff: &diffnote::diff::UnifiedDiff,
-    diff_digest: &str,
+    files: &[diffnote::model::FileDigest],
     context_lines: u32,
 ) -> Result<Anchor> {
     use annotation::AnchorScope;
@@ -480,7 +475,7 @@ fn build_anchor(
             *line,
             *line,
             None,
-            diff_digest,
+            files,
             context_lines,
         ),
         AnchorScope::Range {
@@ -496,7 +491,7 @@ fn build_anchor(
             *line_start,
             *line_end,
             *old_range,
-            diff_digest,
+            files,
             context_lines,
         ),
     }
@@ -510,7 +505,7 @@ fn build_span(
     line_start: u32,
     line_end: u32,
     old_range: Option<(u32, u32)>,
-    diff_digest: &str,
+    files: &[diffnote::model::FileDigest],
     context_lines: u32,
 ) -> Result<Anchor> {
     let file_diff = parsed_diff
@@ -533,7 +528,9 @@ fn build_span(
         line_start,
         line_end,
         context,
-        origin_diff_digest: diff_digest.to_string(),
+        origin_file_digest: anchor::digest_for(files, file, side)
+            .unwrap_or_default()
+            .to_string(),
         source_hint: Default::default(),
         old_range,
     })
@@ -582,9 +579,50 @@ fn save_draft(draft_path: &Path, content: &str) -> Result<()> {
         .with_context(|| format!("failed to save draft to {}", draft_path.display()))
 }
 
-fn digest(text: &str) -> String {
-    let hash = Sha256::digest(text.as_bytes());
+fn digest(bytes: impl AsRef<[u8]>) -> String {
+    let hash = Sha256::digest(bytes.as_ref());
     format!("sha256:{hash:x}")
+}
+
+/// The per-file digests of every file `diff` touches: old side read from
+/// the base tree, new side from the head tree (each `None` when that side
+/// doesn't exist, e.g. an added or deleted file).
+fn file_digests(
+    repo: &diffnote::git::Repo,
+    base_tree: &[diffnote::git::TreeEntry],
+    head_tree: &[diffnote::git::TreeEntry],
+    diff: &diffnote::diff::UnifiedDiff,
+) -> Result<Vec<diffnote::model::FileDigest>> {
+    let find = |tree: &'_ [diffnote::git::TreeEntry], path: &Option<String>| {
+        path.as_deref()
+            .and_then(|p| tree.iter().find(|e| e.path == p))
+            .map(|e| e.oid.clone())
+    };
+    let wanted: Vec<(Option<String>, Option<String>)> = diff
+        .files
+        .iter()
+        .map(|f| (find(base_tree, &f.old_path), find(head_tree, &f.new_path)))
+        .collect();
+    let oids: Vec<&str> = wanted
+        .iter()
+        .flat_map(|(o, n)| [o, n])
+        .flatten()
+        .map(String::as_str)
+        .collect();
+    let mut blobs = repo.read_blobs(&oids)?.into_iter();
+    let mut next = |present: &Option<String>| present.as_ref().and_then(|_| blobs.next());
+    let mut out = Vec::new();
+    for (f, (old_oid, new_oid)) in diff.files.iter().zip(&wanted) {
+        let old = next(old_oid).map(digest);
+        let new = next(new_oid).map(digest);
+        out.push(diffnote::model::FileDigest {
+            old_path: f.old_path.clone(),
+            new_path: f.new_path.clone(),
+            old,
+            new,
+        });
+    }
+    Ok(out)
 }
 
 /// Bytes at which a `full` snapshot is considered "big enough to ask

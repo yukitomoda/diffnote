@@ -21,10 +21,9 @@
 //! enough that this is simple and safe (no risk of a half-written zip from
 //! an in-place edit), at the cost of not scaling to huge bundles.
 
-use crate::model::Event;
 pub use crate::model::SnapshotMode;
+use crate::model::{Event, Revision};
 use anyhow::{Context, Result};
-use std::collections::BTreeSet;
 use std::io::{Read, Write};
 use std::path::Path;
 use zip::write::SimpleFileOptions;
@@ -32,37 +31,45 @@ use zip::{ZipArchive, ZipWriter};
 
 pub struct Loaded {
     pub events: Vec<Event>,
-    /// Digests (`sha256:...`) already captured in this bundle.
-    pub known_digests: BTreeSet<String>,
     /// Existing `diffs/`/`sources/` entries, carried through unchanged
     /// into the rewritten archive.
     carried_entries: Vec<(String, Vec<u8>)>,
 }
 
 impl Loaded {
-    /// The most recently captured diff (by save order -- new snapshots are
-    /// always appended after existing ones, both in memory and when
-    /// re-read on the next `load`), if the bundle has captured any yet.
-    /// Lets `export`/`show` render against "whatever this review was last
-    /// edited against" without the caller having to re-specify the diff.
-    pub fn latest_diff(&self) -> Option<(String, String)> {
-        self.carried_entries.iter().rev().find_map(|(name, bytes)| {
-            let component = name.strip_prefix("diffs/")?.strip_suffix(".diff")?;
-            let text = String::from_utf8(bytes.clone()).ok()?;
-            Some((format!("sha256:{component}"), text))
+    /// The most recently recorded revision and its diff text, if the bundle
+    /// has recorded any yet. Lets `export`/`show` render against "whatever
+    /// this review was last edited against" without the caller having to
+    /// re-specify the diff.
+    pub fn latest_revision(&self) -> Option<(&Revision, String)> {
+        let revision = self.revisions().last()?;
+        let wanted = format!("diffs/{}.diff", digest_path_component(&revision.digest));
+        let (_, bytes) = self
+            .carried_entries
+            .iter()
+            .find(|(name, _)| *name == wanted)?;
+        Some((revision, String::from_utf8(bytes.clone()).ok()?))
+    }
+
+    /// Whether a revision with this diff digest has been recorded.
+    pub fn has_revision(&self, digest: &str) -> bool {
+        self.revisions().any(|r| r.digest == digest)
+    }
+
+    /// Every recorded revision, oldest first.
+    pub fn revisions(&self) -> impl Iterator<Item = &Revision> {
+        self.events.iter().filter_map(|e| match e {
+            Event::Revision(r) => Some(r),
+            _ => None,
         })
     }
 
-    /// The mode this bundle was first created with, if it's been through at
-    /// least one save (`Meta` is always the first event once any exist).
-    /// `edit` defaults new captures to this rather than the CLI's own
-    /// default, so an existing bundle's snapshot behavior never silently
-    /// changes out from under it.
+    /// The mode this bundle's first revision was captured with. `edit`
+    /// defaults new captures to this rather than the CLI's own default, so
+    /// an existing bundle's snapshot behavior never silently changes out
+    /// from under it.
     pub fn snapshot_mode(&self) -> Option<SnapshotMode> {
-        self.events.iter().find_map(|e| match e {
-            Event::Meta { snapshot_mode, .. } => Some(*snapshot_mode),
-            _ => None,
-        })
+        self.revisions().next().map(|r| r.snapshot_mode)
     }
 }
 
@@ -76,7 +83,6 @@ pub fn load(path: &Path) -> Result<Loaded> {
     if !path.exists() {
         return Ok(Loaded {
             events: Vec::new(),
-            known_digests: BTreeSet::new(),
             carried_entries: Vec::new(),
         });
     }
@@ -91,7 +97,6 @@ pub fn load(path: &Path) -> Result<Loaded> {
     })?;
 
     let mut events = Vec::new();
-    let mut known_digests = BTreeSet::new();
     let mut carried_entries = Vec::new();
 
     for i in 0..archive.len() {
@@ -111,18 +116,12 @@ pub fn load(path: &Path) -> Result<Loaded> {
             events =
                 crate::review::parse_jsonl(&text, &format!("review.jsonl in {}", path.display()))?;
         } else {
-            if let Some(rest) = name.strip_prefix("diffs/")
-                && let Some(component) = rest.strip_suffix(".diff")
-            {
-                known_digests.insert(format!("sha256:{component}"));
-            }
             carried_entries.push((name, bytes));
         }
     }
 
     Ok(Loaded {
         events,
-        known_digests,
         carried_entries,
     })
 }
@@ -200,12 +199,20 @@ mod tests {
         Event::Meta {
             version: 1,
             created_at: OffsetDateTime::now_utc(),
-            diff_digest: "sha256:abc123".to_string(),
-            git: None,
             description: None,
             context_lines: 3,
-            snapshot_mode: SnapshotMode::Changed,
         }
+    }
+
+    fn revision(digest: &str, snapshot_mode: SnapshotMode) -> Event {
+        Event::Revision(Revision {
+            id: ulid::Ulid::new(),
+            created_at: OffsetDateTime::now_utc(),
+            digest: digest.to_string(),
+            git: None,
+            snapshot_mode,
+            files: Vec::new(),
+        })
     }
 
     #[test]
@@ -213,7 +220,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let loaded = load(&dir.path().join("nope.diffnote")).unwrap();
         assert!(loaded.events.is_empty());
-        assert!(loaded.known_digests.is_empty());
+        assert_eq!(loaded.revisions().count(), 0);
     }
 
     #[test]
@@ -230,7 +237,10 @@ mod tests {
         let path = dir.path().join("review.diffnote");
 
         let loaded = load(&path).unwrap();
-        let events = vec![sample_event()];
+        let events = vec![
+            sample_event(),
+            revision("sha256:abc123", SnapshotMode::Changed),
+        ];
         let snapshot = NewSnapshot {
             digest: "sha256:abc123".to_string(),
             diff_text: "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-old\n+new\n".to_string(),
@@ -239,8 +249,8 @@ mod tests {
         save(&path, &loaded, &events, Some(&snapshot)).unwrap();
 
         let reloaded = load(&path).unwrap();
-        assert_eq!(reloaded.events.len(), 1);
-        assert!(reloaded.known_digests.contains("sha256:abc123"));
+        assert_eq!(reloaded.events.len(), 2);
+        assert!(reloaded.has_revision("sha256:abc123"));
         assert!(
             reloaded
                 .carried_entries
@@ -258,23 +268,24 @@ mod tests {
         // one through untouched.
         save(&path, &reloaded, &reloaded.events, None).unwrap();
         let reloaded_again = load(&path).unwrap();
-        assert!(reloaded_again.known_digests.contains("sha256:abc123"));
-        assert_eq!(reloaded_again.events.len(), 1);
+        assert!(reloaded_again.has_revision("sha256:abc123"));
+        assert_eq!(reloaded_again.events.len(), 2);
     }
 
     #[test]
-    fn loaded_snapshot_mode_reflects_the_saved_events_meta() {
+    fn snapshot_mode_is_the_first_revisions() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("review.diffnote");
 
         let loaded = load(&path).unwrap();
         assert_eq!(loaded.snapshot_mode(), None);
 
-        let mut event = sample_event();
-        if let Event::Meta { snapshot_mode, .. } = &mut event {
-            *snapshot_mode = SnapshotMode::Full;
-        }
-        save(&path, &loaded, &[event], None).unwrap();
+        let events = [
+            sample_event(),
+            revision("sha256:a", SnapshotMode::Full),
+            revision("sha256:b", SnapshotMode::Diff),
+        ];
+        save(&path, &loaded, &events, None).unwrap();
 
         let reloaded = load(&path).unwrap();
         assert_eq!(reloaded.snapshot_mode(), Some(SnapshotMode::Full));
@@ -287,23 +298,25 @@ mod tests {
     }
 
     #[test]
-    fn latest_diff_is_the_most_recently_saved_one() {
+    fn latest_revision_is_the_most_recently_recorded_one_with_its_diff() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("review.diffnote");
 
         let loaded = load(&path).unwrap();
-        assert_eq!(loaded.latest_diff(), None);
+        assert!(loaded.latest_revision().is_none());
 
         let first = NewSnapshot {
             digest: "sha256:first".to_string(),
             diff_text: "first diff text".to_string(),
             files: Vec::new(),
         };
-        save(&path, &loaded, &[sample_event()], Some(&first)).unwrap();
+        let events = vec![sample_event(), revision("sha256:first", SnapshotMode::Diff)];
+        save(&path, &loaded, &events, Some(&first)).unwrap();
         let loaded = load(&path).unwrap();
+        let (rev, text) = loaded.latest_revision().unwrap();
         assert_eq!(
-            loaded.latest_diff(),
-            Some(("sha256:first".to_string(), "first diff text".to_string()))
+            (rev.digest.as_str(), text.as_str()),
+            ("sha256:first", "first diff text")
         );
 
         let second = NewSnapshot {
@@ -311,13 +324,16 @@ mod tests {
             diff_text: "second diff text".to_string(),
             files: Vec::new(),
         };
-        save(&path, &loaded, &loaded.events.clone(), Some(&second)).unwrap();
+        let mut events = loaded.events.clone();
+        events.push(revision("sha256:second", SnapshotMode::Diff));
+        save(&path, &loaded, &events, Some(&second)).unwrap();
         let loaded = load(&path).unwrap();
+        let (rev, text) = loaded.latest_revision().unwrap();
         assert_eq!(
-            loaded.latest_diff(),
-            Some(("sha256:second".to_string(), "second diff text".to_string()))
+            (rev.digest.as_str(), text.as_str()),
+            ("sha256:second", "second diff text")
         );
-        // The earlier digest is still present, just no longer "latest".
-        assert!(loaded.known_digests.contains("sha256:first"));
+        // The earlier revision is still recorded, just no longer "latest".
+        assert!(loaded.has_revision("sha256:first"));
     }
 }

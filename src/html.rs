@@ -29,7 +29,11 @@ use syntect::html::{IncludeBackground, styled_line_to_highlighted_html};
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 use ulid::Ulid;
 
-pub fn render(events: &[Event], diff: &UnifiedDiff, current_diff_digest: &str) -> String {
+pub fn render(
+    events: &[Event],
+    diff: &UnifiedDiff,
+    current_files: &[crate::model::FileDigest],
+) -> String {
     let threads = build_threads(events);
     let syntax_set = SyntaxSet::load_defaults_newlines();
     let theme_set = ThemeSet::load_defaults();
@@ -50,7 +54,7 @@ pub fn render(events: &[Event], diff: &UnifiedDiff, current_diff_digest: &str) -
     let mut outdated: HashMap<String, Vec<&Thread>> = HashMap::new();
 
     for thread in &threads {
-        match anchor::resolve_placement(&thread.anchor, diff, current_diff_digest) {
+        match anchor::resolve_placement(&thread.anchor, diff, current_files) {
             Placement::Global => global.push(thread),
             Placement::File(file) => by_file.entry(file).or_default().push(thread),
             Placement::Hunk(file, idx) => by_hunk.entry((file, idx)).or_default().push(thread),

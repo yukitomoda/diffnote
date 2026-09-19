@@ -131,7 +131,7 @@ pub fn load(path: &Path) -> Result<Vec<Event>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Anchor, SnapshotMode};
+    use crate::model::Anchor;
     use time::OffsetDateTime;
     use ulid::Ulid;
 
@@ -143,11 +143,8 @@ mod tests {
         let meta = Event::Meta {
             version: 1,
             created_at: OffsetDateTime::now_utc(),
-            diff_digest: "sha256:abc".to_string(),
-            git: None,
             description: None,
             context_lines: 3,
-            snapshot_mode: SnapshotMode::Changed,
         };
         let comment = Event::Comment {
             id: Ulid::new(),
@@ -177,11 +174,8 @@ mod tests {
         let valid_meta = Event::Meta {
             version: 1,
             created_at: OffsetDateTime::now_utc(),
-            diff_digest: "sha256:abc".to_string(),
-            git: None,
             description: None,
             context_lines: 3,
-            snapshot_mode: SnapshotMode::Changed,
         };
         let content = format!(
             "{}\nnot json at all\n",

@@ -16,8 +16,9 @@
 //!   context/added/removed lines for the relevant side.
 //!
 //! Matching, in order:
-//! 1. If `current_diff_digest` matches the anchor's own `origin_diff_digest`,
-//!    skip matching entirely — [`Resolution::Current`].
+//! 1. If the file's current digest on the anchor's side matches the
+//!    anchor's own `origin_file_digest`, skip matching entirely —
+//!    [`Resolution::Current`].
 //! 2. Exact, line-number-contiguous match of `context.target` in the
 //!    corpus. Zero candidates falls through to fuzzy matching (3); exactly
 //!    one is used directly; more than one is disambiguated using
@@ -40,14 +41,14 @@
 //! persist it as the new authoritative anchor for future re-anchoring runs.
 
 use crate::diff::{FileDiff, UnifiedDiff};
-use crate::model::{Anchor, Context, Side};
+use crate::model::{Anchor, Context, FileDigest, Side};
 
 pub const DEFAULT_SIMILARITY_THRESHOLD: f32 = 0.6;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolution {
-    /// The stored context still matches exactly where expected (or
-    /// `current_diff_digest` already matched the anchor's own digest).
+    /// The stored context still matches exactly where expected (or the
+    /// file's current digest already matched the anchor's own digest).
     Current,
     /// Found elsewhere with reasonable confidence; not yet human-confirmed.
     Relocated(Anchor),
@@ -126,7 +127,28 @@ pub fn context_for_line_range(
     ))
 }
 
-pub fn resolve(anchor: &Anchor, current_diff_digest: &str, corpus: &[CorpusLine]) -> Resolution {
+/// The digest of `file` on `side` in the revision described by `files`, if
+/// the file is one that revision's diff touches and has that side. `file`
+/// may be spelled as either its old or its new path.
+pub fn digest_for<'a>(files: &'a [FileDigest], file: &str, side: Side) -> Option<&'a str> {
+    let entry = files
+        .iter()
+        .find(|f| f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file))?;
+    match side {
+        Side::Old => entry.old.as_deref(),
+        Side::New => entry.new.as_deref(),
+    }
+}
+
+/// `current_file_digest` is the digest of the anchor's file on its side in
+/// the version being viewed, when known. `None` (unknown) never
+/// short-circuits, and a relocated anchor then records an empty origin
+/// digest, so it is simply re-matched next time.
+pub fn resolve(
+    anchor: &Anchor,
+    current_file_digest: Option<&str>,
+    corpus: &[CorpusLine],
+) -> Resolution {
     // Global/File/Hunk anchors are positional only -- v1 doesn't re-verify
     // that the file/hunk they name still exists, so they're always current.
     let Anchor::Span {
@@ -135,7 +157,7 @@ pub fn resolve(anchor: &Anchor, current_diff_digest: &str, corpus: &[CorpusLine]
         line_start: anchor_line_start,
         line_end: anchor_line_end,
         context,
-        origin_diff_digest,
+        origin_file_digest,
         source_hint,
         old_range: _,
     } = anchor
@@ -143,7 +165,7 @@ pub fn resolve(anchor: &Anchor, current_diff_digest: &str, corpus: &[CorpusLine]
         return Resolution::Current;
     };
 
-    if origin_diff_digest == current_diff_digest {
+    if current_file_digest == Some(origin_file_digest.as_str()) {
         return Resolution::Current;
     }
 
@@ -188,7 +210,7 @@ pub fn resolve(anchor: &Anchor, current_diff_digest: &str, corpus: &[CorpusLine]
         line_start,
         line_end,
         context: new_context,
-        origin_diff_digest: current_diff_digest.to_string(),
+        origin_file_digest: current_file_digest.unwrap_or_default().to_string(),
         source_hint: source_hint.clone(),
         // The old side has nothing to search for in the new diff -- removed
         // content is gone by definition, so a relocation can't tell where
@@ -401,7 +423,7 @@ pub fn find_file<'a>(diff: &'a UnifiedDiff, file: &str) -> Option<&'a FileDiff> 
 pub fn resolve_placement(
     anchor: &Anchor,
     diff: &UnifiedDiff,
-    current_diff_digest: &str,
+    current_files: &[FileDigest],
 ) -> Placement {
     match anchor {
         Anchor::Global => Placement::Global,
@@ -412,7 +434,8 @@ pub fn resolve_placement(
                 return Placement::Outdated { file: file.clone() };
             };
             let corpus = corpus_from_diff_hunks(file_diff, *side);
-            match resolve(anchor, current_diff_digest, &corpus) {
+            let current = digest_for(current_files, file, *side);
+            match resolve(anchor, current, &corpus) {
                 Resolution::Outdated => Placement::Outdated { file: file.clone() },
                 Resolution::Current => {
                     let Anchor::Span {
@@ -504,7 +527,7 @@ mod tests {
                 target: target.iter().map(|s| s.to_string()).collect(),
                 after,
             },
-            origin_diff_digest: digest.to_string(),
+            origin_file_digest: digest.to_string(),
             source_hint: SourceHint::default(),
             old_range: None,
         }
@@ -522,14 +545,14 @@ mod tests {
         );
         // An empty corpus would make any real search fail; this proves the
         // fast path really does skip matching.
-        assert_eq!(resolve(&a, "same", &[]), Resolution::Current);
+        assert_eq!(resolve(&a, Some("same"), &[]), Resolution::Current);
     }
 
     #[test]
     fn exact_unique_match_at_the_same_position_is_current() {
         let c = corpus(&[(10, "fn bar() {"), (11, "  self.value"), (12, "}")]);
         let a = anchor(11, 11, &["  self.value"]);
-        assert_eq!(resolve(&a, "new-digest", &c), Resolution::Current);
+        assert_eq!(resolve(&a, Some("new-digest"), &c), Resolution::Current);
     }
 
     #[test]
@@ -543,11 +566,11 @@ mod tests {
         ]);
         // Originally at line 5, the content now sits at line 11.
         let a = anchor(5, 5, &["  self.value"]);
-        let resolved = resolve(&a, "new-digest", &c);
+        let resolved = resolve(&a, Some("new-digest"), &c);
         let Resolution::Relocated(Anchor::Span {
             line_start,
             line_end,
-            origin_diff_digest,
+            origin_file_digest,
             context,
             ..
         }) = resolved
@@ -556,7 +579,7 @@ mod tests {
         };
         assert_eq!(line_start, 11);
         assert_eq!(line_end, 11);
-        assert_eq!(origin_diff_digest, "new-digest");
+        assert_eq!(origin_file_digest, "new-digest");
         assert_eq!(context.target, vec!["  self.value".to_string()]);
     }
 
@@ -580,7 +603,8 @@ mod tests {
             Vec::new(),
             "old-digest",
         );
-        let Resolution::Relocated(Anchor::Span { line_start, .. }) = resolve(&a, "new-digest", &c)
+        let Resolution::Relocated(Anchor::Span { line_start, .. }) =
+            resolve(&a, Some("new-digest"), &c)
         else {
             panic!("expected Relocated");
         };
@@ -591,7 +615,7 @@ mod tests {
     fn ambiguous_exact_matches_with_no_disambiguation_are_outdated() {
         let c = corpus(&[(1, "return x;"), (2, "return x;")]);
         let a = anchor(99, 99, &["return x;"]);
-        assert_eq!(resolve(&a, "new-digest", &c), Resolution::Outdated);
+        assert_eq!(resolve(&a, Some("new-digest"), &c), Resolution::Outdated);
     }
 
     #[test]
@@ -610,7 +634,7 @@ mod tests {
             line_start,
             context,
             ..
-        }) = resolve(&a, "new-digest", &c)
+        }) = resolve(&a, Some("new-digest"), &c)
         else {
             panic!("expected Relocated");
         };
@@ -628,7 +652,7 @@ mod tests {
             (2, "nothing like the original"),
         ]);
         let a = anchor(5, 5, &["    fn baz(&self) -> i32 {"]);
-        assert_eq!(resolve(&a, "new-digest", &c), Resolution::Outdated);
+        assert_eq!(resolve(&a, Some("new-digest"), &c), Resolution::Outdated);
     }
 
     #[test]
@@ -636,7 +660,7 @@ mod tests {
         // v1 doesn't re-verify that a named file/hunk still exists; an
         // empty corpus proves resolve() isn't even trying to search.
         assert_eq!(
-            resolve(&Anchor::Global, "any-digest", &[]),
+            resolve(&Anchor::Global, Some("any-digest"), &[]),
             Resolution::Current
         );
         assert_eq!(
@@ -644,7 +668,7 @@ mod tests {
                 &Anchor::File {
                     file: "gone.rs".to_string()
                 },
-                "any-digest",
+                Some("any-digest"),
                 &[]
             ),
             Resolution::Current
@@ -655,7 +679,7 @@ mod tests {
                     file: "gone.rs".to_string(),
                     hunk_index: 99
                 },
-                "any-digest",
+                Some("any-digest"),
                 &[]
             ),
             Resolution::Current
@@ -666,7 +690,7 @@ mod tests {
     fn target_longer_than_corpus_is_outdated() {
         let c = corpus(&[(1, "only one line")]);
         let a = anchor(1, 2, &["line one", "line two"]);
-        assert_eq!(resolve(&a, "new-digest", &c), Resolution::Outdated);
+        assert_eq!(resolve(&a, Some("new-digest"), &c), Resolution::Outdated);
     }
 
     #[test]
@@ -684,7 +708,7 @@ mod tests {
             (21, "0987654321"),
         ]);
         let a = anchor(1, 2, &["QWERTYUIOP1", "ASDFGHJKL2"]);
-        assert_eq!(resolve(&a, "new-digest", &c), Resolution::Outdated);
+        assert_eq!(resolve(&a, Some("new-digest"), &c), Resolution::Outdated);
     }
 
     #[test]
@@ -753,5 +777,35 @@ mod tests {
         // Lines 2 and 10 exist individually but aren't contiguous.
         assert_eq!(context_for_line_range(&c, 2, 10, 1), None);
         assert_eq!(context_for_line_range(&c, 5, 6, 1), None);
+    }
+
+    #[test]
+    fn digest_for_finds_a_file_by_either_path_and_side() {
+        let files = vec![FileDigest {
+            old_path: Some("old.rs".to_string()),
+            new_path: Some("new.rs".to_string()),
+            old: Some("sha256:o".to_string()),
+            new: Some("sha256:n".to_string()),
+        }];
+        assert_eq!(digest_for(&files, "new.rs", Side::New), Some("sha256:n"));
+        assert_eq!(digest_for(&files, "old.rs", Side::Old), Some("sha256:o"));
+        assert_eq!(digest_for(&files, "other.rs", Side::New), None);
+
+        let added = vec![FileDigest {
+            old_path: None,
+            new_path: Some("a.rs".to_string()),
+            old: None,
+            new: Some("sha256:n".to_string()),
+        }];
+        assert_eq!(digest_for(&added, "a.rs", Side::Old), None);
+    }
+
+    #[test]
+    fn unknown_current_digest_never_short_circuits() {
+        let a = anchor(3, 3, &["x"]);
+        let c = corpus(&[(1, "a"), (2, "b"), (3, "x")]);
+        // Matched by search instead; at the same place, so still Current --
+        // but through the search path, not the digest shortcut.
+        assert_eq!(resolve(&a, None, &c), Resolution::Current);
     }
 }

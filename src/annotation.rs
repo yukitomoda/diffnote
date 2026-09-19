@@ -706,7 +706,7 @@ type ByLine<'a> = HashMap<(String, Side, u32), Vec<(&'a Thread, bool)>>;
 pub fn render_for_edit(
     diff_text: &str,
     diff: &UnifiedDiff,
-    current_diff_digest: &str,
+    current_files: &[crate::model::FileDigest],
     threads: &[Thread],
 ) -> (String, Vec<(Ulid, Anchor)>) {
     let mut global: Vec<&Thread> = Vec::new();
@@ -717,7 +717,7 @@ pub fn render_for_edit(
     let mut auto_relocated: Vec<(Ulid, Anchor)> = Vec::new();
 
     for thread in threads {
-        match anchor::resolve_placement(&thread.anchor, diff, current_diff_digest) {
+        match anchor::resolve_placement(&thread.anchor, diff, current_files) {
             Placement::Global => global.push(thread),
             Placement::File(file) => by_file.entry(file).or_default().push(thread),
             Placement::Hunk(file, idx) => by_hunk.entry((file, idx)).or_default().push(thread),
@@ -1269,7 +1269,7 @@ diff --git a/f.rs b/f.rs
         }
     }
 
-    fn span(line_start: u32, line_end: u32, target: &str, origin_diff_digest: &str) -> Anchor {
+    fn span(line_start: u32, line_end: u32, target: &str, origin_file_digest: &str) -> Anchor {
         Anchor::Span {
             file: "src/lib.rs".to_string(),
             side: Side::New,
@@ -1280,10 +1280,20 @@ diff --git a/f.rs b/f.rs
                 target: vec![target.to_string()],
                 after: Vec::new(),
             },
-            origin_diff_digest: origin_diff_digest.to_string(),
+            origin_file_digest: origin_file_digest.to_string(),
             source_hint: SourceHint::default(),
             old_range: None,
         }
+    }
+
+    /// The current per-file digests where `src/lib.rs` is at `digest`.
+    fn files_at(digest: &str) -> Vec<crate::model::FileDigest> {
+        vec![crate::model::FileDigest {
+            old_path: Some("src/lib.rs".to_string()),
+            new_path: Some("src/lib.rs".to_string()),
+            old: None,
+            new: Some(digest.to_string()),
+        }]
     }
 
     #[test]
@@ -1319,7 +1329,7 @@ diff --git a/f.rs b/f.rs
             ),
         ];
 
-        let (rendered, auto_relocated) = render_for_edit(BASE, &diff, digest, &threads);
+        let (rendered, auto_relocated) = render_for_edit(BASE, &diff, &files_at(digest), &threads);
         assert!(auto_relocated.is_empty());
         assert!(!rendered.contains("[moved]"));
 
@@ -1366,8 +1376,12 @@ diff --git a/f.rs b/f.rs
             "drifted",
         );
 
-        let (rendered, auto_relocated) =
-            render_for_edit(BASE, &diff, "current-digest", std::slice::from_ref(&thread));
+        let (rendered, auto_relocated) = render_for_edit(
+            BASE,
+            &diff,
+            &files_at("current-digest"),
+            std::slice::from_ref(&thread),
+        );
 
         assert_eq!(auto_relocated.len(), 1);
         assert_eq!(auto_relocated[0].0, root_id);
@@ -1392,8 +1406,12 @@ diff --git a/f.rs b/f.rs
             "gone",
         );
 
-        let (rendered, auto_relocated) =
-            render_for_edit(BASE, &diff, "current-digest", std::slice::from_ref(&thread));
+        let (rendered, auto_relocated) = render_for_edit(
+            BASE,
+            &diff,
+            &files_at("current-digest"),
+            std::slice::from_ref(&thread),
+        );
 
         assert!(auto_relocated.is_empty());
         let header_pos = rendered.find(&format!(">#@{root_id}")).unwrap();
@@ -1414,8 +1432,12 @@ diff --git a/f.rs b/f.rs
             "original",
         );
 
-        let (rendered, _) =
-            render_for_edit(BASE, &diff, "same-digest", std::slice::from_ref(&thread));
+        let (rendered, _) = render_for_edit(
+            BASE,
+            &diff,
+            &files_at("same-digest"),
+            std::slice::from_ref(&thread),
+        );
         let annotated = format!("{rendered}>> 承知しました\n");
         let parsed = parse(&annotated).expect("valid annotation");
 
