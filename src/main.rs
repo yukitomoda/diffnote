@@ -1,0 +1,709 @@
+use anyhow::{Context, Result};
+use clap::{Parser, Subcommand};
+use diffnote::model::{Anchor, Event};
+use diffnote::{anchor, annotation, bundle, review};
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use time::OffsetDateTime;
+use ulid::Ulid;
+
+/// diffnote: comment on a git diff locally, share the review as a file.
+#[derive(Debug, Parser)]
+#[command(name = "diffnote", version)]
+struct Cli {
+    #[command(subcommand)]
+    command: Cmd,
+}
+
+#[derive(Debug, Subcommand)]
+enum Cmd {
+    /// Open a diff for annotation in $EDITOR, appending new comments to a review bundle.
+    Edit {
+        /// Path to the diffnote review bundle (.diffnote, a zip). Created if missing.
+        #[arg(short = 'f', long = "file", default_value = ".diffnote")]
+        review: PathBuf,
+        /// Extra arguments forwarded to `git diff`, e.g.
+        /// `diffnote edit main..feature` or `diffnote edit HEAD~3 HEAD`.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        git_diff_args: Vec<String>,
+        /// What to snapshot into the bundle the first time a new diff digest
+        /// is seen and this session actually adds something: `diff` (just
+        /// the diff text), `changed` (+ the touched files' full content), or
+        /// `full` (+ the whole source tree, respecting .gitignore). Defaults
+        /// to the bundle's own previously-established mode if it has one,
+        /// otherwise `full`.
+        #[arg(long, value_enum)]
+        snapshot: Option<diffnote::bundle::SnapshotMode>,
+    },
+    /// Print the threads/replies stored in a review bundle.
+    Show {
+        /// Path to the diffnote review bundle (.diffnote).
+        #[arg(short = 'f', long = "file", default_value = ".diffnote")]
+        review: PathBuf,
+    },
+    /// Render a review bundle to a self-contained HTML file.
+    Export {
+        /// Path to the diffnote review bundle (.diffnote).
+        #[arg(short = 'f', long = "file", default_value = ".diffnote")]
+        review: PathBuf,
+        /// Output HTML path, e.g. `-o out.html`.
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+        /// Output HTML path, given positionally instead of via -o/--output,
+        /// e.g. `diffnote export out.html`.
+        #[arg(index = 1, value_name = "OUTPUT")]
+        output_pos: Option<PathBuf>,
+    },
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    match cli.command {
+        Cmd::Edit {
+            review,
+            git_diff_args,
+            snapshot,
+        } => cmd_edit(review, git_diff_args, snapshot),
+        Cmd::Show { review } => cmd_show(review),
+        Cmd::Export {
+            review,
+            output,
+            output_pos,
+        } => {
+            let output = match (output, output_pos) {
+                (Some(o), None) | (None, Some(o)) => o,
+                (Some(_), Some(_)) => {
+                    anyhow::bail!(
+                        "pass the output path either positionally or via -o/--output, not both"
+                    )
+                }
+                (None, None) => {
+                    anyhow::bail!("missing output path (pass it positionally or via -o/--output)")
+                }
+            };
+            cmd_export(review, output)
+        }
+    }
+}
+
+fn cmd_export(review_path: PathBuf, output_path: PathBuf) -> Result<()> {
+    let loaded = bundle::load(&review_path)?;
+
+    // Prefer the bundle's own most recently captured diff -- that's almost
+    // always what "render this review" should mean, and it's the one diff
+    // guaranteed to actually match what's in known_digests. Only a bundle
+    // that has never captured one at all (e.g. an empty/fresh review) falls
+    // back to a bare `git diff` in the current repo.
+    let diff_text = match loaded.latest_diff() {
+        Some((_, text)) => text,
+        None => load_diff_text(&[])?,
+    };
+
+    let diff_digest = digest(&diff_text);
+    let parsed_diff = diffnote::diff::parse(&diff_text).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if parsed_diff.files.is_empty() {
+        eprintln!(
+            "warning: this bundle has no captured diff yet and `git diff` in the \
+            current repo is also empty -- comments will show up as unplaced. \
+            Run `diffnote edit` first to capture the diff this review is against."
+        );
+    } else if !loaded.known_digests.contains(&diff_digest) {
+        eprintln!(
+            "warning: rendering against a diff this bundle has never seen (no \
+            matching digest) -- comments may show up relocated or unplaced. \
+            Run `diffnote edit` first to capture this one."
+        );
+    }
+
+    let html = diffnote::html::render(&loaded.events, &parsed_diff, &diff_digest);
+    std::fs::write(&output_path, html)
+        .with_context(|| format!("failed to write {}", output_path.display()))?;
+    println!("Wrote {}", output_path.display());
+    Ok(())
+}
+
+fn cmd_edit(
+    review_path: PathBuf,
+    git_diff_args: Vec<String>,
+    snapshot_override: Option<bundle::SnapshotMode>,
+) -> Result<()> {
+    let diff_text = load_diff_text(&git_diff_args)?;
+    if diff_text.trim().is_empty() {
+        println!("No changes to review (diff is empty).");
+        return Ok(());
+    }
+    let diff_digest = digest(&diff_text);
+    let parsed_diff = diffnote::diff::parse(&diff_text).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let loaded = bundle::load(&review_path)?;
+    let existing_events = &loaded.events;
+    let existing_threads = review::build_threads(existing_events);
+
+    // Fresh review: write the diff verbatim, exactly as `git diff` produced
+    // it. annotation::render_for_edit reconstructs it line-by-line instead,
+    // which is fine for round-trip but an unnecessary risk (e.g. a possible
+    // trailing-newline mismatch) when there's nothing to interleave anyway.
+    let (temp_text, auto_relocated) = if existing_threads.is_empty() {
+        (diff_text.clone(), Vec::new())
+    } else {
+        annotation::render_for_edit(&diff_text, &parsed_diff, &diff_digest, &existing_threads)
+    };
+
+    let temp_dir = tempfile::tempdir().context("failed to create a temp directory")?;
+    let temp_path = temp_dir.path().join("review.diff");
+
+    // If a previous session's edits failed to parse (or the editor itself
+    // exited non-zero), they were saved here instead of being lost -- reopen
+    // that instead of a fresh render so the user can just fix the mistake.
+    let draft_path = draft_path_for(&review_path);
+    let initial_text = match std::fs::read_to_string(&draft_path) {
+        Ok(draft) => {
+            println!(
+                "Resuming a draft saved after a previous edit didn't save cleanly: {}",
+                draft_path.display()
+            );
+            draft
+        }
+        Err(_) => temp_text.clone(),
+    };
+    std::fs::write(&temp_path, &initial_text)
+        .context("failed to write the temp annotation file")?;
+
+    let editor = default_editor();
+    let status = Command::new(&editor)
+        .arg(&temp_path)
+        .status()
+        .with_context(|| format!("failed to launch editor '{editor}' (set $EDITOR)"))?;
+
+    let annotated =
+        std::fs::read_to_string(&temp_path).context("failed to read back the annotated file")?;
+
+    if !status.success() {
+        save_draft(&draft_path, &annotated)?;
+        anyhow::bail!(
+            "editor '{editor}' exited with a failure status; your edits were saved to {} \
+            -- fix them and rerun `diffnote edit` to resume, aborting",
+            draft_path.display()
+        );
+    }
+
+    let parsed = match annotation::parse(&annotated) {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            save_draft(&draft_path, &annotated)?;
+            anyhow::bail!(
+                "failed to parse your edits: {e}\n\nYour changes were saved to {} -- fix the \
+                error and run `diffnote edit` again to resume where you left off.",
+                draft_path.display()
+            );
+        }
+    };
+
+    // Parsing succeeded, so nothing here is at risk of being lost anymore --
+    // any draft from an earlier failed attempt is now stale.
+    let _ = std::fs::remove_file(&draft_path);
+
+    if existing_events.is_empty() && parsed.items.is_empty() {
+        println!("No comments added.");
+        return Ok(());
+    }
+
+    let author = resolve_author();
+    let mut new_events = Vec::new();
+    if existing_events.is_empty() {
+        new_events.push(Event::Meta {
+            version: 1,
+            created_at: OffsetDateTime::now_utc(),
+            diff_digest: diff_digest.clone(),
+            branch: current_branch(),
+            description: None,
+            context_lines: 3,
+            // Placeholder -- patched below, once the effective mode for
+            // this (guaranteed, since we're mid-first-ever-Meta) snapshot
+            // is actually resolved, to whatever that turns out to be.
+            snapshot_mode: bundle::SnapshotMode::Full,
+        });
+    }
+
+    // Existing threads whose >>!reject or >!reanchor was explicitly seen in
+    // this edit -- these must NOT also get an auto "silence = accept"
+    // Reanchor event below for their render-time [moved] guess.
+    let mut explicitly_handled: std::collections::HashSet<Ulid> = Default::default();
+
+    let mut thread_ids: Vec<Ulid> = Vec::new();
+    for item in &parsed.items {
+        match item {
+            annotation::Item::NewThread {
+                scope,
+                body,
+                directives,
+                ..
+            } => {
+                if let Some(pos) = directives
+                    .iter()
+                    .position(|d| matches!(d, annotation::Directive::Reanchor(_)))
+                {
+                    if directives.len() != 1 || body.is_some() {
+                        anyhow::bail!(
+                            "'>!reanchor' cannot be combined with comment text or other directives in the same block"
+                        );
+                    }
+                    let annotation::Directive::Reanchor(id_str) = &directives[pos] else {
+                        unreachable!()
+                    };
+                    let target_id = Ulid::from_string(id_str).map_err(|_| {
+                        anyhow::anyhow!("'>!reanchor {id_str}': not a valid thread id")
+                    })?;
+                    let new_anchor = build_anchor(scope, &parsed.diff, &diff_digest, 3)?;
+                    new_events.push(Event::Reanchor {
+                        parent: target_id,
+                        author: author.clone(),
+                        created_at: OffsetDateTime::now_utc(),
+                        anchor: new_anchor,
+                    });
+                    explicitly_handled.insert(target_id);
+                    continue;
+                }
+
+                let id = Ulid::new();
+                thread_ids.push(id);
+                let comment_anchor = build_anchor(scope, &parsed.diff, &diff_digest, 3)?;
+                new_events.push(Event::Comment {
+                    id,
+                    parent: None,
+                    author: author.clone(),
+                    created_at: OffsetDateTime::now_utc(),
+                    anchor: Some(comment_anchor),
+                    body: body.clone().unwrap_or_default(),
+                });
+                for directive in directives {
+                    push_simple_directive(&mut new_events, directive, id, &author)?;
+                }
+            }
+            annotation::Item::Reply {
+                target,
+                body,
+                directives,
+            } => {
+                let target_id = match target {
+                    annotation::ThreadRef::New(tid) => *thread_ids.get(tid.0).ok_or_else(|| {
+                        anyhow::anyhow!("internal error: unknown thread reference")
+                    })?,
+                    annotation::ThreadRef::Existing(ulid) => *ulid,
+                };
+                if let Some(body) = body {
+                    let id = Ulid::new();
+                    new_events.push(Event::Comment {
+                        id,
+                        parent: Some(target_id),
+                        author: author.clone(),
+                        created_at: OffsetDateTime::now_utc(),
+                        anchor: None,
+                        body: body.clone(),
+                    });
+                }
+                for directive in directives {
+                    if matches!(directive, annotation::Directive::Reject) {
+                        explicitly_handled.insert(target_id);
+                        continue;
+                    }
+                    push_simple_directive(&mut new_events, directive, target_id, &author)?;
+                }
+            }
+        }
+    }
+
+    // Silence = accept: any render-time [moved] guess not explicitly
+    // reanchored/rejected above is committed now.
+    for (thread_id, new_anchor) in auto_relocated {
+        if explicitly_handled.insert(thread_id) {
+            new_events.push(Event::Reanchor {
+                parent: thread_id,
+                author: author.clone(),
+                created_at: OffsetDateTime::now_utc(),
+                anchor: new_anchor,
+            });
+        }
+    }
+
+    if new_events.is_empty() {
+        println!("No changes.");
+        return Ok(());
+    }
+
+    // Only snapshot a not-yet-seen digest when this session actually
+    // produced something -- an idle "opened it, looked, closed it" pass
+    // shouldn't grow the bundle.
+    let new_snapshot = if loaded.known_digests.contains(&diff_digest) {
+        None
+    } else {
+        let root = std::env::current_dir().context("failed to determine the current directory")?;
+        let snapshot_mode = resolve_snapshot_mode(
+            snapshot_override,
+            loaded.snapshot_mode(),
+            &root,
+            &review_path,
+        )?;
+        // If this session also just created the bundle's first-ever Meta
+        // event above, that pushed a placeholder mode -- fix it up to the
+        // mode actually resolved now, so it's what future sessions default
+        // to (see `Loaded::snapshot_mode`), not whatever the placeholder
+        // happened to be.
+        if let Some(Event::Meta {
+            snapshot_mode: m, ..
+        }) = new_events
+            .iter_mut()
+            .find(|e| matches!(e, Event::Meta { .. }))
+        {
+            *m = snapshot_mode;
+        }
+        Some(bundle::capture_snapshot(
+            snapshot_mode,
+            &diff_digest,
+            &diff_text,
+            &parsed_diff,
+            &root,
+            &review_path,
+        )?)
+    };
+
+    let comment_count = new_events
+        .iter()
+        .filter(|e| matches!(e, Event::Comment { .. }))
+        .count();
+    let mut all_events = loaded.events.clone();
+    all_events.extend(new_events.iter().cloned());
+    bundle::save(&review_path, &loaded, &all_events, new_snapshot.as_ref())?;
+    println!(
+        "Wrote {comment_count} comment(s) ({} event(s) total) to {}",
+        new_events.len(),
+        review_path.display()
+    );
+    Ok(())
+}
+
+fn cmd_show(review_path: PathBuf) -> Result<()> {
+    let loaded = bundle::load(&review_path)?;
+    let events = loaded.events;
+    if events.is_empty() {
+        println!("{} is empty.", review_path.display());
+        return Ok(());
+    }
+    for event in &events {
+        match event {
+            Event::Meta {
+                diff_digest,
+                branch,
+                context_lines,
+                ..
+            } => {
+                println!(
+                    "[meta] diff_digest={diff_digest} branch={} context_lines={context_lines}",
+                    branch.as_deref().unwrap_or("-")
+                );
+            }
+            Event::Comment {
+                id,
+                parent: None,
+                author,
+                body,
+                anchor,
+                ..
+            } => {
+                println!(
+                    "[{id}] NEW  {} -- {author}",
+                    describe_anchor(anchor.as_ref())
+                );
+                print_body(body);
+            }
+            Event::Comment {
+                id,
+                parent: Some(parent),
+                author,
+                body,
+                ..
+            } => {
+                println!("[{id}] REPLY -> {parent} -- {author}");
+                print_body(body);
+            }
+            Event::Resolve { parent, author, .. } => {
+                println!("      RESOLVE {parent} -- {author}");
+            }
+            Event::Reopen { parent, author, .. } => {
+                println!("      REOPEN {parent} -- {author}");
+            }
+            Event::Reanchor {
+                parent,
+                author,
+                anchor,
+                ..
+            } => {
+                println!(
+                    "      REANCHOR {parent} -> {} -- {author}",
+                    describe_anchor(Some(anchor))
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_body(body: &str) {
+    for line in body.lines() {
+        println!("        | {line}");
+    }
+}
+
+fn describe_anchor(anchor: Option<&Anchor>) -> String {
+    match anchor {
+        None => "?".to_string(),
+        Some(Anchor::Global) => "diff全体".to_string(),
+        Some(Anchor::File { file }) => format!("ファイル全体: {file}"),
+        Some(Anchor::Hunk { file, hunk_index }) => format!("hunk全体: {file} (#{hunk_index})"),
+        Some(Anchor::Span {
+            file,
+            side,
+            line_start,
+            line_end,
+            ..
+        }) => {
+            if line_start == line_end {
+                format!("{file}:{line_start} ({side:?})")
+            } else {
+                format!("{file}:{line_start}-{line_end} ({side:?})")
+            }
+        }
+    }
+}
+
+fn build_anchor(
+    scope: &annotation::AnchorScope,
+    parsed_diff: &diffnote::diff::UnifiedDiff,
+    diff_digest: &str,
+    context_lines: u32,
+) -> Result<Anchor> {
+    use annotation::AnchorScope;
+    match scope {
+        AnchorScope::Global => Ok(Anchor::Global),
+        AnchorScope::File { file } => Ok(Anchor::File { file: file.clone() }),
+        AnchorScope::Hunk { file, hunk_index } => Ok(Anchor::Hunk {
+            file: file.clone(),
+            hunk_index: *hunk_index,
+        }),
+        AnchorScope::Line { file, side, line } => build_span(
+            parsed_diff,
+            file,
+            *side,
+            *line,
+            *line,
+            None,
+            diff_digest,
+            context_lines,
+        ),
+        AnchorScope::Range {
+            file,
+            side,
+            line_start,
+            line_end,
+            old_range,
+        } => build_span(
+            parsed_diff,
+            file,
+            *side,
+            *line_start,
+            *line_end,
+            *old_range,
+            diff_digest,
+            context_lines,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_span(
+    parsed_diff: &diffnote::diff::UnifiedDiff,
+    file: &str,
+    side: diffnote::model::Side,
+    line_start: u32,
+    line_end: u32,
+    old_range: Option<(u32, u32)>,
+    diff_digest: &str,
+    context_lines: u32,
+) -> Result<Anchor> {
+    let file_diff = parsed_diff
+        .files
+        .iter()
+        .find(|f| f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file))
+        .ok_or_else(|| {
+            anyhow::anyhow!("internal error: file '{file}' not found in the parsed diff")
+        })?;
+    let corpus = anchor::corpus_from_diff_hunks(file_diff, side);
+    let context = anchor::context_for_line_range(&corpus, line_start, line_end, context_lines)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "internal error: could not locate {file}:{line_start}-{line_end} in the parsed diff"
+            )
+        })?;
+    Ok(Anchor::Span {
+        file: file.to_string(),
+        side,
+        line_start,
+        line_end,
+        context,
+        origin_diff_digest: diff_digest.to_string(),
+        source_hint: Default::default(),
+        old_range,
+    })
+}
+
+/// Handles `resolve`/`reopen` only -- `reanchor`/`reject` need extra
+/// context (the position/target-thread bookkeeping) that only the caller
+/// has, so `cmd_edit` special-cases those before ever reaching here.
+fn push_simple_directive(
+    events: &mut Vec<Event>,
+    directive: &annotation::Directive,
+    thread_id: Ulid,
+    author: &str,
+) -> Result<()> {
+    use annotation::Directive;
+    match directive {
+        Directive::Resolve => events.push(Event::Resolve {
+            parent: thread_id,
+            author: author.to_string(),
+            created_at: OffsetDateTime::now_utc(),
+        }),
+        Directive::Reopen => events.push(Event::Reopen {
+            parent: thread_id,
+            author: author.to_string(),
+            created_at: OffsetDateTime::now_utc(),
+        }),
+        Directive::Reanchor(_) | Directive::Reject => {
+            anyhow::bail!("internal error: {directive:?} should have been handled by the caller");
+        }
+    }
+    Ok(())
+}
+
+/// Where an edit session's unsaved buffer is parked if it can't be
+/// committed to the bundle (parse failure, or the editor itself exiting
+/// non-zero) -- a sibling of the review bundle, not inside the temp dir
+/// that gets deleted when `cmd_edit` returns.
+fn draft_path_for(review_path: &Path) -> PathBuf {
+    let mut name = review_path.file_name().unwrap_or_default().to_os_string();
+    name.push(".draft");
+    review_path.with_file_name(name)
+}
+
+fn save_draft(draft_path: &Path, content: &str) -> Result<()> {
+    std::fs::write(draft_path, content)
+        .with_context(|| format!("failed to save draft to {}", draft_path.display()))
+}
+
+fn digest(text: &str) -> String {
+    let hash = Sha256::digest(text.as_bytes());
+    format!("sha256:{hash:x}")
+}
+
+/// Bytes at which a `full` snapshot is considered "big enough to ask
+/// about" -- 30 MB, per the user's own threshold.
+const FULL_SNAPSHOT_WARN_BYTES: u64 = 30 * 1024 * 1024;
+
+/// Picks the `SnapshotMode` for a newly-captured digest. In priority
+/// order: an explicit `--snapshot` always wins; otherwise the bundle's own
+/// previously-established mode (so an existing bundle's behavior never
+/// silently changes just because the CLI's own default did); otherwise
+/// `Full`.
+///
+/// If the mode lands on `Full` (however it got there) and `root` is at
+/// least `FULL_SNAPSHOT_WARN_BYTES`, warns and offers to use `Changed`
+/// instead.
+fn resolve_snapshot_mode(
+    explicit: Option<bundle::SnapshotMode>,
+    stored: Option<bundle::SnapshotMode>,
+    root: &Path,
+    review_path: &Path,
+) -> Result<bundle::SnapshotMode> {
+    let mode = explicit.or(stored).unwrap_or(bundle::SnapshotMode::Full);
+    if mode != bundle::SnapshotMode::Full {
+        return Ok(mode);
+    }
+
+    let size = bundle::estimate_full_tree_size(root, review_path)?;
+    if size < FULL_SNAPSHOT_WARN_BYTES {
+        return Ok(mode);
+    }
+
+    eprintln!(
+        "warning: a `full` snapshot of {} would be about {:.1} MB.",
+        root.display(),
+        size as f64 / (1024.0 * 1024.0)
+    );
+    eprint!("Use `changed` instead (only the files this diff touches)? [y/N] ");
+    std::io::Write::flush(&mut std::io::stdout()).ok();
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer).ok();
+    if answer.trim().eq_ignore_ascii_case("y") {
+        Ok(bundle::SnapshotMode::Changed)
+    } else {
+        Ok(mode)
+    }
+}
+
+fn load_diff_text(git_diff_args: &[String]) -> Result<String> {
+    let output = Command::new("git")
+        .arg("diff")
+        .args(git_diff_args)
+        .output()
+        .context("failed to run `git diff` (is git installed and on PATH?)")?;
+    if !output.status.success() {
+        let first_line = String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .next()
+            .unwrap_or("(no output)")
+            .to_string();
+        anyhow::bail!("`git diff` failed: {first_line}");
+    }
+    String::from_utf8(output.stdout).context("`git diff` produced non-UTF-8 output")
+}
+
+fn resolve_author() -> String {
+    if let Ok(output) = Command::new("git").args(["config", "user.email"]).output()
+        && output.status.success()
+    {
+        let email = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !email.is_empty() {
+            return email;
+        }
+    }
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn current_branch() -> Option<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if name.is_empty() || name == "HEAD" {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+fn default_editor() -> String {
+    std::env::var("EDITOR").unwrap_or_else(|_| {
+        if cfg!(windows) {
+            "notepad".to_string()
+        } else {
+            "vi".to_string()
+        }
+    })
+}
