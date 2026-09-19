@@ -5,11 +5,12 @@
 //! builds a [`CorpusLine`] search space with one of the two constructors
 //! and picks between them per the design's two tiers:
 //!
-//! - **Tier 1** — [`corpus_from_file_text`]: the full new-side text of the
-//!   file is known (a bundle snapshot, or read at edit time), so all of it
-//!   is searched. Only for `Side::New` anchors: snapshots hold the new side
-//!   only, so `Side::Old` anchors always use Tier 2 below. A match that
-//!   lands outside every hunk is [`Placement::OutsideDiff`], not outdated.
+//! - **Tier 1** — [`corpus_from_file_text`]: the full text of the viewed
+//!   file version is known (a bundle snapshot, or read at edit time), so all
+//!   of it is searched -- and, when the version the anchor was written
+//!   against is held too, a line diff between the two gives the position
+//!   directly ([`resolve_with_texts`]). A match that lands outside every
+//!   hunk is [`Placement::OutsideDiff`], not outdated.
 //! - **Tier 2** — [`corpus_from_diff_hunks`]: only a bare new diff/patch is
 //!   available, so the search is restricted to that diff's own visible
 //!   context/added/removed lines for the relevant side.
@@ -201,6 +202,71 @@ pub fn resolve(
         start,
         context: new_context,
     })
+}
+
+/// Like [`resolve`], but when the text of the version the anchor was
+/// written against (`origin`) and of the version being viewed (`current`)
+/// are both known, first follows the line diff between them: a range that
+/// lies entirely inside an unchanged run of lines is at a known new
+/// position, with no searching or guessing. Anything else (the range was
+/// edited, or a text is missing) falls back to [`resolve`]'s search of
+/// `corpus`, which must then be built from `current`.
+pub fn resolve_with_texts(
+    side: &SideAnchor,
+    current_file_digest: Option<&str>,
+    corpus: &[CorpusLine],
+    origin: Option<&str>,
+    current: Option<&str>,
+) -> Resolution {
+    if current_file_digest == Some(side.digest.as_str()) {
+        return Resolution::Current;
+    }
+    if let (Some(origin), Some(current)) = (origin, current)
+        && let Some(start) = map_range(origin, current, side.start, side.len())
+    {
+        if start == side.start {
+            return Resolution::Current;
+        }
+        if let Some(idx) = corpus.iter().position(|l| l.line == start) {
+            let len = side.context.target.len();
+            if idx + len <= corpus.len() {
+                return Resolution::Relocated(SideAnchor {
+                    file: side.file.clone(),
+                    digest: current_file_digest.unwrap_or_default().to_string(),
+                    start,
+                    context: extract_context(
+                        corpus,
+                        idx,
+                        len,
+                        side.context.before.len(),
+                        side.context.after.len(),
+                    ),
+                });
+            }
+        }
+    }
+    resolve(side, current_file_digest, corpus)
+}
+
+/// Where the `len` lines starting at `start` (1-based) of `origin` sit in
+/// `current`, if they all fall inside one unchanged run. For an insertion
+/// point (`len == 0`) the line it sits before is followed instead.
+fn map_range(origin: &str, current: &str, start: u32, len: u32) -> Option<u32> {
+    let first = start.checked_sub(1)? as usize;
+    let count = len.max(1) as usize;
+    similar::TextDiff::from_lines(origin, current)
+        .ops()
+        .iter()
+        .find_map(|op| match *op {
+            similar::DiffOp::Equal {
+                old_index,
+                new_index,
+                len,
+            } if first >= old_index && first + count <= old_index + len => {
+                Some((new_index + (first - old_index)) as u32 + 1)
+            }
+            _ => None,
+        })
 }
 
 /// Starting corpus indices where `corpus[i..i+target.len()]` is
@@ -429,30 +495,26 @@ fn place_side(
     which: Side,
     file_diff: &FileDiff,
     current_files: &[FileDigest],
-    new_files: &crate::files::Tree,
+    blobs: &crate::digest::Blobs,
 ) -> SideState {
     if side.is_empty() {
         return SideState::Absent;
     }
-    let full_text = match which {
-        Side::New => file_diff
-            .new_path
-            .as_deref()
-            .and_then(|p| new_files.get(p))
-            .and_then(|b| std::str::from_utf8(b).ok()),
-        Side::Old => None,
-    };
+    let current = digest_for(current_files, &side.file, which);
+    // Tier 1 when the full text of the version being viewed is held.
+    let full_text = current.and_then(|d| blobs.text(d));
     let visible = corpus_from_diff_hunks(file_diff, which);
     let corpus = match full_text {
         Some(text) => corpus_from_file_text(text),
         None => visible.clone(),
     };
-    let current = digest_for(current_files, &side.file, which);
-    let (start, end, relocated) = match resolve(side, current, &corpus) {
-        Resolution::Outdated => return SideState::Outdated,
-        Resolution::Current => (side.start, side.end(), None),
-        Resolution::Relocated(a) => (a.start, a.end(), Some(a)),
-    };
+    let origin = blobs.text(&side.digest);
+    let (start, end, relocated) =
+        match resolve_with_texts(side, current, &corpus, origin, full_text) {
+            Resolution::Outdated => return SideState::Outdated,
+            Resolution::Current => (side.start, side.end(), None),
+            Resolution::Relocated(a) => (a.start, a.end(), Some(a)),
+        };
     if !(start..=end).all(|l| visible.iter().any(|v| v.line == l)) {
         return SideState::Outside;
     }
@@ -463,11 +525,11 @@ fn place_side(
     }
 }
 
-/// `new_files` holds the full new-side content of the version being viewed
-/// (from the bundle's snapshot, or read at edit time), keyed by path. A
-/// head-side range whose file is in it is searched against the whole file
-/// (Tier 1); everything else falls back to the diff's own visible lines
-/// (Tier 2).
+/// `blobs` holds file versions by digest (the bundle's snapshots, plus
+/// whatever this session read). A side whose current version is held is
+/// searched against the whole file (Tier 1), and mapped from the version it
+/// was written against by a line diff when that is held too; otherwise it
+/// falls back to the diff's own visible lines (Tier 2).
 ///
 /// A `Span` is drawn on its head side when that still resolves, else on its
 /// base side. If a side moved, the returned `relocated` anchor carries the
@@ -476,7 +538,7 @@ pub fn resolve_placement(
     anchor: &Anchor,
     diff: &UnifiedDiff,
     current_files: &[FileDigest],
-    new_files: &crate::files::Tree,
+    blobs: &crate::digest::Blobs,
 ) -> Placement {
     match anchor {
         Anchor::Global { .. } => Placement::Global,
@@ -493,10 +555,10 @@ pub fn resolve_placement(
                 return Placement::Outdated { file: label };
             };
             let head_state = head.as_ref().map_or(SideState::Absent, |s| {
-                place_side(s, Side::New, file_diff, current_files, new_files)
+                place_side(s, Side::New, file_diff, current_files, blobs)
             });
             let base_state = base.as_ref().map_or(SideState::Absent, |s| {
-                place_side(s, Side::Old, file_diff, current_files, new_files)
+                place_side(s, Side::Old, file_diff, current_files, blobs)
             });
 
             let relocated = |h: &SideState, b: &SideState| {
@@ -887,9 +949,21 @@ mod tests {
  l4
 ";
 
-    fn tier1_files() -> crate::files::Tree {
-        let text: String = (1..=10).map(|n| format!("l{n}\n")).collect();
-        [("src/lib.rs".to_string(), text.into_bytes())].into()
+    const TIER1_TEXT: &str = "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n";
+
+    fn tier1_digests() -> Vec<FileDigest> {
+        vec![FileDigest {
+            old_path: Some("src/lib.rs".into()),
+            new_path: Some("src/lib.rs".into()),
+            old: None,
+            new: Some(crate::digest::digest(TIER1_TEXT)),
+        }]
+    }
+
+    fn tier1_blobs() -> crate::digest::Blobs<'static> {
+        let mut blobs = crate::digest::Blobs::default();
+        blobs.add(TIER1_TEXT.as_bytes());
+        blobs
     }
 
     #[test]
@@ -897,8 +971,11 @@ mod tests {
         let diff = crate::diff::parse(TIER1_DIFF).unwrap();
         // `l3` used to be line 2; the new hunk shows it at line 3.
         let a = span(anchor(2, 2, &["l3"]));
-        for files in [tier1_files(), Default::default()] {
-            let p = resolve_placement(&a, &diff, &[], &files);
+        for (files, blobs) in [
+            (tier1_digests(), tier1_blobs()),
+            (Vec::new(), Default::default()),
+        ] {
+            let p = resolve_placement(&a, &diff, &files, &blobs);
             let Placement::Line {
                 line_start,
                 relocated,
@@ -925,7 +1002,7 @@ mod tests {
         );
         // With the full file it is found, but there is no hunk to draw it in.
         assert_eq!(
-            resolve_placement(&a, &diff, &[], &tier1_files()),
+            resolve_placement(&a, &diff, &tier1_digests(), &tier1_blobs()),
             Placement::OutsideDiff {
                 file: "src/lib.rs".into()
             }
@@ -933,8 +1010,61 @@ mod tests {
         // Genuinely gone stays outdated even with the full file.
         let gone = span(anchor(8, 8, &["completely different"]));
         assert!(matches!(
-            resolve_placement(&gone, &diff, &[], &tier1_files()),
+            resolve_placement(&gone, &diff, &tier1_digests(), &tier1_blobs()),
             Placement::Outdated { .. }
         ));
+    }
+
+    #[test]
+    fn a_line_diff_between_the_two_versions_gives_the_position_directly() {
+        // Identical-looking lines would defeat a text search; the diff
+        // between the versions still knows which one the range was.
+        let origin = "x\nsame\nsame\ny\n";
+        let current = "new\nx\nsame\nsame\ny\n";
+        let a = anchor(3, 3, &["same"]);
+        let corpus = corpus_from_file_text(current);
+        let Resolution::Relocated(moved) =
+            resolve_with_texts(&a, Some("cur"), &corpus, Some(origin), Some(current))
+        else {
+            panic!("expected Relocated");
+        };
+        assert_eq!(moved.start, 4);
+        assert_eq!(moved.digest, "cur");
+        // Without the origin text this is ambiguous, so it can't be placed.
+        assert_eq!(
+            resolve_with_texts(&a, Some("cur"), &corpus, None, Some(current)),
+            Resolution::Outdated
+        );
+    }
+
+    #[test]
+    fn an_edited_range_falls_back_to_searching() {
+        let origin = "a\nb\nc\n";
+        let current = "a\nB\nc\n";
+        let a = anchor(2, 2, &["b"]);
+        let corpus = corpus_from_file_text(current);
+        // The line changed, so the diff has no unchanged run to follow; the
+        // fuzzy search still finds it (one char apart) at the same line.
+        assert!(matches!(
+            resolve_with_texts(&a, Some("cur"), &corpus, Some(origin), Some(current)),
+            Resolution::Relocated(_) | Resolution::Outdated
+        ));
+    }
+
+    #[test]
+    fn an_insertion_point_follows_the_line_it_sits_before() {
+        let origin = "a\nb\n";
+        let current = "z\na\nb\n";
+        let mut a = anchor(2, 2, &[]);
+        a.context.before = vec!["a".to_string()];
+        a.context.after = vec!["b".to_string()];
+        let corpus = corpus_from_file_text(current);
+        let Resolution::Relocated(moved) =
+            resolve_with_texts(&a, Some("cur"), &corpus, Some(origin), Some(current))
+        else {
+            panic!("expected Relocated");
+        };
+        assert_eq!(moved.start, 3);
+        assert!(moved.context.target.is_empty());
     }
 }

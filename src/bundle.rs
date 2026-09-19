@@ -69,6 +69,18 @@ impl Loaded {
             .collect()
     }
 
+    /// Every snapshotted file version in the bundle (head and base sides),
+    /// findable by content digest.
+    pub fn blobs(&self) -> crate::digest::Blobs<'_> {
+        let mut blobs = crate::digest::Blobs::default();
+        for (name, bytes) in &self.carried_entries {
+            if name.starts_with("sources/") || name.starts_with("bases/") {
+                blobs.add(bytes);
+            }
+        }
+        blobs
+    }
+
     /// Whether a revision with this digest has been recorded.
     pub fn has_revision(&self, digest: &str) -> bool {
         self.revisions().any(|r| r.digest == digest)
@@ -151,6 +163,10 @@ pub struct NewSnapshot {
     /// (relative path, file content) pairs at the reviewed (head) side --
     /// empty for `SnapshotMode::Diff`.
     pub files: Vec<(String, Vec<u8>)>,
+    /// The base-side versions of the files the diff touches, stored under
+    /// `bases/` (a directory review's base is the previous revision's own
+    /// snapshot, so it passes none).
+    pub base_files: Vec<(String, Vec<u8>)>,
 }
 
 /// Rewrites `path` from scratch: `loaded`'s carried-over entries, `events`
@@ -194,6 +210,10 @@ pub fn save(
             writer.write_all(snapshot.diff_text.as_bytes())?;
             for (rel_path, bytes) in &snapshot.files {
                 writer.start_file(format!("sources/{component}/{rel_path}"), options)?;
+                writer.write_all(bytes)?;
+            }
+            for (rel_path, bytes) in &snapshot.base_files {
+                writer.start_file(format!("bases/{component}/{rel_path}"), options)?;
                 writer.write_all(bytes)?;
             }
         }
@@ -263,6 +283,7 @@ mod tests {
             digest: "sha256:abc123".to_string(),
             diff_text: "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-old\n+new\n".to_string(),
             files: vec![("f".to_string(), b"new content".to_vec())],
+            base_files: vec![("f".to_string(), b"old content".to_vec())],
         };
         save(&path, &loaded, &events, Some(&snapshot)).unwrap();
 
@@ -280,6 +301,15 @@ mod tests {
                 .carried_entries
                 .iter()
                 .any(|(n, _)| n == "sources/abc123/f")
+        );
+        let blobs = reloaded.blobs();
+        assert_eq!(
+            blobs.text(&crate::digest::digest("old content")),
+            Some("old content")
+        );
+        assert_eq!(
+            blobs.text(&crate::digest::digest("new content")),
+            Some("new content")
         );
 
         // Saving again with no *new* snapshot must still carry the first
@@ -327,6 +357,7 @@ mod tests {
             digest: "sha256:first".to_string(),
             diff_text: "first diff text".to_string(),
             files: Vec::new(),
+            base_files: Vec::new(),
         };
         let events = vec![sample_event(), revision("sha256:first", SnapshotMode::Diff)];
         save(&path, &loaded, &events, Some(&first)).unwrap();
@@ -341,6 +372,7 @@ mod tests {
             digest: "sha256:second".to_string(),
             diff_text: "second diff text".to_string(),
             files: Vec::new(),
+            base_files: Vec::new(),
         };
         let mut events = loaded.events.clone();
         events.push(revision("sha256:second", SnapshotMode::Diff));

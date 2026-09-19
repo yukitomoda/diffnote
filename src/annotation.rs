@@ -744,7 +744,7 @@ pub fn render_for_edit(
     diff_text: &str,
     diff: &UnifiedDiff,
     current_files: &[crate::model::FileDigest],
-    new_files: &crate::files::Tree,
+    blobs: &crate::digest::Blobs,
     threads: &[Thread],
 ) -> (String, Vec<(Ulid, Anchor)>) {
     let mut global: Vec<&Thread> = Vec::new();
@@ -754,7 +754,7 @@ pub fn render_for_edit(
     let mut auto_relocated: Vec<(Ulid, Anchor)> = Vec::new();
 
     for thread in threads {
-        match anchor::resolve_placement(&thread.anchor, diff, current_files, new_files) {
+        match anchor::resolve_placement(&thread.anchor, diff, current_files, blobs) {
             Placement::Global => global.push(thread),
             Placement::File(file) => by_file.entry(file).or_default().push(thread),
             Placement::Line {

@@ -121,7 +121,7 @@ fn cmd_export(review_path: PathBuf, output_path: PathBuf) -> Result<()> {
         &loaded.events,
         &parsed_diff,
         &revision.files,
-        &loaded.snapshot_files(&revision.digest),
+        &loaded.blobs(),
     );
     std::fs::write(&output_path, html)
         .with_context(|| format!("failed to write {}", output_path.display()))?;
@@ -138,9 +138,13 @@ struct Input {
     diff_text: String,
     /// Per-file digests of the files the diff touches.
     files: Vec<diffnote::model::FileDigest>,
-    /// Full new-side content of the files the diff touches, for Tier 1
+    /// Full head-side content of the files the diff touches, for Tier 1
     /// re-anchoring.
     new_files: diffnote::files::Tree,
+    /// The base-side counterparts, when the base isn't already a snapshot in
+    /// the bundle (git reviews; a directory review's base is its previous
+    /// revision).
+    base_files: diffnote::files::Tree,
     source: diffnote::model::Source,
     /// The revision's digest (see `Revision::digest`).
     digest: String,
@@ -158,8 +162,12 @@ fn git_input(targets: &[String]) -> Result<Input> {
     let diff_text = repo.diff(&range)?;
     let parsed = diffnote::diff::parse(&diff_text).map_err(|e| anyhow::anyhow!("{e}"))?;
     let head_tree = repo.ls_tree(&range.head)?;
-    let files = file_digests(&repo, &repo.ls_tree(&range.base)?, &head_tree, &parsed)?;
+    let base_tree = repo.ls_tree(&range.base)?;
+    let files = file_digests(&repo, &base_tree, &head_tree, &parsed)?;
     let new_files = snapshot_files(&repo, bundle::SnapshotMode::Changed, &head_tree, &parsed)?
+        .into_iter()
+        .collect();
+    let base_files = base_snapshot_files(&repo, &base_tree, &parsed)?
         .into_iter()
         .collect();
     Ok(Input {
@@ -168,6 +176,7 @@ fn git_input(targets: &[String]) -> Result<Input> {
         source: diffnote::model::Source::Git(range),
         files,
         new_files,
+        base_files,
         forced_snapshot_mode: None,
         snapshot_files: Box::new(move |mode| snapshot_files(&repo, mode, &head_tree, &parsed)),
         diff_text,
@@ -206,6 +215,7 @@ fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Resu
         source: diffnote::model::Source::Files { base },
         files,
         new_files: current.clone(),
+        base_files: Default::default(),
         forced_snapshot_mode: Some(bundle::SnapshotMode::Full),
         snapshot_files: Box::new(move |_| Ok(current.into_iter().collect())),
         diff_text,
@@ -239,6 +249,7 @@ fn cmd_init(review_path: PathBuf, dir: PathBuf) -> Result<()> {
         digest,
         diff_text: String::new(),
         files: tree.into_iter().collect(),
+        base_files: Vec::new(),
     };
     bundle::save(
         &review_path,
@@ -279,6 +290,7 @@ fn cmd_edit(
         diff_text,
         files,
         new_files,
+        base_files,
         source,
         digest: diff_digest,
         forced_snapshot_mode,
@@ -302,11 +314,15 @@ fn cmd_edit(
     let (temp_text, auto_relocated) = if existing_threads.is_empty() {
         (diff_text.clone(), Vec::new())
     } else {
+        let mut blobs = loaded.blobs();
+        for bytes in new_files.values().chain(base_files.values()) {
+            blobs.add(bytes);
+        }
         annotation::render_for_edit(
             &diff_text,
             &parsed_diff,
             &files,
-            &new_files,
+            &blobs,
             &existing_threads,
         )
     };
@@ -517,6 +533,11 @@ fn cmd_edit(
             digest: diff_digest.clone(),
             diff_text: diff_text.clone(),
             files: snapshot_files(snapshot_mode)?,
+            base_files: if snapshot_mode == bundle::SnapshotMode::Diff {
+                Vec::new()
+            } else {
+                base_files.into_iter().collect()
+            },
         })
     };
 
@@ -847,6 +868,26 @@ fn resolve_snapshot_mode(
 }
 
 /// The committed (head-side) files `mode` calls for.
+/// The base-side content of the files `diff` touches (by their old paths).
+fn base_snapshot_files(
+    repo: &diffnote::git::Repo,
+    base_tree: &[diffnote::git::TreeEntry],
+    diff: &diffnote::diff::UnifiedDiff,
+) -> Result<Vec<(String, Vec<u8>)>> {
+    let touched: std::collections::HashSet<&str> = diff
+        .files
+        .iter()
+        .filter_map(|f| f.old_path.as_deref())
+        .collect();
+    let wanted: Vec<&diffnote::git::TreeEntry> = base_tree
+        .iter()
+        .filter(|e| touched.contains(e.path.as_str()))
+        .collect();
+    let oids: Vec<&str> = wanted.iter().map(|e| e.oid.as_str()).collect();
+    let blobs = repo.read_blobs(&oids)?;
+    Ok(wanted.iter().map(|e| e.path.clone()).zip(blobs).collect())
+}
+
 fn snapshot_files(
     repo: &diffnote::git::Repo,
     mode: bundle::SnapshotMode,

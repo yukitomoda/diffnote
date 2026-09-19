@@ -33,7 +33,7 @@ pub fn render(
     events: &[Event],
     diff: &UnifiedDiff,
     current_files: &[crate::model::FileDigest],
-    new_files: &crate::files::Tree,
+    blobs: &crate::digest::Blobs,
 ) -> String {
     let threads = build_threads(events);
     let syntax_set = SyntaxSet::load_defaults_newlines();
@@ -54,7 +54,7 @@ pub fn render(
     let mut outdated: HashMap<String, Vec<&Thread>> = HashMap::new();
 
     for thread in &threads {
-        match anchor::resolve_placement(&thread.anchor, diff, current_files, new_files) {
+        match anchor::resolve_placement(&thread.anchor, diff, current_files, blobs) {
             Placement::Global => global.push(thread),
             Placement::File(file) => by_file.entry(file).or_default().push(thread),
             Placement::Line {
