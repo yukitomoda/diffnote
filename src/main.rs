@@ -18,14 +18,16 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Cmd {
-    /// Open a diff for annotation in $EDITOR, appending new comments to a review bundle.
+    /// Open the diff of a commit range for annotation in $EDITOR, appending new comments to a review bundle.
     Edit {
         /// Path to the diffnote review bundle (.diffnote, a zip). Created if missing.
         #[arg(short = 'f', long = "file", default_value = ".diffnote")]
         review: PathBuf,
-        /// Extra arguments forwarded to `git diff`, e.g.
-        /// `diffnote edit main..feature` or `diffnote edit HEAD~3 HEAD`.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        /// The commits to review, resolved by git itself: `A..B` or `A B`
+        /// (A -> B), `A...B` (merge-base of A and B -> B), or a single
+        /// commit (its first parent -> it). Only committed content is
+        /// reviewed; the working tree is ignored.
+        #[arg(value_name = "REV", num_args = 1..)]
         git_diff_args: Vec<String>,
         /// What to snapshot into the bundle the first time a new diff digest
         /// is seen and this session actually adds something: `diff` (just
@@ -90,32 +92,17 @@ fn main() -> Result<()> {
 fn cmd_export(review_path: PathBuf, output_path: PathBuf) -> Result<()> {
     let loaded = bundle::load(&review_path)?;
 
-    // Prefer the bundle's own most recently captured diff -- that's almost
-    // always what "render this review" should mean, and it's the one diff
-    // guaranteed to actually match what's in known_digests. Only a bundle
-    // that has never captured one at all (e.g. an empty/fresh review) falls
-    // back to a bare `git diff` in the current repo.
-    let diff_text = match loaded.latest_diff() {
-        Some((_, text)) => text,
-        None => load_diff_text(&[])?,
+    // Render against the bundle's own most recently captured diff -- the
+    // one diff guaranteed to match what's in known_digests.
+    let Some((_, diff_text)) = loaded.latest_diff() else {
+        anyhow::bail!(
+            "{} has no captured diff yet; run `diffnote edit` first",
+            review_path.display()
+        );
     };
 
     let diff_digest = digest(&diff_text);
     let parsed_diff = diffnote::diff::parse(&diff_text).map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    if parsed_diff.files.is_empty() {
-        eprintln!(
-            "warning: this bundle has no captured diff yet and `git diff` in the \
-            current repo is also empty -- comments will show up as unplaced. \
-            Run `diffnote edit` first to capture the diff this review is against."
-        );
-    } else if !loaded.known_digests.contains(&diff_digest) {
-        eprintln!(
-            "warning: rendering against a diff this bundle has never seen (no \
-            matching digest) -- comments may show up relocated or unplaced. \
-            Run `diffnote edit` first to capture this one."
-        );
-    }
 
     let html = diffnote::html::render(&loaded.events, &parsed_diff, &diff_digest);
     std::fs::write(&output_path, html)
@@ -129,7 +116,9 @@ fn cmd_edit(
     git_diff_args: Vec<String>,
     snapshot_override: Option<bundle::SnapshotMode>,
 ) -> Result<()> {
-    let diff_text = load_diff_text(&git_diff_args)?;
+    let repo = diffnote::git::Repo::current();
+    let range = repo.resolve_range(&git_diff_args)?;
+    let diff_text = repo.diff(&range)?;
     if diff_text.trim().is_empty() {
         println!("No changes to review (diff is empty).");
         return Ok(());
@@ -217,7 +206,7 @@ fn cmd_edit(
             version: 1,
             created_at: OffsetDateTime::now_utc(),
             diff_digest: diff_digest.clone(),
-            branch: current_branch(),
+            git: Some(range.clone()),
             description: None,
             context_lines: 3,
             // Placeholder -- patched below, once the effective mode for
@@ -339,13 +328,8 @@ fn cmd_edit(
     let new_snapshot = if loaded.known_digests.contains(&diff_digest) {
         None
     } else {
-        let root = std::env::current_dir().context("failed to determine the current directory")?;
-        let snapshot_mode = resolve_snapshot_mode(
-            snapshot_override,
-            loaded.snapshot_mode(),
-            &root,
-            &review_path,
-        )?;
+        let tree = repo.ls_tree(&range.head)?;
+        let snapshot_mode = resolve_snapshot_mode(snapshot_override, loaded.snapshot_mode(), &tree);
         // If this session also just created the bundle's first-ever Meta
         // event above, that pushed a placeholder mode -- fix it up to the
         // mode actually resolved now, so it's what future sessions default
@@ -359,14 +343,11 @@ fn cmd_edit(
         {
             *m = snapshot_mode;
         }
-        Some(bundle::capture_snapshot(
-            snapshot_mode,
-            &diff_digest,
-            &diff_text,
-            &parsed_diff,
-            &root,
-            &review_path,
-        )?)
+        Some(bundle::NewSnapshot {
+            digest: diff_digest.clone(),
+            diff_text: diff_text.clone(),
+            files: snapshot_files(&repo, snapshot_mode, &tree, &parsed_diff)?,
+        })
     };
 
     let comment_count = new_events
@@ -395,13 +376,13 @@ fn cmd_show(review_path: PathBuf) -> Result<()> {
         match event {
             Event::Meta {
                 diff_digest,
-                branch,
+                git,
                 context_lines,
                 ..
             } => {
                 println!(
-                    "[meta] diff_digest={diff_digest} branch={} context_lines={context_lines}",
-                    branch.as_deref().unwrap_or("-")
+                    "[meta] diff_digest={diff_digest} git={} context_lines={context_lines}",
+                    git.as_ref().map_or("-", |g| g.spec.as_str())
                 );
             }
             Event::Comment {
@@ -616,28 +597,26 @@ const FULL_SNAPSHOT_WARN_BYTES: u64 = 30 * 1024 * 1024;
 /// silently changes just because the CLI's own default did); otherwise
 /// `Full`.
 ///
-/// If the mode lands on `Full` (however it got there) and `root` is at
-/// least `FULL_SNAPSHOT_WARN_BYTES`, warns and offers to use `Changed`
+/// If the mode lands on `Full` (however it got there) and the head tree is
+/// at least `FULL_SNAPSHOT_WARN_BYTES`, warns and offers to use `Changed`
 /// instead.
 fn resolve_snapshot_mode(
     explicit: Option<bundle::SnapshotMode>,
     stored: Option<bundle::SnapshotMode>,
-    root: &Path,
-    review_path: &Path,
-) -> Result<bundle::SnapshotMode> {
+    tree: &[diffnote::git::TreeEntry],
+) -> bundle::SnapshotMode {
     let mode = explicit.or(stored).unwrap_or(bundle::SnapshotMode::Full);
     if mode != bundle::SnapshotMode::Full {
-        return Ok(mode);
+        return mode;
     }
 
-    let size = bundle::estimate_full_tree_size(root, review_path)?;
+    let size: u64 = tree.iter().map(|e| e.size).sum();
     if size < FULL_SNAPSHOT_WARN_BYTES {
-        return Ok(mode);
+        return mode;
     }
 
     eprintln!(
-        "warning: a `full` snapshot of {} would be about {:.1} MB.",
-        root.display(),
+        "warning: a `full` snapshot of the reviewed tree would be about {:.1} MB.",
         size as f64 / (1024.0 * 1024.0)
     );
     eprint!("Use `changed` instead (only the files this diff touches)? [y/N] ");
@@ -645,27 +624,36 @@ fn resolve_snapshot_mode(
     let mut answer = String::new();
     std::io::stdin().read_line(&mut answer).ok();
     if answer.trim().eq_ignore_ascii_case("y") {
-        Ok(bundle::SnapshotMode::Changed)
+        bundle::SnapshotMode::Changed
     } else {
-        Ok(mode)
+        mode
     }
 }
 
-fn load_diff_text(git_diff_args: &[String]) -> Result<String> {
-    let output = Command::new("git")
-        .arg("diff")
-        .args(git_diff_args)
-        .output()
-        .context("failed to run `git diff` (is git installed and on PATH?)")?;
-    if !output.status.success() {
-        let first_line = String::from_utf8_lossy(&output.stderr)
-            .lines()
-            .next()
-            .unwrap_or("(no output)")
-            .to_string();
-        anyhow::bail!("`git diff` failed: {first_line}");
-    }
-    String::from_utf8(output.stdout).context("`git diff` produced non-UTF-8 output")
+/// The committed (head-side) files `mode` calls for.
+fn snapshot_files(
+    repo: &diffnote::git::Repo,
+    mode: bundle::SnapshotMode,
+    tree: &[diffnote::git::TreeEntry],
+    diff: &diffnote::diff::UnifiedDiff,
+) -> Result<Vec<(String, Vec<u8>)>> {
+    let wanted: Vec<&diffnote::git::TreeEntry> = match mode {
+        bundle::SnapshotMode::Diff => Vec::new(),
+        bundle::SnapshotMode::Full => tree.iter().collect(),
+        bundle::SnapshotMode::Changed => {
+            let touched: std::collections::HashSet<&str> = diff
+                .files
+                .iter()
+                .filter_map(|f| f.new_path.as_deref())
+                .collect();
+            tree.iter()
+                .filter(|e| touched.contains(e.path.as_str()))
+                .collect()
+        }
+    };
+    let oids: Vec<&str> = wanted.iter().map(|e| e.oid.as_str()).collect();
+    let blobs = repo.read_blobs(&oids)?;
+    Ok(wanted.iter().map(|e| e.path.clone()).zip(blobs).collect())
 }
 
 fn resolve_author() -> String {
@@ -680,22 +668,6 @@ fn resolve_author() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "unknown".to_string())
-}
-
-fn current_branch() -> Option<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if name.is_empty() || name == "HEAD" {
-        None
-    } else {
-        Some(name)
-    }
 }
 
 fn default_editor() -> String {

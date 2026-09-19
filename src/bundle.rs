@@ -3,6 +3,8 @@
 //! itself and (depending on `SnapshotMode`) source file snapshots -- so a
 //! review can be shared or continued without separately handing over the
 //! diff (or, for `Full`, the whole source tree) it was reviewed against.
+//! What goes into `sources/` is decided by the caller (the git provider
+//! reads committed content), not read from disk here.
 //!
 //! Layout inside the zip:
 //! ```text
@@ -19,7 +21,6 @@
 //! enough that this is simple and safe (no risk of a half-written zip from
 //! an in-place edit), at the cost of not scaling to huge bundles.
 
-use crate::diff::UnifiedDiff;
 use crate::model::Event;
 pub use crate::model::SnapshotMode;
 use anyhow::{Context, Result};
@@ -130,119 +131,9 @@ pub fn load(path: &Path) -> Result<Loaded> {
 pub struct NewSnapshot {
     pub digest: String,
     pub diff_text: String,
-    /// (relative path, file content) pairs -- empty for `SnapshotMode::Diff`.
+    /// (relative path, file content) pairs at the reviewed (head) side --
+    /// empty for `SnapshotMode::Diff`.
     pub files: Vec<(String, Vec<u8>)>,
-}
-
-pub fn capture_snapshot(
-    mode: SnapshotMode,
-    digest: &str,
-    diff_text: &str,
-    diff: &UnifiedDiff,
-    root: &Path,
-    bundle_path: &Path,
-) -> Result<NewSnapshot> {
-    // Never snapshot the bundle's own file -- with SnapshotMode::Full in
-    // particular, the bundle typically lives inside the tree being walked,
-    // and embedding a copy of an earlier version of itself on every save
-    // would grow it without bound.
-    let exclude = std::fs::canonicalize(bundle_path).ok();
-    let files = match mode {
-        SnapshotMode::Diff => Vec::new(),
-        SnapshotMode::Changed => capture_changed_files(diff, root, exclude.as_deref()),
-        SnapshotMode::Full => capture_full_tree(root, exclude.as_deref())?,
-    };
-    Ok(NewSnapshot {
-        digest: digest.to_string(),
-        diff_text: diff_text.to_string(),
-        files,
-    })
-}
-
-fn is_excluded(path: &Path, exclude: Option<&Path>) -> bool {
-    match (exclude, std::fs::canonicalize(path)) {
-        (Some(exclude), Ok(canon)) => canon == exclude,
-        _ => false,
-    }
-}
-
-fn capture_changed_files(
-    diff: &UnifiedDiff,
-    root: &Path,
-    exclude: Option<&Path>,
-) -> Vec<(String, Vec<u8>)> {
-    let mut files = Vec::new();
-    for file in &diff.files {
-        let Some(rel) = &file.new_path else {
-            // Deleted (or otherwise sourceless) file: nothing to snapshot.
-            continue;
-        };
-        let full = root.join(rel);
-        if is_excluded(&full, exclude) {
-            continue;
-        }
-        if let Ok(bytes) = std::fs::read(&full) {
-            files.push((rel.clone(), bytes));
-        }
-    }
-    files
-}
-
-/// Every file a `Full` snapshot of `root` would include: `.gitignore`-aware
-/// (via `require_git(false)`, since diffnote must work on a plain, non-git
-/// folder too -- see the project's original motivation), `.git` itself
-/// skipped, and `exclude` (the bundle's own path) skipped so a `Full`
-/// snapshot never embeds an earlier copy of itself.
-fn walk_full_tree(root: &Path, exclude: Option<&Path>) -> Result<Vec<ignore::DirEntry>> {
-    let walker = ignore::WalkBuilder::new(root)
-        .hidden(false)
-        .require_git(false)
-        .build();
-    let mut entries = Vec::new();
-    for entry in walker {
-        let entry = entry.context("failed to walk the source tree")?;
-        if !entry.file_type().is_some_and(|t| t.is_file()) {
-            continue;
-        }
-        let path = entry.path();
-        if path.components().any(|c| c.as_os_str() == ".git") {
-            continue;
-        }
-        if is_excluded(path, exclude) {
-            continue;
-        }
-        entries.push(entry);
-    }
-    Ok(entries)
-}
-
-fn capture_full_tree(root: &Path, exclude: Option<&Path>) -> Result<Vec<(String, Vec<u8>)>> {
-    let mut files = Vec::new();
-    for entry in walk_full_tree(root, exclude)? {
-        let path = entry.path();
-        let Ok(rel) = path.strip_prefix(root) else {
-            continue;
-        };
-        let Ok(bytes) = std::fs::read(path) else {
-            continue;
-        };
-        files.push((rel.to_string_lossy().replace('\\', "/"), bytes));
-    }
-    Ok(files)
-}
-
-/// Total size in bytes of everything a `Full` snapshot of `root` would
-/// capture, without reading any file's content -- used to warn before an
-/// unexpectedly large `full` snapshot.
-pub fn estimate_full_tree_size(root: &Path, bundle_path: &Path) -> Result<u64> {
-    let exclude = std::fs::canonicalize(bundle_path).ok();
-    let mut total = 0u64;
-    for entry in walk_full_tree(root, exclude.as_deref())? {
-        if let Ok(meta) = entry.metadata() {
-            total += meta.len();
-        }
-    }
-    Ok(total)
 }
 
 /// Rewrites `path` from scratch: `loaded`'s carried-over entries, `events`
@@ -310,7 +201,7 @@ mod tests {
             version: 1,
             created_at: OffsetDateTime::now_utc(),
             diff_digest: "sha256:abc123".to_string(),
-            branch: None,
+            git: None,
             description: None,
             context_lines: 3,
             snapshot_mode: SnapshotMode::Changed,
@@ -369,60 +260,6 @@ mod tests {
         let reloaded_again = load(&path).unwrap();
         assert!(reloaded_again.known_digests.contains("sha256:abc123"));
         assert_eq!(reloaded_again.events.len(), 1);
-    }
-
-    #[test]
-    fn capture_changed_files_only_includes_touched_files_present_on_disk() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("touched.txt"), "touched content").unwrap();
-        // "removed.txt" is intentionally absent -- a deleted file has no
-        // new_path, and even if it did, there'd be nothing to read.
-
-        let diff_text = "\
---- a/touched.txt
-+++ b/touched.txt
-@@ -1 +1 @@
--old
-+touched content
---- a/removed.txt
-+++ /dev/null
-@@ -1 +0,0 @@
--gone
-";
-        let diff = crate::diff::parse(diff_text).unwrap();
-        let files = capture_changed_files(&diff, dir.path(), None);
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].0, "touched.txt");
-        assert_eq!(files[0].1, b"touched content");
-    }
-
-    #[test]
-    fn capture_full_tree_respects_gitignore() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join(".gitignore"), "ignored.txt\n").unwrap();
-        std::fs::write(dir.path().join("kept.txt"), "kept").unwrap();
-        std::fs::write(dir.path().join("ignored.txt"), "ignored").unwrap();
-
-        let files = capture_full_tree(dir.path(), None).unwrap();
-        let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
-        assert!(names.contains(&"kept.txt"));
-        assert!(names.contains(&".gitignore"));
-        assert!(!names.contains(&"ignored.txt"));
-    }
-
-    #[test]
-    fn estimate_full_tree_size_matches_the_files_a_full_snapshot_would_capture() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join(".gitignore"), "ignored.txt\n").unwrap();
-        std::fs::write(dir.path().join("kept.txt"), "12345").unwrap();
-        std::fs::write(dir.path().join("ignored.txt"), "should not count").unwrap();
-
-        let files = capture_full_tree(dir.path(), None).unwrap();
-        let expected: u64 = files.iter().map(|(_, bytes)| bytes.len() as u64).sum();
-
-        let size =
-            estimate_full_tree_size(dir.path(), &dir.path().join("nonexistent.diffnote")).unwrap();
-        assert_eq!(size, expected);
     }
 
     #[test]

@@ -36,6 +36,16 @@ pub enum SnapshotMode {
     Full,
 }
 
+/// The commits a git-backed review was made against, resolved to full ids
+/// at edit time (so a moving ref such as `HEAD~4` is pinned).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitSource {
+    pub base: String,
+    pub head: String,
+    /// What the user typed (`HEAD~3..HEAD`), for display only.
+    pub spec: String,
+}
+
 /// Old bundles (from before `Meta` carried `snapshot_mode`) implicitly
 /// behaved like `Changed`, the only mode that existed at the time.
 fn default_snapshot_mode() -> SnapshotMode {
@@ -120,7 +130,7 @@ pub enum Event {
         created_at: OffsetDateTime,
         diff_digest: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        branch: Option<String>,
+        git: Option<GitSource>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         description: Option<String>,
         context_lines: u32,
