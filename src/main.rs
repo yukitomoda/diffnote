@@ -330,6 +330,10 @@ fn cmd_edit(
         }
     };
 
+    for warning in &parsed.warnings {
+        eprintln!("warning: {warning}");
+    }
+
     // Parsing succeeded, so nothing here is at risk of being lost anymore --
     // any draft from an earlier failed attempt is now stale.
     let _ = std::fs::remove_file(&draft_path);

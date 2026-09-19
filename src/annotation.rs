@@ -123,6 +123,9 @@ pub enum Item {
 pub struct Parsed {
     pub diff: UnifiedDiff,
     pub items: Vec<Item>,
+    /// Things that parsed fine but probably aren't what the user meant --
+    /// currently a closed range that no comment was attached to.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -328,6 +331,11 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
     let mut items: Vec<Item> = Vec::new();
     let mut pending: Option<PendingBlock> = None;
     let mut last_line_no: usize = 0;
+    let mut warnings: Vec<String> = Vec::new();
+    // The range most recently closed (id, line of its `>]`) while no
+    // comment has been attached to it yet. A range is only a scope for the
+    // comment that follows, so one that never gets a comment records nothing.
+    let mut unused_range: Option<(String, usize)> = None;
 
     for (idx, raw_line) in text.lines().enumerate() {
         let line_no = idx + 1;
@@ -379,6 +387,8 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                     let start = open_ranges
                         .remove(id)
                         .ok_or_else(|| err(line_no, format!("range '{id}' was never opened")))?;
+                    warn_unused_range(&mut unused_range, &mut warnings);
+                    unused_range = Some((id.to_string(), line_no));
                     // Prefer the new side (matches every other scope's
                     // preference), but a range spanning only removed lines
                     // never advances `new_no` -- fall back to the old side
@@ -448,6 +458,9 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                                 &mut next_thread_id,
                                 &mut last_thread,
                             )?;
+                            if target == Target::New {
+                                unused_range = None;
+                            }
                             pending = Some(PendingBlock {
                                 target,
                                 scope: current_scope.clone(),
@@ -471,6 +484,9 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                                 &mut next_thread_id,
                                 &mut last_thread,
                             )?;
+                            if target == Target::New {
+                                unused_range = None;
+                            }
                             pending = Some(PendingBlock {
                                 target,
                                 scope: current_scope.clone(),
@@ -486,7 +502,9 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
         }
 
         // Everything below is a diff-structural line, which always ends
-        // any pending comment block.
+        // any pending comment block -- and the chance to comment on a range
+        // that was just closed.
+        warn_unused_range(&mut unused_range, &mut warnings);
         flush_pending(
             &mut pending,
             &mut items,
@@ -685,6 +703,7 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
         &mut last_thread,
     )?;
 
+    warn_unused_range(&mut unused_range, &mut warnings);
     if let Some(id) = open_ranges.into_keys().next() {
         return Err(err(
             last_line_no + 1,
@@ -695,7 +714,21 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
     Ok(Parsed {
         diff: UnifiedDiff { files },
         items,
+        warnings,
     })
+}
+
+fn warn_unused_range(unused: &mut Option<(String, usize)>, warnings: &mut Vec<String>) {
+    if let Some((id, line)) = unused.take() {
+        let name = if id.is_empty() {
+            "range".to_string()
+        } else {
+            format!("range '{id}'")
+        };
+        warnings.push(format!(
+            "line {line}: {name} was closed but has no comment, so nothing was recorded for it"
+        ));
+    }
 }
 
 /// Renders `diff_text` back out verbatim (byte-for-byte, so the blank-line
@@ -1227,6 +1260,59 @@ diff --git a/f.rs b/f.rs
     fn reply_without_a_preceding_thread_is_an_error() {
         let text = format!("{BASE}>> どのスレッドへの返信？\n");
         assert!(parse(&text).is_err());
+    }
+
+    fn with_range(after_close: &str, id: &str) -> String {
+        BASE.replacen(
+            "+    fn baz(&self) -> i32 {\n+        self.value * 2\n+    }\n",
+            &format!(
+                "+    fn baz(&self) -> i32 {{\n>[{id}\n+        self.value * 2\n+    }}\n>]{id}\n{after_close}"
+            ),
+            1,
+        )
+    }
+
+    #[test]
+    fn a_closed_range_with_a_comment_produces_no_warning() {
+        let parsed = parse(&with_range("> 範囲コメント\n", "a")).unwrap();
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        // A blank line before the comment doesn't detach it from the range.
+        let parsed = parse(&with_range("\n> 範囲コメント\n", "a")).unwrap();
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+    }
+
+    #[test]
+    fn a_closed_range_without_a_comment_warns_and_records_nothing() {
+        // The next diff line arrives before any comment.
+        let parsed = parse(&with_range("", "a")).unwrap();
+        assert!(parsed.items.is_empty());
+        assert_eq!(parsed.warnings.len(), 1);
+        assert!(
+            parsed.warnings[0].contains("range 'a'"),
+            "{:?}",
+            parsed.warnings
+        );
+        assert!(parsed.warnings[0].starts_with("line "));
+
+        // ...and the same for an anonymous range.
+        let parsed = parse(&with_range("", "")).unwrap();
+        assert_eq!(parsed.warnings.len(), 1);
+        assert!(
+            parsed.warnings[0].contains("range was closed"),
+            "{:?}",
+            parsed.warnings
+        );
+    }
+
+    #[test]
+    fn a_reply_does_not_count_as_commenting_on_a_range() {
+        let id = Ulid::new();
+        let text = with_range(
+            &format!(">#@{id} someone@example.com 2026-09-18T10:00:00Z\n>> 返信\n"),
+            "a",
+        );
+        let parsed = parse(&text).unwrap();
+        assert_eq!(parsed.warnings.len(), 1);
     }
 
     #[test]
