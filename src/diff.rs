@@ -142,9 +142,20 @@ pub fn parse(text: &str) -> Result<UnifiedDiff, ParseError> {
             continue;
         }
 
-        if raw_line.starts_with("Binary files ") && raw_line.ends_with(" differ") {
+        if let Some((old_path, new_path)) = parse_binary_line(raw_line) {
+            // A bare (header-less) diff has no `diff --git` line to start a
+            // new file, so a finished file can't be reused here.
+            let file_already_has_content = current_hunk.is_some()
+                || current_file
+                    .as_ref()
+                    .is_some_and(|f| !f.hunks.is_empty() || f.is_binary);
+            if file_already_has_content {
+                finish_file(&mut files, &mut current_file, &mut current_hunk);
+            }
             let file = current_file.get_or_insert_with(FileDiff::default);
             file.is_binary = true;
+            file.old_path = old_path;
+            file.new_path = new_path;
             continue;
         }
 
@@ -157,7 +168,9 @@ pub fn parse(text: &str) -> Result<UnifiedDiff, ParseError> {
             // silently merge two files' hunks into one (the second file's
             // "---"/"+++" would just overwrite the first file's paths).
             let file_already_has_content = current_hunk.is_some()
-                || current_file.as_ref().is_some_and(|f| !f.hunks.is_empty());
+                || current_file
+                    .as_ref()
+                    .is_some_and(|f| !f.hunks.is_empty() || f.is_binary);
             if current_file.is_none() || file_already_has_content {
                 finish_file(&mut files, &mut current_file, &mut current_hunk);
                 current_file = Some(FileDiff::default());
@@ -284,6 +297,25 @@ pub(crate) fn parse_path(rest: &str) -> Option<String> {
             .unwrap_or(path_part);
         Some(stripped.to_string())
     }
+}
+
+/// Parses `Binary files <old> and <new> differ` into the two paths
+/// (`None` for `/dev/null`). Returns `None` if `line` isn't such a line.
+pub(crate) fn parse_binary_line(line: &str) -> Option<(Option<String>, Option<String>)> {
+    let rest = line
+        .strip_prefix("Binary files ")?
+        .strip_suffix(" differ")?;
+    // The paths themselves may contain " and "; prefer the split where both
+    // names agree (same path, or one side is /dev/null), else the first.
+    let splits: Vec<usize> = rest.match_indices(" and ").map(|(i, _)| i).collect();
+    let pick = splits
+        .iter()
+        .find(|&&i| {
+            let (old, new) = (parse_path(&rest[..i]), parse_path(&rest[i + 5..]));
+            old.is_none() || new.is_none() || old == new
+        })
+        .or(splits.first())?;
+    Some((parse_path(&rest[..*pick]), parse_path(&rest[pick + 5..])))
 }
 
 pub(crate) fn parse_hunk_header(
@@ -418,5 +450,45 @@ index 83db48f..bf269c9 100644
 > hello world
 ";
         assert!(parse(context_style).is_err());
+    }
+
+    #[test]
+    fn binary_entries_carry_their_paths() {
+        let text = "\
+diff --git a/img.png b/img.png
+Binary files a/img.png and b/img.png differ
+diff --git a/new.bin b/new.bin
+new file mode 100644
+Binary files /dev/null and b/new.bin differ
+diff --git a/t.txt b/t.txt
+--- a/t.txt
++++ b/t.txt
+@@ -1 +1 @@
+-a
++b
+";
+        let files = parse(text).unwrap().files;
+        assert_eq!(files.len(), 3);
+        assert_eq!(files[0].new_path.as_deref(), Some("img.png"));
+        assert!(files[0].is_binary && files[0].hunks.is_empty());
+        assert_eq!(
+            (files[1].old_path.as_deref(), files[1].new_path.as_deref()),
+            (None, Some("new.bin"))
+        );
+        assert!(!files[2].is_binary);
+        assert_eq!(files[2].hunks.len(), 1);
+    }
+
+    #[test]
+    fn binary_line_paths_may_contain_and() {
+        assert_eq!(
+            parse_binary_line("Binary files a/rock and roll.bin and b/rock and roll.bin differ"),
+            Some((
+                Some("rock and roll.bin".into()),
+                Some("rock and roll.bin".into())
+            ))
+        );
+        assert_eq!(parse_binary_line("Binary files a/x differ"), None);
+        assert_eq!(parse_binary_line("not binary"), None);
     }
 }

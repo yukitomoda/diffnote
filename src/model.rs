@@ -46,6 +46,17 @@ pub struct GitSource {
     pub spec: String,
 }
 
+/// What a revision's content was taken from. Fixed by a bundle's first
+/// revision: a git-backed review stays git-backed, a plain-directory review
+/// stays a directory review.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum Source {
+    Git(GitSource),
+    /// A plain directory, compared against the bundle's previous snapshot.
+    Files,
+}
+
 /// A few lines of frozen source text kept alongside an anchor so a comment
 /// stays meaningful even if the file it points at can no longer be found
 /// (see re-anchoring in the `anchor` module).
@@ -137,11 +148,11 @@ pub struct Revision {
     pub id: Ulid,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
-    /// Digest (`sha256:...`) of the diff text; also the key of this
-    /// revision's `diffs/`/`sources/` entries in the bundle.
+    /// Digest (`sha256:...`) identifying this revision, and the key of its
+    /// `diffs/`/`sources/` entries in the bundle: the diff text's digest for
+    /// a git revision, the whole tree's digest for a directory revision.
     pub digest: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub git: Option<GitSource>,
+    pub source: Source,
     pub snapshot_mode: SnapshotMode,
     pub files: Vec<FileDigest>,
 }

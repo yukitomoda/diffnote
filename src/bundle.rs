@@ -22,7 +22,7 @@
 //! an in-place edit), at the cost of not scaling to huge bundles.
 
 pub use crate::model::SnapshotMode;
-use crate::model::{Event, Revision};
+use crate::model::{Event, Revision, Source};
 use anyhow::{Context, Result};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -51,7 +51,25 @@ impl Loaded {
         Some((revision, String::from_utf8(bytes.clone()).ok()?))
     }
 
-    /// Whether a revision with this diff digest has been recorded.
+    /// The source kind fixed by the bundle's first revision.
+    pub fn source(&self) -> Option<&Source> {
+        self.revisions().next().map(|r| &r.source)
+    }
+
+    /// The files snapshotted for the revision with this digest
+    /// (relative path -> content); empty unless it was a `Full` (or
+    /// `Changed`) capture.
+    pub fn snapshot_files(&self, digest: &str) -> crate::files::Tree {
+        let prefix = format!("sources/{}/", digest_path_component(digest));
+        self.carried_entries
+            .iter()
+            .filter_map(|(name, bytes)| {
+                Some((name.strip_prefix(&prefix)?.to_string(), bytes.clone()))
+            })
+            .collect()
+    }
+
+    /// Whether a revision with this digest has been recorded.
     pub fn has_revision(&self, digest: &str) -> bool {
         self.revisions().any(|r| r.digest == digest)
     }
@@ -209,7 +227,7 @@ mod tests {
             id: ulid::Ulid::new(),
             created_at: OffsetDateTime::now_utc(),
             digest: digest.to_string(),
-            git: None,
+            source: Source::Files,
             snapshot_mode,
             files: Vec::new(),
         })

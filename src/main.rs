@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use diffnote::digest::digest;
 use diffnote::model::{Anchor, Event};
 use diffnote::{anchor, annotation, bundle, review};
-use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use time::OffsetDateTime;
@@ -18,23 +18,37 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Cmd {
-    /// Open the diff of a commit range for annotation in $EDITOR, appending new comments to a review bundle.
-    Edit {
-        /// Path to the diffnote review bundle (.diffnote, a zip). Created if missing.
+    /// Snapshot a plain directory (no git) into a new review bundle, so later
+    /// `edit` runs can review what changed since. Not needed for git reviews.
+    Init {
+        /// Path of the diffnote review bundle to create (.diffnote, a zip).
         #[arg(short = 'f', long = "file", default_value = ".diffnote")]
         review: PathBuf,
-        /// The commits to review, resolved by git itself: `A..B` or `A B`
-        /// (A -> B), `A...B` (merge-base of A and B -> B), or a single
+        /// The directory to snapshot. Files matched by `.diffnoteignore`
+        /// (or, if there is none, `.gitignore`) are left out.
+        #[arg(value_name = "DIR", default_value = ".")]
+        dir: PathBuf,
+    },
+    /// Open what is being reviewed for annotation in $EDITOR, appending new
+    /// comments to a review bundle (created if missing, for git reviews).
+    Edit {
+        /// Path to the diffnote review bundle (.diffnote, a zip).
+        #[arg(short = 'f', long = "file", default_value = ".diffnote")]
+        review: PathBuf,
+        /// Git review: the commits, resolved by git itself -- `A..B` or
+        /// `A B` (A -> B), `A...B` (merge-base of A and B -> B), or a single
         /// commit (its first parent -> it). Only committed content is
-        /// reviewed; the working tree is ignored.
-        #[arg(value_name = "REV", num_args = 1..)]
-        git_diff_args: Vec<String>,
+        /// reviewed. Directory review (bundle made by `init`): at most one
+        /// argument, the directory to compare with the bundle's last
+        /// snapshot (default: the current directory).
+        #[arg(value_name = "REV|DIR", num_args = 0..)]
+        targets: Vec<String>,
         /// What to snapshot into the bundle the first time a new diff digest
         /// is seen and this session actually adds something: `diff` (just
         /// the diff text), `changed` (+ the touched files' full content), or
-        /// `full` (+ the whole source tree, respecting .gitignore). Defaults
-        /// to the bundle's own previously-established mode if it has one,
-        /// otherwise `full`.
+        /// `full` (+ the whole source tree). Defaults to the bundle's own
+        /// previously-established mode if it has one, otherwise `full`.
+        /// Directory reviews always snapshot the full tree.
         #[arg(long, value_enum)]
         snapshot: Option<diffnote::bundle::SnapshotMode>,
     },
@@ -62,11 +76,12 @@ enum Cmd {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Cmd::Init { review, dir } => cmd_init(review, dir),
         Cmd::Edit {
             review,
-            git_diff_args,
+            targets,
             snapshot,
-        } => cmd_edit(review, git_diff_args, snapshot),
+        } => cmd_edit(review, targets, snapshot),
         Cmd::Show { review } => cmd_show(review),
         Cmd::Export {
             review,
@@ -109,24 +124,149 @@ fn cmd_export(review_path: PathBuf, output_path: PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// Produces the files to store for a snapshot mode.
+type SnapshotFiles = Box<dyn FnOnce(bundle::SnapshotMode) -> Result<Vec<(String, Vec<u8>)>>>;
+
+/// What one edit session reviews: the diff, plus everything needed to
+/// record it as a `Revision` if the session ends up adding anything.
+struct Input {
+    diff_text: String,
+    /// Per-file digests of the files the diff touches.
+    files: Vec<diffnote::model::FileDigest>,
+    source: diffnote::model::Source,
+    /// The revision's digest (see `Revision::digest`).
+    digest: String,
+    /// `Some` when only one snapshot mode makes sense for this source.
+    forced_snapshot_mode: Option<bundle::SnapshotMode>,
+    /// Total size of the tree a `full` snapshot would store.
+    tree_size: u64,
+    /// The files to store for a given mode.
+    snapshot_files: SnapshotFiles,
+}
+
+fn git_input(targets: &[String]) -> Result<Input> {
+    let repo = diffnote::git::Repo::current();
+    let range = repo.resolve_range(targets)?;
+    let diff_text = repo.diff(&range)?;
+    let parsed = diffnote::diff::parse(&diff_text).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let head_tree = repo.ls_tree(&range.head)?;
+    let files = file_digests(&repo, &repo.ls_tree(&range.base)?, &head_tree, &parsed)?;
+    Ok(Input {
+        digest: digest(&diff_text),
+        tree_size: head_tree.iter().map(|e| e.size).sum(),
+        source: diffnote::model::Source::Git(range),
+        files,
+        forced_snapshot_mode: None,
+        snapshot_files: Box::new(move |mode| snapshot_files(&repo, mode, &head_tree, &parsed)),
+        diff_text,
+    })
+}
+
+/// Compares `dir` with the bundle's last recorded snapshot.
+fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Result<Input> {
+    let previous = loaded
+        .revisions()
+        .last()
+        .map(|r| loaded.snapshot_files(&r.digest))
+        .context("the bundle has no snapshot to compare with")?;
+    let current = diffnote::files::read_tree(dir, exclude)?;
+    let digest = diffnote::files::tree_digest(&current);
+    // Unchanged since the last recorded snapshot: reopen the diff that
+    // revision was reviewed with (so replies/resolves can still be added),
+    // rather than the empty diff against itself.
+    let (diff_text, files) = match loaded.latest_revision() {
+        Some((rev, text)) if rev.digest == digest => (text, rev.files.clone()),
+        _ => diffnote::files::diff_trees(&previous, &current),
+    };
+    Ok(Input {
+        digest,
+        tree_size: current.values().map(|b| b.len() as u64).sum(),
+        source: diffnote::model::Source::Files,
+        files,
+        forced_snapshot_mode: Some(bundle::SnapshotMode::Full),
+        snapshot_files: Box::new(move |_| Ok(current.into_iter().collect())),
+        diff_text,
+    })
+}
+
+fn cmd_init(review_path: PathBuf, dir: PathBuf) -> Result<()> {
+    if review_path.exists() {
+        anyhow::bail!("{} already exists", review_path.display());
+    }
+    let tree = diffnote::files::read_tree(&dir, std::slice::from_ref(&review_path))?;
+    let digest = diffnote::files::tree_digest(&tree);
+    let events = vec![
+        Event::Meta {
+            version: 1,
+            created_at: OffsetDateTime::now_utc(),
+            description: None,
+            context_lines: 3,
+        },
+        Event::Revision(diffnote::model::Revision {
+            id: Ulid::new(),
+            created_at: OffsetDateTime::now_utc(),
+            digest: digest.clone(),
+            source: diffnote::model::Source::Files,
+            snapshot_mode: bundle::SnapshotMode::Full,
+            files: Vec::new(),
+        }),
+    ];
+    let count = tree.len();
+    let snapshot = bundle::NewSnapshot {
+        digest,
+        diff_text: String::new(),
+        files: tree.into_iter().collect(),
+    };
+    bundle::save(
+        &review_path,
+        &bundle::load(&review_path)?,
+        &events,
+        Some(&snapshot),
+    )?;
+    println!("Snapshotted {count} file(s) into {}", review_path.display());
+    Ok(())
+}
+
 fn cmd_edit(
     review_path: PathBuf,
-    git_diff_args: Vec<String>,
+    targets: Vec<String>,
     snapshot_override: Option<bundle::SnapshotMode>,
 ) -> Result<()> {
-    let repo = diffnote::git::Repo::current();
-    let range = repo.resolve_range(&git_diff_args)?;
-    let diff_text = repo.diff(&range)?;
+    let loaded = bundle::load(&review_path)?;
+    let input = match loaded.source() {
+        Some(diffnote::model::Source::Files) => {
+            if targets.len() > 1 {
+                anyhow::bail!("a directory review takes at most one argument: the directory");
+            }
+            let dir = PathBuf::from(targets.first().map_or(".", String::as_str));
+            files_input(
+                &loaded,
+                &dir,
+                &[review_path.clone(), draft_path_for(&review_path)],
+            )?
+        }
+        Some(diffnote::model::Source::Git(_)) => git_input(&targets)?,
+        None if targets.is_empty() => anyhow::bail!(
+            "specify the commit(s) to review, e.g. `diffnote edit HEAD~3..HEAD`; \
+            to review a plain directory instead, run `diffnote init` first"
+        ),
+        None => git_input(&targets)?,
+    };
+    let Input {
+        diff_text,
+        files,
+        source,
+        digest: diff_digest,
+        forced_snapshot_mode,
+        tree_size,
+        snapshot_files,
+    } = input;
     if diff_text.trim().is_empty() {
         println!("No changes to review (diff is empty).");
         return Ok(());
     }
-    let diff_digest = digest(&diff_text);
     let parsed_diff = diffnote::diff::parse(&diff_text).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let head_tree = repo.ls_tree(&range.head)?;
-    let files = file_digests(&repo, &repo.ls_tree(&range.base)?, &head_tree, &parsed_diff)?;
 
-    let loaded = bundle::load(&review_path)?;
     let existing_events = &loaded.events;
     let existing_threads = review::build_threads(existing_events);
 
@@ -322,8 +462,9 @@ fn cmd_edit(
     let new_snapshot = if loaded.has_revision(&diff_digest) {
         None
     } else {
-        let snapshot_mode =
-            resolve_snapshot_mode(snapshot_override, loaded.snapshot_mode(), &head_tree);
+        let snapshot_mode = forced_snapshot_mode.unwrap_or_else(|| {
+            resolve_snapshot_mode(snapshot_override, loaded.snapshot_mode(), tree_size)
+        });
         // Right after Meta if this session creates it, else first.
         let at = usize::from(matches!(new_events.first(), Some(Event::Meta { .. })));
         new_events.insert(
@@ -332,7 +473,7 @@ fn cmd_edit(
                 id: Ulid::new(),
                 created_at: OffsetDateTime::now_utc(),
                 digest: diff_digest.clone(),
-                git: Some(range.clone()),
+                source,
                 snapshot_mode,
                 files: files.clone(),
             }),
@@ -340,7 +481,7 @@ fn cmd_edit(
         Some(bundle::NewSnapshot {
             digest: diff_digest.clone(),
             diff_text: diff_text.clone(),
-            files: snapshot_files(&repo, snapshot_mode, &head_tree, &parsed_diff)?,
+            files: snapshot_files(snapshot_mode)?,
         })
     };
 
@@ -373,10 +514,13 @@ fn cmd_show(review_path: PathBuf) -> Result<()> {
             }
             Event::Revision(r) => {
                 println!(
-                    "[revision] {} digest={} git={} snapshot={:?}",
+                    "[revision] {} digest={} source={} snapshot={:?}",
                     r.id,
                     r.digest,
-                    r.git.as_ref().map_or("-", |g| g.spec.as_str()),
+                    match &r.source {
+                        diffnote::model::Source::Git(g) => g.spec.as_str(),
+                        diffnote::model::Source::Files => "(directory)",
+                    },
                     r.snapshot_mode
                 );
             }
@@ -579,11 +723,6 @@ fn save_draft(draft_path: &Path, content: &str) -> Result<()> {
         .with_context(|| format!("failed to save draft to {}", draft_path.display()))
 }
 
-fn digest(bytes: impl AsRef<[u8]>) -> String {
-    let hash = Sha256::digest(bytes.as_ref());
-    format!("sha256:{hash:x}")
-}
-
 /// The per-file digests of every file `diff` touches: old side read from
 /// the base tree, new side from the head tree (each `None` when that side
 /// doesn't exist, e.g. an added or deleted file).
@@ -641,14 +780,14 @@ const FULL_SNAPSHOT_WARN_BYTES: u64 = 30 * 1024 * 1024;
 fn resolve_snapshot_mode(
     explicit: Option<bundle::SnapshotMode>,
     stored: Option<bundle::SnapshotMode>,
-    tree: &[diffnote::git::TreeEntry],
+    tree_size: u64,
 ) -> bundle::SnapshotMode {
     let mode = explicit.or(stored).unwrap_or(bundle::SnapshotMode::Full);
     if mode != bundle::SnapshotMode::Full {
         return mode;
     }
 
-    let size: u64 = tree.iter().map(|e| e.size).sum();
+    let size = tree_size;
     if size < FULL_SNAPSHOT_WARN_BYTES {
         return mode;
     }

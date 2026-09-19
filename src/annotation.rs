@@ -523,9 +523,23 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
             continue;
         }
 
-        if raw_line.starts_with("Binary files ") && raw_line.ends_with(" differ") {
+        if let Some((old_path, new_path)) = diff::parse_binary_line(raw_line) {
+            let file_already_has_content = current_hunk.is_some()
+                || current_file
+                    .as_ref()
+                    .is_some_and(|f| !f.hunks.is_empty() || f.is_binary);
+            if file_already_has_content {
+                diff::finish_file(&mut files, &mut current_file, &mut current_hunk);
+            }
             let file = current_file.get_or_insert_with(FileDiff::default);
             file.is_binary = true;
+            file.old_path = old_path;
+            file.new_path = new_path;
+            // Nothing follows a binary file's header to hang a comment on
+            // but the file itself, so comments here are file-level.
+            current_scope = AnchorScope::File {
+                file: file_label(file),
+            };
             continue;
         }
 
@@ -534,7 +548,9 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
             // accumulated (not yet flushed into `.hunks`) must count too,
             // or two files' hunks can get silently merged into one.
             let file_already_has_content = current_hunk.is_some()
-                || current_file.as_ref().is_some_and(|f| !f.hunks.is_empty());
+                || current_file
+                    .as_ref()
+                    .is_some_and(|f| !f.hunks.is_empty() || f.is_binary);
             if current_file.is_none() || file_already_has_content {
                 diff::finish_file(&mut files, &mut current_file, &mut current_hunk);
                 current_file = Some(FileDiff::default());
@@ -783,7 +799,17 @@ pub fn render_for_edit(
         {
             continue;
         }
-        if raw_line.starts_with("Binary files ") && raw_line.ends_with(" differ") {
+        if let Some((old_path, new_path)) = diff::parse_binary_line(raw_line) {
+            current_file = new_path.or(old_path);
+            hunk_idx = 0;
+            file_has_hunks = false;
+            if let Some(f) = &current_file
+                && let Some(ts) = by_file.get(f)
+            {
+                for t in ts {
+                    render_thread_block(&mut out, t, false);
+                }
+            }
             continue;
         }
         if raw_line.starts_with("--- ") {
@@ -1447,5 +1473,58 @@ diff --git a/f.rs b/f.rs
         };
         assert_eq!(*target, ThreadRef::Existing(root_id));
         assert_eq!(body.as_deref(), Some("承知しました"));
+    }
+
+    const WITH_BINARY: &str = "\
+diff --git a/img.bin b/img.bin
+Binary files a/img.bin and b/img.bin differ
+diff --git a/t.txt b/t.txt
+--- a/t.txt
++++ b/t.txt
+@@ -1 +1 @@
+-a
++b
+";
+
+    #[test]
+    fn a_comment_after_a_binary_files_line_is_file_level() {
+        let text = WITH_BINARY.replace("differ\n", "differ\n> about the image\n");
+        let parsed = parse(&text).unwrap();
+        let [Item::NewThread { scope, body, .. }] = parsed.items.as_slice() else {
+            panic!("expected one new thread, got {:?}", parsed.items);
+        };
+        assert_eq!(
+            *scope,
+            AnchorScope::File {
+                file: "img.bin".to_string()
+            }
+        );
+        assert_eq!(body.as_deref(), Some("about the image"));
+        assert_eq!(parsed.diff.files.len(), 2);
+        assert!(parsed.diff.files[0].is_binary);
+    }
+
+    #[test]
+    fn render_for_edit_places_a_binary_files_file_thread_after_its_line() {
+        let diff = diff::parse(WITH_BINARY).unwrap();
+        let id = Ulid::new();
+        let threads = vec![thread_with(
+            id,
+            Anchor::File {
+                file: "img.bin".to_string(),
+            },
+            "about the image",
+        )];
+        let (rendered, _) = render_for_edit(WITH_BINARY, &diff, &[], &threads);
+        let lines: Vec<&str> = rendered.lines().collect();
+        let at = lines
+            .iter()
+            .position(|l| l.starts_with("Binary files"))
+            .unwrap();
+        assert!(lines[at + 1].starts_with(">#@"), "got {:?}", lines[at + 1]);
+        assert!(lines[at + 2].contains("about the image"));
+        // ...and the rendered text parses back to the same diff.
+        let reparsed = parse(&rendered).unwrap();
+        assert_eq!(reparsed.diff, diff);
     }
 }
