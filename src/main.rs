@@ -107,22 +107,37 @@ fn main() -> Result<()> {
 fn cmd_export(review_path: PathBuf, output_path: PathBuf) -> Result<()> {
     let loaded = bundle::load(&review_path)?;
 
-    // Render against the bundle's own most recently recorded revision.
-    let Some((revision, diff_text)) = loaded.latest_revision() else {
+    // One view per recorded revision that has a diff (a fresh `init`
+    // snapshot has none), oldest first; the last is the latest.
+    let mut parsed = Vec::new();
+    for revision in loaded.revisions() {
+        let Some(text) = loaded.revision_diff(revision).filter(|t| !t.trim().is_empty()) else {
+            continue;
+        };
+        let diff = diffnote::diff::parse(&text).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let source = match &revision.source {
+            diffnote::model::Source::Git(g) => g.spec.clone(),
+            diffnote::model::Source::Files { .. } => "directory".to_string(),
+        };
+        let label = format!("#{} {source} ({})", parsed.len() + 1, revision.created_at.date());
+        parsed.push((label, diff, revision));
+    }
+    if parsed.is_empty() {
         anyhow::bail!(
             "{} has no captured diff yet; run `diffnote edit` first",
             review_path.display()
         );
-    };
+    }
+    let views: Vec<diffnote::html::RevisionView> = parsed
+        .iter()
+        .map(|(label, diff, revision)| diffnote::html::RevisionView {
+            label: label.clone(),
+            diff,
+            files: &revision.files,
+        })
+        .collect();
 
-    let parsed_diff = diffnote::diff::parse(&diff_text).map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    let html = diffnote::html::render(
-        &loaded.events,
-        &parsed_diff,
-        &revision.files,
-        &loaded.blobs(),
-    );
+    let html = diffnote::html::render(&loaded.events, &views, &loaded.blobs());
     std::fs::write(&output_path, html)
         .with_context(|| format!("failed to write {}", output_path.display()))?;
     println!("Wrote {}", output_path.display());

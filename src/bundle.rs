@@ -43,12 +43,17 @@ impl Loaded {
     /// re-specify the diff.
     pub fn latest_revision(&self) -> Option<(&Revision, String)> {
         let revision = self.revisions().last()?;
+        Some((revision, self.revision_diff(revision)?))
+    }
+
+    /// The diff text stored for `revision`, if it has one.
+    pub fn revision_diff(&self, revision: &Revision) -> Option<String> {
         let wanted = format!("diffs/{}.diff", digest_path_component(&revision.digest));
         let (_, bytes) = self
             .carried_entries
             .iter()
             .find(|(name, _)| *name == wanted)?;
-        Some((revision, String::from_utf8(bytes.clone()).ok()?))
+        String::from_utf8(bytes.clone()).ok()
     }
 
     /// The source kind fixed by the bundle's first revision.

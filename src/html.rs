@@ -29,10 +29,23 @@ use syntect::html::{IncludeBackground, styled_line_to_highlighted_html};
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 use ulid::Ulid;
 
+/// One revision of the review to show: its diff and per-file digests, and a
+/// short label for the switcher.
+pub struct RevisionView<'a> {
+    pub label: String,
+    pub diff: &'a UnifiedDiff,
+    pub files: &'a [crate::model::FileDigest],
+}
+
+/// Renders every revision as its own pre-rendered view (oldest first, the
+/// last one -- the latest -- shown by default). Every thread appears in every
+/// view: at its position where it can be placed against that revision's
+/// diff, in that view's "unplaced" section where it can't. The tiny inline
+/// script only switches which view is visible; without it all views are
+/// simply stacked.
 pub fn render(
     events: &[Event],
-    diff: &UnifiedDiff,
-    current_files: &[crate::model::FileDigest],
+    views: &[RevisionView],
     blobs: &crate::digest::Blobs,
 ) -> String {
     let threads = build_threads(events);
@@ -40,6 +53,47 @@ pub fn render(
     let theme_set = ThemeSet::load_defaults();
     let theme = &theme_set.themes["InspiredGitHub"];
 
+    let mut body = String::new();
+    body.push_str(r#"<header class="diffnote-summary"><h1>diffnote review</h1>"#);
+    body.push_str(&format!(
+        "<p>{} thread(s), {} resolved</p></header>\n",
+        threads.len(),
+        threads.iter().filter(|t| t.resolved).count()
+    ));
+    if views.len() > 1 {
+        body.push_str(r#"<nav class="diffnote-revisions"><ul>"#);
+        for (i, view) in views.iter().enumerate() {
+            body.push_str(&format!(
+                r##"<li><a href="#rev-{i}" data-diffnote-revision-link="{i}">{}</a></li>"##,
+                escape_html(&view.label)
+            ));
+        }
+        body.push_str("</ul></nav>\n");
+    }
+    for (i, view) in views.iter().enumerate() {
+        let current = if i + 1 == views.len() { " is-current" } else { "" };
+        let inner = render_view(&threads, view, blobs, &syntax_set, theme);
+        // Element ids must be unique across the views.
+        let inner = inner
+            .replace(r#"id="file-"#, &format!(r#"id="r{i}-file-"#))
+            .replace(r##"href="#file-"##, &format!(r##"href="#r{i}-file-"##))
+            .replace(r#"id="thread-"#, &format!(r#"id="r{i}-thread-"#));
+        body.push_str(&format!(
+            r#"<section class="diffnote-revision{current}" id="rev-{i}" data-diffnote-revision="{i}"><h2 class="diffnote-revision__title">{}</h2>{inner}</section>"#,
+            escape_html(&view.label)
+        ));
+    }
+    wrap_document(&body)
+}
+
+fn render_view(
+    threads: &[Thread],
+    view: &RevisionView,
+    blobs: &crate::digest::Blobs,
+    syntax_set: &SyntaxSet,
+    theme: &Theme,
+) -> String {
+    let (diff, current_files) = (view.diff, view.files);
     let mut global: Vec<&Thread> = Vec::new();
     let mut by_file: HashMap<String, Vec<&Thread>> = HashMap::new();
     // Where a thread's card is drawn: keyed by the *last* line of its range.
@@ -53,7 +107,7 @@ pub fn render(
     let mut color_of: HashMap<Ulid, usize> = HashMap::new();
     let mut outdated: HashMap<String, Vec<&Thread>> = HashMap::new();
 
-    for thread in &threads {
+    for thread in threads {
         match anchor::resolve_placement(&thread.anchor, diff, current_files, blobs) {
             Placement::Global => global.push(thread),
             Placement::File(file) => by_file.entry(file).or_default().push(thread),
@@ -112,13 +166,6 @@ pub fn render(
     }
 
     let mut body = String::new();
-    body.push_str(r#"<header class="diffnote-summary"><h1>diffnote review</h1>"#);
-    body.push_str(&format!(
-        "<p>{} thread(s), {} resolved</p></header>\n",
-        threads.len(),
-        threads.iter().filter(|t| t.resolved).count()
-    ));
-
     body.push_str(r#"<nav class="diffnote-filelist"><ul>"#);
     for key in &file_order {
         let count = by_file.get(key).map_or(0, Vec::len)
@@ -154,12 +201,12 @@ pub fn render(
             &highlighted,
             &color_of,
             outdated.get(key).map(Vec::as_slice).unwrap_or(&[]),
-            &syntax_set,
+            syntax_set,
             theme,
         ));
     }
 
-    wrap_document(&body)
+    body
 }
 
 fn diff_file_comment_count(
@@ -541,6 +588,11 @@ const STYLE: &str = r#"
 body { font-family: system-ui, sans-serif; margin: 0; padding: 1rem; }
 .diffnote-review { max-width: 1000px; margin: 0 auto; }
 .diffnote-filelist ul { list-style: none; padding: 0; }
+.diffnote-revisions ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.diffnote-revisions a { border: 1px solid var(--diffnote-color-border); border-radius: 0.4em; padding: 0.15em 0.6em; text-decoration: none; }
+.diffnote-revisions a.is-current { background: var(--diffnote-color-thread-bg); font-weight: bold; }
+.diffnote-revision { margin-top: 1.5rem; }
+.diffnote-js .diffnote-revision:not(.is-current) { display: none; }
 .diffnote-badge { background: var(--diffnote-color-thread-bg); border: 1px solid var(--diffnote-color-border); border-radius: 1em; padding: 0 0.5em; font-size: 0.85em; }
 .diffnote-file { border: 1px solid var(--diffnote-color-border); border-radius: 6px; margin-bottom: 1rem; }
 .diffnote-file > details > summary { padding: 0.5em 1em; cursor: pointer; }
@@ -578,6 +630,22 @@ body { font-family: system-ui, sans-serif; margin: 0; padding: 1rem; }
 /// bands can only go so far once there are more threads than palette slots).
 const SCRIPT: &str = r#"
 (function () {
+  var views = Array.prototype.slice.call(document.querySelectorAll('.diffnote-revision'));
+  var links = Array.prototype.slice.call(document.querySelectorAll('[data-diffnote-revision-link]'));
+  function show(i) {
+    views.forEach(function (v, k) { v.classList.toggle('is-current', k === i); });
+    links.forEach(function (a, k) { a.classList.toggle('is-current', k === i); });
+  }
+  if (views.length > 1) {
+    document.documentElement.classList.add('diffnote-js');
+    var start = views.length - 1;
+    var m = /^#rev-(\d+)$/.exec(location.hash);
+    if (m && +m[1] < views.length) start = +m[1];
+    show(start);
+    links.forEach(function (a, k) {
+      a.addEventListener('click', function (e) { e.preventDefault(); show(k); });
+    });
+  }
   function idsOf(el) {
     var s = el.getAttribute('data-diffnote-threads') || el.getAttribute('data-diffnote-thread-id') || '';
     return s.split(' ').filter(Boolean);
@@ -585,7 +653,8 @@ const SCRIPT: &str = r#"
   function setHover(el, on) {
     idsOf(el).forEach(function (id) {
       var selector = '[data-diffnote-threads~="' + id + '"], [data-diffnote-thread-id="' + id + '"]';
-      document.querySelectorAll(selector).forEach(function (match) {
+      var scope = el.closest('.diffnote-revision') || document;
+      scope.querySelectorAll(selector).forEach(function (match) {
         match.classList.toggle('diffnote-hover', on);
       });
     });
