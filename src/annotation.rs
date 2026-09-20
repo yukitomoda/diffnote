@@ -12,6 +12,10 @@
 //!   so a following `>>`/`>>!<dir>` targets it same as a same-session `>`
 //!   thread would. Always carries the *thread root's* id, even for a
 //!   rendered reply, since threading is flat.
+//! - `>#[<ulid>` decorative marker before the first row of an existing
+//!   comment's lines (drawn only when it covers more than its own row), so
+//!   the range it covers -- from this line to just before its `>#@` header --
+//!   can be seen; ignored on parse like any `>#` text.
 //! - `>#<text>` decorative body line for a rendered comment/reply above —
 //!   purely for human reading, ignored on parse (never affects `last_thread`
 //!   beyond what the `>#@` header already set).
@@ -771,6 +775,10 @@ pub fn render_for_edit(
     let mut global: Vec<&Thread> = Vec::new();
     let mut by_file: HashMap<String, Vec<&Thread>> = HashMap::new();
     let mut by_line: ByLine = HashMap::new();
+    // Where a thread begins, so its `>#[` marker can be drawn before its first
+    // row (the card itself is after the last). A thread on a single row gets
+    // none: its card is right under that row.
+    let mut starts: HashMap<(String, Side, u32), Vec<Ulid>> = HashMap::new();
     let mut outdated: HashMap<String, Vec<&Thread>> = HashMap::new();
 
     for (thread, placement) in threads.iter().zip(placements) {
@@ -786,9 +794,21 @@ pub fn render_for_edit(
             Placement::Line {
                 file,
                 side,
+                line_start,
                 line_end,
-                ..
+                old_range,
             } => {
+                starts
+                    .entry((file.clone(), side, line_start))
+                    .or_default()
+                    .push(thread.root_id);
+                // With base-side rows too, the range may begin on one.
+                if let Some((old_start, _)) = old_range {
+                    starts
+                        .entry((file.clone(), Side::Old, old_start))
+                        .or_default()
+                        .push(thread.root_id);
+                }
                 by_line
                     .entry((file, side, line_end))
                     .or_default()
@@ -829,7 +849,10 @@ pub fn render_for_edit(
     let mut old_no: u32 = 0;
     let mut new_no: u32 = 0;
 
+    let mut started: std::collections::HashSet<Ulid> = std::collections::HashSet::new();
+
     for raw_line in diff_text.lines() {
+        let row_start = out.len();
         out.push_str(raw_line);
         out.push('\n');
 
@@ -895,16 +918,22 @@ pub fn render_for_edit(
         };
         match raw_line.chars().next() {
             Some(' ') => {
+                let keys = [(Side::Old, old_no), (Side::New, new_no)];
+                mark_starts(&mut out, row_start, &starts, &by_line, &mut started, &file, &keys);
                 emit_line_threads(&mut out, &by_line, &file, Side::New, new_no);
                 emit_line_threads(&mut out, &by_line, &file, Side::Old, old_no);
                 old_no += 1;
                 new_no += 1;
             }
             Some('+') => {
+                let keys = [(Side::New, new_no)];
+                mark_starts(&mut out, row_start, &starts, &by_line, &mut started, &file, &keys);
                 emit_line_threads(&mut out, &by_line, &file, Side::New, new_no);
                 new_no += 1;
             }
             Some('-') => {
+                let keys = [(Side::Old, old_no)];
+                mark_starts(&mut out, row_start, &starts, &by_line, &mut started, &file, &keys);
                 emit_line_threads(&mut out, &by_line, &file, Side::Old, old_no);
                 old_no += 1;
             }
@@ -913,6 +942,37 @@ pub fn render_for_edit(
     }
 
     (out, synthetic_files)
+}
+
+/// Draws `>#[<id>` at byte `at` (before the row just written) for each thread
+/// that begins on this row, unless its card is drawn right under this same
+/// row (it covers just this one). `keys` are the row's places: its line on
+/// each side it has.
+fn mark_starts(
+    out: &mut String,
+    at: usize,
+    starts: &HashMap<(String, Side, u32), Vec<Ulid>>,
+    by_line: &ByLine,
+    started: &mut std::collections::HashSet<Ulid>,
+    file: &str,
+    keys: &[(Side, u32)],
+) {
+    let card_here = |id: &Ulid| {
+        keys.iter().any(|&(side, line)| {
+            by_line
+                .get(&(file.to_string(), side, line))
+                .is_some_and(|ts| ts.iter().any(|(t, _)| t.root_id == *id))
+        })
+    };
+    let mut markers = String::new();
+    for &(side, line) in keys {
+        for id in starts.get(&(file.to_string(), side, line)).into_iter().flatten() {
+            if started.insert(*id) && !card_here(id) {
+                markers.push_str(&format!(">#[{id}\n"));
+            }
+        }
+    }
+    out.insert_str(at, &markers);
 }
 
 fn emit_line_threads(out: &mut String, by_line: &ByLine, file: &str, side: Side, line: u32) {
@@ -1548,6 +1608,138 @@ diff --git a/f.rs b/f.rs
             target_line_pos < line_pos,
             "line comment must render after its target line"
         );
+    }
+
+    /// A comment on new lines `start` to `start + len - 1` of the added block.
+    fn on_new_lines(start: u32, len: u32) -> Anchor {
+        Anchor::Span {
+            base: Some(range(13, 0, &old_text())),
+            head: Some(range(start, len, &new_text())),
+        }
+    }
+
+    #[test]
+    fn a_thread_over_several_rows_has_a_start_marker_before_its_first_row() {
+        // `fn baz` (14) and `self.value * 2` (15).
+        let id = Ulid::new();
+        let rendered = render(
+            &fixture(),
+            &[],
+            &[thread_with(id, on_new_lines(14, 2), "about baz")],
+        );
+        let (marker, card) = (format!(">#[{id}\n"), format!(">#@{id}"));
+        let (m, c) = (rendered.find(&marker).unwrap(), rendered.find(&card).unwrap());
+        let first = rendered.find("+    fn baz").unwrap();
+        let last = rendered.find("        self.value * 2").unwrap();
+        // Marker, then the first row, then the last row, then the card.
+        assert!(m < first && first < last && last < c, "{rendered}");
+        // The row before the range is not inside it.
+        assert!(rendered.find("+\n").unwrap() < m, "{rendered}");
+        assert_eq!(rendered.matches(&marker).count(), 1);
+    }
+
+    #[test]
+    fn a_thread_on_one_row_has_no_start_marker() {
+        let id = Ulid::new();
+        let rendered = render(&fixture(), &[], &[thread_with(id, on_baz_line(), "one line")]);
+        assert!(rendered.contains(&format!(">#@{id}")));
+        assert!(!rendered.contains(">#["), "{rendered}");
+    }
+
+    #[test]
+    fn a_hunk_thread_starts_before_the_hunks_first_row_and_each_marker_appears_once() {
+        let (hunk, inner) = (Ulid::new(), Ulid::new());
+        let rendered = render(
+            &fixture(),
+            &[],
+            &[
+                thread_with(
+                    hunk,
+                    Anchor::Span {
+                        base: Some(range(10, 4, &old_text())),
+                        head: Some(range(10, 8, &new_text())),
+                    },
+                    "the hunk",
+                ),
+                thread_with(inner, on_new_lines(13, 3), "inside it"),
+            ],
+        );
+        let at = |needle: &str| rendered.find(needle).unwrap();
+        let (hunk_marker, inner_marker) = (format!(">#[{hunk}\n"), format!(">#[{inner}\n"));
+        assert!(at("@@ -10,4") < at(&hunk_marker) && at(&hunk_marker) < at("     fn bar"), "{rendered}");
+        // The inner range starts at the added blank line: after the context
+        // row `    }`, before that blank `+` row.
+        assert!(at("     }\n") < at(&inner_marker), "{rendered}");
+        assert!(rendered.contains(&format!("{inner_marker}+\n+    fn baz")), "{rendered}");
+        assert_eq!(rendered.matches(&hunk_marker).count(), 1);
+        assert_eq!(rendered.matches(&inner_marker).count(), 1);
+    }
+
+    #[test]
+    fn a_replaced_block_starts_on_its_removed_row_and_a_context_row_has_no_marker() {
+        let (old, new) = ("tags\nraw\nlong\nsemver\n", "tags\nraw\nshort\nsemver\n");
+        let tree = |t: &str| -> crate::files::Tree {
+            [("f.txt".to_string(), t.as_bytes().to_vec())].into()
+        };
+        let (text, files) = crate::files::diff_trees(&tree(old), &tree(new));
+        let file_range = |text: &str, start, len| crate::model::LineRange {
+            file: "f.txt".to_string(),
+            ..range(start, len, text)
+        };
+        let (block, context) = (Ulid::new(), Ulid::new());
+        let threads = vec![
+            // `long` -> `short`: a removed row and an added row.
+            thread_with(
+                block,
+                Anchor::Span {
+                    base: Some(file_range(old, 3, 1)),
+                    head: Some(file_range(new, 3, 1)),
+                },
+                "the change",
+            ),
+            // `semver`, unchanged: one context row, both sides.
+            thread_with(
+                context,
+                Anchor::Span {
+                    base: Some(file_range(old, 4, 1)),
+                    head: Some(file_range(new, 4, 1)),
+                },
+                "just this line",
+            ),
+        ];
+        let mut blobs = crate::digest::Blobs::default();
+        blobs.add(old.as_bytes());
+        blobs.add(new.as_bytes());
+        let (rendered, _) = render_for_edit(
+            &text,
+            &diff::parse(&text).unwrap(),
+            &anchor::ViewVersions {
+                files: &files,
+                tree: &[],
+            },
+            &blobs,
+            &threads,
+            &[],
+        );
+        assert!(
+            rendered.contains(&format!(">#[{block}\n-long\n+short\n>#@{block}")),
+            "{rendered}"
+        );
+        assert!(!rendered.contains(&format!(">#[{context}")), "{rendered}");
+        assert!(rendered.contains(&format!(" semver\n>#@{context}")), "{rendered}");
+    }
+
+    #[test]
+    fn a_marker_that_was_drawn_is_ignored_when_the_buffer_is_read_back() {
+        let id = Ulid::new();
+        let rendered = render(
+            &fixture(),
+            &[],
+            &[thread_with(id, on_new_lines(14, 2), "about baz")],
+        );
+        assert!(rendered.contains(">#["));
+        let parsed = parse(&rendered).unwrap();
+        assert!(parsed.items.is_empty() && parsed.warnings.is_empty(), "{parsed:?}");
     }
 
     #[test]
