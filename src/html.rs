@@ -840,6 +840,12 @@ pub fn render_with(
         }
         body.push_str("</ul></nav>\n");
     }
+    // Where there is something to hide (on the served page there may be, soon).
+    if interactive || threads.iter().any(|t| t.resolved) {
+        body.push_str(
+            r#"<label class="diffnote-toggle"><input type="checkbox" data-diffnote-hide-resolved> 解決済みを隠す<span class="diffnote-toggle__count" data-diffnote-resolved-count></span></label>"#,
+        );
+    }
     if interactive {
         body.push_str(
             r#"<button type="button" class="diffnote-button diffnote-topbar__quit" data-diffnote-shutdown title="サーバーを止めます">終了</button>"#,
@@ -1774,6 +1780,17 @@ body.is-selecting { user-select: none; }
 .diffnote-compose__where { margin-bottom: 4px; font-family: var(--diffnote-font-mono); font-size: 12px; color: var(--diffnote-color-muted); }
 .diffnote-compose textarea { display: block; width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; resize: vertical; border: 1px solid var(--diffnote-color-border); border-radius: 6px; background: var(--diffnote-color-bg); }
 .diffnote-compose textarea:focus { outline: 2px solid var(--diffnote-color-accent); outline-offset: -1px; }
+.diffnote-toggle { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 13px; color: var(--diffnote-color-muted); white-space: nowrap; cursor: pointer; user-select: none; }
+.diffnote-toggle__count { color: var(--diffnote-color-muted); }
+.diffnote-toggle + .diffnote-topbar__quit { margin-left: 0; }
+/* Resolved threads out of the way: their cards and list entries, and the
+   marks on lines that only they are about. */
+.diffnote-hide-resolved .diffnote-thread--resolved { display: none; }
+.diffnote-hide-resolved .diffnote-thread-row:has(> td > .diffnote-thread--resolved) { display: none; }
+.diffnote-hide-resolved .diffnote-outdated__entry:has(> .diffnote-thread--resolved) { display: none; }
+.diffnote-hide-resolved .diffnote-threadlist .is-resolved { display: none; }
+.diffnote-hide-resolved .diffnote-line--resolved-only > td:first-child { --dn-l: 0 0 0 0 transparent; }
+.diffnote-hide-resolved .diffnote-line--resolved-only .diffnote-line__gutter-old, .diffnote-hide-resolved .diffnote-line--resolved-only .diffnote-line__gutter-new { color: var(--diffnote-color-muted); font-weight: 400; }
 .diffnote-topbar__quit { margin-left: auto; }
 .diffnote-button { font: inherit; font-size: 12.5px; padding: 3px 12px; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; cursor: pointer; }
 .diffnote-button:hover { background: var(--diffnote-color-gutter); }
@@ -2020,6 +2037,40 @@ const SCRIPT: &str = r#"
     if (e.key === 'Escape') { pinned = null; clear(); }
   });
 
+  // --- Hiding resolved threads -------------------------------------------
+  // The box in the top bar (kept between visits, where the browser allows).
+  // Cards and list entries are hidden by the style; a line's mark is too
+  // when every thread on it is resolved, which is worked out here (and again
+  // whenever the page changes).
+  var hideBox = document.querySelector('[data-diffnote-hide-resolved]');
+  function syncResolved() {
+    var hide = !!(hideBox && hideBox.checked);
+    document.body.classList.toggle('diffnote-hide-resolved', hide);
+    slice.call(document.querySelectorAll('.diffnote-revision')).forEach(function (view) {
+      var done = {};
+      slice.call(view.querySelectorAll('.diffnote-thread--resolved[data-diffnote-thread-id]')).forEach(function (c) {
+        done[c.getAttribute('data-diffnote-thread-id')] = true;
+      });
+      slice.call(view.querySelectorAll('tr[data-diffnote-threads]')).forEach(function (row) {
+        var ids = row.getAttribute('data-diffnote-threads').split(' ').filter(Boolean);
+        row.classList.toggle('diffnote-line--resolved-only', hide && ids.length > 0 && ids.every(function (id) { return done[id]; }));
+      });
+    });
+    var count = document.querySelector('[data-diffnote-resolved-count]');
+    if (count) {
+      var shownView = document.querySelector('.diffnote-revision.is-current') || document;
+      var n = shownView.querySelectorAll('.diffnote-threadlist .is-resolved').length;
+      count.textContent = n ? '(' + n + ')' : '';
+    }
+  }
+  if (hideBox) {
+    try { hideBox.checked = localStorage.getItem('diffnote-hide-resolved') === '1'; } catch (e) { /* not kept */ }
+    hideBox.addEventListener('change', function () {
+      try { localStorage.setItem('diffnote-hide-resolved', hideBox.checked ? '1' : '0'); } catch (e) { /* not kept */ }
+      syncResolved();
+    });
+  }
+
   // --- Revisions ---------------------------------------------------------
   // Set by the served page: draws a view again (see `refresh` below).
   var refreshView = null;
@@ -2029,6 +2080,7 @@ const SCRIPT: &str = r#"
     views.forEach(function (v, k) { v.classList.toggle('is-current', k === i); });
     links.forEach(function (a, k) { a.classList.toggle('is-current', k === i); });
     if (refreshView && views[i].hasAttribute('data-stale')) refreshView(i);
+    syncResolved();
   }
   if (views.length > 1) {
     document.documentElement.classList.add('diffnote-js');
@@ -2092,6 +2144,7 @@ const SCRIPT: &str = r#"
       });
       var summary = document.querySelector('.diffnote-summary p');
       if (summary) summary.textContent = 'スレッド ' + res.all + ' 件(解決済み ' + (res.all - res.open) + ' 件)';
+      syncResolved();
       if (again) {
         var current = document.querySelector('.diffnote-revision.is-current') || document;
         activate(current, res.thread);
@@ -2388,6 +2441,7 @@ const SCRIPT: &str = r#"
         var details = fresh.closest('details.diffnote-file, .diffnote-file > details');
         if (details) details.open = true;
         insertListItem(section, p);
+        syncResolved();
         fresh.scrollIntoView({ block: 'nearest' });
         return;
       }
@@ -2407,6 +2461,7 @@ const SCRIPT: &str = r#"
       var row = parseRow(p.card_row);
       after.parentNode.insertBefore(row, at);
       insertListItem(section, p);
+      syncResolved();
       var card = row.querySelector('.diffnote-thread');
       if (card) {
         pinned = card.getAttribute('data-diffnote-thread-id');
@@ -2594,9 +2649,11 @@ const SCRIPT: &str = r#"
         views[k].innerHTML = res.html;
         views[k].removeAttribute('data-stale');
         watchFiles(k);
+        syncResolved();
       });
     };
   }
+  syncResolved();
 })();
 "#;
 
@@ -3206,6 +3263,45 @@ mod tests {
         let html = render_bundle(&loaded).unwrap();
         assert!(!html.contains(r#"<nav class="diffnote-threadlist">"#));
         assert!(html.contains(r#"<nav class="diffnote-filelist">"#));
+    }
+
+    #[test]
+    fn the_export_has_a_box_to_hide_resolved_threads_only_when_there_are_some() {
+        // The scenario has a resolved thread.
+        let s = scenario();
+        assert!(s.html.contains(r#"<label class="diffnote-toggle"><input type="checkbox" data-diffnote-hide-resolved> 解決済みを隠す"#), "{}", &s.html[..600]);
+        // The counter the script fills in.
+        assert!(s.html.contains("data-diffnote-resolved-count"));
+        // Nothing resolved: nothing to hide, so no box.
+        let html = dated(Vec::new());
+        assert!(
+            !html.contains(r#"<input type="checkbox" data-diffnote-hide-resolved>"#),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn the_served_page_always_has_the_box_for_threads_resolved_later() {
+        let (_dir, loaded) = bundle_of(&[(R1_BASE, R1_HEAD, files_source(None))], Vec::new());
+        let html = render_bundle_interactive(&loaded).unwrap();
+        assert!(html.contains(r#"<input type="checkbox" data-diffnote-hide-resolved>"#));
+        // Before the quit button, which stays at the right end.
+        let toggle = html.find("data-diffnote-hide-resolved>").unwrap();
+        assert!(toggle < html.find("data-diffnote-shutdown").unwrap());
+    }
+
+    #[test]
+    fn hiding_resolved_threads_covers_cards_rows_list_entries_and_line_marks() {
+        // The rules the box switches on (the class is on the body).
+        for rule in [
+            ".diffnote-hide-resolved .diffnote-thread--resolved { display: none; }",
+            ".diffnote-hide-resolved .diffnote-thread-row:has(> td > .diffnote-thread--resolved) { display: none; }",
+            ".diffnote-hide-resolved .diffnote-outdated__entry:has(> .diffnote-thread--resolved) { display: none; }",
+            ".diffnote-hide-resolved .diffnote-threadlist .is-resolved { display: none; }",
+            ".diffnote-hide-resolved .diffnote-line--resolved-only > td:first-child { --dn-l: 0 0 0 0 transparent; }",
+        ] {
+            assert!(STYLE.contains(rule), "{rule}");
+        }
     }
 
     #[test]
