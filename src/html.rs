@@ -49,12 +49,22 @@ struct Marks {
     /// Where in its file a thread starts (the first line, or where the lines
     /// were), to order the thread list.
     starts: HashMap<Ulid, u32>,
+    /// Whether the page can be changed from the browser (the served one): its
+    /// thread cards get buttons and a reply box.
+    interactive: bool,
 }
 
-/// Renders a whole bundle: one view per recorded revision that has a diff
-/// (a fresh `init` snapshot has none), oldest first.
-pub fn render_bundle(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
-    let mut parsed = Vec::new();
+/// The revisions that have a diff to show, each with its label, diff and
+/// tree (a fresh `init` snapshot has no diff, so is left out).
+struct Shown<'a> {
+    label: String,
+    diff: UnifiedDiff,
+    revision: &'a crate::model::Revision,
+    tree: Vec<crate::model::TreeFile>,
+}
+
+fn shown_revisions(loaded: &crate::bundle::Loaded) -> anyhow::Result<Vec<Shown<'_>>> {
+    let mut shown = Vec::new();
     for revision in loaded.revisions() {
         let Some(text) = loaded
             .revision_diff(revision)
@@ -69,24 +79,103 @@ pub fn render_bundle(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
         };
         let label = format!(
             "#{} {source} ({})",
-            parsed.len() + 1,
+            shown.len() + 1,
             revision.created_at.date()
         );
-        parsed.push((label, diff, revision, loaded.manifest(revision)));
+        shown.push(Shown {
+            label,
+            diff,
+            revision,
+            tree: loaded.manifest(revision),
+        });
     }
-    if parsed.is_empty() {
+    if shown.is_empty() {
         anyhow::bail!("バンドルに記録された差分がありません");
     }
-    let views: Vec<RevisionView> = parsed
+    Ok(shown)
+}
+
+fn revision_views<'a>(shown: &'a [Shown<'a>]) -> Vec<RevisionView<'a>> {
+    shown
         .iter()
-        .map(|(label, diff, revision, tree)| RevisionView {
-            label: label.clone(),
-            diff,
-            files: &revision.files,
-            tree,
+        .map(|s| RevisionView {
+            label: s.label.clone(),
+            diff: &s.diff,
+            files: &s.revision.files,
+            tree: &s.tree,
+        })
+        .collect()
+}
+
+/// Renders a whole bundle: one view per recorded revision that has a diff
+/// (a fresh `init` snapshot has none), oldest first.
+pub fn render_bundle(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
+    let shown = shown_revisions(loaded)?;
+    let views = revision_views(&shown);
+    Ok(render(&loaded.events, &views, &loaded.blobs()))
+}
+
+/// Like [`render_bundle`], for a page whose threads can be changed from the
+/// browser: each card has buttons and a reply box, and the page's script talks
+/// to the server that serves it.
+pub fn render_bundle_interactive(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
+    let shown = shown_revisions(loaded)?;
+    let views = revision_views(&shown);
+    Ok(render_with(&loaded.events, &views, &loaded.blobs(), true))
+}
+
+/// What the browser needs to update after a thread changed: for every
+/// revision's view, the thread's new card and its entry in the thread list
+/// (with the ids that view's page uses), and the counts.
+pub struct ThreadFragments {
+    pub views: Vec<ViewFragment>,
+    pub open: usize,
+    pub all: usize,
+}
+
+pub struct ViewFragment {
+    pub revision: usize,
+    pub card: String,
+    pub list_item: String,
+}
+
+/// The fragments for the thread `id` of `loaded` as the interactive page
+/// draws it, or `None` if there is no such thread (or nothing to show).
+pub fn thread_fragments(loaded: &crate::bundle::Loaded, id: Ulid) -> Option<ThreadFragments> {
+    let shown = shown_revisions(loaded).ok()?;
+    let views = revision_views(&shown);
+    let threads = build_threads(&loaded.events);
+    let thread = threads.iter().find(|t| t.root_id == id)?;
+    let blobs = loaded.blobs();
+    let fragments = views
+        .iter()
+        .enumerate()
+        .map(|(i, view)| {
+            let placed = place(&threads, view, &blobs, true);
+            ViewFragment {
+                revision: i,
+                card: prefix_ids(&render_thread_html(thread, &placed.marks), i),
+                list_item: prefix_ids(&thread_list_item(thread, &placed.marks), i),
+            }
         })
         .collect();
-    Ok(render(&loaded.events, &views, &loaded.blobs()))
+    Some(ThreadFragments {
+        views: fragments,
+        open: threads.iter().filter(|t| !t.resolved).count(),
+        all: threads.len(),
+    })
+}
+
+/// Element ids must be unique across the views, so a view's ids carry its
+/// number.
+fn prefix_ids(html: &str, view: usize) -> String {
+    html.replace(r#"id="file-"#, &format!(r#"id="r{view}-file-"#))
+        .replace(r##"href="#file-"##, &format!(r##"href="#r{view}-file-"##))
+        .replace(r#"id="thread-"#, &format!(r#"id="r{view}-thread-"#))
+        .replace(
+            r##"href="#thread-"##,
+            &format!(r##"href="#r{view}-thread-"##),
+        )
 }
 
 /// One revision of the review to show: its diff and per-file digests, and a
@@ -106,6 +195,15 @@ pub struct RevisionView<'a> {
 /// script only switches which view is visible; without it all views are
 /// simply stacked.
 pub fn render(events: &[Event], views: &[RevisionView], blobs: &crate::digest::Blobs) -> String {
+    render_with(events, views, blobs, false)
+}
+
+pub fn render_with(
+    events: &[Event],
+    views: &[RevisionView],
+    blobs: &crate::digest::Blobs,
+    interactive: bool,
+) -> String {
     let threads = build_threads(events);
     let syntax_set = SyntaxSet::load_defaults_newlines();
     let theme_set = ThemeSet::load_defaults();
@@ -132,6 +230,11 @@ pub fn render(events: &[Event], views: &[RevisionView], blobs: &crate::digest::B
         }
         body.push_str("</ul></nav>\n");
     }
+    if interactive {
+        body.push_str(
+            r#"<button type="button" class="diffnote-button diffnote-topbar__quit" data-diffnote-shutdown title="サーバーを止めます">終了</button>"#,
+        );
+    }
     body.push_str("</div>\n");
     for (i, view) in views.iter().enumerate() {
         let current = if i + 1 == views.len() {
@@ -139,28 +242,42 @@ pub fn render(events: &[Event], views: &[RevisionView], blobs: &crate::digest::B
         } else {
             ""
         };
-        let inner = render_view(&threads, view, blobs, &syntax_set, theme);
-        // Element ids must be unique across the views.
-        let inner = inner
-            .replace(r#"id="file-"#, &format!(r#"id="r{i}-file-"#))
-            .replace(r##"href="#file-"##, &format!(r##"href="#r{i}-file-"##))
-            .replace(r#"id="thread-"#, &format!(r#"id="r{i}-thread-"#))
-            .replace(r##"href="#thread-"##, &format!(r##"href="#r{i}-thread-"##));
+        let inner = prefix_ids(
+            &render_view(&threads, view, blobs, &syntax_set, theme, interactive),
+            i,
+        );
         body.push_str(&format!(
             r#"<section class="diffnote-revision{current}" id="rev-{i}" data-diffnote-revision="{i}"><h2 class="diffnote-revision__title">{}</h2>{inner}</section>"#,
             escape_html(&view.label)
         ));
     }
-    wrap_document(&body, title.unwrap_or(DEFAULT_TITLE))
+    wrap_document(&body, title.unwrap_or(DEFAULT_TITLE), interactive)
 }
 
-fn render_view(
-    threads: &[Thread],
+/// Where every thread goes in one revision's view, worked out from its
+/// anchor and the texts (never from what the diff shows).
+struct Placed<'a> {
+    /// The view's diff plus context around threads it doesn't show.
+    diff: UnifiedDiff,
+    global: Vec<&'a Thread>,
+    by_file: HashMap<String, Vec<&'a Thread>>,
+    /// Where a thread's card is drawn: keyed by the *last* line of its range.
+    by_line: HashMap<(String, Side, u32), Vec<&'a Thread>>,
+    /// Every line covered by a Span anchor's range, and *which* thread(s)
+    /// cover it -- so overlapping range comments can each get their own
+    /// color band instead of collapsing into one undifferentiated highlight.
+    highlighted: HashMap<(String, Side, u32), Vec<Ulid>>,
+    outdated: HashMap<String, Vec<&'a Thread>>,
+    marks: Marks,
+    file_order: Vec<String>,
+}
+
+fn place<'a>(
+    threads: &'a [Thread],
     view: &RevisionView,
     blobs: &crate::digest::Blobs,
-    syntax_set: &SyntaxSet,
-    theme: &Theme,
-) -> String {
+    interactive: bool,
+) -> Placed<'a> {
     let versions = anchor::ViewVersions {
         files: view.files,
         tree: view.tree,
@@ -184,7 +301,10 @@ fn render_view(
     let mut highlighted: HashMap<(String, Side, u32), Vec<Ulid>> = HashMap::new();
     // A stable color (index into PALETTE) per thread that ends up as a Line
     // placement, assigned in document order so it's deterministic run to run.
-    let mut marks = Marks::default();
+    let mut marks = Marks {
+        interactive,
+        ..Marks::default()
+    };
     let mut outdated: HashMap<String, Vec<&Thread>> = HashMap::new();
 
     for (thread, placement) in threads.iter().zip(placements) {
@@ -277,6 +397,37 @@ fn render_view(
         }
     }
 
+    Placed {
+        diff: expanded,
+        global,
+        by_file,
+        by_line,
+        highlighted,
+        outdated,
+        marks,
+        file_order,
+    }
+}
+
+fn render_view(
+    threads: &[Thread],
+    view: &RevisionView,
+    blobs: &crate::digest::Blobs,
+    syntax_set: &SyntaxSet,
+    theme: &Theme,
+    interactive: bool,
+) -> String {
+    let Placed {
+        diff,
+        global,
+        by_file,
+        by_line,
+        highlighted,
+        outdated,
+        marks,
+        file_order,
+    } = place(threads, view, blobs, interactive);
+    let diff = &diff;
     let mut body = String::new();
     body.push_str(r#"<aside class="diffnote-sidebar"><details class="diffnote-side" open><summary>ファイル</summary><nav class="diffnote-filelist"><ul>"#);
     for key in &file_order {
@@ -568,6 +719,39 @@ fn preview(body: &str) -> String {
     out
 }
 
+/// One thread's entry in the thread list.
+fn thread_list_item(t: &Thread, marks: &Marks) -> String {
+    let full = location(marks, t.root_id);
+    let short = match (marks.files.get(&t.root_id), marks.lines.get(&t.root_id)) {
+        (None, _) => "全体".to_string(),
+        (Some(file), lines) => {
+            let name = file.rsplit('/').next().unwrap_or(file);
+            match lines {
+                Some(&(a, b)) if a == b => format!("{name}:{a}"),
+                Some(&(a, b)) => format!("{name}:{a}-{b}"),
+                None => name.to_string(),
+            }
+        }
+    };
+    let color = marks
+        .color_of
+        .get(&t.root_id)
+        .map_or("#8b949e", |c| PALETTE[*c]);
+    format!(
+        r##"<li class="{state}"><a href="#thread-{id}" data-diffnote-jump="{id}" title="{title}"><span class="diffnote-thread__swatch" style="background:{color}"></span><span class="diffnote-threadlist__where">{short}</span>{resolved}<span class="diffnote-threadlist__preview">{preview}</span></a></li>"##,
+        state = if t.resolved { "is-resolved" } else { "" },
+        id = t.root_id,
+        title = escape_html(full.as_deref().unwrap_or("差分全体")),
+        short = escape_html(&short),
+        resolved = if t.resolved {
+            r#"<span class="diffnote-threadlist__state">解決済み</span>"#
+        } else {
+            ""
+        },
+        preview = escape_html(&preview(&t.body)),
+    )
+}
+
 /// Every thread in reading order -- review-wide ones, then by file and line --
 /// each a link to its card.
 fn render_thread_list(threads: &[Thread], file_order: &[String], marks: &Marks) -> String {
@@ -591,35 +775,7 @@ fn render_thread_list(threads: &[Thread], file_order: &[String], marks: &Marks) 
         threads.len(),
     );
     for (_, _, t) in items {
-        let full = location(marks, t.root_id);
-        let short = match (marks.files.get(&t.root_id), marks.lines.get(&t.root_id)) {
-            (None, _) => "全体".to_string(),
-            (Some(file), lines) => {
-                let name = file.rsplit('/').next().unwrap_or(file);
-                match lines {
-                    Some(&(a, b)) if a == b => format!("{name}:{a}"),
-                    Some(&(a, b)) => format!("{name}:{a}-{b}"),
-                    None => name.to_string(),
-                }
-            }
-        };
-        let color = marks
-            .color_of
-            .get(&t.root_id)
-            .map_or("#8b949e", |c| PALETTE[*c]);
-        out.push_str(&format!(
-            r##"<li class="{state}"><a href="#thread-{id}" data-diffnote-jump="{id}" title="{title}"><span class="diffnote-thread__swatch" style="background:{color}"></span><span class="diffnote-threadlist__where">{short}</span>{resolved}<span class="diffnote-threadlist__preview">{preview}</span></a></li>"##,
-            state = if t.resolved { "is-resolved" } else { "" },
-            id = t.root_id,
-            title = escape_html(full.as_deref().unwrap_or("差分全体")),
-            short = escape_html(&short),
-            resolved = if t.resolved {
-                r#"<span class="diffnote-threadlist__state">解決済み</span>"#
-            } else {
-                ""
-            },
-            preview = escape_html(&preview(&t.body)),
-        ));
+        out.push_str(&thread_list_item(t, marks));
     }
     out.push_str("</ol></nav></details>");
     out
@@ -677,8 +833,24 @@ fn render_thread_html(t: &Thread, marks: &Marks) -> String {
     for r in &t.replies {
         out.push_str(&render_comment_article(&r.author, r.created_at, &r.body));
     }
+    if marks.interactive {
+        out.push_str(&render_actions(t));
+    }
     out.push_str("</details>");
     out
+}
+
+/// The buttons and reply box of a thread card on the interactive page.
+fn render_actions(t: &Thread) -> String {
+    let (action, label) = if t.resolved {
+        ("reopen", "再開する")
+    } else {
+        ("resolve", "解決にする")
+    };
+    format!(
+        r#"<div class="diffnote-thread__actions"><form class="diffnote-reply" data-diffnote-thread="{id}"><textarea rows="2" placeholder="返信を書く(Ctrl+Enter で送信)"></textarea><div class="diffnote-reply__buttons"><button type="submit" class="diffnote-button diffnote-button--primary">返信</button><button type="button" class="diffnote-button" data-diffnote-action="{action}" data-diffnote-thread="{id}">{label}</button></div></form></div>"#,
+        id = t.root_id,
+    )
 }
 
 fn render_snippet(lines: Option<&Vec<String>>, class: &str) -> String {
@@ -785,7 +957,7 @@ fn escape_html(s: &str) -> String {
 /// What the page is called when the review has no title.
 const DEFAULT_TITLE: &str = "diffnote レビュー";
 
-fn wrap_document(body: &str, title: &str) -> String {
+fn wrap_document(body: &str, title: &str, interactive: bool) -> String {
     format!(
         r##"<!DOCTYPE html>
 <html lang="ja">
@@ -797,7 +969,7 @@ fn wrap_document(body: &str, title: &str) -> String {
 {css}
 </style>
 </head>
-<body>
+<body{api}>
 <article class="diffnote-review">
 {body}
 </article>
@@ -808,6 +980,12 @@ fn wrap_document(body: &str, title: &str) -> String {
 </html>
 "##,
         title = escape_html(title),
+        // The script acts on the server only where there is one.
+        api = if interactive {
+            r#" data-diffnote-api="1""#
+        } else {
+            ""
+        },
         css = STYLE,
         js = SCRIPT,
     )
@@ -868,6 +1046,18 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-copy { margin-left: 8px; padding: 0 7px; font: inherit; font-size: 11px; font-weight: 400; line-height: 18px; color: var(--diffnote-color-muted); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 4px; cursor: pointer; vertical-align: baseline; }
 .diffnote-copy:hover { color: var(--diffnote-color-fg); border-color: var(--diffnote-color-muted); }
 .diffnote-copy.is-done { color: #1a7f37; border-color: #1a7f37; }
+.diffnote-topbar__quit { margin-left: auto; }
+.diffnote-button { font: inherit; font-size: 12.5px; padding: 3px 12px; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; cursor: pointer; }
+.diffnote-button:hover { background: var(--diffnote-color-gutter); }
+.diffnote-button:disabled { opacity: 0.6; cursor: default; }
+.diffnote-button--primary { color: #fff; background: var(--diffnote-color-accent); border-color: var(--diffnote-color-accent); }
+.diffnote-button--primary:hover { background: #0860ca; }
+.diffnote-thread__actions { margin-top: 6px; }
+.diffnote-reply textarea { display: block; width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; resize: vertical; border: 1px solid var(--diffnote-color-border); border-radius: 6px; background: var(--diffnote-color-bg); }
+.diffnote-reply textarea:focus { outline: 2px solid var(--diffnote-color-accent); outline-offset: -1px; }
+.diffnote-reply__buttons { display: flex; gap: 6px; margin-top: 6px; }
+.diffnote-comment.is-pending { opacity: 0.55; }
+.diffnote-error { margin: 6px 0 0; color: #cf222e; font-size: 12.5px; }
 .diffnote-thread__where { font-family: var(--diffnote-font-mono); font-size: 12px; font-weight: 400; color: var(--diffnote-color-muted); }
 .diffnote-filelist ul { list-style: none; margin: 0; padding: 0; }
 .diffnote-filelist li { display: flex; align-items: center; justify-content: space-between; gap: 6px; border-radius: 6px; }
@@ -1123,6 +1313,131 @@ const SCRIPT: &str = r#"
       ' ' + two(d.getHours()) + ':' + two(d.getMinutes());
     t.title = d.toLocaleString();
   });
+
+  // --- Changing threads from the served page ----------------------------
+  // A change is sent to the server, which answers with the HTML of what
+  // changed; that is swapped in, so the page is never reloaded. The change
+  // also shows at once (a reply as a faded comment, a resolve as the new
+  // state) and is corrected by the answer, or undone with a message if it
+  // fails.
+  if (document.body.hasAttribute('data-diffnote-api')) {
+    var post = function (path, data) {
+      return fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Diffnote': '1' },
+        credentials: 'same-origin',
+        body: JSON.stringify(data || {})
+      }).then(function (r) {
+        return r.json().catch(function () { return { ok: false, error: '応答を読めませんでした' }; });
+      }, function () {
+        return { ok: false, error: 'サーバーに接続できませんでした' };
+      });
+    };
+    var swap = function (el, html) {
+      var tpl = document.createElement('template');
+      tpl.innerHTML = html.trim();
+      var fresh = tpl.content.firstElementChild;
+      el.replaceWith(fresh);
+      return fresh;
+    };
+    var apply = function (res) {
+      var again = active && active.id === res.thread ? active.scope : null;
+      if (again) clear();
+      res.views.forEach(function (v) {
+        var card = document.getElementById('r' + v.revision + '-thread-' + res.thread);
+        if (card) swap(card, v.card);
+        var section = document.getElementById('rev-' + v.revision);
+        var link = section && section.querySelector('a[data-diffnote-jump=' + JSON.stringify(res.thread) + ']');
+        if (link && link.parentElement) swap(link.parentElement, v.list_item);
+      });
+      slice.call(document.querySelectorAll('.diffnote-side .diffnote-badge[title]')).forEach(function (b) {
+        b.textContent = res.open + ' / ' + res.all;
+      });
+      var summary = document.querySelector('.diffnote-summary p');
+      if (summary) summary.textContent = 'スレッド ' + res.all + ' 件(解決済み ' + (res.all - res.open) + ' 件)';
+      if (again) {
+        var current = document.querySelector('.diffnote-revision.is-current') || document;
+        activate(current, res.thread);
+      }
+    };
+    var showError = function (where, message) {
+      var old = where.querySelector('.diffnote-error');
+      if (old) old.remove();
+      var p = document.createElement('p');
+      p.className = 'diffnote-error';
+      p.textContent = message;
+      where.appendChild(p);
+    };
+    var send = function (form) {
+      var box = form.querySelector('textarea');
+      var text = box.value.trim();
+      if (!text || form.classList.contains('is-sending')) return;
+      form.classList.add('is-sending');
+      box.disabled = true;
+      var pending = document.createElement('article');
+      pending.className = 'diffnote-comment is-pending';
+      var who = document.createElement('p');
+      who.className = 'diffnote-comment__author';
+      who.textContent = '保存中…';
+      var what = document.createElement('div');
+      what.className = 'diffnote-comment__body';
+      what.textContent = text;
+      pending.appendChild(who);
+      pending.appendChild(what);
+      var actions = form.closest('.diffnote-thread__actions');
+      actions.parentNode.insertBefore(pending, actions);
+      post('/api/threads/' + form.getAttribute('data-diffnote-thread') + '/replies', { body: text }).then(function (res) {
+        pending.remove();
+        form.classList.remove('is-sending');
+        box.disabled = false;
+        if (res.ok) {
+          apply(res);
+        } else {
+          showError(form, res.error || '保存できませんでした');
+          box.focus();
+        }
+      });
+    };
+    document.addEventListener('submit', function (e) {
+      var form = e.target.closest ? e.target.closest('.diffnote-reply') : null;
+      if (!form) return;
+      e.preventDefault();
+      send(form);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && e.target.closest && e.target.closest('.diffnote-reply')) {
+        e.preventDefault();
+        send(e.target.closest('.diffnote-reply'));
+      }
+    });
+    document.addEventListener('click', function (e) {
+      var quit = e.target.closest ? e.target.closest('[data-diffnote-shutdown]') : null;
+      if (quit) {
+        post('/api/shutdown').then(function () {
+          document.body.innerHTML = '<p style="padding:24px;font:14px sans-serif">終了しました。このタブは閉じてかまいません。</p>';
+        });
+        return;
+      }
+      var button = e.target.closest ? e.target.closest('[data-diffnote-action]') : null;
+      if (!button) return;
+      var id = button.getAttribute('data-diffnote-thread');
+      var action = button.getAttribute('data-diffnote-action');
+      var card = button.closest('.diffnote-thread');
+      var was = card.classList.contains('diffnote-thread--resolved');
+      // At once: the state and the button show what will be.
+      card.classList.toggle('diffnote-thread--resolved', action === 'resolve');
+      button.disabled = true;
+      post('/api/threads/' + id + '/' + action).then(function (res) {
+        if (res.ok) {
+          apply(res);
+        } else {
+          card.classList.toggle('diffnote-thread--resolved', was);
+          button.disabled = false;
+          showError(button.closest('.diffnote-thread__actions'), res.error || '保存できませんでした');
+        }
+      });
+    });
+  }
 
   // --- The file list follows what is on screen ---------------------------
   if ('IntersectionObserver' in window) {

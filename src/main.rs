@@ -103,6 +103,26 @@ enum Cmd {
         #[arg(long, value_name = "NAME")]
         author: Option<String>,
     },
+    /// レビューをブラウザで開き、返信や解決をその画面で行う(自分のパソコンからだけ接続できる)。
+    Serve {
+        /// レビューバンドル(.diffnote)のパス。省略時は ./.diffnote。
+        #[arg(
+            short = 'f',
+            long = "file",
+            default_value = ".diffnote",
+            hide_default_value = true
+        )]
+        review: PathBuf,
+        /// 待ち受けるポート。省略時は空いているものを自動で選ぶ。
+        #[arg(long, value_name = "PORT", default_value_t = 0)]
+        port: u16,
+        /// ブラウザを自動で開かない(URL だけを表示する)。
+        #[arg(long)]
+        no_open: bool,
+        /// 返信などの作者名。省略時は git の user.name、なければ user.email、なければ環境のユーザー名。
+        #[arg(long, value_name = "NAME")]
+        author: Option<String>,
+    },
     /// レビューバンドルに保存されたスレッドと返信を表示する。
     Show {
         /// レビューバンドル(.diffnote)のパス。省略時は ./.diffnote。
@@ -154,6 +174,12 @@ fn main() -> Result<()> {
             author,
         } => cmd_edit(review, targets, snapshot, show, title, author),
         Cmd::Show { review } => cmd_show(review),
+        Cmd::Serve {
+            review,
+            port,
+            no_open,
+            author,
+        } => cmd_serve(review, port, no_open, author),
         Cmd::Export {
             review,
             output,
@@ -173,6 +199,46 @@ fn main() -> Result<()> {
             cmd_export(review, output)
         }
     }
+}
+
+fn cmd_serve(review: PathBuf, port: u16, no_open: bool, author: Option<String>) -> Result<()> {
+    if !review.exists() {
+        anyhow::bail!(
+            "{} がありません。先に `diffnote edit` か `diffnote init` でレビューを作ってください",
+            review.display()
+        );
+    }
+    let options = diffnote::serve::Options {
+        review,
+        port,
+        author,
+    };
+    diffnote::serve::run(&options, |url| {
+        println!("ブラウザで開きます: {url}");
+        println!(
+            "終了するには、この画面で Ctrl+C を押すか、ブラウザの「終了」ボタンを押してください"
+        );
+        if !no_open && !open_in_browser(url) {
+            println!("ブラウザを自動で開けませんでした。上の URL を、ブラウザに貼り付けてください");
+        }
+    })
+}
+
+/// Asks the system to open `url` in the default browser.
+fn open_in_browser(url: &str) -> bool {
+    let (program, args): (&str, Vec<&str>) = if cfg!(windows) {
+        ("cmd", vec!["/C", "start", "", url])
+    } else if cfg!(target_os = "macos") {
+        ("open", vec![url])
+    } else {
+        ("xdg-open", vec![url])
+    };
+    Command::new(program)
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 fn cmd_export(review_path: PathBuf, output_path: PathBuf) -> Result<()> {
