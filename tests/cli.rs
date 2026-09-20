@@ -781,8 +781,9 @@ fn a_thread_survives_a_second_review_from_the_same_base_with_a_longer_range() {
     let second_view = &html[html.find(r#"id="rev-1""#).unwrap()..];
     let (before, _) = second_view.split_once("why mul?").expect("the mul thread is in the view");
     let summary = &before[before.rfind("<summary>").unwrap()..];
-    // Placed at its line, not as a line that was deleted or is not there.
-    assert!(summary.contains("(L3)"), "{summary}");
+    // Placed at its line in this view (the header pushed it from 3 to 4), not
+    // as a line that was deleted or is not there.
+    assert!(summary.contains("(L4)"), "{summary}");
     assert!(!summary.contains("削除された行"), "{summary}");
     assert!(!summary.contains("まだない行") && !summary.contains("この版にない行"), "{summary}");
 }

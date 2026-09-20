@@ -40,6 +40,9 @@ struct Marks {
     was: HashMap<Ulid, Vec<String>>,
     /// Threads whose lines this view's head doesn't have, and why.
     absent: HashMap<Ulid, anchor::Absence>,
+    /// The lines (first, last) a thread sits on in this view, for its label:
+    /// where it is here, not where it was written.
+    lines: HashMap<Ulid, (u32, u32)>,
 }
 
 /// Renders a whole bundle: one view per recorded revision that has a diff
@@ -191,6 +194,7 @@ fn render_view(
             } => {
                 let color = marks.color_of.len() % PALETTE.len();
                 marks.color_of.insert(thread.root_id, color);
+                marks.lines.insert(thread.root_id, (line_start, line_end));
                 for line in line_start..=line_end {
                     highlighted
                         .entry((file.clone(), side, line))
@@ -508,14 +512,11 @@ fn thread_row(t: &Thread, marks: &Marks) -> String {
 /// A short, explicit "which line(s) is this about" label, alongside the
 /// `diffnote-line--commented` highlight -- not relying on color alone to
 /// show a range comment's extent.
-fn range_label(anchor: &Anchor) -> String {
-    match anchor {
-        Anchor::Global { .. } | Anchor::File { .. } => String::new(),
-        Anchor::Span { base, head } => match head.as_ref().filter(|h| !h.is_empty()).or(base.as_ref()) {
-            Some(side) if side.len == 1 => format!("(L{})", side.start),
-            Some(side) if side.len > 1 => format!("(L{}\u{2013}L{})", side.start, side.end()),
-            _ => String::new(),
-        },
+fn range_label(lines: Option<&(u32, u32)>) -> String {
+    match lines {
+        Some(&(a, b)) if a == b => format!("(L{a})"),
+        Some(&(a, b)) => format!("(L{a}\u{2013}L{b})"),
+        None => String::new(),
     }
 }
 
@@ -544,7 +545,7 @@ fn render_thread_html(t: &Thread, marks: &Marks) -> String {
         } else {
             "未解決"
         },
-        range_label(&t.anchor),
+        range_label(marks.lines.get(&t.root_id)),
         match marks.absent.get(&t.root_id) {
             Some(anchor::Absence::Deleted) => " (削除された行)",
             Some(anchor::Absence::NotYet) => " (この版にはまだない行)",
@@ -649,7 +650,8 @@ fn wrap_document(body: &str) -> String {
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<title>diffnote review</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>diffnote レビュー</title>
 <style>
 {css}
 </style>
@@ -1065,6 +1067,29 @@ mod tests {
         // (old 4 / new 4): the new text doesn't exist there.
         let rows = rows_of(view(&s.html, 0), s.t2);
         assert_eq!(rows, vec![("4".to_string(), "4".to_string())]);
+    }
+
+    /// The text of a thread card's summary line in a view.
+    fn summary_of(view: &str, id: Ulid) -> String {
+        let from = view.find(&format!(r#"data-diffnote-thread-id="{id}""#)).unwrap();
+        let rest = &view[from..];
+        let start = rest.find("<summary>").unwrap();
+        rest[start..rest.find("</summary>").unwrap()].to_string()
+    }
+
+    #[test]
+    fn a_threads_line_label_is_where_it_is_in_this_view() {
+        let s = scenario();
+        // `B` is line 2 in revision 1 and line 3 in revision 2 (`top` came
+        // first), whichever revision the thread was written on.
+        assert!(summary_of(view(&s.html, 0), s.t1).contains("(L2)"));
+        assert!(summary_of(view(&s.html, 1), s.t1).contains("(L3)"));
+    }
+
+    #[test]
+    fn the_page_scales_to_a_phones_width() {
+        let s = scenario();
+        assert!(s.html.contains(r#"<meta name="viewport" content="width=device-width, initial-scale=1">"#));
     }
 
     #[test]
