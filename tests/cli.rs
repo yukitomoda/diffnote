@@ -422,3 +422,130 @@ fn threads_on_a_file_a_later_diff_leaves_alone_are_shown_and_can_be_added_to() {
         assert!(second_view.contains(body), "{body}");
     }
 }
+
+/// The mode each recorded revision of `review` was kept with.
+fn modes(review: &Path) -> Vec<bundle::SnapshotMode> {
+    bundle::load(review)
+        .unwrap()
+        .revisions()
+        .map(|r| r.snapshot_mode)
+        .collect()
+}
+
+fn manifest_paths(review: &Path, nth: usize) -> Vec<String> {
+    let loaded = bundle::load(review).unwrap();
+    let rev = loaded.revisions().nth(nth).unwrap();
+    let mut paths: Vec<String> = loaded.manifest(rev).into_iter().map(|f| f.path).collect();
+    paths.sort();
+    paths
+}
+
+#[test]
+fn a_git_review_keeps_only_what_it_needs_by_default() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    // c2..c3 changes calc.txt only; README.md is neither touched nor commented on.
+    env.ok(
+        &repo,
+        &[("+d", "new line")],
+        &["edit", "-f", review.to_str().unwrap(), "c2..c3"],
+    );
+    assert_eq!(modes(&review), [bundle::SnapshotMode::Changed]);
+    assert_eq!(manifest_paths(&review, 0), ["calc.txt"]);
+    // Only calc.txt's two versions are stored: git has everything else.
+    assert_eq!(count_blobs(&review), 2, "{:?}", bundle_names(&review));
+}
+
+#[test]
+fn a_git_review_remembers_the_commits_it_was_made_against() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    env.ok(
+        &repo,
+        &[("+B", "why B?")],
+        &["edit", "-f", review.to_str().unwrap(), "c1..c2"],
+    );
+    let loaded = bundle::load(&review).unwrap();
+    let rev = loaded.revisions().next().unwrap();
+    let diffnote::model::Source::Git(g) = &rev.source else {
+        panic!("a git review");
+    };
+    assert_eq!(g.base, git(&repo, &["rev-parse", "c1"]));
+    assert_eq!(g.head, git(&repo, &["rev-parse", "c2"]));
+    assert_eq!(g.spec, "c1..c2");
+    assert!(g.base.len() == 40 && g.head.len() == 40, "full ids, not names");
+}
+
+#[test]
+fn the_mode_of_a_bundles_first_revision_carries_on_and_an_explicit_one_wins() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    // Ask for the whole tree once...
+    env.ok(
+        &repo,
+        &[("+B", "one")],
+        &["edit", "-f", review_arg, "--snapshot", "full", "c1..c2"],
+    );
+    // ...and the next revision, with no flag, does the same.
+    env.ok(&repo, &[("+d", "two")], &["edit", "-f", review_arg, "c2..c3"]);
+    assert_eq!(
+        modes(&review),
+        [bundle::SnapshotMode::Full, bundle::SnapshotMode::Full]
+    );
+    assert_eq!(manifest_paths(&review, 1), ["README.md", "calc.txt"]);
+
+    // An explicit request beats what the bundle started with.
+    std::fs::write(repo.join("calc.txt"), "a\nB\nc\nd\ne\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c4"]);
+    env.ok(
+        &repo,
+        &[("+e", "three")],
+        &["edit", "-f", review_arg, "--snapshot", "changed", "c3..HEAD"],
+    );
+    assert_eq!(modes(&review)[2], bundle::SnapshotMode::Changed);
+    assert_eq!(manifest_paths(&review, 2), ["calc.txt"]);
+}
+
+#[test]
+fn a_directory_review_keeps_the_full_tree_and_refuses_to_be_told_otherwise() {
+    let env = Env::new();
+    let dir = env.path("project");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "x\n").unwrap();
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    env.ok(&dir, &[], &["init", "-f", review_arg, "."]);
+    std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+
+    // `changed` can't work here, so it is an error, not something quietly
+    // ignored -- and nothing is opened or written.
+    let before = std::fs::read(&review).unwrap();
+    let out = env.run(
+        &dir,
+        &[("+two", "hello")],
+        &["edit", "-f", review_arg, "--snapshot", "changed", "."],
+    );
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("--snapshot changed"), "{err}");
+    assert!(err.contains(".diffnoteignore"), "{err}");
+    assert_eq!(std::fs::read(&review).unwrap(), before, "the bundle is untouched");
+    assert!(!env.path("review.diffnote.draft").exists());
+
+    // `full` is what it does anyway, so asking for it is fine, as is not asking.
+    env.ok(
+        &dir,
+        &[("+two", "hello")],
+        &["edit", "-f", review_arg, "--snapshot", "full", "."],
+    );
+    assert_eq!(
+        modes(&review),
+        [bundle::SnapshotMode::Full, bundle::SnapshotMode::Full]
+    );
+    assert_eq!(manifest_paths(&review, 1), ["a.txt", "b.txt"]);
+}

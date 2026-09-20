@@ -40,6 +40,36 @@ pub type HeadSome<'a> = &'a dyn Fn(&[String]) -> Result<Vec<(String, Vec<u8>)>>;
 /// The whole head tree, for a `full` snapshot.
 pub type HeadAll<'a> = Box<dyn FnOnce() -> Result<Vec<(String, Vec<u8>)>> + 'a>;
 
+/// Bytes at which keeping a whole tree is worth mentioning: 30 MB.
+pub const FULL_SNAPSHOT_WARN_BYTES: u64 = 30 * 1024 * 1024;
+
+/// The snapshot mode a new revision is recorded with. A directory review has
+/// nothing but its own snapshots to compare against, so it always keeps the
+/// full tree. A git review can read whatever it needs from git itself, so it
+/// keeps only what the diff touches and the comments refer to, unless asked
+/// (`explicit`) or already decided by the bundle's first revision (`stored`).
+pub fn pick_snapshot_mode(
+    explicit: Option<SnapshotMode>,
+    stored: Option<SnapshotMode>,
+    source: &Source,
+) -> SnapshotMode {
+    match source {
+        Source::Files { .. } => SnapshotMode::Full,
+        Source::Git(_) => explicit.or(stored).unwrap_or(SnapshotMode::Changed),
+    }
+}
+
+/// What to tell the user when a `full` snapshot of `bytes` is about to be
+/// kept, if it is big enough to mention.
+pub fn full_snapshot_warning(bytes: u64) -> Option<String> {
+    (bytes >= FULL_SNAPSHOT_WARN_BYTES).then(|| {
+        format!(
+            "a `full` snapshot of the reviewed tree would be about {:.1} MB",
+            bytes as f64 / (1024.0 * 1024.0)
+        )
+    })
+}
+
 pub fn tree_file(path: &str, bytes: &[u8]) -> TreeFile {
     TreeFile {
         path: path.to_string(),
@@ -695,5 +725,50 @@ mod tests {
         // calc v1/v2, gone v1, README v1, docs v1: five, not ten.
         assert_eq!(blobs, 5, "{names:?}");
         assert_eq!(names.iter().filter(|n| n.starts_with("diffs/")).count(), 2);
+    }
+
+    // ---- the snapshot mode a new revision gets ----------------------------------
+
+    #[test]
+    fn a_git_review_keeps_only_what_it_needs_unless_told_otherwise() {
+        let git = git_source();
+        assert_eq!(pick_snapshot_mode(None, None, &git), SnapshotMode::Changed);
+        // The bundle's own first revision decides for the ones after it...
+        assert_eq!(
+            pick_snapshot_mode(None, Some(SnapshotMode::Full), &git),
+            SnapshotMode::Full
+        );
+        assert_eq!(
+            pick_snapshot_mode(None, Some(SnapshotMode::Changed), &git),
+            SnapshotMode::Changed
+        );
+        // ...and an explicit request beats both.
+        assert_eq!(
+            pick_snapshot_mode(Some(SnapshotMode::Full), Some(SnapshotMode::Changed), &git),
+            SnapshotMode::Full
+        );
+        assert_eq!(
+            pick_snapshot_mode(Some(SnapshotMode::Changed), Some(SnapshotMode::Full), &git),
+            SnapshotMode::Changed
+        );
+    }
+
+    #[test]
+    fn a_directory_review_always_keeps_the_full_tree() {
+        let dir = Source::Files { base: None };
+        for explicit in [None, Some(SnapshotMode::Changed), Some(SnapshotMode::Full)] {
+            for stored in [None, Some(SnapshotMode::Changed), Some(SnapshotMode::Full)] {
+                assert_eq!(pick_snapshot_mode(explicit, stored, &dir), SnapshotMode::Full);
+            }
+        }
+    }
+
+    #[test]
+    fn only_a_big_full_snapshot_is_worth_a_warning() {
+        assert_eq!(full_snapshot_warning(0), None);
+        assert_eq!(full_snapshot_warning(FULL_SNAPSHOT_WARN_BYTES - 1), None);
+        let w = full_snapshot_warning(FULL_SNAPSHOT_WARN_BYTES).unwrap();
+        assert!(w.contains("30.0 MB"), "{w}");
+        assert!(full_snapshot_warning(100 * 1024 * 1024).unwrap().contains("100.0 MB"));
     }
 }

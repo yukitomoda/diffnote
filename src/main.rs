@@ -47,8 +47,9 @@ enum Cmd {
         /// seen and this session actually adds something: `changed` (both
         /// sides of every touched file, plus every file a comment refers to)
         /// or `full` (+ the whole head tree). Defaults to the bundle's own
-        /// previously-established mode if it has one, otherwise `full`.
-        /// Directory reviews always keep the full tree.
+        /// previously-established mode if it has one, otherwise `changed` for
+        /// git reviews (git itself has the rest). Directory reviews always
+        /// keep the full tree, so `--snapshot changed` is an error there.
         #[arg(long, value_enum)]
         snapshot: Option<diffnote::bundle::SnapshotMode>,
     },
@@ -137,8 +138,6 @@ struct Input {
     source: diffnote::model::Source,
     /// The revision's digest (see `Revision::digest`).
     digest: String,
-    /// `Some` when only one snapshot mode makes sense for this source.
-    forced_snapshot_mode: Option<bundle::SnapshotMode>,
     /// Total size of the tree a `full` snapshot would store.
     tree_size: u64,
     /// The head content of specific files (the ones comments refer to).
@@ -178,7 +177,6 @@ fn git_input(targets: &[String]) -> Result<Input> {
         files,
         new_files,
         base_files,
-        forced_snapshot_mode: None,
         head_some: Box::new(move |paths| repo.read_paths(&head_tree, paths)),
         head_all: Box::new(move || {
             let all: Vec<String> = tree_all.iter().map(|e| e.path.clone()).collect();
@@ -222,7 +220,6 @@ fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Resu
         files,
         new_files: current,
         base_files: Default::default(),
-        forced_snapshot_mode: Some(bundle::SnapshotMode::Full),
         head_some: Box::new(move |paths| {
             Ok(paths
                 .iter()
@@ -240,6 +237,8 @@ fn cmd_init(review_path: PathBuf, dir: PathBuf) -> Result<()> {
     }
     let tree = diffnote::files::read_tree(&dir, std::slice::from_ref(&review_path))?;
     let digest = diffnote::files::tree_digest(&tree);
+    let size: u64 = tree.values().map(|b| b.len() as u64).sum();
+    confirm_snapshot_size(bundle::SnapshotMode::Full, false, size);
     let events = vec![
         Event::Meta {
             version: 1,
@@ -283,6 +282,14 @@ fn cmd_edit(
     let loaded = bundle::load(&review_path)?;
     let input = match loaded.source() {
         Some(diffnote::model::Source::Files { .. }) => {
+            if snapshot_override == Some(bundle::SnapshotMode::Changed) {
+                anyhow::bail!(
+                    "`--snapshot changed` isn't possible for a directory review: with no git to \
+                    read the rest from, the next edit needs the whole tree to compare against, \
+                    so it is always kept in full. Leave out what a review doesn't need with a \
+                    `.diffnoteignore` file instead."
+                );
+            }
             if targets.len() > 1 {
                 anyhow::bail!("a directory review takes at most one argument: the directory");
             }
@@ -307,7 +314,6 @@ fn cmd_edit(
         base_files,
         source,
         digest: diff_digest,
-        forced_snapshot_mode,
         tree_size,
         head_some,
         head_all,
@@ -539,6 +545,10 @@ fn cmd_edit(
     // Only record a not-yet-seen diff when this session actually produced
     // something -- an idle "opened it, looked, closed it" pass shouldn't
     // grow the bundle.
+    // Only asked about (if big) when a new revision is actually recorded.
+    let picked_mode =
+        diffnote::record::pick_snapshot_mode(snapshot_override, loaded.snapshot_mode(), &source);
+    let is_git = matches!(source, diffnote::model::Source::Git(_));
     let additions = diffnote::record::record_session(
         &loaded,
         &mut new_events,
@@ -550,11 +560,7 @@ fn cmd_edit(
             new_files: &new_files,
             base_files: &base_files,
         },
-        &|| {
-            forced_snapshot_mode.unwrap_or_else(|| {
-                resolve_snapshot_mode(snapshot_override, loaded.snapshot_mode(), tree_size)
-            })
-        },
+        &|| confirm_snapshot_size(picked_mode, is_git, tree_size),
         &*head_some,
         head_all,
     )?;
@@ -766,38 +772,25 @@ fn file_digests(
     Ok(out)
 }
 
-/// Bytes at which a `full` snapshot is considered "big enough to ask
-/// about" -- 30 MB, per the user's own threshold.
-const FULL_SNAPSHOT_WARN_BYTES: u64 = 30 * 1024 * 1024;
-
-/// Picks the `SnapshotMode` for a newly-captured digest. In priority
-/// order: an explicit `--snapshot` always wins; otherwise the bundle's own
-/// previously-established mode (so an existing bundle's behavior never
-/// silently changes just because the CLI's own default did); otherwise
-/// `Full`.
-///
-/// If the mode lands on `Full` (however it got there) and the head tree is
-/// at least `FULL_SNAPSHOT_WARN_BYTES`, warns and offers to use `Changed`
-/// instead.
-fn resolve_snapshot_mode(
-    explicit: Option<bundle::SnapshotMode>,
-    stored: Option<bundle::SnapshotMode>,
+/// Asks about the size of a `full` snapshot, if it is big. A git review
+/// can switch to `changed` (git has the rest); a directory review needs its
+/// full tree to compare the next edit against, so it is only told.
+fn confirm_snapshot_size(
+    mode: bundle::SnapshotMode,
+    is_git: bool,
     tree_size: u64,
 ) -> bundle::SnapshotMode {
-    let mode = explicit.or(stored).unwrap_or(bundle::SnapshotMode::Full);
     if mode != bundle::SnapshotMode::Full {
         return mode;
     }
-
-    let size = tree_size;
-    if size < FULL_SNAPSHOT_WARN_BYTES {
+    let Some(warning) = diffnote::record::full_snapshot_warning(tree_size) else {
+        return mode;
+    };
+    eprintln!("warning: {warning}.");
+    if !is_git {
+        eprintln!("Exclude what a review doesn't need with a `.diffnoteignore` file.");
         return mode;
     }
-
-    eprintln!(
-        "warning: a `full` snapshot of the reviewed tree would be about {:.1} MB.",
-        size as f64 / (1024.0 * 1024.0)
-    );
     eprint!("Use `changed` instead (only the files this diff touches)? [y/N] ");
     std::io::Write::flush(&mut std::io::stdout()).ok();
     let mut answer = String::new();
