@@ -42,13 +42,14 @@ struct Cli {
 fn command() -> clap::Command {
     use clap::CommandFactory;
     Cli::command().mut_subcommands(|sub| {
-        sub.help_template(HELP_TEMPLATE)
-                        .mut_args(|a| {
-                {
-                    let heading = if a.is_positional() { "引数" } else { "オプション" };
-                    a.help_heading(heading)
-                }
-            })
+        sub.help_template(HELP_TEMPLATE).mut_args(|a| {
+            let heading = if a.is_positional() {
+                "引数"
+            } else {
+                "オプション"
+            };
+            a.help_heading(heading)
+        })
     })
 }
 
@@ -59,7 +60,12 @@ enum Cmd {
     /// git を使わないディレクトリのスナップショットを新しいレビューバンドルに保存する。以降の `edit` で、その時点からの変更をレビューできる。git のレビューでは不要。
     Init {
         /// 作成するレビューバンドル(.diffnote、zip 形式)のパス。省略時は ./.diffnote。
-        #[arg(short = 'f', long = "file", default_value = ".diffnote", hide_default_value = true)]
+        #[arg(
+            short = 'f',
+            long = "file",
+            default_value = ".diffnote",
+            hide_default_value = true
+        )]
         review: PathBuf,
         /// スナップショットを取るディレクトリ。省略時はカレントディレクトリ。`.diffnoteignore`(なければ`.gitignore`)に一致するファイルは含めない。
         #[arg(value_name = "DIR", default_value = ".", hide_default_value = true)]
@@ -74,7 +80,12 @@ enum Cmd {
     /// レビュー対象を $EDITOR で開いてコメントを書き、レビューバンドルに追記する(git のレビューでは、バンドルがなければ作成する)。
     Edit {
         /// レビューバンドル(.diffnote、zip 形式)のパス。省略時は ./.diffnote。
-        #[arg(short = 'f', long = "file", default_value = ".diffnote", hide_default_value = true)]
+        #[arg(
+            short = 'f',
+            long = "file",
+            default_value = ".diffnote",
+            hide_default_value = true
+        )]
         review: PathBuf,
         /// git のレビュー: git 自身が解決するコミット指定。`A..B` または `A B`(A → B)、`A...B`(A と B のマージベース → B)、単一のコミット(その第一親 → そのコミット)。コミット済みの内容だけをレビューする。ディレクトリのレビュー(`init` で作ったバンドル): 引数は多くても 1 つで、バンドルの最後のスナップショットと比べるディレクトリ(省略時はカレント)。
         #[arg(value_name = "REV|DIR", num_args = 0..)]
@@ -95,13 +106,23 @@ enum Cmd {
     /// レビューバンドルに保存されたスレッドと返信を表示する。
     Show {
         /// レビューバンドル(.diffnote)のパス。省略時は ./.diffnote。
-        #[arg(short = 'f', long = "file", default_value = ".diffnote", hide_default_value = true)]
+        #[arg(
+            short = 'f',
+            long = "file",
+            default_value = ".diffnote",
+            hide_default_value = true
+        )]
         review: PathBuf,
     },
     /// レビューバンドルを、単体で開ける HTML ファイルに書き出す。
     Export {
         /// レビューバンドル(.diffnote)のパス。省略時は ./.diffnote。
-        #[arg(short = 'f', long = "file", default_value = ".diffnote", hide_default_value = true)]
+        #[arg(
+            short = 'f',
+            long = "file",
+            default_value = ".diffnote",
+            hide_default_value = true
+        )]
         review: PathBuf,
         /// 出力する HTML のパス。例: `-o out.html`。
         #[arg(long, short)]
@@ -213,8 +234,14 @@ fn git_input(targets: &[String]) -> Result<Input> {
         .iter()
         .filter_map(|f| f.old_path.clone())
         .collect();
-    let new_files = repo.read_paths(&head_tree, &touched_new)?.into_iter().collect();
-    let base_files = repo.read_paths(&base_tree, &touched_old)?.into_iter().collect();
+    let new_files = repo
+        .read_paths(&head_tree, &touched_new)?
+        .into_iter()
+        .collect();
+    let base_files = repo
+        .read_paths(&base_tree, &touched_old)?
+        .into_iter()
+        .collect();
     let tree_size = head_tree.iter().map(|e| e.size).sum();
     let repo = std::rc::Rc::new(repo);
     let head_tree = std::rc::Rc::new(head_tree);
@@ -300,19 +327,23 @@ fn cmd_init(
         context_lines: 3,
     }];
     if let Some(title) = title.as_deref() {
-        events.extend(review::title_change(&events, title, &diffnote::author::resolve(author.as_deref())));
+        events.extend(review::title_change(
+            &events,
+            title,
+            &diffnote::author::resolve(author.as_deref()),
+        ));
     }
     events.push(Event::Revision(diffnote::model::Revision {
-            id: Ulid::new(),
-            created_at: OffsetDateTime::now_utc(),
-            digest: digest.clone(),
-            source: diffnote::model::Source::Files { base: None },
-            snapshot_mode: bundle::SnapshotMode::Full,
-            files: Vec::new(),
-            tree: tree
-                .iter()
-                .map(|(path, bytes)| diffnote::record::tree_file(path, bytes))
-                .collect(),
+        id: Ulid::new(),
+        created_at: OffsetDateTime::now_utc(),
+        digest: digest.clone(),
+        source: diffnote::model::Source::Files { base: None },
+        snapshot_mode: bundle::SnapshotMode::Full,
+        files: Vec::new(),
+        tree: tree
+            .iter()
+            .map(|(path, bytes)| diffnote::record::tree_file(path, bytes))
+            .collect(),
     }));
     let count = tree.len();
     let additions = bundle::Additions {
@@ -325,7 +356,10 @@ fn cmd_init(
         &events,
         &additions,
     )?;
-    println!("{count} 個のファイルを {} に保存しました", review_path.display());
+    println!(
+        "{count} 個のファイルを {} に保存しました",
+        review_path.display()
+    );
     Ok(())
 }
 
@@ -339,9 +373,7 @@ fn cmd_edit(
 ) -> Result<()> {
     let shows: Vec<diffnote::show::Show> = show_specs
         .iter()
-        .map(|spec| {
-            diffnote::show::parse(spec).map_err(|e| anyhow::anyhow!("--show {spec}: {e}"))
-        })
+        .map(|spec| diffnote::show::parse(spec).map_err(|e| anyhow::anyhow!("--show {spec}: {e}")))
         .collect::<Result<_>>()?;
     let loaded = bundle::load(&review_path)?;
     let input = match loaded.source() {
@@ -468,11 +500,8 @@ fn cmd_edit(
 
     // Comments written in a file the diff doesn't touch (shown for the
     // threads on it) are anchored to that file's version at the head.
-    let anchor_files: Vec<diffnote::model::FileDigest> = files
-        .iter()
-        .cloned()
-        .chain(synthetic_files)
-        .collect();
+    let anchor_files: Vec<diffnote::model::FileDigest> =
+        files.iter().cloned().chain(synthetic_files).collect();
 
     let temp_dir = tempfile::tempdir().context("一時ディレクトリを作れませんでした")?;
     let temp_path = temp_dir.path().join("review.diff");
@@ -503,7 +532,9 @@ fn cmd_edit(
         .args(args)
         .arg(&temp_path)
         .status()
-        .with_context(|| format!("エディタ '{editor}' を起動できませんでした($EDITOR を設定してください)"))?;
+        .with_context(|| {
+            format!("エディタ '{editor}' を起動できませんでした($EDITOR を設定してください)")
+        })?;
 
     let annotated =
         std::fs::read_to_string(&temp_path).context("編集したファイルを読み戻せませんでした")?;
@@ -578,7 +609,12 @@ fn cmd_edit(
                     let target_id = Ulid::from_string(id_str).map_err(|_| {
                         anyhow::anyhow!("'>!reanchor {id_str}': スレッド ID として正しくありません")
                     })?;
-                    let new_anchor = diffnote::create::build_anchor(scope, &parsed.diff, &anchor_files, &revisions)?;
+                    let new_anchor = diffnote::create::build_anchor(
+                        scope,
+                        &parsed.diff,
+                        &anchor_files,
+                        &revisions,
+                    )?;
                     new_events.push(Event::Reanchor {
                         parent: target_id,
                         author: author.clone(),
@@ -590,7 +626,8 @@ fn cmd_edit(
 
                 let id = Ulid::new();
                 thread_ids.push(id);
-                let comment_anchor = diffnote::create::build_anchor(scope, &parsed.diff, &anchor_files, &revisions)?;
+                let comment_anchor =
+                    diffnote::create::build_anchor(scope, &parsed.diff, &anchor_files, &revisions)?;
                 new_events.push(Event::Comment {
                     id,
                     parent: None,
@@ -609,9 +646,9 @@ fn cmd_edit(
                 directives,
             } => {
                 let target_id = match target {
-                    annotation::ThreadRef::New(tid) => *thread_ids.get(tid.0).ok_or_else(|| {
-                        anyhow::anyhow!("内部エラー: 不明なスレッド参照です")
-                    })?,
+                    annotation::ThreadRef::New(tid) => *thread_ids
+                        .get(tid.0)
+                        .ok_or_else(|| anyhow::anyhow!("内部エラー: 不明なスレッド参照です"))?,
                     annotation::ThreadRef::Existing(ulid) => *ulid,
                 };
                 if let Some(body) = body {
@@ -776,7 +813,9 @@ fn describe_anchor(anchor: Option<&Anchor>) -> String {
         Some(Anchor::Global { .. }) => "差分全体".to_string(),
         Some(Anchor::File { base, head }) => format!(
             "ファイル全体: {}",
-            head.as_ref().or(base.as_ref()).map_or("?", |f| f.file.as_str())
+            head.as_ref()
+                .or(base.as_ref())
+                .map_or("?", |f| f.file.as_str())
         ),
         Some(Anchor::Span { base, head }) => match (base, head) {
             (Some(b), Some(h)) if !b.is_empty() && !h.is_empty() => {
@@ -905,11 +944,14 @@ fn confirm_snapshot_size(
 
 fn default_editor() -> String {
     // An empty $EDITOR is as good as none.
-    std::env::var("EDITOR").ok().filter(|e| !e.trim().is_empty()).unwrap_or_else(|| {
-        if cfg!(windows) {
-            "notepad".to_string()
-        } else {
-            "vi".to_string()
-        }
-    })
+    std::env::var("EDITOR")
+        .ok()
+        .filter(|e| !e.trim().is_empty())
+        .unwrap_or_else(|| {
+            if cfg!(windows) {
+                "notepad".to_string()
+            } else {
+                "vi".to_string()
+            }
+        })
 }

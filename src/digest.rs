@@ -233,7 +233,11 @@ mod tests {
     fn a_path_follows_recorded_steps_forward_and_backward() {
         let b = held(&[("v1", "v2"), ("v2", "v3")], &["v1", "v2", "v3"]);
         assert_eq!(path(&b, "v1", "v3"), ["v1", "v2", "v3"]);
-        assert_eq!(path(&b, "v3", "v1"), ["v3", "v2", "v1"], "backward, one way");
+        assert_eq!(
+            path(&b, "v3", "v1"),
+            ["v3", "v2", "v1"],
+            "backward, one way"
+        );
         assert_eq!(path(&b, "v2", "v2"), ["v2"]);
     }
 

@@ -131,7 +131,9 @@ impl Repo {
                 (mb.clone(), b.clone())
             }
             _ => {
-                bail!("この組み合わせのコミット指定は使えません。`A..B`、`A...B`、`A B`、または単一のコミットにしてください")
+                bail!(
+                    "この組み合わせのコミット指定は使えません。`A..B`、`A...B`、`A B`、または単一のコミットにしてください"
+                )
             }
         };
 
@@ -213,7 +215,11 @@ impl Repo {
 
     /// The content of the files at `paths` in `tree` (a listing from
     /// [`Repo::ls_tree`]), in tree order. Paths not in the tree are skipped.
-    pub fn read_paths(&self, tree: &[TreeEntry], paths: &[String]) -> Result<Vec<(String, Vec<u8>)>> {
+    pub fn read_paths(
+        &self,
+        tree: &[TreeEntry],
+        paths: &[String],
+    ) -> Result<Vec<(String, Vec<u8>)>> {
         let wanted: std::collections::HashSet<&str> = paths.iter().map(String::as_str).collect();
         let entries: Vec<&TreeEntry> = tree
             .iter()
@@ -256,9 +262,14 @@ impl Repo {
                 let (Some(_), Some("blob"), Some(size)) =
                     (fields.next(), fields.next(), fields.next())
                 else {
-                    bail!("git cat-file が blob {oid} を読めませんでした: {}", header.trim());
+                    bail!(
+                        "git cat-file が blob {oid} を読めませんでした: {}",
+                        header.trim()
+                    );
                 };
-                let size: usize = size.parse().context("git cat-file が不正なサイズを返しました")?;
+                let size: usize = size
+                    .parse()
+                    .context("git cat-file が不正なサイズを返しました")?;
                 let mut content = vec![0u8; size + 1]; // + trailing newline
                 stdout.read_exact(&mut content)?;
                 content.pop();
@@ -411,7 +422,8 @@ mod tests {
     fn read_paths_returns_only_the_requested_files_that_exist() {
         with_repo(|_, repo, commits| {
             let tree = repo.ls_tree("HEAD").unwrap();
-            let want = |names: &[&str]| -> Vec<String> { names.iter().map(|s| s.to_string()).collect() };
+            let want =
+                |names: &[&str]| -> Vec<String> { names.iter().map(|s| s.to_string()).collect() };
 
             let got = repo
                 .read_paths(&tree, &want(&["dir/b.txt", "not-there.txt"]))
@@ -450,7 +462,10 @@ mod tests {
         let got = repo
             .read_paths(&tree, &["bin.dat".to_string(), "empty.txt".to_string()])
             .unwrap();
-        assert_eq!(got[0], ("bin.dat".to_string(), vec![0u8, 159, 146, 150, 255, 0]));
+        assert_eq!(
+            got[0],
+            ("bin.dat".to_string(), vec![0u8, 159, 146, 150, 255, 0])
+        );
         assert_eq!(got[1], ("empty.txt".to_string(), Vec::new()));
     }
 }

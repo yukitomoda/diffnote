@@ -70,7 +70,10 @@ fn fake_editor_entry() {
 /// spaces in its path), started to run just `fake_editor_entry`.
 fn fake_editor_command() -> String {
     let exe = std::env::current_exe().unwrap();
-    format!("\"{}\" --exact fake_editor_entry --nocapture", exe.display())
+    format!(
+        "\"{}\" --exact fake_editor_entry --nocapture",
+        exe.display()
+    )
 }
 
 struct Env {
@@ -184,7 +187,11 @@ fn a_directory_review_over_several_sessions() {
         .collect();
     assert_eq!(touched, ["a.txt"]);
     // A directory review keeps the whole tree, every time.
-    let mut tree: Vec<_> = loaded.manifest(latest).into_iter().map(|f| f.path).collect();
+    let mut tree: Vec<_> = loaded
+        .manifest(latest)
+        .into_iter()
+        .map(|f| f.path)
+        .collect();
     tree.sort();
     assert_eq!(tree, ["a.txt", "b.txt"]);
     let read = loaded.tree_of(latest);
@@ -218,9 +225,22 @@ fn a_directory_review_over_several_sessions() {
 
     // Export: one view per revision that has a diff, with every comment.
     let html_path = env.path("out.html");
-    env.ok(&dir, &[], &["export", "-f", review_arg, "-o", html_path.to_str().unwrap()]);
+    env.ok(
+        &dir,
+        &[],
+        &[
+            "export",
+            "-f",
+            review_arg,
+            "-o",
+            html_path.to_str().unwrap(),
+        ],
+    );
     let html = std::fs::read_to_string(&html_path).unwrap();
-    assert_eq!(html.matches(r#"<section class="diffnote-revision"#).count(), 2);
+    assert_eq!(
+        html.matches(r#"<section class="diffnote-revision"#).count(),
+        2
+    );
     for body in ["why uppercase?", "overall remark", "new line"] {
         assert_eq!(html.matches(body).count(), 2, "{body} once per view");
     }
@@ -241,7 +261,11 @@ fn an_unchanged_directory_reopens_the_last_diff_and_records_nothing_new() {
 
     // Nothing changed since: the diff of the last revision comes back, so a
     // reply-like comment can still be added, and nothing else is recorded.
-    let out = env.ok(&dir, &[("+two", "second")], &["edit", "-f", review_arg, "."]);
+    let out = env.ok(
+        &dir,
+        &[("+two", "second")],
+        &["edit", "-f", review_arg, "."],
+    );
     assert!(out.contains("コメント 1 件"), "{out}");
     let loaded = bundle::load(&review).unwrap();
     assert_eq!(loaded.revisions().count(), 2);
@@ -298,14 +322,22 @@ fn a_git_review_keeps_files_that_comments_refer_to_even_when_a_later_diff_leaves
     );
     let loaded = bundle::load(&review).unwrap();
     let second = loaded.revisions().nth(1).unwrap();
-    assert_eq!(second.snapshot_mode, bundle::SnapshotMode::Changed, "inherited");
+    assert_eq!(
+        second.snapshot_mode,
+        bundle::SnapshotMode::Changed,
+        "inherited"
+    );
     let touched: Vec<_> = second
         .files
         .iter()
         .filter_map(|f| f.new_path.as_deref())
         .collect();
     assert_eq!(touched, ["calc.txt"]);
-    let mut manifest: Vec<_> = loaded.manifest(second).into_iter().map(|f| f.path).collect();
+    let mut manifest: Vec<_> = loaded
+        .manifest(second)
+        .into_iter()
+        .map(|f| f.path)
+        .collect();
     manifest.sort();
     assert_eq!(manifest, ["README.md", "calc.txt"]);
     let tree = loaded.tree_of(second);
@@ -327,7 +359,14 @@ fn full_snapshots_keep_the_whole_tree_and_changed_ones_do_not() {
         env.ok(
             &repo,
             &[("+d", "hello")],
-            &["edit", "-f", review.to_str().unwrap(), "--snapshot", mode, "c2..c3"],
+            &[
+                "edit",
+                "-f",
+                review.to_str().unwrap(),
+                "--snapshot",
+                mode,
+                "c2..c3",
+            ],
         );
         let loaded = bundle::load(&review).unwrap();
         let rev = loaded.revisions().next().unwrap();
@@ -413,7 +452,10 @@ fn threads_on_a_file_a_later_diff_leaves_alone_are_shown_and_can_be_added_to() {
     assert!(out.contains("コメント 1 件"), "{out}");
 
     let loaded = bundle::load(&review).unwrap();
-    assert_eq!(comment_bodies(&loaded), ["why edit this?", "and what about this line?"]);
+    assert_eq!(
+        comment_bodies(&loaded),
+        ["why edit this?", "and what about this line?"]
+    );
     let anchors: Vec<&Anchor> = loaded
         .events
         .iter()
@@ -433,13 +475,28 @@ fn threads_on_a_file_a_later_diff_leaves_alone_are_shown_and_can_be_added_to() {
     // The bundle keeps that version for the second revision even though the
     // diff doesn't touch it.
     let second = loaded.revisions().nth(1).unwrap();
-    assert!(loaded.manifest(second).iter().any(|f| f.path == "README.md"));
+    assert!(
+        loaded
+            .manifest(second)
+            .iter()
+            .any(|f| f.path == "README.md")
+    );
     assert!(loaded.blob(&h.digest).is_some());
 
     // The export shows both README threads in the second revision's view,
     // each with its context, and nothing is unplaced.
     let html_path = env.path("out.html");
-    env.ok(&repo, &[], &["export", "-f", review_arg, "-o", html_path.to_str().unwrap()]);
+    env.ok(
+        &repo,
+        &[],
+        &[
+            "export",
+            "-f",
+            review_arg,
+            "-o",
+            html_path.to_str().unwrap(),
+        ],
+    );
     let html = std::fs::read_to_string(&html_path).unwrap();
     assert!(!html.contains(r#"<section class="diffnote-outdated">"#));
     let second_view = &html[html.find(r#"id="rev-1""#).unwrap()..];
@@ -501,7 +558,10 @@ fn a_git_review_remembers_the_commits_it_was_made_against() {
     assert_eq!(g.base, git(&repo, &["rev-parse", "c1"]));
     assert_eq!(g.head, git(&repo, &["rev-parse", "c2"]));
     assert_eq!(g.spec, "c1..c2");
-    assert!(g.base.len() == 40 && g.head.len() == 40, "full ids, not names");
+    assert!(
+        g.base.len() == 40 && g.head.len() == 40,
+        "full ids, not names"
+    );
 }
 
 #[test]
@@ -517,7 +577,11 @@ fn the_mode_of_a_bundles_first_revision_carries_on_and_an_explicit_one_wins() {
         &["edit", "-f", review_arg, "--snapshot", "full", "c1..c2"],
     );
     // ...and the next revision, with no flag, does the same.
-    env.ok(&repo, &[("+d", "two")], &["edit", "-f", review_arg, "c2..c3"]);
+    env.ok(
+        &repo,
+        &[("+d", "two")],
+        &["edit", "-f", review_arg, "c2..c3"],
+    );
     assert_eq!(
         modes(&review),
         [bundle::SnapshotMode::Full, bundle::SnapshotMode::Full]
@@ -530,7 +594,14 @@ fn the_mode_of_a_bundles_first_revision_carries_on_and_an_explicit_one_wins() {
     env.ok(
         &repo,
         &[("+e", "three")],
-        &["edit", "-f", review_arg, "--snapshot", "changed", "c3..HEAD"],
+        &[
+            "edit",
+            "-f",
+            review_arg,
+            "--snapshot",
+            "changed",
+            "c3..HEAD",
+        ],
     );
     assert_eq!(modes(&review)[2], bundle::SnapshotMode::Changed);
     assert_eq!(manifest_paths(&review, 2), ["calc.txt"]);
@@ -560,7 +631,11 @@ fn a_directory_review_keeps_the_full_tree_and_refuses_to_be_told_otherwise() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("--snapshot changed"), "{err}");
     assert!(err.contains(".diffnoteignore"), "{err}");
-    assert_eq!(std::fs::read(&review).unwrap(), before, "the bundle is untouched");
+    assert_eq!(
+        std::fs::read(&review).unwrap(),
+        before,
+        "the bundle is untouched"
+    );
     assert!(!env.path("review.diffnote.draft").exists());
 
     // `full` is what it does anyway, so asking for it is fine, as is not asking.
@@ -653,7 +728,10 @@ fn show_gives_three_lines_of_context_around_the_range_and_no_more() {
             &[(hidden, "nowhere to put this")],
             &["edit", "-f", review_arg, "--show", "docs.md:9-11", "c1..c2"],
         );
-        assert!(out.contains("コメントは追加されませんでした"), "{hidden}: {out}");
+        assert!(
+            out.contains("コメントは追加されませんでした"),
+            "{hidden}: {out}"
+        );
         let out = env.ok(
             &repo,
             &[(shown, "this is in the buffer")],
@@ -675,7 +753,16 @@ fn show_of_a_whole_file_and_of_lines_in_a_file_the_diff_touches() {
             (" line 20", "last line of the docs"),
             (" c2", "far above the change in calc.txt"),
         ],
-        &["edit", "-f", review_arg, "--show", "docs.md", "--show", "calc.txt:1-4", "c1..c2"],
+        &[
+            "edit",
+            "-f",
+            review_arg,
+            "--show",
+            "docs.md",
+            "--show",
+            "calc.txt:1-4",
+            "c1..c2",
+        ],
     );
     let loaded = bundle::load(&review).unwrap();
     // Comments are recorded in buffer order: the diff's own file first.
@@ -746,7 +833,14 @@ fn show_of_a_file_the_diff_deletes_says_so() {
     let out = env.run(
         &repo,
         &[],
-        &["edit", "-f", review.to_str().unwrap(), "--show", "docs.md", "c2..c3"],
+        &[
+            "edit",
+            "-f",
+            review.to_str().unwrap(),
+            "--show",
+            "docs.md",
+            "c2..c3",
+        ],
     );
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
@@ -796,22 +890,45 @@ fn a_thread_survives_a_second_review_from_the_same_base_with_a_longer_range() {
     let review = env.path("review.diffnote");
     let review_arg = review.to_str().unwrap();
     // c1..c2 adds mul and div; comment on mul.
-    env.ok(&repo, &[("+mul", "why mul?")], &["edit", "-f", review_arg, "c1..c2"]);
+    env.ok(
+        &repo,
+        &[("+mul", "why mul?")],
+        &["edit", "-f", review_arg, "c1..c2"],
+    );
     // The review is extended to c1..c3 from the same base: a comment on the
     // new header makes this a recorded revision too.
-    env.ok(&repo, &[("+header", "why a header?")], &["edit", "-f", review_arg, "c1..c3"]);
+    env.ok(
+        &repo,
+        &[("+header", "why a header?")],
+        &["edit", "-f", review_arg, "c1..c3"],
+    );
 
     let html_path = env.path("out.html");
-    env.ok(&repo, &[], &["export", "-f", review_arg, "-o", html_path.to_str().unwrap()]);
+    env.ok(
+        &repo,
+        &[],
+        &[
+            "export",
+            "-f",
+            review_arg,
+            "-o",
+            html_path.to_str().unwrap(),
+        ],
+    );
     let html = std::fs::read_to_string(&html_path).unwrap();
     let second_view = &html[html.find(r#"id="rev-1""#).unwrap()..];
-    let (before, _) = second_view.split_once("why mul?").expect("the mul thread is in the view");
+    let (before, _) = second_view
+        .split_once("why mul?")
+        .expect("the mul thread is in the view");
     let summary = &before[before.rfind("<summary>").unwrap()..];
     // Placed at its line in this view (the header pushed it from 3 to 4), not
     // as a line that was deleted or is not there.
     assert!(summary.contains("(L4)"), "{summary}");
     assert!(!summary.contains("削除された行"), "{summary}");
-    assert!(!summary.contains("まだない行") && !summary.contains("この版にない行"), "{summary}");
+    assert!(
+        !summary.contains("まだない行") && !summary.contains("この版にない行"),
+        "{summary}"
+    );
 }
 
 fn titles(review: &Path) -> Vec<String> {
@@ -831,7 +948,13 @@ fn exported(env: &Env, repo: &Path, review: &Path) -> String {
     env.ok(
         repo,
         &[],
-        &["export", "-f", review.to_str().unwrap(), "-o", html.to_str().unwrap()],
+        &[
+            "export",
+            "-f",
+            review.to_str().unwrap(),
+            "-o",
+            html.to_str().unwrap(),
+        ],
     );
     std::fs::read_to_string(html).unwrap()
 }
@@ -861,7 +984,11 @@ fn without_a_title_the_export_keeps_the_default_heading() {
     let env = Env::new();
     let repo = git_repo(&env);
     let review = env.path("review.diffnote");
-    env.ok(&repo, &[("+B", "why?")], &["edit", "-f", review.to_str().unwrap(), "c1..c2"]);
+    env.ok(
+        &repo,
+        &[("+B", "why?")],
+        &["edit", "-f", review.to_str().unwrap(), "c1..c2"],
+    );
     assert!(titles(&review).is_empty());
     assert!(exported(&env, &repo, &review).contains("<h1>diffnote レビュー</h1>"));
 }
@@ -872,12 +999,24 @@ fn a_title_can_be_changed_kept_and_cleared_later() {
     let repo = git_repo(&env);
     let review = env.path("review.diffnote");
     let arg = review.to_str().unwrap();
-    env.ok(&repo, &[("+B", "why?")], &["edit", "-f", arg, "--title", "first", "c1..c2"]);
+    env.ok(
+        &repo,
+        &[("+B", "why?")],
+        &["edit", "-f", arg, "--title", "first", "c1..c2"],
+    );
     // Changed by a session that also comments.
-    env.ok(&repo, &[(" a", "and here")], &["edit", "-f", arg, "--title", "second", "c1..c2"]);
+    env.ok(
+        &repo,
+        &[(" a", "and here")],
+        &["edit", "-f", arg, "--title", "second", "c1..c2"],
+    );
     assert_eq!(titles(&review), ["first", "second"]);
     // The same title again records nothing new.
-    let out = env.ok(&repo, &[(" c", "more")], &["edit", "-f", arg, "--title", "second", "c1..c2"]);
+    let out = env.ok(
+        &repo,
+        &[(" c", "more")],
+        &["edit", "-f", arg, "--title", "second", "c1..c2"],
+    );
     assert!(!out.contains("タイトルを設定しました"), "{out}");
     assert_eq!(titles(&review), ["first", "second"]);
     assert!(exported(&env, &repo, &review).contains("<h1>second</h1>"));
@@ -894,11 +1033,19 @@ fn a_title_alone_is_enough_to_save_a_session() {
     let review = env.path("review.diffnote");
     let arg = review.to_str().unwrap();
     // No comment, but a title: the review is created with it.
-    let out = env.ok(&repo, &[], &["edit", "-f", arg, "--title", "only a title", "c1..c2"]);
+    let out = env.ok(
+        &repo,
+        &[],
+        &["edit", "-f", arg, "--title", "only a title", "c1..c2"],
+    );
     assert!(out.contains("タイトルを設定しました"), "{out}");
     assert_eq!(titles(&review), ["only a title"]);
     // ...and it can be changed on its own too.
-    env.ok(&repo, &[], &["edit", "-f", arg, "--title", "renamed", "c1..c2"]);
+    env.ok(
+        &repo,
+        &[],
+        &["edit", "-f", arg, "--title", "renamed", "c1..c2"],
+    );
     assert_eq!(titles(&review), ["only a title", "renamed"]);
     // Without a title and without comments nothing is saved, as before.
     let before = std::fs::read(&review).unwrap();
@@ -916,7 +1063,13 @@ fn a_directory_review_takes_a_title_at_init() {
     env.ok(
         &dir,
         &[],
-        &["init", "-f", review.to_str().unwrap(), "--title", "設計レビュー"],
+        &[
+            "init",
+            "-f",
+            review.to_str().unwrap(),
+            "--title",
+            "設計レビュー",
+        ],
     );
     assert_eq!(titles(&review), ["設計レビュー"]);
     assert!(exported_dir(&env, &dir, &review).contains("<h1>設計レビュー</h1>"));
@@ -925,7 +1078,11 @@ fn a_directory_review_takes_a_title_at_init() {
 /// Like `exported`, for a review with no comment yet: give it one first.
 fn exported_dir(env: &Env, dir: &Path, review: &Path) -> String {
     std::fs::write(dir.join("a.txt"), "two\n").unwrap();
-    env.ok(dir, &[("+two", "changed")], &["edit", "-f", review.to_str().unwrap()]);
+    env.ok(
+        dir,
+        &[("+two", "changed")],
+        &["edit", "-f", review.to_str().unwrap()],
+    );
     exported(env, dir, review)
 }
 
@@ -949,7 +1106,11 @@ fn the_author_is_git_user_name_first() {
     git(&repo, &["config", "user.name", "山田 太郎"]);
     git(&repo, &["config", "user.email", "taro@example.com"]);
     let review = env.path("review.diffnote");
-    env.ok(&repo, &[("+B", "why?")], &["edit", "-f", review.to_str().unwrap(), "c1..c2"]);
+    env.ok(
+        &repo,
+        &[("+B", "why?")],
+        &["edit", "-f", review.to_str().unwrap(), "c1..c2"],
+    );
     assert_eq!(authors(&review), ["山田 太郎"]);
 }
 
@@ -961,7 +1122,11 @@ fn without_a_git_name_the_email_is_the_author() {
     git(&repo, &["config", "user.name", ""]);
     git(&repo, &["config", "user.email", "taro@example.com"]);
     let review = env.path("review.diffnote");
-    env.ok(&repo, &[("+B", "why?")], &["edit", "-f", review.to_str().unwrap(), "c1..c2"]);
+    env.ok(
+        &repo,
+        &[("+B", "why?")],
+        &["edit", "-f", review.to_str().unwrap(), "c1..c2"],
+    );
     assert_eq!(authors(&review), ["taro@example.com"]);
 }
 
@@ -972,7 +1137,11 @@ fn author_overrides_git_and_applies_to_every_event_of_the_session() {
     git(&repo, &["config", "user.name", "山田 太郎"]);
     let review = env.path("review.diffnote");
     let arg = review.to_str().unwrap();
-    env.ok(&repo, &[("+B", "why?")], &["edit", "-f", arg, "--author", "レビュアーA", "c1..c2"]);
+    env.ok(
+        &repo,
+        &[("+B", "why?")],
+        &["edit", "-f", arg, "--author", "レビュアーA", "c1..c2"],
+    );
     env.ok(&repo, &[(" a", "and here")], &["edit", "-f", arg, "c1..c2"]);
     // The override is per session, not remembered.
     assert_eq!(authors(&review), ["レビュアーA", "山田 太郎"]);
@@ -986,7 +1155,18 @@ fn a_blank_author_is_ignored() {
     let repo = git_repo(&env);
     git(&repo, &["config", "user.name", "山田 太郎"]);
     let review = env.path("review.diffnote");
-    env.ok(&repo, &[("+B", "why?")], &["edit", "-f", review.to_str().unwrap(), "--author", "  ", "c1..c2"]);
+    env.ok(
+        &repo,
+        &[("+B", "why?")],
+        &[
+            "edit",
+            "-f",
+            review.to_str().unwrap(),
+            "--author",
+            "  ",
+            "c1..c2",
+        ],
+    );
     assert_eq!(authors(&review), ["山田 太郎"]);
 }
 
@@ -1000,7 +1180,15 @@ fn init_takes_an_author_for_its_title() {
     env.ok(
         &dir,
         &[],
-        &["init", "-f", review.to_str().unwrap(), "--title", "T", "--author", "作成者"],
+        &[
+            "init",
+            "-f",
+            review.to_str().unwrap(),
+            "--title",
+            "T",
+            "--author",
+            "作成者",
+        ],
     );
     let loaded = bundle::load(&review).unwrap();
     let author = loaded.events.iter().find_map(|e| match e {

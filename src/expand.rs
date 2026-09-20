@@ -95,18 +95,20 @@ impl Hunk {
         new_first: u32,
         section_heading: Option<String>,
     ) -> Hunk {
-        let old_lines = lines
-            .iter()
-            .filter(|l| l.kind != LineKind::Added)
-            .count() as u32;
-        let new_lines = lines
-            .iter()
-            .filter(|l| l.kind != LineKind::Removed)
-            .count() as u32;
+        let old_lines = lines.iter().filter(|l| l.kind != LineKind::Added).count() as u32;
+        let new_lines = lines.iter().filter(|l| l.kind != LineKind::Removed).count() as u32;
         Hunk {
-            old_start: if old_lines == 0 { old_first - 1 } else { old_first },
+            old_start: if old_lines == 0 {
+                old_first - 1
+            } else {
+                old_first
+            },
             old_lines,
-            new_start: if new_lines == 0 { new_first - 1 } else { new_first },
+            new_start: if new_lines == 0 {
+                new_first - 1
+            } else {
+                new_first
+            },
             new_lines,
             section_heading,
             lines,
@@ -175,7 +177,10 @@ fn expand_file(hunks: &[Hunk], wanted: &[(Side, u32, u32)], text: &str) -> Vec<H
             // unchanged, so they have new-side numbers.
             Side::Old => (start..=end).filter_map(|o| old_to_new(hunks, o)).collect(),
         };
-        for n in lines.into_iter().filter(|n| *n >= 1 && *n <= total && !shown.contains(n)) {
+        for n in lines
+            .into_iter()
+            .filter(|n| *n >= 1 && *n <= total && !shown.contains(n))
+        {
             for m in n.saturating_sub(CONTEXT_RADIUS).max(1)..=(n + CONTEXT_RADIUS).min(total) {
                 need.insert(m);
             }
@@ -188,8 +193,16 @@ fn expand_file(hunks: &[Hunk], wanted: &[(Side, u32, u32)], text: &str) -> Vec<H
     let mut run: Vec<u32> = Vec::new();
     let flush = |run: &mut Vec<u32>, added: &mut Vec<Hunk>| {
         if let (Some(&first), false) = (run.first(), run.is_empty()) {
-            let body: Vec<DiffLine> = run.iter().map(|&n| context_line(&lines, hunks, n)).collect();
-            added.push(Hunk::from_lines(body, new_to_old(hunks, first), first, None));
+            let body: Vec<DiffLine> = run
+                .iter()
+                .map(|&n| context_line(&lines, hunks, n))
+                .collect();
+            added.push(Hunk::from_lines(
+                body,
+                new_to_old(hunks, first),
+                first,
+                None,
+            ));
             run.clear();
         }
     };
@@ -244,10 +257,9 @@ pub fn expand(
             .filter(|w| w.file == file)
             .filter_map(|w| w.lines)
             .collect();
-        let existing = out
-            .files
-            .iter()
-            .position(|f| f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file));
+        let existing = out.files.iter().position(|f| {
+            f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file)
+        });
         match existing {
             Some(i) => {
                 let f = &out.files[i];
@@ -290,10 +302,13 @@ pub fn has_row(diff: &UnifiedDiff, want: &Want) -> bool {
     let Some((side, line)) = want.row else {
         return true;
     };
-    file.hunks.iter().flat_map(|h| &h.lines).any(|l| match side {
-        Side::New => l.new_line == Some(line),
-        Side::Old => l.old_line == Some(line),
-    })
+    file.hunks
+        .iter()
+        .flat_map(|h| &h.lines)
+        .any(|l| match side {
+            Side::New => l.new_line == Some(line),
+            Side::Old => l.old_line == Some(line),
+        })
 }
 
 fn hunk_text(h: &Hunk) -> String {
@@ -482,7 +497,12 @@ mod tests {
     #[test]
     fn lines_the_diff_already_shows_change_nothing() {
         let sc = two_hunks();
-        for (side, a, b) in [(Side::New, 2, 5), (Side::New, 3, 3), (Side::Old, 1, 6), (Side::New, 22, 28)] {
+        for (side, a, b) in [
+            (Side::New, 2, 5),
+            (Side::New, 3, 3),
+            (Side::Old, 1, 6),
+            (Side::New, 22, 28),
+        ] {
             let (d, synthetic) = run(&sc, &[want("f.txt", side, a, b)]);
             assert_eq!(d, sc.diff, "{side:?} {a}..={b}");
             assert!(synthetic.is_empty());
@@ -507,7 +527,10 @@ mod tests {
     fn a_range_gets_context_around_the_lines_that_were_unseen() {
         let sc = two_hunks();
         let (d, _) = run(&sc, &[want("f.txt", Side::New, 12, 14)]);
-        assert_eq!(new_lines_of(&d.files[0].hunks[1]), (9..=17).collect::<Vec<_>>());
+        assert_eq!(
+            new_lines_of(&d.files[0].hunks[1]),
+            (9..=17).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -516,7 +539,10 @@ mod tests {
         // Line 9's window (6..=12) starts right where the first hunk ends.
         let (d, _) = run(&sc, &[want("f.txt", Side::New, 9, 9)]);
         assert_eq!(shape(&d), [(1, 12, 1, 12), (22, 7, 22, 7)]);
-        assert_eq!(new_lines_of(&d.files[0].hunks[0]), (1..=12).collect::<Vec<_>>());
+        assert_eq!(
+            new_lines_of(&d.files[0].hunks[0]),
+            (1..=12).collect::<Vec<_>>()
+        );
         // Contents of the original hunk's changed lines are untouched.
         assert_eq!(d.files[0].hunks[0].lines[2].content, "l3");
         assert_eq!(d.files[0].hunks[0].lines[2].kind, LineKind::Removed);
@@ -525,12 +551,29 @@ mod tests {
     #[test]
     fn context_that_bridges_two_hunks_joins_them() {
         let sc = two_hunks();
-        let (d, _) = run(&sc, &[want("f.txt", Side::New, 10, 10), want("f.txt", Side::New, 18, 18)]);
+        let (d, _) = run(
+            &sc,
+            &[
+                want("f.txt", Side::New, 10, 10),
+                want("f.txt", Side::New, 18, 18),
+            ],
+        );
         // 7..=13 and 15..=21 with the hunks at 1..=6 and 22..=28: one hunk
         // apart from line 14, which stays a gap... no: 13 and 15 leave 14.
         assert_eq!(d.files[0].hunks.len(), 2, "{:?}", shape(&d));
-        let (d, _) = run(&sc, &[want("f.txt", Side::New, 10, 10), want("f.txt", Side::New, 14, 14), want("f.txt", Side::New, 18, 18)]);
-        assert_eq!(shape(&d), [(1, 28, 1, 28)], "everything from 1 to 28 is now shown");
+        let (d, _) = run(
+            &sc,
+            &[
+                want("f.txt", Side::New, 10, 10),
+                want("f.txt", Side::New, 14, 14),
+                want("f.txt", Side::New, 18, 18),
+            ],
+        );
+        assert_eq!(
+            shape(&d),
+            [(1, 28, 1, 28)],
+            "everything from 1 to 28 is now shown"
+        );
     }
 
     #[test]
@@ -609,7 +652,13 @@ mod tests {
                 }
             }
         }
-        assert!(d.files[0].hunks.iter().flat_map(|h| &h.lines).any(|l| l.new_line == Some(8)));
+        assert!(
+            d.files[0]
+                .hunks
+                .iter()
+                .flat_map(|h| &h.lines)
+                .any(|l| l.new_line == Some(8))
+        );
     }
 
     // ---- files the diff doesn't have -----------------------------------------
@@ -626,10 +675,18 @@ mod tests {
         assert_eq!(synthetic, ["README.md"]);
         assert_eq!(d.files.len(), 2);
         let f = &d.files[1];
-        assert_eq!((f.old_path.as_deref(), f.new_path.as_deref()), (Some("README.md"), Some("README.md")));
+        assert_eq!(
+            (f.old_path.as_deref(), f.new_path.as_deref()),
+            (Some("README.md"), Some("README.md"))
+        );
         assert_eq!(f.hunks.len(), 1);
         assert_eq!(new_lines_of(&f.hunks[0]), (2..=8).collect::<Vec<_>>());
-        assert!(f.hunks[0].lines.iter().all(|l| l.kind == LineKind::Context && l.old_line == l.new_line));
+        assert!(
+            f.hunks[0]
+                .lines
+                .iter()
+                .all(|l| l.kind == LineKind::Context && l.old_line == l.new_line)
+        );
         // The original file is untouched.
         assert_eq!(d.files[0], sc.diff.files[0]);
     }
@@ -735,7 +792,10 @@ mod tests {
             kind: crate::anchor::Absence::Deleted,
         };
         let w = want_of(&point).unwrap();
-        assert_eq!((w.lines, w.row), (Some((Side::New, 8, 9)), Some((Side::New, 8))));
+        assert_eq!(
+            (w.lines, w.row),
+            (Some((Side::New, 8, 9)), Some((Side::New, 8)))
+        );
         let top = Placement::Point {
             file: "f".into(),
             before: 1,
@@ -752,7 +812,10 @@ mod tests {
     fn has_row_needs_the_file_and_the_row() {
         let sc = two_hunks();
         assert!(has_row(&sc.diff, &want("f.txt", Side::New, 3, 3)));
-        assert!(has_row(&sc.diff, &want("f.txt", Side::Old, 3, 3)), "the removed row");
+        assert!(
+            has_row(&sc.diff, &want("f.txt", Side::Old, 3, 3)),
+            "the removed row"
+        );
         assert!(!has_row(&sc.diff, &want("f.txt", Side::New, 12, 12)));
         assert!(!has_row(&sc.diff, &want("nope.txt", Side::New, 3, 3)));
         let file_only = Want {
@@ -786,7 +849,10 @@ mod tests {
                 want("f.txt", Side::New, 14, 14),
                 want("f.txt", Side::New, 18, 18),
             ],
-            vec![want("f.txt", Side::New, 30, 30), want("f.txt", Side::New, 1, 1)],
+            vec![
+                want("f.txt", Side::New, 30, 30),
+                want("f.txt", Side::New, 1, 1),
+            ],
         ] {
             let (d, _) = run(&sc, &wants);
             let text = to_text(&sc.text, &sc.diff, &d).unwrap();
@@ -804,7 +870,10 @@ mod tests {
         let (d, synthetic) = run(&sc, &[want("README.md", Side::New, 5, 5)]);
         assert_eq!(synthetic, ["README.md"]);
         let text = to_text(&sc.text, &sc.diff, &d).unwrap();
-        assert!(text.starts_with(&sc.text), "the real diff comes first, verbatim");
+        assert!(
+            text.starts_with(&sc.text),
+            "the real diff comes first, verbatim"
+        );
         assert!(text.contains("diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -2,7 +2,7 @@\n"), "{text}");
         assert_eq!(diff::parse(&text).unwrap(), d);
     }
@@ -876,7 +945,12 @@ diff --git a/f.txt b/f.txt
 \\ No newline at end of file
 ";
         let original = diff::parse(text).unwrap();
-        assert!(original.files[0].hunks[0].lines.iter().any(|l| l.no_newline_at_eof));
+        assert!(
+            original.files[0].hunks[0]
+                .lines
+                .iter()
+                .any(|l| l.no_newline_at_eof)
+        );
         let head: String = (1..=11).map(|n| format!("l{n}\n")).collect::<String>() + "L12";
         let files = vec![FileDigest {
             old_path: Some("f.txt".into()),
@@ -899,7 +973,10 @@ diff --git a/f.txt b/f.txt
         // starts at 10, so 9 stays out).
         assert_eq!(d.files[0].hunks.len(), 2);
         let out = to_text(text, &original, &d).unwrap();
-        assert!(out.contains("+L12\n\\ No newline at end of file\n"), "{out}");
+        assert!(
+            out.contains("+L12\n\\ No newline at end of file\n"),
+            "{out}"
+        );
         assert_eq!(diff::parse(&out).unwrap(), d);
     }
 
@@ -907,11 +984,20 @@ diff --git a/f.txt b/f.txt
     fn hunks_that_touch_are_merged_and_their_lines_kept_in_order() {
         // Two hunks of the diff plus context that meets both.
         let sc = two_hunks();
-        let (d, _) = run(&sc, &[want("f.txt", Side::New, 9, 9), want("f.txt", Side::New, 19, 19)]);
+        let (d, _) = run(
+            &sc,
+            &[
+                want("f.txt", Side::New, 9, 9),
+                want("f.txt", Side::New, 19, 19),
+            ],
+        );
         // 6..=12 touches hunk 1 (..=6); 16..=22 touches hunk 2 (22..).
         assert_eq!(d.files[0].hunks.len(), 2, "{:?}", shape(&d));
         let all: Vec<u32> = d.files[0].hunks.iter().flat_map(new_lines_of).collect();
-        assert!(all.windows(2).all(|w| w[0] < w[1]), "in order, no repeats: {all:?}");
+        assert!(
+            all.windows(2).all(|w| w[0] < w[1]),
+            "in order, no repeats: {all:?}"
+        );
     }
 
     #[test]
@@ -929,7 +1015,10 @@ diff --git a/f.txt b/f.txt
     struct Lcg(u64);
     impl Lcg {
         fn next(&mut self, below: usize) -> usize {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((self.0 >> 33) as usize) % below.max(1)
         }
     }
@@ -976,7 +1065,10 @@ diff --git a/f.txt b/f.txt
                 // In order, without overlap.
                 assert!(h.old_first() > last_old || last_old == 0, "{ctx}");
                 assert!(h.new_first() > last_new || last_new == 0, "{ctx}");
-                assert!(h.old_first() >= last_old && h.new_first() >= last_new, "{ctx}");
+                assert!(
+                    h.old_first() >= last_old && h.new_first() >= last_new,
+                    "{ctx}"
+                );
                 last_old = h.old_next();
                 last_new = h.new_next();
                 // The header agrees with the lines.

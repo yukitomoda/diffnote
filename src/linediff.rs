@@ -126,7 +126,14 @@ fn fixed_points(a: &[&str], b: &[&str]) -> Vec<DiffOp> {
         });
         (oi, nj) = (i + 1, j + 1);
     }
-    gap(&mut ops, ca, cb, (oi, ca.len()), (nj, cb.len()), (prefix, prefix));
+    gap(
+        &mut ops,
+        ca,
+        cb,
+        (oi, ca.len()),
+        (nj, cb.len()),
+        (prefix, prefix),
+    );
 
     if suffix > 0 {
         ops.push(DiffOp::Equal {
@@ -355,7 +362,9 @@ fn normalize(ops: Vec<DiffOp>) -> Vec<DiffOp> {
                     new_len,
                 }),
                 DiffOp::Replace {
-                    old_len: o, new_len: n, ..
+                    old_len: o,
+                    new_len: n,
+                    ..
                 },
             ) => Some(DiffOp::Replace {
                 old_index,
@@ -392,7 +401,11 @@ mod tests {
         let (mut oi, mut nj) = (0usize, 0usize);
         for op in ops {
             let (o, n) = (op.old_range(), op.new_range());
-            assert_eq!((o.start, n.start), (oi, nj), "ops must be contiguous: {ops:?}");
+            assert_eq!(
+                (o.start, n.start),
+                (oi, nj),
+                "ops must be contiguous: {ops:?}"
+            );
             if let DiffOp::Equal { len, .. } = op {
                 assert!(*len > 0);
                 assert_eq!(a[o.clone()], b[n.clone()], "equal run isn't equal: {op:?}");
@@ -402,7 +415,11 @@ mod tests {
             oi = o.end;
             nj = n.end;
         }
-        assert_eq!((oi, nj), (a.len(), b.len()), "the script must reach the ends");
+        assert_eq!(
+            (oi, nj),
+            (a.len(), b.len()),
+            "the script must reach the ends"
+        );
         // Normalized: no two neighbours of the same kind, no lone delete+insert.
         for pair in ops.windows(2) {
             let same = std::mem::discriminant(&pair[0]) == std::mem::discriminant(&pair[1]);
@@ -420,14 +437,23 @@ mod tests {
 
     fn matched(ops: &[DiffOp]) -> usize {
         ops.iter()
-            .map(|op| if let DiffOp::Equal { len, .. } = op { *len } else { 0 })
+            .map(|op| {
+                if let DiffOp::Equal { len, .. } = op {
+                    *len
+                } else {
+                    0
+                }
+            })
             .sum()
     }
 
     struct Lcg(u64);
     impl Lcg {
         fn next(&mut self, below: usize) -> usize {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((self.0 >> 33) as usize) % below.max(1)
         }
     }
@@ -442,7 +468,10 @@ mod tests {
     #[test]
     fn small_inputs_are_diffed_exactly_as_myers_does() {
         let (old, new) = ("a\nb\nc\nd\n", "a\nB\nc\nd\ne\n");
-        assert_eq!(line_diff(old, new), TextDiff::from_lines(old, new).ops().to_vec());
+        assert_eq!(
+            line_diff(old, new),
+            TextDiff::from_lines(old, new).ops().to_vec()
+        );
     }
 
     #[test]
@@ -529,7 +558,9 @@ mod tests {
         let mut rng = Lcg(0xBEEF);
         for round in 0..200 {
             let mk = |rng: &mut Lcg| -> String {
-                (0..rng.next(80)).map(|_| format!("v{}\n", rng.next(4))).collect()
+                (0..rng.next(80))
+                    .map(|_| format!("v{}\n", rng.next(4)))
+                    .collect()
             };
             let (o, n) = (mk(&mut rng), mk(&mut rng));
             let ops = big(&o, &n);
@@ -561,7 +592,9 @@ mod tests {
     fn a_big_input_takes_the_fast_path_and_stays_valid() {
         let mut rng = Lcg(7);
         let n = 30_000;
-        let old: Vec<String> = (0..n).map(|i| format!("line {i} {}", rng.next(1000))).collect();
+        let old: Vec<String> = (0..n)
+            .map(|i| format!("line {i} {}", rng.next(1000)))
+            .collect();
         let mut new = old.clone();
         for _ in 0..200 {
             let i = rng.next(n);
@@ -580,8 +613,12 @@ mod tests {
     fn a_total_rewrite_of_a_big_file_is_quick() {
         let mut rng = Lcg(9);
         let n = 60_000;
-        let old: Vec<String> = (0..n).map(|i| format!("old {i} {}", rng.next(1_000_000))).collect();
-        let new: Vec<String> = (0..n).map(|i| format!("new {i} {}", rng.next(1_000_000))).collect();
+        let old: Vec<String> = (0..n)
+            .map(|i| format!("old {i} {}", rng.next(1_000_000)))
+            .collect();
+        let new: Vec<String> = (0..n)
+            .map(|i| format!("new {i} {}", rng.next(1_000_000)))
+            .collect();
         let (o, nn) = (text(&old), text(&new));
         let start = std::time::Instant::now();
         let ops = line_diff(&o, &nn);
@@ -600,7 +637,9 @@ mod tests {
         let mut rng = Lcg(0xFACE);
         for round in 0..500 {
             let mk = |rng: &mut Lcg| -> String {
-                (0..rng.next(14)).map(|_| format!("v{}\n", rng.next(3))).collect()
+                (0..rng.next(14))
+                    .map(|_| format!("v{}\n", rng.next(3)))
+                    .collect()
             };
             let (o, n) = (mk(&mut rng), mk(&mut rng));
             let ops = line_diff(&o, &n);

@@ -61,8 +61,8 @@ pub fn read_tree(root: &Path, exclude: &[PathBuf]) -> Result<Tree> {
         let Ok(rel) = path.strip_prefix(root) else {
             continue;
         };
-        let bytes =
-            std::fs::read(path).with_context(|| format!("{} を読めませんでした", path.display()))?;
+        let bytes = std::fs::read(path)
+            .with_context(|| format!("{} を読めませんでした", path.display()))?;
         tree.insert(rel.to_string_lossy().replace('\\', "/"), bytes);
     }
     Ok(tree)

@@ -30,7 +30,9 @@ fn git_config(key: &str) -> Option<String> {
 /// The author to record, from `--author` (if given) and this machine's
 /// settings.
 pub fn resolve(explicit: Option<&str>) -> String {
-    let login = std::env::var("USER").or_else(|_| std::env::var("USERNAME")).ok();
+    let login = std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .ok();
     // `--author` needs no git at all.
     if let Some(explicit) = explicit.filter(|e| !e.trim().is_empty()) {
         return explicit.trim().to_string();
@@ -49,12 +51,18 @@ mod tests {
 
     #[test]
     fn the_explicit_author_beats_everything() {
-        assert_eq!(pick(Some("Me"), Some("Name"), Some("e@x"), Some("login")), "Me");
+        assert_eq!(
+            pick(Some("Me"), Some("Name"), Some("e@x"), Some("login")),
+            "Me"
+        );
     }
 
     #[test]
     fn git_name_comes_before_email_and_login() {
-        assert_eq!(pick(None, Some("Yuki T"), Some("e@x"), Some("login")), "Yuki T");
+        assert_eq!(
+            pick(None, Some("Yuki T"), Some("e@x"), Some("login")),
+            "Yuki T"
+        );
         assert_eq!(pick(None, None, Some("e@x"), Some("login")), "e@x");
         assert_eq!(pick(None, None, None, Some("login")), "login");
         assert_eq!(pick(None, None, None, None), "unknown");
@@ -62,7 +70,10 @@ mod tests {
 
     #[test]
     fn blank_values_are_skipped_and_the_result_is_trimmed() {
-        assert_eq!(pick(Some("  "), Some(""), Some(" e@x "), Some("login")), "e@x");
+        assert_eq!(
+            pick(Some("  "), Some(""), Some(" e@x "), Some("login")),
+            "e@x"
+        );
         assert_eq!(pick(Some(" Me "), None, None, None), "Me");
     }
 

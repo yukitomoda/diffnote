@@ -92,7 +92,10 @@ impl Loaded {
     pub fn manifest(&self, revision: &Revision) -> Vec<TreeFile> {
         let mut out: Vec<TreeFile> = revision.tree.clone();
         for event in &self.events {
-            if let Event::Pin { revision: id, files } = event
+            if let Event::Pin {
+                revision: id,
+                files,
+            } = event
                 && *id == revision.id
             {
                 for f in files {
@@ -160,8 +163,8 @@ pub fn load(path: &Path) -> Result<Loaded> {
         });
     }
 
-    let file =
-        std::fs::File::open(path).with_context(|| format!("{} を開けませんでした", path.display()))?;
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("{} を開けませんでした", path.display()))?;
     let mut archive = ZipArchive::new(file).with_context(|| {
         format!(
             "{} は .diffnote バンドルではないようです(zip ではありません)",
@@ -173,9 +176,9 @@ pub fn load(path: &Path) -> Result<Loaded> {
     let mut carried_entries = Vec::new();
 
     for i in 0..archive.len() {
-        let mut entry = archive
-            .by_index(i)
-            .with_context(|| format!("{} の {i} 番目のエントリを読めませんでした", path.display()))?;
+        let mut entry = archive.by_index(i).with_context(|| {
+            format!("{} の {i} 番目のエントリを読めませんでした", path.display())
+        })?;
         let name = entry.name().to_string();
         let mut bytes = Vec::new();
         entry
@@ -224,7 +227,8 @@ pub fn save(path: &Path, loaded: &Loaded, events: &[Event], additions: &Addition
 
         writer.start_file("review.jsonl", options)?;
         for event in events {
-            let line = serde_json::to_string(event).context("イベントを JSON にできませんでした")?;
+            let line =
+                serde_json::to_string(event).context("イベントを JSON にできませんでした")?;
             writer.write_all(line.as_bytes())?;
             writer.write_all(b"\n")?;
         }
@@ -433,7 +437,10 @@ mod tests {
             diff: Some(("sha256:first".to_string(), "first diff text".to_string())),
             blobs: Vec::new(),
         };
-        let events = vec![sample_event(), revision("sha256:first", SnapshotMode::Changed)];
+        let events = vec![
+            sample_event(),
+            revision("sha256:first", SnapshotMode::Changed),
+        ];
         save(&path, &loaded, &events, &first).unwrap();
         let loaded = load(&path).unwrap();
         let (rev, text) = loaded.latest_revision().unwrap();
@@ -501,8 +508,14 @@ mod tests {
         assert_eq!(manifest[1].digest, digest("b v2"));
 
         let tree = loaded.tree_of(&rev);
-        assert_eq!(tree.get("a.txt").map(Vec::as_slice), Some(b"a v1".as_slice()));
-        assert_eq!(tree.get("b.txt").map(Vec::as_slice), Some(b"b v2".as_slice()));
+        assert_eq!(
+            tree.get("a.txt").map(Vec::as_slice),
+            Some(b"a v1".as_slice())
+        );
+        assert_eq!(
+            tree.get("b.txt").map(Vec::as_slice),
+            Some(b"b v2".as_slice())
+        );
         assert_eq!(tree.len(), 3);
     }
 
@@ -514,7 +527,10 @@ mod tests {
             "sha256:r",
             SnapshotMode::Changed,
             Vec::new(),
-            vec![tree_file("here.txt", "stored"), tree_file("gone.txt", "missing")],
+            vec![
+                tree_file("here.txt", "stored"),
+                tree_file("gone.txt", "missing"),
+            ],
         );
         let additions = Additions {
             diff: None,

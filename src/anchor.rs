@@ -208,7 +208,9 @@ pub enum Placement {
         kind: Absence,
     },
     /// The versions needed to place it aren't in the bundle.
-    Unplaced { file: String },
+    Unplaced {
+        file: String,
+    },
 }
 
 pub fn find_file<'a>(diff: &'a UnifiedDiff, file: &str) -> Option<&'a FileDiff> {
@@ -285,7 +287,9 @@ pub fn resolve_placement(
             let head_first = non_empty(&[head.as_ref(), base.as_ref()]);
             let base_first = non_empty(&[base.as_ref(), head.as_ref()]);
 
-            let into = |ranges: &[LineRange], digest: Option<&str>| -> (Option<Located>, Option<Located>) {
+            let into = |ranges: &[LineRange],
+                        digest: Option<&str>|
+             -> (Option<Located>, Option<Located>) {
                 let mut lines = None;
                 let mut point = None;
                 for r in ranges {
@@ -306,10 +310,14 @@ pub fn resolve_placement(
             // Lines the diff doesn't show are still lines: they get drawn with
             // context around them (see `expand`), not dropped.
             let head_file = |fallback: String| {
-                file_diff.and_then(|f| f.new_path.clone()).unwrap_or(fallback)
+                file_diff
+                    .and_then(|f| f.new_path.clone())
+                    .unwrap_or(fallback)
             };
             let base_file = |fallback: String| {
-                file_diff.and_then(|f| f.old_path.clone()).unwrap_or(fallback)
+                file_diff
+                    .and_then(|f| f.old_path.clone())
+                    .unwrap_or(fallback)
             };
             let old_range = old_lines.map(|l| (l.start, l.start + l.len - 1));
             if let Some(l) = new_lines {
@@ -393,7 +401,11 @@ mod tests {
     #[test]
     fn lines_removed_at_the_ends_of_a_range_shrink_it_to_what_is_left() {
         let old = "a\nb\nc\nd\ne\n";
-        assert_eq!(map(old, "a\nc\nd\ne\n", 2, 3), (2, 2), "the first line went");
+        assert_eq!(
+            map(old, "a\nc\nd\ne\n", 2, 3),
+            (2, 2),
+            "the first line went"
+        );
         assert_eq!(map(old, "a\nb\nc\ne\n", 2, 3), (2, 2), "the last line went");
         assert_eq!(map(old, "a\nd\ne\n", 2, 3), (2, 1), "only d is left");
     }
@@ -435,7 +447,11 @@ mod tests {
         assert_eq!(map(old, new, 2, 2), (2, 0));
         // Removal at the top and at the bottom.
         assert_eq!(map("a\nb\nc\n", "c\n", 1, 2), (1, 0));
-        assert_eq!(map("a\nb\nc\n", "a\nb\n", 3, 1), (3, 0), "before the line past the end");
+        assert_eq!(
+            map("a\nb\nc\n", "a\nb\n", 3, 1),
+            (3, 0),
+            "before the line past the end"
+        );
     }
 
     #[test]
@@ -449,7 +465,11 @@ mod tests {
     fn a_whole_file_replaced_maps_to_the_whole_new_file() {
         assert_eq!(map("a\nb\n", "x\ny\nz\n", 1, 2), (1, 3));
         assert_eq!(map("a\nb\n", "", 1, 2), (1, 0), "or to nothing");
-        assert_eq!(map("", "a\nb\n", 1, 0), (1, 0), "an empty file's only point");
+        assert_eq!(
+            map("", "a\nb\n", 1, 0),
+            (1, 0),
+            "an empty file's only point"
+        );
     }
 
     // ---- points ------------------------------------------------------------
@@ -459,7 +479,11 @@ mod tests {
         let old = "a\nb\nc\n";
         assert_eq!(map(old, "x\na\nb\nc\n", 2, 0), (3, 0), "shifted with `b`");
         assert_eq!(map(old, "a\nb\nc\nx\n", 2, 0), (2, 0));
-        assert_eq!(map(old, "a\nx\ny\nb\nc\n", 2, 0), (4, 0), "after what was inserted at it");
+        assert_eq!(
+            map(old, "a\nx\ny\nb\nc\n", 2, 0),
+            (4, 0),
+            "after what was inserted at it"
+        );
     }
 
     #[test]
@@ -485,7 +509,11 @@ mod tests {
     fn a_line_without_a_trailing_newline_is_still_a_line() {
         assert_eq!(map("a\nb", "a\nb", 2, 1), (2, 1));
         assert_eq!(map("a\nb", "x\na\nb", 2, 1), (3, 1));
-        assert_eq!(map("a\nb\n", "a\nb", 2, 1), (2, 1), "adding or losing the final newline");
+        assert_eq!(
+            map("a\nb\n", "a\nb", 2, 1),
+            (2, 1),
+            "adding or losing the final newline"
+        );
     }
 
     // ---- randomized: against an oracle -----------------------------------
@@ -495,7 +523,10 @@ mod tests {
 
     impl Lcg {
         fn next(&mut self, below: usize) -> usize {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((self.0 >> 33) as usize) % below.max(1)
         }
     }
@@ -573,7 +604,11 @@ mod tests {
                     .position(|e| matches!(e, Some(o) if *o + 1 >= (start + len) as usize));
                 let lo = before.map_or(1, |b| b as u32 + 2);
                 let hi = after.map_or(entries.len() as u32 + 1, |a| a as u32 + 1);
-                assert!((lo..=hi).contains(&got.0), "{context}: point {} not in {lo}..={hi}", got.0);
+                assert!(
+                    (lo..=hi).contains(&got.0),
+                    "{context}: point {} not in {lo}..={hi}",
+                    got.0
+                );
             }
         }
     }
@@ -638,7 +673,10 @@ mod tests {
     #[test]
     fn locating_needs_both_versions() {
         let r = range_in("a\nb\n", 2, 1);
-        assert_eq!(locate(&r, &digest("x\n"), &blobs_of(&["a\nb\n"], false)), None);
+        assert_eq!(
+            locate(&r, &digest("x\n"), &blobs_of(&["a\nb\n"], false)),
+            None
+        );
         assert_eq!(locate(&r, &digest("x\n"), &blobs_of(&["x\n"], false)), None);
     }
 
@@ -673,8 +711,8 @@ mod tests {
         let texts = [
             "a\nb\nc\nd\n",
             "a\nb\nX\nc\nd\n",      // a line inside b..c: grows to b..c (3)
-            "top\na\nb\nX\nc\nd\n",  // pushed down by one
-            "top\na\nb\nc\nd\n",     // X removed: shrinks back
+            "top\na\nb\nX\nc\nd\n", // pushed down by one
+            "top\na\nb\nc\nd\n",    // X removed: shrinks back
         ];
         let r = range_in(texts[0], 2, 2);
         let last = digest(texts[3]);
@@ -692,12 +730,20 @@ mod tests {
         let (old, new) = ("a\nb\nc\n", "x\na\nb\nc\n");
         // Written against the newer version, viewed at the older.
         assert_eq!(
-            locate(&range_in(new, 3, 1), &digest(old), &blobs_of(&[old, new], true)),
+            locate(
+                &range_in(new, 3, 1),
+                &digest(old),
+                &blobs_of(&[old, new], true)
+            ),
             Some(Located { start: 2, len: 1 })
         );
         // A line the older version doesn't have: where it would be.
         assert_eq!(
-            locate(&range_in(new, 1, 1), &digest(old), &blobs_of(&[old, new], true)),
+            locate(
+                &range_in(new, 1, 1),
+                &digest(old),
+                &blobs_of(&[old, new], true)
+            ),
             Some(Located { start: 1, len: 0 })
         );
     }
@@ -884,13 +930,25 @@ mod tests {
                 &blobs,
             )
         };
-        let Placement::Point { kind, was, before, .. } = placed(true) else {
+        let Placement::Point {
+            kind, was, before, ..
+        } = placed(true)
+        else {
             panic!("expected a point")
         };
-        assert_eq!((kind, was, before), (Absence::NotYet, vec!["b".to_string()], 2));
+        assert_eq!(
+            (kind, was, before),
+            (Absence::NotYet, vec!["b".to_string()], 2)
+        );
         // With no recorded step between the versions, all that is known is
         // that the lines aren't in this one.
-        assert!(matches!(placed(false), Placement::Point { kind: Absence::Unknown, .. }));
+        assert!(matches!(
+            placed(false),
+            Placement::Point {
+                kind: Absence::Unknown,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -908,7 +966,12 @@ mod tests {
     fn a_thread_whose_version_is_missing_is_unplaced() {
         let v = view(OLD, NEW, &[]);
         let a = span(None, Some(range_in("something else entirely\n", 1, 1)));
-        assert_eq!(place(&v, &a), Placement::Unplaced { file: "f.txt".into() });
+        assert_eq!(
+            place(&v, &a),
+            Placement::Unplaced {
+                file: "f.txt".into()
+            }
+        );
     }
 
     #[test]
@@ -1027,7 +1090,16 @@ mod tests {
         assert_eq!(original_text(&removed, &blobs), ["c"]);
         // Not held: nothing to show.
         assert!(original_text(&span(None, Some(range_in("lost\n", 1, 1))), &blobs).is_empty());
-        assert!(original_text(&Anchor::Global { base: None, head: None }, &blobs).is_empty());
+        assert!(
+            original_text(
+                &Anchor::Global {
+                    base: None,
+                    head: None
+                },
+                &blobs
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -1055,7 +1127,10 @@ mod tests {
         assert_eq!(v.head("a"), Some("sha256:a-new"));
         assert_eq!(v.base("a"), Some("sha256:a-old"));
         // Untouched: the same on both sides.
-        assert_eq!((v.head("b"), v.base("b")), (Some("sha256:b"), Some("sha256:b")));
+        assert_eq!(
+            (v.head("b"), v.base("b")),
+            (Some("sha256:b"), Some("sha256:b"))
+        );
         assert_eq!(v.head("c"), None);
     }
 }

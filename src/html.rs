@@ -18,8 +18,8 @@
 //! thread is drawn for this one export.
 
 use crate::anchor::{self, Placement};
-use crate::expand;
 use crate::diff::{FileDiff, Hunk, LineKind, UnifiedDiff};
+use crate::expand;
 use crate::model::{Event, Side};
 use crate::review::{Thread, build_threads};
 use pulldown_cmark::{Parser as MdParser, html::push_html as md_push_html};
@@ -99,11 +99,7 @@ pub struct RevisionView<'a> {
 /// diff, in that view's "unplaced" section where it can't. The tiny inline
 /// script only switches which view is visible; without it all views are
 /// simply stacked.
-pub fn render(
-    events: &[Event],
-    views: &[RevisionView],
-    blobs: &crate::digest::Blobs,
-) -> String {
+pub fn render(events: &[Event], views: &[RevisionView], blobs: &crate::digest::Blobs) -> String {
     let threads = build_threads(events);
     let syntax_set = SyntaxSet::load_defaults_newlines();
     let theme_set = ThemeSet::load_defaults();
@@ -132,7 +128,11 @@ pub fn render(
     }
     body.push_str("</div>\n");
     for (i, view) in views.iter().enumerate() {
-        let current = if i + 1 == views.len() { " is-current" } else { "" };
+        let current = if i + 1 == views.len() {
+            " is-current"
+        } else {
+            ""
+        };
         let inner = render_view(&threads, view, blobs, &syntax_set, theme);
         // Element ids must be unique across the views.
         let inner = inner
@@ -338,9 +338,8 @@ fn render_file(
     theme: &Theme,
 ) -> String {
     let mut out = String::new();
-    let comment_count = file_threads.len()
-        + diff_file_comment_count(key, by_line)
-        + outdated_threads.len();
+    let comment_count =
+        file_threads.len() + diff_file_comment_count(key, by_line) + outdated_threads.len();
     let open_attr = if comment_count > 0 { " open" } else { "" };
     let is_binary = file_diff.is_some_and(|f| f.is_binary);
     let is_rename = file_diff.is_some_and(|f| f.is_rename);
@@ -482,11 +481,7 @@ const PALETTE: [&str; 8] = [
 /// `box-shadow` with one band per covering thread's color, and a
 /// `data-diffnote-threads` list for the hover script) for however many
 /// threads' ranges include this line -- zero, one, or several overlapping.
-fn commented_row_markup(
-    base_class: &str,
-    covering: &[Ulid],
-    marks: &Marks,
-) -> (String, String) {
+fn commented_row_markup(base_class: &str, covering: &[Ulid], marks: &Marks) -> (String, String) {
     if covering.is_empty() {
         return (base_class.to_string(), String::new());
     }
@@ -494,7 +489,11 @@ fn commented_row_markup(
     let mut bars = Vec::new();
     let mut ids = Vec::new();
     for (i, id) in covering.iter().enumerate() {
-        let color = marks.color_of.get(id).map(|c| PALETTE[*c]).unwrap_or("#999");
+        let color = marks
+            .color_of
+            .get(id)
+            .map(|c| PALETTE[*c])
+            .unwrap_or("#999");
         let offset = 3 + i as u32 * 4;
         bars.push(format!("inset {offset}px 0 0 0 {color}"));
         ids.push(id.to_string());
@@ -560,7 +559,10 @@ fn render_thread_html(t: &Thread, marks: &Marks) -> String {
         },
     ));
     if marks.absent.contains_key(&t.root_id) {
-        out.push_str(&render_snippet(marks.was.get(&t.root_id), "diffnote-deleted__snippet"));
+        out.push_str(&render_snippet(
+            marks.was.get(&t.root_id),
+            "diffnote-deleted__snippet",
+        ));
     }
     out.push_str(&render_comment_article(&t.author, t.created_at, &t.body));
     for r in &t.replies {
@@ -586,7 +588,10 @@ fn render_snippet(lines: Option<&Vec<String>>, class: &str) -> String {
 fn render_outdated(t: &Thread, marks: &Marks) -> String {
     let mut out = String::new();
     out.push_str(r#"<div class="diffnote-outdated__entry">"#);
-    out.push_str(&render_snippet(marks.was.get(&t.root_id), "diffnote-outdated__snippet"));
+    out.push_str(&render_snippet(
+        marks.was.get(&t.root_id),
+        "diffnote-outdated__snippet",
+    ));
     out.push_str(&render_thread_html(t, marks));
     out.push_str("</div>");
     out
@@ -1198,9 +1203,17 @@ mod tests {
     #[test]
     fn every_revision_is_a_view_and_the_latest_is_the_current_one() {
         let s = scenario();
-        assert_eq!(s.html.matches(r#"<section class="diffnote-revision"#).count(), 2);
+        assert_eq!(
+            s.html
+                .matches(r#"<section class="diffnote-revision"#)
+                .count(),
+            2
+        );
         assert!(view(&s.html, 1).starts_with(r#"id="rev-1" data-diffnote-revision="1""#));
-        assert!(s.html.contains(r#"class="diffnote-revision is-current" id="rev-1""#));
+        assert!(
+            s.html
+                .contains(r#"class="diffnote-revision is-current" id="rev-1""#)
+        );
         assert!(s.html.contains(r#"class="diffnote-revision" id="rev-0""#));
         // The switcher links to both, and the script only switches views.
         assert!(s.html.contains(r##"href="#rev-0""##));
@@ -1267,7 +1280,9 @@ mod tests {
 
     /// The text of a thread card's summary line in a view.
     fn summary_of(view: &str, id: Ulid) -> String {
-        let from = view.find(&format!(r#"data-diffnote-thread-id="{id}""#)).unwrap();
+        let from = view
+            .find(&format!(r#"data-diffnote-thread-id="{id}""#))
+            .unwrap();
         let rest = &view[from..];
         let start = rest.find("<summary>").unwrap();
         rest[start..rest.find("</summary>").unwrap()].to_string()
@@ -1287,14 +1302,20 @@ mod tests {
         let s = scenario();
         let bar = &s.html[s.html.find(r#"<div class="diffnote-topbar">"#).unwrap()..];
         let bar = &bar[..bar.find("</div>").unwrap()];
-        assert!(bar.contains(r#"<header class="diffnote-summary">"#), "{bar}");
+        assert!(
+            bar.contains(r#"<header class="diffnote-summary">"#),
+            "{bar}"
+        );
         assert!(bar.contains(r#"<nav class="diffnote-revisions">"#), "{bar}");
     }
 
     #[test]
     fn a_thread_card_carries_its_color_for_the_range_highlight() {
         let s = scenario();
-        let card = format!(r##"data-diffnote-thread-id="{}" data-diffnote-color="#"##, s.t1);
+        let card = format!(
+            r##"data-diffnote-thread-id="{}" data-diffnote-color="#"##,
+            s.t1
+        );
         assert!(view(&s.html, 0).contains(&card), "{card}");
         // The lines it covers name the thread, so the script can find them.
         let rows = view(&s.html, 0)
@@ -1309,7 +1330,10 @@ mod tests {
         // first cell from `--diffnote-bars`; an inline box-shadow on the row
         // would sit under it.
         let s = scenario();
-        assert!(s.html.contains(r#"style="--diffnote-bars: inset 3px 0 0 0 #"#));
+        assert!(
+            s.html
+                .contains(r#"style="--diffnote-bars: inset 3px 0 0 0 #"#)
+        );
         assert!(!s.html.contains(r#"style="box-shadow"#));
     }
 
@@ -1362,7 +1386,10 @@ mod tests {
     #[test]
     fn the_title_takes_the_headings_place_and_is_escaped() {
         let html = dated(vec![title_event("ログイン改修 <v2> & co")]);
-        assert!(html.contains("<h1>ログイン改修 &lt;v2&gt; &amp; co</h1>"), "{html}");
+        assert!(
+            html.contains("<h1>ログイン改修 &lt;v2&gt; &amp; co</h1>"),
+            "{html}"
+        );
         assert!(html.contains("<title>ログイン改修 &lt;v2&gt; &amp; co</title>"));
         assert!(!html.contains("<h1>diffnote レビュー</h1>"));
     }
@@ -1389,13 +1416,20 @@ mod tests {
         // Quiet: a small, gray, unbold style.
         let style = &html[html.find(".diffnote-comment__time {").unwrap()..];
         let rule = &style[..style.find('}').unwrap()];
-        assert!(rule.contains("font-size: 11px") && rule.contains("color: #8b949e"), "{rule}");
+        assert!(
+            rule.contains("font-size: 11px") && rule.contains("color: #8b949e"),
+            "{rule}"
+        );
     }
 
     #[test]
     fn the_page_scales_to_a_phones_width() {
         let s = scenario();
-        assert!(s.html.contains(r#"<meta name="viewport" content="width=device-width, initial-scale=1">"#));
+        assert!(
+            s.html.contains(
+                r#"<meta name="viewport" content="width=device-width, initial-scale=1">"#
+            )
+        );
     }
 
     #[test]
@@ -1412,8 +1446,14 @@ mod tests {
             .unwrap();
         let card = &v0[at..v0[at..].find("</details>").unwrap() + at];
         assert!(card.contains("この版にはまだない行"), "{card}");
-        assert!(!card.contains("削除された行"), "not deleted: it isn't there yet");
-        assert!(card.contains(r#"<pre class="diffnote-deleted__snippet">top"#), "{card}");
+        assert!(
+            !card.contains("削除された行"),
+            "not deleted: it isn't there yet"
+        );
+        assert!(
+            card.contains(r#"<pre class="diffnote-deleted__snippet">top"#),
+            "{card}"
+        );
         // In revision 2, where the line exists, it is an ordinary thread on
         // line 1.
         assert_eq!(rows_of(v1, s.t4), vec![("".to_string(), "1".to_string())]);
@@ -1479,7 +1519,10 @@ mod tests {
         let (_dir, loaded) = bundle_of(&[(R1_BASE, R1_HEAD, files_source(None))], Vec::new());
         let html = render_bundle(&loaded).unwrap();
         assert!(!html.contains(r#"<nav class="diffnote-revisions""#));
-        assert_eq!(html.matches(r#"<section class="diffnote-revision"#).count(), 1);
+        assert_eq!(
+            html.matches(r#"<section class="diffnote-revision"#).count(),
+            1
+        );
         assert!(html.contains(r#"class="diffnote-revision is-current" id="rev-0""#));
     }
 
@@ -1491,7 +1534,10 @@ mod tests {
             spec: "<script>alert(1)</script>&x".into(),
         });
         let (_dir, loaded) = bundle_of(
-            &[(R1_BASE, R1_HEAD, git), (R1_HEAD, R2_HEAD, files_source(None))],
+            &[
+                (R1_BASE, R1_HEAD, git),
+                (R1_HEAD, R2_HEAD, files_source(None)),
+            ],
             Vec::new(),
         );
         let html = render_bundle(&loaded).unwrap();
@@ -1512,7 +1558,10 @@ mod tests {
             Vec::new(),
         );
         let html = render_bundle(&loaded).unwrap();
-        assert_eq!(html.matches(r#"<section class="diffnote-revision"#).count(), 1);
+        assert_eq!(
+            html.matches(r#"<section class="diffnote-revision"#).count(),
+            1
+        );
     }
 
     /// A bundle of one revision over two files: `f.txt` changes, `README.md`
@@ -1601,9 +1650,15 @@ mod tests {
         assert_eq!(rows_of(&html, id), vec![("4".to_string(), "4".to_string())]);
         let section = &html[html.find(r#"id="r0-file-README-md""#).unwrap()..];
         for n in 1..=7 {
-            assert!(section.contains(&format!(r#"diffnote-line__gutter-new">{n}<"#)), "line {n}");
+            assert!(
+                section.contains(&format!(r#"diffnote-line__gutter-new">{n}<"#)),
+                "line {n}"
+            );
         }
-        assert!(!section.contains(r#"diffnote-line__gutter-new">8<"#), "no more than 3 lines around");
+        assert!(
+            !section.contains(r#"diffnote-line__gutter-new">8<"#),
+            "no more than 3 lines around"
+        );
         assert!(section.contains("about line 4 of the readme"));
         // ...as a file that only has context: no added or removed lines in it.
         let readme_part = &section[..section.find("</section>").unwrap()];

@@ -90,9 +90,15 @@ pub fn wants(shows: &[Show], view: &ViewVersions, blobs: &Blobs) -> Result<Vec<W
                 .iter()
                 .any(|f| f.old_path.as_deref() == Some(show.path.as_str()) && f.new.is_none());
             return Err(if deleted {
-                format!("{}: この差分で削除されているので、head 側に表示するものがありません", show.path)
+                format!(
+                    "{}: この差分で削除されているので、head 側に表示するものがありません",
+                    show.path
+                )
             } else {
-                format!("{}: このレビューの head にそのファイルはありません", show.path)
+                format!(
+                    "{}: このレビューの head にそのファイルはありません",
+                    show.path
+                )
             });
         };
         let Some(text) = blobs.text(digest) else {
@@ -103,7 +109,10 @@ pub fn wants(shows: &[Show], view: &ViewVersions, blobs: &Blobs) -> Result<Vec<W
         };
         let total = text.lines().count() as u32;
         if total == 0 {
-            return Err(format!("{}: ファイルが空なので、表示するものがありません", show.path));
+            return Err(format!(
+                "{}: ファイルが空なので、表示するものがありません",
+                show.path
+            ));
         }
         let (start, end) = match show.lines {
             None => (1, total),
@@ -143,7 +152,11 @@ mod tests {
     fn a_path_alone_is_the_whole_file() {
         assert_eq!(parse("README.md"), Ok(show("README.md", None)));
         assert_eq!(parse("src/lib.rs"), Ok(show("src/lib.rs", None)));
-        assert_eq!(parse("./src/lib.rs"), Ok(show("src/lib.rs", None)), "a leading ./ goes");
+        assert_eq!(
+            parse("./src/lib.rs"),
+            Ok(show("src/lib.rs", None)),
+            "a leading ./ goes"
+        );
     }
 
     #[test]
@@ -151,7 +164,10 @@ mod tests {
         assert_eq!(parse("a.rs:7"), Ok(show("a.rs", Some((7, 7)))));
         assert_eq!(parse("a.rs:7-12"), Ok(show("a.rs", Some((7, 12)))));
         assert_eq!(parse("a.rs:3-3"), Ok(show("a.rs", Some((3, 3)))));
-        assert_eq!(parse("dir/a.rs:1-999"), Ok(show("dir/a.rs", Some((1, 999)))));
+        assert_eq!(
+            parse("dir/a.rs:1-999"),
+            Ok(show("dir/a.rs", Some((1, 999))))
+        );
     }
 
     #[test]
@@ -165,7 +181,10 @@ mod tests {
 
     #[test]
     fn windows_separators_become_slashes() {
-        assert_eq!(with_slashes(r"src\auth\login.ts:3-4"), "src/auth/login.ts:3-4");
+        assert_eq!(
+            with_slashes(r"src\auth\login.ts:3-4"),
+            "src/auth/login.ts:3-4"
+        );
         assert_eq!(with_slashes(r".\a.txt"), "./a.txt");
         assert_eq!(with_slashes("already/fine"), "already/fine");
     }
@@ -230,7 +249,12 @@ mod tests {
                 tree_entry("empty.txt", b""),
                 tree_entry("missing-blob.txt", b"never stored"),
             ],
-            held: vec![calc.as_bytes().to_vec(), readme.as_bytes().to_vec(), logo, Vec::new()],
+            held: vec![
+                calc.as_bytes().to_vec(),
+                readme.as_bytes().to_vec(),
+                logo,
+                Vec::new(),
+            ],
         }
     }
 
@@ -260,8 +284,15 @@ mod tests {
     fn a_whole_file_is_all_of_its_lines() {
         let w = check(&["README.md", "calc.rs"]).unwrap();
         assert_eq!((w[0].file.as_str(), lines_of(&w[0])), ("README.md", (1, 3)));
-        assert_eq!((w[1].file.as_str(), lines_of(&w[1])), ("calc.rs", (1, 5)), "a touched file too");
-        assert!(w.iter().all(|w| w.lines.unwrap().0 == Side::New && w.row.is_none()));
+        assert_eq!(
+            (w[1].file.as_str(), lines_of(&w[1])),
+            ("calc.rs", (1, 5)),
+            "a touched file too"
+        );
+        assert!(
+            w.iter()
+                .all(|w| w.lines.unwrap().0 == Side::New && w.row.is_none())
+        );
     }
 
     #[test]
@@ -275,7 +306,10 @@ mod tests {
     #[test]
     fn a_start_past_the_end_is_an_error_that_says_how_long_the_file_is() {
         let err = check(&["README.md:4"]).unwrap_err();
-        assert!(err.contains("README.md") && err.contains("3 行") && err.contains("4 行目"), "{err}");
+        assert!(
+            err.contains("README.md") && err.contains("3 行") && err.contains("4 行目"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -288,8 +322,16 @@ mod tests {
 
     #[test]
     fn a_file_that_is_not_text_or_not_kept_or_empty_is_refused() {
-        assert!(check(&["logo.png"]).unwrap_err().contains("テキストファイルではありません"));
-        assert!(check(&["missing-blob.txt"]).unwrap_err().contains("テキストファイルではありません"));
+        assert!(
+            check(&["logo.png"])
+                .unwrap_err()
+                .contains("テキストファイルではありません")
+        );
+        assert!(
+            check(&["missing-blob.txt"])
+                .unwrap_err()
+                .contains("テキストファイルではありません")
+        );
         assert!(check(&["empty.txt"]).unwrap_err().contains("空"));
     }
 

@@ -22,9 +22,9 @@ pub fn build_anchor(
             head: revisions.1.clone(),
         }),
         AnchorScope::File { file } => {
-            let entry = files
-                .iter()
-                .find(|f| f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file));
+            let entry = files.iter().find(|f| {
+                f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file)
+            });
             let make = |path: Option<&String>, digest: Option<&String>| {
                 path.map(|p| FileRef {
                     file: p.clone(),
@@ -122,7 +122,10 @@ mod tests {
         (Some("base-rev".into()), Some("head-rev".into()))
     }
 
-    fn parse_with_comment(c: &Change, lines: Vec<String>) -> (crate::diff::UnifiedDiff, AnchorScope) {
+    fn parse_with_comment(
+        c: &Change,
+        lines: Vec<String>,
+    ) -> (crate::diff::UnifiedDiff, AnchorScope) {
         let text = lines.join("\n") + "\n";
         let parsed = annotation::parse(&text).unwrap();
         let Item::NewThread { scope, .. } = &parsed.items[0] else {
@@ -179,7 +182,10 @@ mod tests {
         assert_eq!(at(head), (5, 1));
         assert_eq!(base.unwrap().file, "f.txt");
         assert_eq!(base.unwrap().digest, digest(numbered(20)));
-        assert_eq!(head.unwrap().digest, digest(edited(&numbered(20), &[(2, Some("L2")), (19, Some("L19"))])));
+        assert_eq!(
+            head.unwrap().digest,
+            digest(edited(&numbered(20), &[(2, Some("L2")), (19, Some("L19"))]))
+        );
     }
 
     #[test]
@@ -205,10 +211,7 @@ mod tests {
 
     #[test]
     fn a_removed_line_is_an_insertion_point_on_the_head_side() {
-        let c = change(
-            Some("a\nb\nc\nd\ne\nf\ng\n"),
-            Some("a\nb\nc\ne\nf\ng\n"),
-        );
+        let c = change(Some("a\nb\nc\nd\ne\nf\ng\n"), Some("a\nb\nc\ne\nf\ng\n"));
         let a = anchor_after(&c, "-d");
         let (base, head) = ranges(&a);
         assert_eq!(at(base), (4, 1));
@@ -253,7 +256,10 @@ mod tests {
     #[test]
     fn a_whole_hunk_is_a_span_over_both_of_its_ranges() {
         let old = numbered(12);
-        let c = change(Some(&old), Some(&edited(&old, &[(6, Some("L6")), (7, None)])));
+        let c = change(
+            Some(&old),
+            Some(&edited(&old, &[(6, Some("L6")), (7, None)])),
+        );
         // A comment straight after the hunk header.
         let index = c.diff.lines().position(|l| l.starts_with("@@")).unwrap();
         let a = anchor_after_line(&c, index);
@@ -318,7 +324,10 @@ rename to new.txt
         let a = build_anchor(scope, &parsed.diff, &files, &revisions()).unwrap();
         let (base, head) = ranges(&a);
         let (base, head) = (base.unwrap(), head.unwrap());
-        assert_eq!((base.file.as_str(), head.file.as_str()), ("old.txt", "new.txt"));
+        assert_eq!(
+            (base.file.as_str(), head.file.as_str()),
+            ("old.txt", "new.txt")
+        );
         assert_eq!(base.digest, digest("a\nb\nc\n"));
         assert_eq!(head.digest, digest("a\nB\nc\n"));
         // The comment is after the trailing context line ` c`.
@@ -371,20 +380,27 @@ rename to new.txt
             let (has_base, has_head) = (marker != '+', marker != '-');
             for (r, has, lines) in [(base, has_base, &old_lines), (head, has_head, &new_lines)] {
                 let Some(r) = r else {
-                    assert!(lines.is_empty(), "{line:?}: side missing but the file has lines");
+                    assert!(
+                        lines.is_empty(),
+                        "{line:?}: side missing but the file has lines"
+                    );
                     continue;
                 };
                 if has {
                     assert_eq!(r.len, 1, "{line:?}");
                     assert_eq!(
-                        lines[r.start as usize - 1], content,
+                        lines[r.start as usize - 1],
+                        content,
                         "{line:?} is not at line {} of its version",
                         r.start
                     );
                 } else {
                     // A point: it sits between the line before and the one after.
                     assert_eq!(r.len, 0, "{line:?}");
-                    assert!(r.start >= 1 && r.start as usize <= lines.len() + 1, "{line:?}");
+                    assert!(
+                        r.start >= 1 && r.start as usize <= lines.len() + 1,
+                        "{line:?}"
+                    );
                 }
             }
         }

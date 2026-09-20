@@ -229,7 +229,10 @@ mod tests {
         assert_eq!(title(&[title_event("a")]), Some("a"));
         assert_eq!(title(&[title_event("a"), title_event(" b ")]), Some("b"));
         assert_eq!(title(&[title_event("a"), title_event("")]), None, "cleared");
-        assert_eq!(title(&[title_event("a"), title_event(""), title_event("c")]), Some("c"));
+        assert_eq!(
+            title(&[title_event("a"), title_event(""), title_event("c")]),
+            Some("c")
+        );
     }
 
     #[test]
@@ -237,7 +240,10 @@ mod tests {
         let none: Vec<Event> = Vec::new();
         assert!(title_change(&none, "", "me").is_none(), "nothing to clear");
         assert!(title_change(&none, "  ", "me").is_none());
-        let Some(Event::Title { title: t, author, .. }) = title_change(&none, " new ", "me") else {
+        let Some(Event::Title {
+            title: t, author, ..
+        }) = title_change(&none, " new ", "me")
+        else {
             panic!("a title should be set");
         };
         assert_eq!((t.as_str(), author.as_str()), ("new", "me"));

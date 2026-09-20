@@ -671,7 +671,8 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
             });
             // A side with no lines has its `start` one *before* the point
             // (git's convention), unlike ours (the line it sits before).
-            let side = |start: u32, len: u32| LineSpan::new(if len == 0 { start + 1 } else { start }, len);
+            let side =
+                |start: u32, len: u32| LineSpan::new(if len == 0 { start + 1 } else { start }, len);
             current_scope = AnchorScope::Span {
                 file: file_lbl,
                 base: side(old_start, old_lines),
@@ -1006,7 +1007,9 @@ pub fn render_for_edit(
         match raw_line.chars().next() {
             Some(' ') => {
                 let keys = [(Side::Old, old_no), (Side::New, new_no)];
-                mark_starts(&mut out, row_start, &starts, &by_line, &mut marks, &file, &keys);
+                mark_starts(
+                    &mut out, row_start, &starts, &by_line, &mut marks, &file, &keys,
+                );
                 emit_line_threads(&mut out, &by_line, &marks, &file, Side::New, new_no);
                 emit_line_threads(&mut out, &by_line, &marks, &file, Side::Old, old_no);
                 old_no += 1;
@@ -1014,13 +1017,17 @@ pub fn render_for_edit(
             }
             Some('+') => {
                 let keys = [(Side::New, new_no)];
-                mark_starts(&mut out, row_start, &starts, &by_line, &mut marks, &file, &keys);
+                mark_starts(
+                    &mut out, row_start, &starts, &by_line, &mut marks, &file, &keys,
+                );
                 emit_line_threads(&mut out, &by_line, &marks, &file, Side::New, new_no);
                 new_no += 1;
             }
             Some('-') => {
                 let keys = [(Side::Old, old_no)];
-                mark_starts(&mut out, row_start, &starts, &by_line, &mut marks, &file, &keys);
+                mark_starts(
+                    &mut out, row_start, &starts, &by_line, &mut marks, &file, &keys,
+                );
                 emit_line_threads(&mut out, &by_line, &marks, &file, Side::Old, old_no);
                 old_no += 1;
             }
@@ -1061,7 +1068,11 @@ fn mark_starts(
     };
     let mut markers = String::new();
     for &(side, line) in keys {
-        for id in starts.get(&(file.to_string(), side, line)).into_iter().flatten() {
+        for id in starts
+            .get(&(file.to_string(), side, line))
+            .into_iter()
+            .flatten()
+        {
             if marks.seen.insert(*id) && !card_here(id) {
                 marks.drawn.insert(*id);
                 markers.push_str(&format!(">#[{id}\n"));
@@ -1229,10 +1240,10 @@ index 83db48f..bf269c9 100644
             assert_eq!(
                 *scope,
                 AnchorScope::Span {
-                file: "src/lib.rs".to_string(),
-                base: LineSpan::new(13, 1),
-                head: LineSpan::new(17, 1),
-            }
+                    file: "src/lib.rs".to_string(),
+                    base: LineSpan::new(13, 1),
+                    head: LineSpan::new(17, 1),
+                }
             );
         }
     }
@@ -1598,9 +1609,7 @@ diff --git a/f.rs b/f.rs
     /// hunk's old side (lines 10-13).
     fn old_text() -> String {
         let mut t: String = (1..=9).map(|n| format!("// filler {n}\n")).collect();
-        t.push_str(
-            "    fn bar(&self) -> i32 {\n        self.value\n    }\n}\n",
-        );
+        t.push_str("    fn bar(&self) -> i32 {\n        self.value\n    }\n}\n");
         t
     }
 
@@ -1642,12 +1651,20 @@ diff --git a/f.rs b/f.rs
     ) -> (String, Vec<crate::model::FileDigest>) {
         let diff = diff::parse(BASE).unwrap();
         let mut blobs = crate::digest::Blobs::default();
-        for t in fx.texts.iter().map(String::as_str).chain(extra.iter().copied()) {
+        for t in fx
+            .texts
+            .iter()
+            .map(String::as_str)
+            .chain(extra.iter().copied())
+        {
             blobs.add(t.as_bytes());
         }
         // The extra texts are older versions of the file, taken to today's.
         for t in extra {
-            blobs.link(&crate::digest::digest(t), &crate::digest::digest(new_text()));
+            blobs.link(
+                &crate::digest::digest(t),
+                &crate::digest::digest(new_text()),
+            );
         }
         render_for_edit(
             BASE,
@@ -1728,7 +1745,10 @@ diff --git a/f.rs b/f.rs
         // last of them like any range comment.
         let hunk_pos = rendered.find(&format!(">#]{hunk_id}")).unwrap();
         let last_line = rendered.rfind("\n }\n").unwrap();
-        assert!(last_line < hunk_pos, "a span comment must render after its lines");
+        assert!(
+            last_line < hunk_pos,
+            "a span comment must render after its lines"
+        );
 
         let line_pos = rendered.find(&format!(">#@{line_id}")).unwrap();
         let target_line_pos = rendered.find("self.value * 2").unwrap();
@@ -1756,7 +1776,10 @@ diff --git a/f.rs b/f.rs
             &[thread_with(id, on_new_lines(14, 2), "about baz")],
         );
         let (marker, card) = (format!(">#[{id}\n"), format!(">#]{id}\n>#@ "));
-        let (m, c) = (rendered.find(&marker).unwrap(), rendered.find(&card).unwrap());
+        let (m, c) = (
+            rendered.find(&marker).unwrap(),
+            rendered.find(&card).unwrap(),
+        );
         let first = rendered.find("+    fn baz").unwrap();
         let last = rendered.find("        self.value * 2").unwrap();
         // Marker, then the first row, then the last row, then the card.
@@ -1769,7 +1792,11 @@ diff --git a/f.rs b/f.rs
     #[test]
     fn a_thread_on_one_row_has_no_start_marker() {
         let id = Ulid::new();
-        let rendered = render(&fixture(), &[], &[thread_with(id, on_baz_line(), "one line")]);
+        let rendered = render(
+            &fixture(),
+            &[],
+            &[thread_with(id, on_baz_line(), "one line")],
+        );
         assert!(rendered.contains(&format!(">#@{id}")));
         assert!(!rendered.contains(">#["), "{rendered}");
     }
@@ -1794,11 +1821,17 @@ diff --git a/f.rs b/f.rs
         );
         let at = |needle: &str| rendered.find(needle).unwrap();
         let (hunk_marker, inner_marker) = (format!(">#[{hunk}\n"), format!(">#[{inner}\n"));
-        assert!(at("@@ -10,4") < at(&hunk_marker) && at(&hunk_marker) < at("     fn bar"), "{rendered}");
+        assert!(
+            at("@@ -10,4") < at(&hunk_marker) && at(&hunk_marker) < at("     fn bar"),
+            "{rendered}"
+        );
         // The inner range starts at the added blank line: after the context
         // row `    }`, before that blank `+` row.
         assert!(at("     }\n") < at(&inner_marker), "{rendered}");
-        assert!(rendered.contains(&format!("{inner_marker}+\n+    fn baz")), "{rendered}");
+        assert!(
+            rendered.contains(&format!("{inner_marker}+\n+    fn baz")),
+            "{rendered}"
+        );
         assert_eq!(rendered.matches(&hunk_marker).count(), 1);
         assert_eq!(rendered.matches(&inner_marker).count(), 1);
     }
@@ -1854,7 +1887,10 @@ diff --git a/f.rs b/f.rs
             "{rendered}"
         );
         assert!(!rendered.contains(&format!(">#[{context}")), "{rendered}");
-        assert!(rendered.contains(&format!(" semver\n>#@{context}")), "{rendered}");
+        assert!(
+            rendered.contains(&format!(" semver\n>#@{context}")),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -1872,13 +1908,29 @@ diff --git a/f.rs b/f.rs
         // Three `>#@` headers (root and two replies), none with an id: the
         // one `>#]` line names the thread.
         assert_eq!(rendered.matches(">#@ ").count(), 3, "{rendered}");
-        assert_eq!(rendered.matches(&format!(">#@{id}")).count(), 0, "{rendered}");
-        assert_eq!(rendered.matches(&format!(">#[{id}\n")).count(), 1, "{rendered}");
-        assert_eq!(rendered.matches(&format!(">#]{id}\n")).count(), 1, "{rendered}");
+        assert_eq!(
+            rendered.matches(&format!(">#@{id}")).count(),
+            0,
+            "{rendered}"
+        );
+        assert_eq!(
+            rendered.matches(&format!(">#[{id}\n")).count(),
+            1,
+            "{rendered}"
+        );
+        assert_eq!(
+            rendered.matches(&format!(">#]{id}\n")).count(),
+            1,
+            "{rendered}"
+        );
         // The closing marker sits right before the first header, not between.
         let close = rendered.find(&format!(">#]{id}\n")).unwrap();
         let first_header = rendered.find(">#@ ").unwrap();
-        assert_eq!(first_header, close + format!(">#]{id}\n").len(), "{rendered}");
+        assert_eq!(
+            first_header,
+            close + format!(">#]{id}\n").len(),
+            "{rendered}"
+        );
         assert!(parse(&rendered).unwrap().items.is_empty());
     }
 
@@ -1892,14 +1944,21 @@ diff --git a/f.rs b/f.rs
         );
         assert!(rendered.contains(">#["));
         let parsed = parse(&rendered).unwrap();
-        assert!(parsed.items.is_empty() && parsed.warnings.is_empty(), "{parsed:?}");
+        assert!(
+            parsed.items.is_empty() && parsed.warnings.is_empty(),
+            "{parsed:?}"
+        );
     }
 
     #[test]
     fn a_thread_written_against_an_older_version_is_placed_by_following_the_lines() {
         // The same file three lines shorter at the top: `self.value * 2` was
         // line 12 then, and the position is worked out from the two texts.
-        let older: String = new_text().lines().skip(3).map(|l| format!("{l}\n")).collect();
+        let older: String = new_text()
+            .lines()
+            .skip(3)
+            .map(|l| format!("{l}\n"))
+            .collect();
         let root_id = Ulid::new();
         let thread = thread_with(
             root_id,
@@ -1992,7 +2051,12 @@ diff --git a/f.rs b/f.rs
         assert_eq!(parsed.diff.files.len(), 1);
         let hunks = &parsed.diff.files[0].hunks;
         assert_eq!(hunks.len(), 2);
-        assert!(hunks[0].lines.iter().all(|l| l.kind == crate::diff::LineKind::Context));
+        assert!(
+            hunks[0]
+                .lines
+                .iter()
+                .all(|l| l.kind == crate::diff::LineKind::Context)
+        );
     }
 
     #[test]
@@ -2031,7 +2095,10 @@ diff --git a/f.rs b/f.rs
             &[],
         );
         // The real diff is untouched and comes first; the README follows.
-        assert!(rendered.starts_with(&format!("{BASE}diff --git a/README.md b/README.md\n")), "{rendered}");
+        assert!(
+            rendered.starts_with(&format!("{BASE}diff --git a/README.md b/README.md\n")),
+            "{rendered}"
+        );
         let header = rendered.find(&format!(">#@{root_id}")).unwrap();
         let line4 = rendered.find(" line 4\n").unwrap();
         assert!(line4 < header);
@@ -2054,13 +2121,8 @@ diff --git a/f.rs b/f.rs
                 head: LineSpan::new(6, 1),
             }
         );
-        let anchor = crate::create::build_anchor(
-            scope,
-            &parsed.diff,
-            &synthetic,
-            &(None, None),
-        )
-        .unwrap();
+        let anchor =
+            crate::create::build_anchor(scope, &parsed.diff, &synthetic, &(None, None)).unwrap();
         let Anchor::Span { head: Some(h), .. } = anchor else {
             panic!()
         };
@@ -2069,7 +2131,10 @@ diff --git a/f.rs b/f.rs
     }
 
     /// Runs `render_for_edit` with no threads and just these requests.
-    fn render_showing(extra: &[expand::Want], readme: Option<&str>) -> (String, Vec<crate::model::FileDigest>) {
+    fn render_showing(
+        extra: &[expand::Want],
+        readme: Option<&str>,
+    ) -> (String, Vec<crate::model::FileDigest>) {
         let diff = diff::parse(BASE).unwrap();
         let fx = fixture();
         let mut blobs = crate::digest::Blobs::default();
@@ -2107,7 +2172,10 @@ diff --git a/f.rs b/f.rs
     #[test]
     fn requested_lines_of_the_diffs_own_file_get_context_blocks() {
         let (text, synthetic) = render_showing(&[want("src/lib.rs", 2, 3)], None);
-        assert!(text.contains("@@ -1,6 +1,6 @@") || text.contains("@@ -1,5 +1,5 @@"), "{text}");
+        assert!(
+            text.contains("@@ -1,6 +1,6 @@") || text.contains("@@ -1,5 +1,5 @@"),
+            "{text}"
+        );
         assert!(text.contains(" // filler 2\n") && text.contains(" // filler 3\n"));
         assert!(synthetic.is_empty(), "no new file: it is the diff's own");
         // It reads back, and the real hunk is still there.
@@ -2193,7 +2261,10 @@ diff --git a/f.rs b/f.rs
         let thread = thread_with(root_id, anchor, "lost");
         let rendered = render(&fixture(), &[], std::slice::from_ref(&thread));
         let header = rendered.find(&format!(">#@{root_id}")).unwrap();
-        assert!(header < rendered.find("diff --git").unwrap(), "in the preamble");
+        assert!(
+            header < rendered.find("diff --git").unwrap(),
+            "in the preamble"
+        );
     }
 
     #[test]
@@ -2235,7 +2306,10 @@ diff --git a/f.rs b/f.rs
         let id = Ulid::new();
         let thread = with_replies(thread_with(id, on_new_lines(14, 2), "root"), 2);
         let rendered = render(&fixture(), &[], &[thread]);
-        assert!(!rendered.contains(&format!(">#@{id}")), "no id in the headers");
+        assert!(
+            !rendered.contains(&format!(">#@{id}")),
+            "no id in the headers"
+        );
         let parsed = parse(&format!("{rendered}>> mine\n")).unwrap();
         assert_eq!(reply_target(&parsed), ThreadRef::Existing(id));
     }
@@ -2245,7 +2319,11 @@ diff --git a/f.rs b/f.rs
         let id = Ulid::new();
         let thread = with_replies(thread_with(id, on_baz_line(), "root"), 2);
         let rendered = render(&fixture(), &[], &[thread]);
-        assert_eq!(rendered.matches(&format!(">#@{id} ")).count(), 1, "{rendered}");
+        assert_eq!(
+            rendered.matches(&format!(">#@{id} ")).count(),
+            1,
+            "{rendered}"
+        );
         assert_eq!(rendered.matches(">#@ ").count(), 2, "{rendered}");
         assert!(!rendered.contains(">#]"), "no range, no markers");
         let parsed = parse(&format!("{rendered}>> mine\n")).unwrap();
@@ -2285,7 +2363,10 @@ diff --git a/f.rs b/f.rs
         // The old form, every header with the thread's id (an unsent draft).
         let id = Ulid::new();
         let text = format!("{BASE}>#@{id} someone@example.com 2026-01-01T00:00:00Z\n>#hi\n>> ok\n");
-        assert_eq!(reply_target(&parse(&text).unwrap()), ThreadRef::Existing(id));
+        assert_eq!(
+            reply_target(&parse(&text).unwrap()),
+            ThreadRef::Existing(id)
+        );
     }
 
     #[test]
@@ -2359,10 +2440,15 @@ diff --git a/f.rs b/f.rs
         // The open marker has no close, and the id-less header that used to
         // follow the close now follows a diff row.
         assert!(
-            warnings.iter().any(|w| w.contains(&format!("'>#[{id}'")) && w.contains("対応する")),
+            warnings
+                .iter()
+                .any(|w| w.contains(&format!("'>#[{id}'")) && w.contains("対応する")),
             "{warnings:?}"
         );
-        assert!(warnings.iter().any(|w| w.contains("ID のない")), "{warnings:?}");
+        assert!(
+            warnings.iter().any(|w| w.contains("ID のない")),
+            "{warnings:?}"
+        );
     }
 
     #[test]
@@ -2387,9 +2473,17 @@ diff --git a/f.rs b/f.rs
         );
         assert!(parse(&rendered).unwrap().warnings.is_empty());
         let warnings = parse(&without(&rendered, ">#]", first)).unwrap().warnings;
-        assert!(warnings.iter().any(|w| w.contains(&format!("'>#[{first}'"))), "{warnings:?}");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains(&format!("'>#[{first}'"))),
+            "{warnings:?}"
+        );
         // The second thread's own markers are fine.
-        assert!(!warnings.iter().any(|w| w.contains(&second.to_string())), "{warnings:?}");
+        assert!(
+            !warnings.iter().any(|w| w.contains(&second.to_string())),
+            "{warnings:?}"
+        );
     }
 
     #[test]
@@ -2397,7 +2491,10 @@ diff --git a/f.rs b/f.rs
         let id = Ulid::new();
         let body = "[01M2Z2AY720BFBEAHBMA04D4Z3\nnext";
         let rendered = render(&fixture(), &[], &[thread_with(id, on_baz_line(), body)]);
-        assert!(rendered.contains("># [01M2Z2AY720BFBEAHBMA04D4Z3"), "{rendered}");
+        assert!(
+            rendered.contains("># [01M2Z2AY720BFBEAHBMA04D4Z3"),
+            "{rendered}"
+        );
         let parsed = parse(&rendered).unwrap();
         assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
     }

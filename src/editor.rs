@@ -61,7 +61,10 @@ mod tests {
     #[test]
     fn arguments_are_split_off() {
         assert_eq!(words("code --wait"), ["code", "--wait"]);
-        assert_eq!(words("emacsclient -t  -a  ''"), ["emacsclient", "-t", "-a", ""]);
+        assert_eq!(
+            words("emacsclient -t  -a  ''"),
+            ["emacsclient", "-t", "-a", ""]
+        );
     }
 
     #[test]
@@ -76,7 +79,10 @@ mod tests {
 
     #[test]
     fn backslashes_are_kept_as_they_are() {
-        assert_eq!(words(r"C:\tools\ed.cmd --wait"), [r"C:\tools\ed.cmd", "--wait"]);
+        assert_eq!(
+            words(r"C:\tools\ed.cmd --wait"),
+            [r"C:\tools\ed.cmd", "--wait"]
+        );
     }
 
     #[test]

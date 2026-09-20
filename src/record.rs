@@ -130,10 +130,7 @@ pub fn record_session(
         .cloned()
         .collect();
 
-    if let Some(recorded) = loaded
-        .revisions()
-        .find(|r| r.digest == capture.diff_digest)
-    {
+    if let Some(recorded) = loaded.revisions().find(|r| r.digest == capture.diff_digest) {
         // Already recorded: only what this session's comments newly refer to.
         let known: HashSet<String> = loaded
             .manifest(recorded)
@@ -204,7 +201,10 @@ pub fn record_session(
         }),
     );
     Ok(Additions {
-        diff: Some((capture.diff_digest.to_string(), capture.diff_text.to_string())),
+        diff: Some((
+            capture.diff_digest.to_string(),
+            capture.diff_text.to_string(),
+        )),
         blobs,
     })
 }
@@ -399,11 +399,7 @@ mod tests {
     }
 
     /// Saves `events` + `additions` to a real bundle and reloads it.
-    fn persist(
-        dir: &tempfile::TempDir,
-        events: &[Event],
-        additions: &Additions,
-    ) -> bundle::Loaded {
+    fn persist(dir: &tempfile::TempDir, events: &[Event], additions: &Additions) -> bundle::Loaded {
         let path = dir.path().join("r.diffnote");
         bundle::save(&path, &bundle::load(&path).unwrap(), events, additions).unwrap();
         bundle::load(&path).unwrap()
@@ -443,7 +439,12 @@ mod tests {
         let o = run(&empty(), vec![meta()], SnapshotMode::Changed, "sha256:d1");
         assert!(matches!(o.events[0], Event::Meta { .. }));
         assert!(matches!(o.events[1], Event::Revision(_)));
-        let o = run(&empty(), vec![comment_on("calc.rs")], SnapshotMode::Changed, "sha256:d1");
+        let o = run(
+            &empty(),
+            vec![comment_on("calc.rs")],
+            SnapshotMode::Changed,
+            "sha256:d1",
+        );
         assert!(matches!(o.events[0], Event::Revision(_)));
         assert!(matches!(o.events[1], Event::Comment { .. }));
     }
@@ -463,7 +464,10 @@ mod tests {
             ["calc v1", "calc v2", "gone v1", "readme v1"]
         );
         // Only the untouched one is read; `calc.rs` came with the diff.
-        assert_eq!(*o.head.some_calls.borrow(), vec![vec!["README.md".to_string()]]);
+        assert_eq!(
+            *o.head.some_calls.borrow(),
+            vec![vec!["README.md".to_string()]]
+        );
     }
 
     #[test]
@@ -511,7 +515,9 @@ mod tests {
         };
         let events = [file_anchor, global, reanchor, reply];
         assert_eq!(
-            referenced_files(events.iter()).into_iter().collect::<Vec<_>>(),
+            referenced_files(events.iter())
+                .into_iter()
+                .collect::<Vec<_>>(),
             ["README.md", "docs.md"]
         );
         // The base side alone is enough.
@@ -520,7 +526,9 @@ mod tests {
             head: None,
         });
         assert_eq!(
-            referenced_files([base_only].iter()).into_iter().collect::<Vec<_>>(),
+            referenced_files([base_only].iter())
+                .into_iter()
+                .collect::<Vec<_>>(),
             ["old.txt"]
         );
     }
@@ -533,7 +541,10 @@ mod tests {
             SnapshotMode::Changed,
             "sha256:d1",
         );
-        assert_eq!(paths(&revision_of(&o.events).tree), ["README.md", "calc.rs"]);
+        assert_eq!(
+            paths(&revision_of(&o.events).tree),
+            ["README.md", "calc.rs"]
+        );
     }
 
     #[test]
@@ -563,7 +574,10 @@ mod tests {
             head.all(),
         )
         .unwrap();
-        assert!(head.some_calls.borrow().is_empty(), "both paths are the diff's own");
+        assert!(
+            head.some_calls.borrow().is_empty(),
+            "both paths are the diff's own"
+        );
     }
 
     #[test]
@@ -582,7 +596,10 @@ mod tests {
             ["calc v1", "calc v2", "docs v1", "gone v1", "readme v1"]
         );
         assert_eq!(o.head.all_calls.get(), 1);
-        assert!(o.head.some_calls.borrow().is_empty(), "the whole tree already has them");
+        assert!(
+            o.head.some_calls.borrow().is_empty(),
+            "the whole tree already has them"
+        );
     }
 
     #[test]
@@ -592,12 +609,21 @@ mod tests {
         let loaded = persist(&dir, &first.events, &first.additions);
 
         // A second session on the very same diff, adding a plain comment.
-        let o = run(&loaded, vec![comment_on("calc.rs")], SnapshotMode::Changed, "sha256:d1");
+        let o = run(
+            &loaded,
+            vec![comment_on("calc.rs")],
+            SnapshotMode::Changed,
+            "sha256:d1",
+        );
         assert_eq!(o.mode_asked.get(), 0);
         assert!(o.additions.diff.is_none());
         assert!(o.additions.blobs.is_empty());
         assert_eq!(o.events.len(), 1);
-        assert!(!o.events.iter().any(|e| matches!(e, Event::Revision(_) | Event::Pin { .. })));
+        assert!(
+            !o.events
+                .iter()
+                .any(|e| matches!(e, Event::Revision(_) | Event::Pin { .. }))
+        );
         assert!(o.head.some_calls.borrow().is_empty());
     }
 
@@ -622,7 +648,10 @@ mod tests {
         );
         assert!(o.additions.diff.is_none());
         assert_eq!(blob_texts(&o.additions), ["docs v1"]);
-        assert_eq!(*o.head.some_calls.borrow(), vec![vec!["docs.md".to_string()]]);
+        assert_eq!(
+            *o.head.some_calls.borrow(),
+            vec![vec!["docs.md".to_string()]]
+        );
         let pins: Vec<_> = o
             .events
             .iter()
@@ -642,7 +671,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let first = run(&empty(), vec![meta()], SnapshotMode::Changed, "sha256:d1");
         let loaded = persist(&dir, &first.events, &first.additions);
-        let second = run(&loaded, vec![comment_on("docs.md")], SnapshotMode::Changed, "sha256:d1");
+        let second = run(
+            &loaded,
+            vec![comment_on("docs.md")],
+            SnapshotMode::Changed,
+            "sha256:d1",
+        );
         assert!(second.events.iter().any(|e| matches!(e, Event::Pin { .. })));
         let mut all = first.events.clone();
         all.extend(second.events.iter().cloned());
@@ -672,7 +706,12 @@ mod tests {
         );
         let loaded = persist(&dir, &first.events, &first.additions);
         // Session 2: the same revision again, now with a comment on docs.md.
-        let second = run(&loaded, vec![comment_on("docs.md")], SnapshotMode::Changed, "sha256:d1");
+        let second = run(
+            &loaded,
+            vec![comment_on("docs.md")],
+            SnapshotMode::Changed,
+            "sha256:d1",
+        );
         let mut all = first.events.clone();
         all.extend(second.events.iter().cloned());
         let loaded = persist(&dir, &all, &second.additions);
@@ -758,7 +797,10 @@ mod tests {
         let dir = Source::Files { base: None };
         for explicit in [None, Some(SnapshotMode::Changed), Some(SnapshotMode::Full)] {
             for stored in [None, Some(SnapshotMode::Changed), Some(SnapshotMode::Full)] {
-                assert_eq!(pick_snapshot_mode(explicit, stored, &dir), SnapshotMode::Full);
+                assert_eq!(
+                    pick_snapshot_mode(explicit, stored, &dir),
+                    SnapshotMode::Full
+                );
             }
         }
     }
@@ -769,6 +811,10 @@ mod tests {
         assert_eq!(full_snapshot_warning(FULL_SNAPSHOT_WARN_BYTES - 1), None);
         let w = full_snapshot_warning(FULL_SNAPSHOT_WARN_BYTES).unwrap();
         assert!(w.contains("30.0 MB"), "{w}");
-        assert!(full_snapshot_warning(100 * 1024 * 1024).unwrap().contains("100.0 MB"));
+        assert!(
+            full_snapshot_warning(100 * 1024 * 1024)
+                .unwrap()
+                .contains("100.0 MB")
+        );
     }
 }

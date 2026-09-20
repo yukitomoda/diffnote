@@ -24,7 +24,9 @@ fn text(ls: &[String]) -> String {
 fn line_diff_timings() {
     let mut rng = Lcg(42);
     let n = 100_000;
-    let base: Vec<String> = (0..n).map(|i| format!("line {} {i}", rng.next(1_000_000))).collect();
+    let base: Vec<String> = (0..n)
+        .map(|i| format!("line {} {i}", rng.next(1_000_000)))
+        .collect();
     let old = text(&base);
 
     let mut few = base.clone();
@@ -38,7 +40,9 @@ fn line_diff_timings() {
             line.push_str(" edited");
         }
     }
-    let rewrite: Vec<String> = (0..n).map(|i| format!("different {} {i}", rng.next(1_000_000))).collect();
+    let rewrite: Vec<String> = (0..n)
+        .map(|i| format!("different {} {i}", rng.next(1_000_000)))
+        .collect();
     let mut shuffled = base.clone();
     for i in (1..n).rev() {
         shuffled.swap(i, rng.next(i + 1));
