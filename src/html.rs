@@ -1247,6 +1247,9 @@ body[data-diffnote-api] .diffnote-diff tr:hover .diffnote-line__gutter-new::befo
 body.is-selecting { user-select: none; }
 .diffnote-diff .diffnote-select > td { background-image: linear-gradient(rgba(9, 105, 218, 0.16), rgba(9, 105, 218, 0.16)); }
 .diffnote-diff .diffnote-select > td:first-child { --dn-l: inset 4px 0 0 0 var(--diffnote-color-accent); }
+.diffnote-diff .diffnote-select > td:last-child { --dn-r: inset -3px 0 0 0 var(--diffnote-color-accent); }
+.diffnote-diff .diffnote-select-first > td { --dn-t: inset 0 3px 0 0 var(--diffnote-color-accent); }
+.diffnote-diff .diffnote-select-last > td { --dn-b: inset 0 -3px 0 0 var(--diffnote-color-accent); }
 .diffnote-composer-row > td { background: var(--diffnote-color-bg); padding: 6px 16px 6px 124px !important; white-space: normal; font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; }
 .diffnote-compose { max-width: 960px; border: 1px solid var(--diffnote-color-accent); border-radius: 6px; padding: 8px 12px; background: var(--diffnote-color-thread-bg); }
 .diffnote-compose__where { margin-bottom: 4px; font-family: var(--diffnote-font-mono); font-size: 12px; color: var(--diffnote-color-muted); }
@@ -1353,6 +1356,9 @@ const SCRIPT: &str = r#"
   var LINE = 'tr[data-diffnote-threads]';
   var active = null;
   var pinned = null;
+  // While lines are being chosen by dragging (served page): the choice is
+  // what is shown, so no comment's range is.
+  var dragging = false;
 
   function scopeOf(el) { return el.closest('.diffnote-revision') || document; }
   function cardOf(scope, id) { return scope.querySelector('[data-diffnote-thread-id="' + id + '"]'); }
@@ -1408,7 +1414,7 @@ const SCRIPT: &str = r#"
   }
 
   document.addEventListener('mouseover', function (e) {
-    if (pinned) return;
+    if (pinned || dragging) return;
     var el = target(e.target);
     if (!el) return;
     var id = pick(scopeOf(el), el);
@@ -1655,7 +1661,6 @@ const SCRIPT: &str = r#"
     // choice); a box opens under the last line. Sent as counters on each side:
     // where they stand before the first line, and after the last.
     var sel = null;       // { table, rows, from } while lines are chosen
-    var dragging = false;
     var composer = null;  // the open box's <tr>
 
     var diffRows = function (table) {
@@ -1669,12 +1674,19 @@ const SCRIPT: &str = r#"
     var num = function (tr, name) { return +tr.getAttribute('data-diffnote-' + name); };
     var has = function (tr, name) { return tr.getAttribute('data-diffnote-' + name) !== ''; };
 
+    var unchoose = function () {
+      if (sel) sel.rows.forEach(function (r) {
+        r.classList.remove('diffnote-select', 'diffnote-select-first', 'diffnote-select-last');
+      });
+    };
     var choose = function (table, from, to) {
-      if (sel) sel.rows.forEach(function (r) { r.classList.remove('diffnote-select'); });
+      unchoose();
       var rows = diffRows(table);
       var a = rows.indexOf(from), b = rows.indexOf(to);
       var picked = rows.slice(Math.min(a, b), Math.max(a, b) + 1);
       picked.forEach(function (r) { r.classList.add('diffnote-select'); });
+      picked[0].classList.add('diffnote-select-first');
+      picked[picked.length - 1].classList.add('diffnote-select-last');
       sel = { table: table, rows: picked, from: from };
     };
 
@@ -1698,7 +1710,7 @@ const SCRIPT: &str = r#"
     var closeComposer = function () {
       if (composer) composer.remove();
       composer = null;
-      if (sel) sel.rows.forEach(function (r) { r.classList.remove('diffnote-select'); });
+      unchoose();
       sel = null;
     };
 
@@ -1729,6 +1741,9 @@ const SCRIPT: &str = r#"
       if (!row) return;
       var table = row.closest('table');
       e.preventDefault();
+      // Whatever comment's range was shown gives way to the choice.
+      pinned = null;
+      clear();
       if (e.shiftKey && sel && sel.table === table) {
         choose(table, sel.from, row);
       } else {
