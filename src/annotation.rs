@@ -18,8 +18,10 @@
 //! - `>#[<ulid>` / `>#]<ulid>` markers around an existing comment's lines
 //!   (before its first row, and after its last, just before its `>#@`
 //!   headers), drawn only when it covers more than its own row, so the range
-//!   can be seen. `>#[` is ignored on parse like any `>#` text; `>#]<ulid>`
-//!   names the thread the headers after it belong to.
+//!   can be seen. `>#]<ulid>` names the thread the headers after it belong
+//!   to; parsing warns when a `>#[` has no `>#]` (or the reverse), or an
+//!   id-less header isn't right after a `>#` line, since a marker was
+//!   probably deleted by hand.
 //! - `>#<text>` decorative body line for a rendered comment/reply above —
 //!   purely for human reading, ignored on parse (never affects `last_thread`
 //!   beyond what the `>#@` header already set).
@@ -196,6 +198,9 @@ enum Sigil<'a> {
     /// `>#]<ulid>`: closes an existing thread's range, and names the thread
     /// the `>#@` headers after it (which then carry no id) belong to.
     RenderedClose(Ulid),
+    /// `>#[<ulid>`: where an existing thread's range begins (decorative,
+    /// but a missing close for it is worth a warning).
+    RenderedOpen(Ulid),
     RenderedBody(&'a str),
 }
 
@@ -217,6 +222,11 @@ fn classify_comment(rest_after_gt: &str) -> Sigil<'_> {
             && let Ok(ulid) = Ulid::from_string(id.trim_end())
         {
             return Sigil::RenderedClose(ulid);
+        }
+        if let Some(id) = rest.strip_prefix('[')
+            && let Ok(ulid) = Ulid::from_string(id.trim_end())
+        {
+            return Sigil::RenderedOpen(ulid);
         }
         return match rest.strip_prefix('@') {
             Some(header) => Sigil::RenderedHeader(header),
@@ -347,6 +357,10 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
     let mut last_thread: Option<ThreadRef> = None;
     // The existing thread the rendered block being read belongs to.
     let mut last_rendered: Option<Ulid> = None;
+    // Ranges of existing threads opened with `>#[<id>` and not closed yet
+    // (with the line), and whether the previous line was a `>#` line.
+    let mut open_markers: Vec<(Ulid, usize)> = Vec::new();
+    let mut prev_rendered = false;
     let mut items: Vec<Item> = Vec::new();
     let mut pending: Option<PendingBlock> = None;
     let mut last_line_no: usize = 0;
@@ -359,6 +373,7 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
     for (idx, raw_line) in text.lines().enumerate() {
         let line_no = idx + 1;
         last_line_no = line_no;
+        let follows_rendered = std::mem::replace(&mut prev_rendered, raw_line.starts_with(">#"));
 
         if raw_line.is_empty() {
             flush_pending(
@@ -429,10 +444,17 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                     // `>#@ author time` (no id right after the `@`) continues
                     // the thread of the `>#@<id>` or `>#]<id>` before it.
                     let ulid = if header.is_empty() || header.starts_with(char::is_whitespace) {
+                        if !follows_rendered {
+                            warnings.push(format!(
+                                "{line_no} 行目: ID のない '>#@' ヘッダが、'>#]<id>' の行や \
+                                他の '>#' の行の直後にありません。'>#]' の行を消していませんか? \
+                                このヘッダは、直前に読んだスレッドのものとして扱います"
+                            ));
+                        }
                         last_rendered.ok_or_else(|| {
                             err(
                                 line_no,
-                                "ID のない '>#@' ヘッダの前に、対象のスレッドがありません",
+                                "ID のない '>#@' ヘッダの前に、対象のスレッドがありません('>#]<id>' の行を消していませんか?)",
                             )
                         })?
                     } else {
@@ -447,6 +469,15 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                     last_rendered = Some(ulid);
                     last_thread = Some(ThreadRef::Existing(ulid));
                 }
+                Sigil::RenderedOpen(ulid) => {
+                    flush_pending(
+                        &mut pending,
+                        &mut items,
+                        &mut next_thread_id,
+                        &mut last_thread,
+                    )?;
+                    open_markers.push((ulid, line_no));
+                }
                 Sigil::RenderedClose(ulid) => {
                     flush_pending(
                         &mut pending,
@@ -454,6 +485,15 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                         &mut next_thread_id,
                         &mut last_thread,
                     )?;
+                    match open_markers.iter().position(|(id, _)| *id == ulid) {
+                        Some(at) => {
+                            open_markers.remove(at);
+                        }
+                        None => warnings.push(format!(
+                            "{line_no} 行目: '>#]{ulid}' に対応する '>#[{ulid}' がありません。\
+                            範囲の開始の行を消していませんか?"
+                        )),
+                    }
                     last_rendered = Some(ulid);
                     last_thread = Some(ThreadRef::Existing(ulid));
                 }
@@ -729,6 +769,12 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
     )?;
 
     warn_unused_range(&mut unused_range, &mut warnings);
+    for (ulid, line) in open_markers {
+        warnings.push(format!(
+            "{line} 行目: '>#[{ulid}' に対応する '>#]{ulid}' がありません。'>#]' の行を消すと、\
+            続くコメントの返信先が別のスレッドになるおそれがあります"
+        ));
+    }
     if let Some(id) = open_ranges.into_keys().next() {
         return Err(err(
             last_line_no + 1,
@@ -1104,7 +1150,7 @@ fn render_rendered_entry(
         out.push_str(">#");
         // A line that starts like a header or a closing marker is drawn one
         // space in, so reading the buffer back can't take it for one.
-        if line.starts_with(['@', ']']) {
+        if line.starts_with(['@', ']', '[']) {
             out.push(' ');
         }
         out.push_str(line);
@@ -2254,6 +2300,106 @@ diff --git a/f.rs b/f.rs
         let parsed = parse(&format!("{rendered}>> reply\n")).unwrap();
         assert_eq!(parsed.items.len(), 1);
         assert_eq!(reply_target(&parsed), ThreadRef::Existing(id));
+    }
+
+    /// The buffer with the lines starting with `prefix` (and the given id)
+    /// taken out, as if deleted by hand.
+    fn without(rendered: &str, marker: &str, id: Ulid) -> String {
+        let gone = format!("{marker}{id}");
+        rendered
+            .lines()
+            .filter(|l| *l != gone)
+            .map(|l| format!("{l}\n"))
+            .collect()
+    }
+
+    fn ranged_with_replies(id: Ulid) -> String {
+        let thread = with_replies(thread_with(id, on_new_lines(14, 2), "root"), 2);
+        render(&fixture(), &[], &[thread])
+    }
+
+    #[test]
+    fn an_untouched_buffer_with_ranged_and_single_row_threads_warns_of_nothing() {
+        let (a, b) = (Ulid::new(), Ulid::new());
+        let rendered = render(
+            &fixture(),
+            &[],
+            &[
+                with_replies(thread_with(a, on_new_lines(14, 2), "ranged"), 2),
+                with_replies(thread_with(b, on_baz_line(), "one row"), 1),
+            ],
+        );
+        let parsed = parse(&rendered).unwrap();
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+    }
+
+    #[test]
+    fn a_lone_threads_deleted_closing_marker_is_an_error_that_says_so() {
+        let id = Ulid::new();
+        let text = without(&ranged_with_replies(id), ">#]", id);
+        let err = parse(&text).unwrap_err().to_string();
+        assert!(err.contains("'>#]<id>' の行を消していませんか"), "{err}");
+    }
+
+    #[test]
+    fn a_deleted_closing_marker_is_warned_about_twice_over() {
+        // With another thread before it, the orphaned headers would be read
+        // as that thread's: warn instead of failing, twice over.
+        let (id, before) = (Ulid::new(), Ulid::new());
+        let rendered = render(
+            &fixture(),
+            &[],
+            &[
+                thread_with(before, on_new_lines(13, 1), "earlier"),
+                with_replies(thread_with(id, on_new_lines(14, 2), "root"), 2),
+            ],
+        );
+        let text = without(&rendered, ">#]", id);
+        let warnings = parse(&text).unwrap().warnings;
+        // The open marker has no close, and the id-less header that used to
+        // follow the close now follows a diff row.
+        assert!(
+            warnings.iter().any(|w| w.contains(&format!("'>#[{id}'")) && w.contains("対応する")),
+            "{warnings:?}"
+        );
+        assert!(warnings.iter().any(|w| w.contains("ID のない")), "{warnings:?}");
+    }
+
+    #[test]
+    fn a_deleted_opening_marker_is_warned_about() {
+        let id = Ulid::new();
+        let text = without(&ranged_with_replies(id), ">#[", id);
+        let warnings = parse(&text).unwrap().warnings;
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains(&format!("'>#]{id}'")), "{warnings:?}");
+    }
+
+    #[test]
+    fn a_deleted_closing_marker_of_the_first_of_two_threads_is_noticed() {
+        let (first, second) = (Ulid::new(), Ulid::new());
+        let rendered = render(
+            &fixture(),
+            &[],
+            &[
+                thread_with(first, on_new_lines(14, 2), "first"),
+                thread_with(second, on_new_lines(13, 2), "second"),
+            ],
+        );
+        assert!(parse(&rendered).unwrap().warnings.is_empty());
+        let warnings = parse(&without(&rendered, ">#]", first)).unwrap().warnings;
+        assert!(warnings.iter().any(|w| w.contains(&format!("'>#[{first}'"))), "{warnings:?}");
+        // The second thread's own markers are fine.
+        assert!(!warnings.iter().any(|w| w.contains(&second.to_string())), "{warnings:?}");
+    }
+
+    #[test]
+    fn a_body_line_that_starts_like_an_opening_marker_is_not_one() {
+        let id = Ulid::new();
+        let body = "[01M2Z2AY720BFBEAHBMA04D4Z3\nnext";
+        let rendered = render(&fixture(), &[], &[thread_with(id, on_baz_line(), body)]);
+        assert!(rendered.contains("># [01M2Z2AY720BFBEAHBMA04D4Z3"), "{rendered}");
+        let parsed = parse(&rendered).unwrap();
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
     }
 
     #[test]
