@@ -326,18 +326,46 @@ fn cmd_edit(
     // it. annotation::render_for_edit reconstructs it line-by-line instead,
     // which is fine for round-trip but an unnecessary risk (e.g. a possible
     // trailing-newline mismatch) when there's nothing to interleave anyway.
+    // The files existing threads refer to that this diff doesn't touch: read
+    // at the head, so those threads can be placed too.
+    let touched_now: std::collections::HashSet<&str> = files
+        .iter()
+        .flat_map(|f| [f.old_path.as_deref(), f.new_path.as_deref()])
+        .flatten()
+        .collect();
+    let untouched_existing: Vec<String> =
+        diffnote::record::referenced_files(existing_events.iter())
+            .into_iter()
+            .filter(|p| !touched_now.contains(p.as_str()))
+            .collect();
+    let head_of_untouched = if untouched_existing.is_empty() {
+        Vec::new()
+    } else {
+        (head_some)(&untouched_existing)?
+    };
+    let tree_now: Vec<diffnote::model::TreeFile> = head_of_untouched
+        .iter()
+        .map(|(p, b)| diffnote::record::tree_file(p, b))
+        .collect();
     let mut blobs = loaded.blobs();
-    for bytes in new_files.values().chain(base_files.values()) {
+    for bytes in new_files
+        .values()
+        .chain(base_files.values())
+        .chain(head_of_untouched.iter().map(|(_, b)| b))
+    {
         blobs.add(bytes);
     }
     bundle::link_revision_files(&mut blobs, &files);
-    let (temp_text, auto_relocated) = if existing_threads.is_empty() {
-        (diff_text.clone(), Vec::new())
+    let temp_text = if existing_threads.is_empty() {
+        diff_text.clone()
     } else {
         annotation::render_for_edit(
             &diff_text,
             &parsed_diff,
-            &files,
+            &diffnote::anchor::ViewVersions {
+                files: &files,
+                tree: &tree_now,
+            },
             &blobs,
             &existing_threads,
         )
@@ -417,11 +445,6 @@ fn cmd_edit(
         });
     }
 
-    // Existing threads whose >>!reject or >!reanchor was explicitly seen in
-    // this edit -- these must NOT also get an auto "silence = accept"
-    // Reanchor event below for their render-time [moved] guess.
-    let mut explicitly_handled: std::collections::HashSet<Ulid> = Default::default();
-
     let mut thread_ids: Vec<Ulid> = Vec::new();
     for item in &parsed.items {
         match item {
@@ -446,20 +469,19 @@ fn cmd_edit(
                     let target_id = Ulid::from_string(id_str).map_err(|_| {
                         anyhow::anyhow!("'>!reanchor {id_str}': not a valid thread id")
                     })?;
-                    let new_anchor = diffnote::create::build_anchor(scope, &parsed.diff, &files, &revisions, &blobs, 3)?;
+                    let new_anchor = diffnote::create::build_anchor(scope, &parsed.diff, &files, &revisions)?;
                     new_events.push(Event::Reanchor {
                         parent: target_id,
                         author: author.clone(),
                         created_at: OffsetDateTime::now_utc(),
                         anchor: new_anchor,
                     });
-                    explicitly_handled.insert(target_id);
                     continue;
                 }
 
                 let id = Ulid::new();
                 thread_ids.push(id);
-                let comment_anchor = diffnote::create::build_anchor(scope, &parsed.diff, &files, &revisions, &blobs, 3)?;
+                let comment_anchor = diffnote::create::build_anchor(scope, &parsed.diff, &files, &revisions)?;
                 new_events.push(Event::Comment {
                     id,
                     parent: None,
@@ -495,26 +517,9 @@ fn cmd_edit(
                     });
                 }
                 for directive in directives {
-                    if matches!(directive, annotation::Directive::Reject) {
-                        explicitly_handled.insert(target_id);
-                        continue;
-                    }
                     push_simple_directive(&mut new_events, directive, target_id, &author)?;
                 }
             }
-        }
-    }
-
-    // Silence = accept: any render-time [moved] guess not explicitly
-    // reanchored/rejected above is committed now.
-    for (thread_id, new_anchor) in auto_relocated {
-        if explicitly_handled.insert(thread_id) {
-            new_events.push(Event::Reanchor {
-                parent: thread_id,
-                author: author.clone(),
-                created_at: OffsetDateTime::now_utc(),
-                anchor: new_anchor,
-            });
         }
     }
 
@@ -641,7 +646,7 @@ fn print_body(body: &str) {
 }
 
 fn describe_anchor(anchor: Option<&Anchor>) -> String {
-    let span = |s: &diffnote::model::SideAnchor| {
+    let span = |s: &diffnote::model::LineRange| {
         let (a, b) = (s.start, s.end());
         if s.is_empty() {
             format!("{}:{a} (挿入位置)", s.file)
@@ -669,7 +674,7 @@ fn describe_anchor(anchor: Option<&Anchor>) -> String {
     }
 }
 
-/// Handles `resolve`/`reopen` only -- `reanchor`/`reject` need extra
+/// Handles `resolve`/`reopen` only -- `reanchor` needs extra
 /// context (the position/target-thread bookkeeping) that only the caller
 /// has, so `cmd_edit` special-cases those before ever reaching here.
 fn push_simple_directive(
@@ -690,7 +695,7 @@ fn push_simple_directive(
             author: author.to_string(),
             created_at: OffsetDateTime::now_utc(),
         }),
-        Directive::Reanchor(_) | Directive::Reject => {
+        Directive::Reanchor(_) => {
             anyhow::bail!("internal error: {directive:?} should have been handled by the caller");
         }
     }

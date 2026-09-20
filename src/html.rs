@@ -29,6 +29,18 @@ use syntect::html::{IncludeBackground, styled_line_to_highlighted_html};
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 use ulid::Ulid;
 
+/// Per-view drawing state shared by the render functions.
+#[derive(Default)]
+struct Marks {
+    /// A stable color (index into PALETTE) per thread drawn on lines.
+    color_of: HashMap<Ulid, usize>,
+    /// The lines a thread was written about, for threads shown as deleted
+    /// (drawn at the point where the lines were) or unplaced.
+    was: HashMap<Ulid, Vec<String>>,
+    /// Threads whose lines were removed.
+    deleted: std::collections::HashSet<Ulid>,
+}
+
 /// Renders a whole bundle: one view per recorded revision that has a diff
 /// (a fresh `init` snapshot has none), oldest first.
 pub fn render_bundle(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
@@ -50,17 +62,18 @@ pub fn render_bundle(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
             parsed.len() + 1,
             revision.created_at.date()
         );
-        parsed.push((label, diff, revision));
+        parsed.push((label, diff, revision, loaded.manifest(revision)));
     }
     if parsed.is_empty() {
         anyhow::bail!("the bundle has no captured diff");
     }
     let views: Vec<RevisionView> = parsed
         .iter()
-        .map(|(label, diff, revision)| RevisionView {
+        .map(|(label, diff, revision, tree)| RevisionView {
             label: label.clone(),
             diff,
             files: &revision.files,
+            tree,
         })
         .collect();
     Ok(render(&loaded.events, &views, &loaded.blobs()))
@@ -72,6 +85,8 @@ pub struct RevisionView<'a> {
     pub label: String,
     pub diff: &'a UnifiedDiff,
     pub files: &'a [crate::model::FileDigest],
+    /// The head tree the revision recorded (for files its diff leaves alone).
+    pub tree: &'a [crate::model::TreeFile],
 }
 
 /// Renders every revision as its own pre-rendered view (oldest first, the
@@ -130,7 +145,11 @@ fn render_view(
     syntax_set: &SyntaxSet,
     theme: &Theme,
 ) -> String {
-    let (diff, current_files) = (view.diff, view.files);
+    let diff = view.diff;
+    let versions = anchor::ViewVersions {
+        files: view.files,
+        tree: view.tree,
+    };
     let mut global: Vec<&Thread> = Vec::new();
     let mut by_file: HashMap<String, Vec<&Thread>> = HashMap::new();
     // Where a thread's card is drawn: keyed by the *last* line of its range.
@@ -141,11 +160,11 @@ fn render_view(
     let mut highlighted: HashMap<(String, Side, u32), Vec<Ulid>> = HashMap::new();
     // A stable color (index into PALETTE) per thread that ends up as a Line
     // placement, assigned in document order so it's deterministic run to run.
-    let mut color_of: HashMap<Ulid, usize> = HashMap::new();
+    let mut marks = Marks::default();
     let mut outdated: HashMap<String, Vec<&Thread>> = HashMap::new();
 
     for thread in threads {
-        match anchor::resolve_placement(&thread.anchor, diff, current_files, blobs) {
+        match anchor::resolve_placement(&thread.anchor, diff, &versions, blobs) {
             Placement::Global => global.push(thread),
             Placement::File(file) => by_file.entry(file).or_default().push(thread),
             Placement::Line {
@@ -154,10 +173,9 @@ fn render_view(
                 line_start,
                 line_end,
                 old_range,
-                relocated: _,
             } => {
-                let color = color_of.len() % PALETTE.len();
-                color_of.insert(thread.root_id, color);
+                let color = marks.color_of.len() % PALETTE.len();
+                marks.color_of.insert(thread.root_id, color);
                 for line in line_start..=line_end {
                     highlighted
                         .entry((file.clone(), side, line))
@@ -180,7 +198,20 @@ fn render_view(
                     .or_default()
                     .push(thread)
             }
-            Placement::Outdated { file } | Placement::OutsideDiff { file } => outdated.entry(file).or_default().push(thread),
+            Placement::Point { file, before, was } => {
+                marks.deleted.insert(thread.root_id);
+                marks.was.insert(thread.root_id, was);
+                by_line
+                    .entry((file, Side::New, before.saturating_sub(1).max(1)))
+                    .or_default()
+                    .push(thread);
+            }
+            Placement::Unplaced { file } | Placement::OutsideDiff { file } => {
+                marks
+                    .was
+                    .insert(thread.root_id, anchor::original_text(&thread.anchor, blobs));
+                outdated.entry(file).or_default().push(thread)
+            }
         }
     }
 
@@ -224,7 +255,7 @@ fn render_view(
     if !global.is_empty() {
         body.push_str(r#"<section class="diffnote-global-comments">"#);
         for t in &global {
-            body.push_str(&render_thread_html(t, &color_of));
+            body.push_str(&render_thread_html(t, &marks));
         }
         body.push_str("</section>\n");
     }
@@ -236,7 +267,7 @@ fn render_view(
             by_file.get(key).map(Vec::as_slice).unwrap_or(&[]),
             &by_line,
             &highlighted,
-            &color_of,
+            &marks,
             outdated.get(key).map(Vec::as_slice).unwrap_or(&[]),
             syntax_set,
             theme,
@@ -272,7 +303,7 @@ fn render_file(
     file_threads: &[&Thread],
     by_line: &HashMap<(String, Side, u32), Vec<&Thread>>,
     highlighted: &HashMap<(String, Side, u32), Vec<Ulid>>,
-    color_of: &HashMap<Ulid, usize>,
+    marks: &Marks,
     outdated_threads: &[&Thread],
     syntax_set: &SyntaxSet,
     theme: &Theme,
@@ -294,7 +325,7 @@ fn render_file(
     ));
 
     for t in file_threads {
-        out.push_str(&render_thread_html(t, color_of));
+        out.push_str(&render_thread_html(t, marks));
     }
 
     match file_diff {
@@ -315,7 +346,7 @@ fn render_file(
                     theme,
                     by_line,
                     highlighted,
-                    color_of,
+                    marks,
                 ));
             }
             out.push_str("</table></div>");
@@ -326,7 +357,7 @@ fn render_file(
     if !outdated_threads.is_empty() {
         out.push_str(r#"<section class="diffnote-outdated"><h3>未配置のコメント</h3>"#);
         for t in outdated_threads {
-            out.push_str(&render_outdated(t, color_of));
+            out.push_str(&render_outdated(t, marks));
         }
         out.push_str("</section>");
     }
@@ -344,7 +375,7 @@ fn render_hunk(
     theme: &Theme,
     by_line: &HashMap<(String, Side, u32), Vec<&Thread>>,
     highlighted: &HashMap<(String, Side, u32), Vec<Ulid>>,
-    color_of: &HashMap<Ulid, usize>,
+    marks: &Marks,
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!(
@@ -380,7 +411,7 @@ fn render_hunk(
             covering.extend(ids.iter().copied());
         }
         covering.dedup();
-        let (row_class, row_attrs) = commented_row_markup(class, &covering, color_of);
+        let (row_class, row_attrs) = commented_row_markup(class, &covering, marks);
         let content_html = highlight_line(&mut highlighter, &line.content, syntax_set);
         out.push_str(&format!(
             r#"<tr class="{row_class}"{row_attrs}><td class="diffnote-line__gutter-old">{old}</td><td class="diffnote-line__gutter-new">{new}</td><td class="diffnote-line__content"><code>{content}</code></td></tr>"#,
@@ -398,14 +429,14 @@ fn render_hunk(
             && let Some(threads) = by_line.get(&(file.to_string(), Side::New, l))
         {
             for t in threads {
-                out.push_str(&thread_row(t, color_of));
+                out.push_str(&thread_row(t, marks));
             }
         }
         if let Some(l) = line.old_line
             && let Some(threads) = by_line.get(&(file.to_string(), Side::Old, l))
         {
             for t in threads {
-                out.push_str(&thread_row(t, color_of));
+                out.push_str(&thread_row(t, marks));
             }
         }
     }
@@ -425,7 +456,7 @@ const PALETTE: [&str; 8] = [
 fn commented_row_markup(
     base_class: &str,
     covering: &[Ulid],
-    color_of: &HashMap<Ulid, usize>,
+    marks: &Marks,
 ) -> (String, String) {
     if covering.is_empty() {
         return (base_class.to_string(), String::new());
@@ -434,7 +465,7 @@ fn commented_row_markup(
     let mut shadows = Vec::new();
     let mut ids = Vec::new();
     for (i, id) in covering.iter().enumerate() {
-        let color = color_of.get(id).map(|c| PALETTE[*c]).unwrap_or("#999");
+        let color = marks.color_of.get(id).map(|c| PALETTE[*c]).unwrap_or("#999");
         let offset = 3 + i as u32 * 4;
         shadows.push(format!("inset {offset}px 0 0 0 {color}"));
         ids.push(id.to_string());
@@ -447,10 +478,10 @@ fn commented_row_markup(
     (class, attrs)
 }
 
-fn thread_row(t: &Thread, color_of: &HashMap<Ulid, usize>) -> String {
+fn thread_row(t: &Thread, marks: &Marks) -> String {
     format!(
         r#"<tr class="diffnote-thread-row"><td colspan="3">{}</td></tr>"#,
-        render_thread_html(t, color_of)
+        render_thread_html(t, marks)
     )
 }
 
@@ -461,16 +492,16 @@ fn range_label(anchor: &Anchor) -> String {
     match anchor {
         Anchor::Global { .. } | Anchor::File { .. } => String::new(),
         Anchor::Span { base, head } => match head.as_ref().filter(|h| !h.is_empty()).or(base.as_ref()) {
-            Some(side) if side.len() == 1 => format!("(L{})", side.start),
-            Some(side) if side.len() > 1 => format!("(L{}\u{2013}L{})", side.start, side.end()),
+            Some(side) if side.len == 1 => format!("(L{})", side.start),
+            Some(side) if side.len > 1 => format!("(L{}\u{2013}L{})", side.start, side.end()),
             _ => String::new(),
         },
     }
 }
 
-fn render_thread_html(t: &Thread, color_of: &HashMap<Ulid, usize>) -> String {
+fn render_thread_html(t: &Thread, marks: &Marks) -> String {
     let mut out = String::new();
-    let swatch = color_of.get(&t.root_id).map_or(String::new(), |c| {
+    let swatch = marks.color_of.get(&t.root_id).map_or(String::new(), |c| {
         format!(
             r#"<span class="diffnote-thread__swatch" style="background:{}"></span>"#,
             PALETTE[*c]
@@ -487,14 +518,22 @@ fn render_thread_html(t: &Thread, color_of: &HashMap<Ulid, usize>) -> String {
         open = if t.resolved { "" } else { " open" },
     ));
     out.push_str(&format!(
-        "<summary>{swatch}{} {}</summary>",
+        "<summary>{swatch}{} {}{}</summary>",
         if t.resolved {
             "解決済み"
         } else {
             "未解決"
         },
         range_label(&t.anchor),
+        if marks.deleted.contains(&t.root_id) {
+            " (削除された行)"
+        } else {
+            ""
+        },
     ));
+    if marks.deleted.contains(&t.root_id) {
+        out.push_str(&render_snippet(marks.was.get(&t.root_id), "diffnote-deleted__snippet"));
+    }
     out.push_str(&render_comment_article(&t.author, &t.body));
     for r in &t.replies {
         out.push_str(&render_comment_article(&r.author, &r.body));
@@ -503,26 +542,24 @@ fn render_thread_html(t: &Thread, color_of: &HashMap<Ulid, usize>) -> String {
     out
 }
 
-fn render_outdated(t: &Thread, color_of: &HashMap<Ulid, usize>) -> String {
+fn render_snippet(lines: Option<&Vec<String>>, class: &str) -> String {
+    let Some(lines) = lines.filter(|l| !l.is_empty()) else {
+        return String::new();
+    };
+    let mut out = format!(r#"<pre class="{class}">"#);
+    for line in lines {
+        out.push_str(&escape_html(line));
+        out.push('\n');
+    }
+    out.push_str("</pre>");
+    out
+}
+
+fn render_outdated(t: &Thread, marks: &Marks) -> String {
     let mut out = String::new();
     out.push_str(r#"<div class="diffnote-outdated__entry">"#);
-    if let Anchor::Span { base, head } = &t.anchor
-        && let Some(side) = head.as_ref().filter(|h| !h.is_empty()).or(base.as_ref())
-    {
-        let context = &side.context;
-        out.push_str(r#"<pre class="diffnote-outdated__snippet">"#);
-        for line in context
-            .before
-            .iter()
-            .chain(context.target.iter())
-            .chain(context.after.iter())
-        {
-            out.push_str(&escape_html(line));
-            out.push('\n');
-        }
-        out.push_str("</pre>");
-    }
-    out.push_str(&render_thread_html(t, color_of));
+    out.push_str(&render_snippet(marks.was.get(&t.root_id), "diffnote-outdated__snippet"));
+    out.push_str(&render_thread_html(t, marks));
     out.push_str("</div>");
     out
 }
@@ -645,6 +682,7 @@ body { font-family: system-ui, sans-serif; margin: 0; padding: 1rem; }
 .diffnote-hunk-header td { background: var(--diffnote-color-thread-bg); color: #666; }
 .diffnote-thread-row td { background: #fff; padding: 0.5em 1em; }
 .diffnote-thread { border: 1px solid var(--diffnote-color-border); border-radius: 6px; background: var(--diffnote-color-thread-bg); padding: 0.3em 0.6em; margin: 0.3em 0; }
+.diffnote-deleted__snippet { margin: 0; padding: 0.25rem 0.5rem; background: var(--diffnote-color-removed-bg); font-family: var(--diffnote-font-mono); white-space: pre-wrap; }
 .diffnote-thread--resolved { background: var(--diffnote-color-resolved-bg); opacity: 0.8; }
 .diffnote-thread summary { cursor: pointer; font-weight: bold; }
 .diffnote-comment { border-top: 1px solid var(--diffnote-color-border); padding: 0.3em 0; }
@@ -713,9 +751,7 @@ mod tests {
     use crate::bundle::{self, Additions};
     use crate::digest::digest;
     use crate::files::{Tree, diff_trees};
-    use crate::model::{
-        Context, FileRef, GitSource, Revision, SideAnchor, SnapshotMode, Source,
-    };
+    use crate::model::{FileRef, GitSource, LineRange, Revision, SnapshotMode, Source};
     use time::OffsetDateTime;
 
     const R1_BASE: &str = "a\nb\nc\nd\n";
@@ -726,16 +762,12 @@ mod tests {
         [("f.txt".to_string(), text.as_bytes().to_vec())].into()
     }
 
-    fn side(start: u32, target: &[&str], text: &str) -> SideAnchor {
-        SideAnchor {
+    fn range(start: u32, len: u32, text: &str) -> LineRange {
+        LineRange {
             file: "f.txt".to_string(),
             digest: digest(text),
             start,
-            context: Context {
-                before: Vec::new(),
-                target: target.iter().map(|s| s.to_string()).collect(),
-                after: Vec::new(),
-            },
+            len,
         }
     }
 
@@ -869,8 +901,8 @@ mod tests {
             comment(
                 t1,
                 Anchor::Span {
-                    base: Some(side(2, &["b"], R1_BASE)),
-                    head: Some(side(2, &["B"], R1_HEAD)),
+                    base: Some(range(2, 1, R1_BASE)),
+                    head: Some(range(2, 1, R1_HEAD)),
                 },
                 "about B",
             ),
@@ -886,8 +918,8 @@ mod tests {
             comment(
                 t2,
                 Anchor::Span {
-                    base: Some(side(4, &["d"], R1_HEAD)),
-                    head: Some(side(5, &["D"], R2_HEAD)),
+                    base: Some(range(4, 1, R1_HEAD)),
+                    head: Some(range(5, 1, R2_HEAD)),
                 },
                 "about D",
             ),
@@ -912,8 +944,8 @@ mod tests {
             comment(
                 t4,
                 Anchor::Span {
-                    base: Some(side(1, &[], R1_HEAD)),
-                    head: Some(side(1, &["top"], R2_HEAD)),
+                    base: Some(range(1, 0, R1_HEAD)),
+                    head: Some(range(1, 1, R2_HEAD)),
                 },
                 "about top",
             ),
@@ -1015,14 +1047,50 @@ mod tests {
     }
 
     #[test]
-    fn a_thread_that_cannot_be_placed_is_listed_as_unplaced_in_that_view_only() {
+    fn a_thread_on_lines_that_are_gone_in_a_view_is_shown_where_they_were() {
         let s = scenario();
         let (v0, v1) = (view(&s.html, 0), view(&s.html, 1));
-        let unplaced = v0.find("diffnote-outdated").expect("unplaced section in view 0");
-        assert!(v0[unplaced..].contains(&format!(r#"data-diffnote-thread-id="{}""#, s.t4)));
+        // `top` was added by revision 2; revision 1 doesn't have it, so in
+        // that view the thread sits at the point where the line would be,
+        // with what it said quoted -- not among the unplaced ones.
         assert!(rows_of(v0, s.t4).is_empty());
-        assert!(!v1.contains("diffnote-outdated"));
+        assert!(!v0.contains("diffnote-outdated"));
+        let at = v0
+            .find(&format!(r#"data-diffnote-thread-id="{}""#, s.t4))
+            .unwrap();
+        let card = &v0[at..v0[at..].find("</details>").unwrap() + at];
+        assert!(card.contains("削除された行"), "{card}");
+        assert!(card.contains(r#"<pre class="diffnote-deleted__snippet">top"#), "{card}");
+        // In revision 2, where the line exists, it is an ordinary thread on
+        // line 1.
         assert_eq!(rows_of(v1, s.t4), vec![("".to_string(), "1".to_string())]);
+        assert!(!v1.contains("削除された行"));
+    }
+
+    #[test]
+    fn a_thread_whose_file_version_is_not_in_the_bundle_is_unplaced_in_every_view() {
+        let lost = Ulid::new();
+        let (_dir, loaded) = bundle_of(
+            &[
+                (R1_BASE, R1_HEAD, files_source(None)),
+                (R1_HEAD, R2_HEAD, files_source(Some("x"))),
+            ],
+            vec![comment(
+                lost,
+                Anchor::Span {
+                    base: None,
+                    head: Some(range(1, 1, "a version that was never kept")),
+                },
+                "about something lost",
+            )],
+        );
+        let html = render_bundle(&loaded).unwrap();
+        for i in 0..2 {
+            let v = view(&html, i);
+            let unplaced = v.find("diffnote-outdated").expect("an unplaced section");
+            assert!(v[unplaced..].contains("about something lost"), "view {i}");
+            assert!(rows_of(v, lost).is_empty());
+        }
     }
 
     #[test]

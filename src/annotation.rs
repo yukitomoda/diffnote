@@ -39,7 +39,7 @@ use crate::anchor::{self, Placement};
 use crate::diff::{
     self, DiffLine, FileDiff, Hunk, LineKind, ParseError as DiffParseError, UnifiedDiff,
 };
-use crate::model::{Anchor, Side};
+use crate::model::Side;
 use crate::review::Thread;
 use std::collections::HashMap;
 use thiserror::Error;
@@ -104,8 +104,6 @@ pub enum Directive {
     /// `reanchor <thread-id>` always targets an explicit thread by id,
     /// regardless of `Target`.
     Reanchor(String),
-    /// `reject` — only meaningful with `Target::Reply`.
-    Reject,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -251,11 +249,6 @@ fn parse_directive(
         ("reanchor", Target::Reply, _) => Err(err(
             line_no,
             "'reanchor' must be written as '>!reanchor <id>', not '>>!reanchor'",
-        )),
-        ("reject", Target::Reply, None) => Ok(Directive::Reject),
-        ("reject", Target::New, _) => Err(err(
-            line_no,
-            "'reject' must be written as '>>!reject', not '>!reject'",
         )),
         _ => Err(err(
             line_no,
@@ -722,58 +715,53 @@ fn warn_unused_range(unused: &mut Option<(String, usize)>, warnings: &mut Vec<St
 /// Renders `diff_text` back out verbatim (byte-for-byte, so the blank-line
 /// message-separator convention and everything else stays exactly correct),
 /// with existing `threads` interleaved as read-only `>#@`/`>#` blocks at
-/// their resolved position -- same `anchor::resolve_placement` used for
-/// re-anchoring in `diffnote edit`'s write path and HTML export.
-///
-/// Returns the rendered text plus every thread whose position came from an
-/// unconfirmed `Relocated` guess (shown with a `[moved]` tag) -- the
-/// caller uses this list for the "silence = accept" bookkeeping: any of
-/// these not explicitly overridden (`>!reanchor <id>`) or rejected
-/// (`>>!reject`) in the user's edit should be auto-committed as a new
-/// `reanchor` event on save.
+/// their resolved position -- same `anchor::resolve_placement` used by HTML
+/// export. A thread whose lines were removed since is drawn at the point where
+/// they were, tagged `[deleted]`, with what they said quoted (`>#|`).
 ///
 /// Known limitation: a comment body containing a line that happens to look
 /// like a `>#@<ulid> ...` header (vanishingly unlikely in practice) would
 /// be misread as a real header on the next parse. Body lines are otherwise
 /// never interpreted, only displayed.
-/// `bool` = whether this thread's placement here came from a `Relocated`
-/// (unconfirmed "[moved]") guess rather than an exact match.
-type ByLine<'a> = HashMap<(String, Side, u32), Vec<(&'a Thread, bool)>>;
+/// `Some(was)` = the thread's lines were removed; this is where they were.
+type ByLine<'a> = HashMap<(String, Side, u32), Vec<(&'a Thread, Option<Vec<String>>)>>;
 
 pub fn render_for_edit(
     diff_text: &str,
     diff: &UnifiedDiff,
-    current_files: &[crate::model::FileDigest],
+    view: &anchor::ViewVersions,
     blobs: &crate::digest::Blobs,
     threads: &[Thread],
-) -> (String, Vec<(Ulid, Anchor)>) {
+) -> String {
     let mut global: Vec<&Thread> = Vec::new();
     let mut by_file: HashMap<String, Vec<&Thread>> = HashMap::new();
     let mut by_line: ByLine = HashMap::new();
     let mut outdated: HashMap<String, Vec<&Thread>> = HashMap::new();
-    let mut auto_relocated: Vec<(Ulid, Anchor)> = Vec::new();
 
     for thread in threads {
-        match anchor::resolve_placement(&thread.anchor, diff, current_files, blobs) {
+        match anchor::resolve_placement(&thread.anchor, diff, view, blobs) {
             Placement::Global => global.push(thread),
             Placement::File(file) => by_file.entry(file).or_default().push(thread),
             Placement::Line {
                 file,
                 side,
                 line_end,
-                relocated,
                 ..
             } => {
-                let moved = relocated.is_some();
-                if let Some(new_anchor) = relocated {
-                    auto_relocated.push((thread.root_id, new_anchor));
-                }
                 by_line
                     .entry((file, side, line_end))
                     .or_default()
-                    .push((thread, moved));
+                    .push((thread, None));
             }
-            Placement::Outdated { file } | Placement::OutsideDiff { file } => outdated.entry(file).or_default().push(thread),
+            Placement::Point { file, before, was } => {
+                by_line
+                    .entry((file, Side::New, before.saturating_sub(1).max(1)))
+                    .or_default()
+                    .push((thread, Some(was)));
+            }
+            Placement::Unplaced { file } | Placement::OutsideDiff { file } => {
+                outdated.entry(file).or_default().push(thread)
+            }
         }
     }
 
@@ -784,12 +772,12 @@ pub fn render_for_edit(
         );
         for ts in outdated.values() {
             for t in ts {
-                render_thread_block(&mut out, t, false);
+                render_thread_block(&mut out, t, None);
             }
         }
     }
     for t in &global {
-        render_thread_block(&mut out, t, false);
+        render_thread_block(&mut out, t, None);
     }
 
     let mut current_file: Option<String> = None;
@@ -824,7 +812,7 @@ pub fn render_for_edit(
                 && let Some(ts) = by_file.get(f)
             {
                 for t in ts {
-                    render_thread_block(&mut out, t, false);
+                    render_thread_block(&mut out, t, None);
                 }
             }
             continue;
@@ -842,7 +830,7 @@ pub fn render_for_edit(
                 && let Some(ts) = by_file.get(f)
             {
                 for t in ts {
-                    render_thread_block(&mut out, t, false);
+                    render_thread_block(&mut out, t, None);
                 }
             }
             continue;
@@ -880,28 +868,33 @@ pub fn render_for_edit(
         }
     }
 
-    (out, auto_relocated)
+    out
 }
 
 fn emit_line_threads(out: &mut String, by_line: &ByLine, file: &str, side: Side, line: u32) {
     if let Some(ts) = by_line.get(&(file.to_string(), side, line)) {
-        for (t, moved) in ts {
-            render_thread_block(out, t, *moved);
+        for (t, was) in ts {
+            render_thread_block(out, t, was.as_deref());
         }
     }
 }
 
-fn render_thread_block(out: &mut String, t: &Thread, moved: bool) {
+fn render_thread_block(out: &mut String, t: &Thread, deleted: Option<&[String]>) {
     let mut tags = String::new();
     if t.resolved {
         tags.push_str(" [resolved]");
     }
-    if moved {
-        tags.push_str(" [moved]");
+    if deleted.is_some() {
+        tags.push_str(" [deleted]");
     }
-    render_rendered_entry(out, t.root_id, &t.author, t.created_at, &t.body, &tags);
+    let quoted: Vec<String> = deleted
+        .unwrap_or_default()
+        .iter()
+        .map(|l| format!("| {l}"))
+        .collect();
+    render_rendered_entry(out, t.root_id, &t.author, t.created_at, &t.body, &tags, &quoted);
     for r in &t.replies {
-        render_rendered_entry(out, t.root_id, &r.author, r.created_at, &r.body, "");
+        render_rendered_entry(out, t.root_id, &r.author, r.created_at, &r.body, "", &[]);
     }
 }
 
@@ -912,9 +905,15 @@ fn render_rendered_entry(
     created_at: OffsetDateTime,
     body: &str,
     tags: &str,
+    quoted: &[String],
 ) {
     let ts = created_at.format(&Rfc3339).unwrap_or_default();
     out.push_str(&format!(">#@{thread_id} {author} {ts}{tags}\n"));
+    for line in quoted {
+        out.push_str(">#");
+        out.push_str(line);
+        out.push('\n');
+    }
     for line in body.lines() {
         out.push_str(">#");
         out.push_str(line);
@@ -925,7 +924,7 @@ fn render_rendered_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::Context;
+    use crate::model::Anchor;
 
     const BASE: &str = "\
 diff --git a/src/lib.rs b/src/lib.rs
@@ -1349,46 +1348,82 @@ diff --git a/f.rs b/f.rs
         }
     }
 
-    fn side(start: u32, target: &[&str], digest: &str) -> crate::model::SideAnchor {
-        crate::model::SideAnchor {
+    fn range(start: u32, len: u32, text: &str) -> crate::model::LineRange {
+        crate::model::LineRange {
             file: "src/lib.rs".to_string(),
-            digest: digest.to_string(),
+            digest: crate::digest::digest(text),
             start,
-            context: Context {
-                before: Vec::new(),
-                target: target.iter().map(|t| t.to_string()).collect(),
-                after: Vec::new(),
+            len,
+        }
+    }
+
+    /// The file `BASE`'s hunk is an excerpt of: nine filler lines, then the
+    /// hunk's old side (lines 10-13).
+    fn old_text() -> String {
+        let mut t: String = (1..=9).map(|n| format!("// filler {n}\n")).collect();
+        t.push_str(
+            "    fn bar(&self) -> i32 {\n        self.value\n    }\n}\n",
+        );
+        t
+    }
+
+    /// ...and its new side (lines 10-17).
+    fn new_text() -> String {
+        let mut t: String = (1..=9).map(|n| format!("// filler {n}\n")).collect();
+        t.push_str(
+            "    fn bar(&self) -> i32 {\n        self.value\n    }\n\n    fn baz(&self) -> i32 {\n        self.value * 2\n    }\n}\n",
+        );
+        t
+    }
+
+    /// What `render_for_edit` needs to know about BASE's revision.
+    struct Fixture {
+        files: Vec<crate::model::FileDigest>,
+        texts: Vec<String>,
+    }
+
+    fn fixture() -> Fixture {
+        Fixture {
+            files: vec![crate::model::FileDigest {
+                old_path: Some("src/lib.rs".to_string()),
+                new_path: Some("src/lib.rs".to_string()),
+                old: Some(crate::digest::digest(old_text())),
+                new: Some(crate::digest::digest(new_text())),
+            }],
+            texts: vec![old_text(), new_text()],
+        }
+    }
+
+    fn render(fx: &Fixture, extra: &[&str], threads: &[Thread]) -> String {
+        let diff = diff::parse(BASE).unwrap();
+        let mut blobs = crate::digest::Blobs::default();
+        for t in fx.texts.iter().map(String::as_str).chain(extra.iter().copied()) {
+            blobs.add(t.as_bytes());
+        }
+        render_for_edit(
+            BASE,
+            &diff,
+            &anchor::ViewVersions {
+                files: &fx.files,
+                tree: &[],
             },
-        }
+            &blobs,
+            threads,
+        )
     }
 
-    /// A head-side-only span (an added line, in these tests).
-    fn span(line_start: u32, _line_end: u32, target: &str, origin_file_digest: &str) -> Anchor {
+    /// A comment on the added line `self.value * 2` (new line 15).
+    fn on_baz_line() -> Anchor {
         Anchor::Span {
-            base: None,
-            head: Some(side(line_start, &[target], origin_file_digest)),
+            base: Some(range(13, 0, &old_text())),
+            head: Some(range(15, 1, &new_text())),
         }
-    }
-
-    /// The current per-file digests where `src/lib.rs` is at `digest`.
-    fn files_at(digest: &str) -> Vec<crate::model::FileDigest> {
-        vec![crate::model::FileDigest {
-            old_path: Some("src/lib.rs".to_string()),
-            new_path: Some("src/lib.rs".to_string()),
-            old: None,
-            new: Some(digest.to_string()),
-        }]
     }
 
     #[test]
     fn render_for_edit_places_global_file_hunk_and_line_threads_at_their_scope() {
-        let diff = diff::parse(BASE).unwrap();
-        let digest = "same-digest";
-        let global_id = Ulid::new();
-        let file_id = Ulid::new();
-        let hunk_id = Ulid::new();
-        let line_id = Ulid::new();
-
+        let (global_id, file_id, hunk_id, line_id) =
+            (Ulid::new(), Ulid::new(), Ulid::new(), Ulid::new());
         let threads = vec![
             thread_with(
                 global_id,
@@ -1409,24 +1444,20 @@ diff --git a/f.rs b/f.rs
                 },
                 "file comment",
             ),
+            // The whole hunk: old lines 10-13, new lines 10-17.
             thread_with(
                 hunk_id,
                 Anchor::Span {
-                    base: Some(side(10, &["    fn bar(&self) -> i32 {"], "old")),
-                    head: Some(side(10, &["    fn bar(&self) -> i32 {"], digest)),
+                    base: Some(range(10, 4, &old_text())),
+                    head: Some(range(10, 8, &new_text())),
                 },
                 "hunk comment",
             ),
-            thread_with(
-                line_id,
-                span(15, 15, "        self.value * 2", digest),
-                "line comment",
-            ),
+            thread_with(line_id, on_baz_line(), "line comment"),
         ];
 
-        let (rendered, auto_relocated) = render_for_edit(BASE, &diff, &files_at(digest), &Default::default(), &threads);
-        assert!(auto_relocated.is_empty());
-        assert!(!rendered.contains("[moved]"));
+        let rendered = render(&fixture(), &[], &threads);
+        assert!(!rendered.contains("[deleted]"));
 
         let global_pos = rendered.find(&format!(">#@{global_id}")).unwrap();
         let diff_git_pos = rendered.find("diff --git").unwrap();
@@ -1443,14 +1474,11 @@ diff --git a/f.rs b/f.rs
             "file comment must render between +++ and the first hunk"
         );
 
-        // A hunk comment is a span over the hunk's lines now, drawn after
-        // the last of them like any range comment.
+        // A hunk comment is a span over the hunk's lines, drawn after the
+        // last of them like any range comment.
         let hunk_pos = rendered.find(&format!(">#@{hunk_id}")).unwrap();
-        let bar_pos = rendered.find("fn bar(&self)").unwrap();
-        assert!(
-            at_pos < bar_pos && bar_pos < hunk_pos,
-            "a span comment must render after its lines"
-        );
+        let last_line = rendered.rfind("\n }\n").unwrap();
+        assert!(last_line < hunk_pos, "a span comment must render after its lines");
 
         let line_pos = rendered.find(&format!(">#@{line_id}")).unwrap();
         let target_line_pos = rendered.find("self.value * 2").unwrap();
@@ -1461,83 +1489,96 @@ diff --git a/f.rs b/f.rs
     }
 
     #[test]
-    fn render_for_edit_tags_drifted_threads_as_moved_and_returns_them_for_auto_accept() {
-        let diff = diff::parse(BASE).unwrap();
+    fn a_thread_written_against_an_older_version_is_placed_by_following_the_lines() {
+        // The same file three lines shorter at the top: `self.value * 2` was
+        // line 12 then, and the position is worked out from the two texts.
+        let older: String = new_text().lines().skip(3).map(|l| format!("{l}\n")).collect();
         let root_id = Ulid::new();
-        // Recorded at a stale line number; the target text is unique in
-        // BASE at line 15, so resolve() should find it there via exact
-        // match and report it as Relocated (drifted, not confirmed).
         let thread = thread_with(
             root_id,
-            span(99, 99, "        self.value * 2", "stale-digest"),
-            "drifted",
+            Anchor::Span {
+                base: None,
+                head: Some(range(12, 1, &older)),
+            },
+            "written earlier",
         );
-
-        let (rendered, auto_relocated) = render_for_edit(
-            BASE,
-            &diff,
-            &files_at("current-digest"),
-            &Default::default(),
-            std::slice::from_ref(&thread),
-        );
-
-        assert_eq!(auto_relocated.len(), 1);
-        assert_eq!(auto_relocated[0].0, root_id);
-        assert!(rendered.contains("[moved]"));
+        let rendered = render(&fixture(), &[&older], std::slice::from_ref(&thread));
         let header_pos = rendered.find(&format!(">#@{root_id}")).unwrap();
         let target_pos = rendered.find("self.value * 2").unwrap();
-        assert!(target_pos < header_pos);
+        let after = rendered.find("+    }\n").unwrap();
+        assert!(target_pos < header_pos && header_pos < after);
+        assert!(!rendered.contains("[deleted]"));
     }
 
     #[test]
-    fn render_for_edit_shows_outdated_threads_in_a_preamble_not_inline() {
-        let diff = diff::parse(BASE).unwrap();
+    fn a_thread_on_lines_that_were_removed_is_drawn_where_they_were_and_quotes_them() {
+        // Written against a version that had an extra line between `}` (new
+        // line 12) and the blank line; this diff's file doesn't have it.
+        let mut older = new_text();
+        older = older.replacen("    }\n\n", "    }\n    // gone soon\n\n", 1);
         let root_id = Ulid::new();
         let thread = thread_with(
             root_id,
-            span(
-                1,
-                1,
-                "content that matches nothing in BASE at all",
-                "stale-digest",
-            ),
+            Anchor::Span {
+                base: None,
+                head: Some(range(13, 1, &older)),
+            },
+            "why is this here",
+        );
+        let rendered = render(&fixture(), &[&older], std::slice::from_ref(&thread));
+        assert!(rendered.contains(" [deleted]"), "{rendered}");
+        assert!(rendered.contains(">#|     // gone soon"), "{rendered}");
+        // Between the lines it was between: after `    }` (line 12), before
+        // the added blank line.
+        assert!(
+            rendered.contains(&format!("     }}\n>#@{root_id}")),
+            "{rendered}"
+        );
+        assert!(rendered.contains(&format!(">#@{root_id}")) && !rendered.contains("+\n>#@"));
+    }
+
+    #[test]
+    fn render_for_edit_shows_unplaceable_threads_in_a_preamble_not_inline() {
+        let root_id = Ulid::new();
+        // A version that isn't in the bundle: nothing to follow from.
+        let thread = thread_with(
+            root_id,
+            Anchor::Span {
+                base: None,
+                head: Some(range(1, 1, "a version nobody kept")),
+            },
             "gone",
         );
-
-        let (rendered, auto_relocated) = render_for_edit(
-            BASE,
-            &diff,
-            &files_at("current-digest"),
-            &Default::default(),
-            std::slice::from_ref(&thread),
-        );
-
-        assert!(auto_relocated.is_empty());
+        let rendered = render(&fixture(), &[], std::slice::from_ref(&thread));
         let header_pos = rendered.find(&format!(">#@{root_id}")).unwrap();
         let diff_git_pos = rendered.find("diff --git").unwrap();
         assert!(
             header_pos < diff_git_pos,
-            "an outdated thread must render in the preamble, not inline in the diff"
+            "an unplaced thread must render in the preamble, not inline in the diff"
         );
     }
 
     #[test]
-    fn render_then_reparse_round_trips_a_reply_to_an_existing_thread() {
-        let diff = diff::parse(BASE).unwrap();
+    fn a_thread_on_a_line_the_diff_does_not_show_is_in_the_preamble_for_now() {
         let root_id = Ulid::new();
         let thread = thread_with(
             root_id,
-            span(15, 15, "        self.value * 2", "same-digest"),
-            "original",
+            Anchor::Span {
+                base: Some(range(2, 1, &old_text())),
+                head: Some(range(2, 1, &new_text())),
+            },
+            "far above the hunk",
         );
+        let rendered = render(&fixture(), &[], std::slice::from_ref(&thread));
+        let header_pos = rendered.find(&format!(">#@{root_id}")).unwrap();
+        assert!(header_pos < rendered.find("diff --git").unwrap());
+    }
 
-        let (rendered, _) = render_for_edit(
-            BASE,
-            &diff,
-            &files_at("same-digest"),
-            &Default::default(),
-            std::slice::from_ref(&thread),
-        );
+    #[test]
+    fn render_then_reparse_round_trips_a_reply_to_an_existing_thread() {
+        let root_id = Ulid::new();
+        let thread = thread_with(root_id, on_baz_line(), "original");
+        let rendered = render(&fixture(), &[], std::slice::from_ref(&thread));
         let annotated = format!("{rendered}>> 承知しました\n");
         let parsed = parse(&annotated).expect("valid annotation");
 
@@ -1547,6 +1588,30 @@ diff --git a/f.rs b/f.rs
         };
         assert_eq!(*target, ThreadRef::Existing(root_id));
         assert_eq!(body.as_deref(), Some("承知しました"));
+    }
+
+    #[test]
+    fn a_deleted_marker_and_its_quote_do_not_disturb_reparsing() {
+        let mut older = new_text();
+        older = older.replacen("    }\n\n", "    }\n    // gone soon\n\n", 1);
+        let thread = thread_with(
+            Ulid::new(),
+            Anchor::Span {
+                base: None,
+                head: Some(range(13, 1, &older)),
+            },
+            "why is this here",
+        );
+        let rendered = render(&fixture(), &[&older], std::slice::from_ref(&thread));
+        let reparsed = parse(&rendered).expect("the rendered buffer parses");
+        assert!(reparsed.items.is_empty(), "{:?}", reparsed.items);
+        assert_eq!(reparsed.diff, diff::parse(BASE).unwrap());
+    }
+
+    #[test]
+    fn reject_is_no_longer_a_directive() {
+        let text = format!("{BASE}> text\n>> reply\n>>!reject\n");
+        assert!(parse(&text).is_err());
     }
 
     const WITH_BINARY: &str = "\
@@ -1593,7 +1658,16 @@ diff --git a/t.txt b/t.txt
             },
             "about the image",
         )];
-        let (rendered, _) = render_for_edit(WITH_BINARY, &diff, &[], &Default::default(), &threads);
+        let rendered = render_for_edit(
+            WITH_BINARY,
+            &diff,
+            &anchor::ViewVersions {
+                files: &[],
+                tree: &[],
+            },
+            &Default::default(),
+            &threads,
+        );
         let lines: Vec<&str> = rendered.lines().collect();
         let at = lines
             .iter()

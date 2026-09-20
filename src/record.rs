@@ -34,6 +34,9 @@ pub struct Capture<'a> {
     pub base_files: &'a Tree,
 }
 
+/// Reads the head content of the given paths (missing ones are skipped).
+pub type HeadSome<'a> = &'a dyn Fn(&[String]) -> Result<Vec<(String, Vec<u8>)>>;
+
 /// The whole head tree, for a `full` snapshot.
 pub type HeadAll<'a> = Box<dyn FnOnce() -> Result<Vec<(String, Vec<u8>)>> + 'a>;
 
@@ -81,7 +84,7 @@ pub fn record_session(
     new_events: &mut Vec<Event>,
     capture: Capture,
     snapshot_mode: &dyn Fn() -> SnapshotMode,
-    head_some: &dyn Fn(&[String]) -> Result<Vec<(String, Vec<u8>)>>,
+    head_some: HeadSome,
     head_all: HeadAll,
 ) -> Result<Additions> {
     let referenced = referenced_files(loaded.events.iter().chain(new_events.iter()));
@@ -180,7 +183,7 @@ pub fn record_session(
 mod tests {
     use super::*;
     use crate::bundle;
-    use crate::model::{Context, FileRef, SideAnchor};
+    use crate::model::{FileRef, LineRange};
     use std::cell::{Cell, RefCell};
 
     fn tree(files: &[(&str, &str)]) -> Tree {
@@ -199,16 +202,12 @@ mod tests {
         }
     }
 
-    fn side(file: &str) -> SideAnchor {
-        SideAnchor {
+    fn side(file: &str) -> LineRange {
+        LineRange {
             file: file.to_string(),
             digest: "sha256:whatever".to_string(),
             start: 1,
-            context: Context {
-                before: Vec::new(),
-                target: vec!["x".to_string()],
-                after: Vec::new(),
-            },
+            len: 1,
         }
     }
 

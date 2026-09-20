@@ -1,129 +1,17 @@
-//! Re-anchoring: relocating a comment's [`Anchor`] against a diff/file
-//! version other than the one it was originally captured against.
+//! Following an anchor -- a line range of one immutable file version -- into
+//! another version of the file, and deciding where a thread is drawn.
 //!
-//! [`resolve`] is the core, corpus-agnostic matching algorithm. The caller
-//! builds a [`CorpusLine`] search space with one of the two constructors
-//! and picks between them per the design's two tiers:
-//!
-//! - **Tier 1** — [`corpus_from_file_text`]: the full text of the viewed
-//!   file version is known (a bundle snapshot, or read at edit time), so all
-//!   of it is searched -- and, when the version the anchor was written
-//!   against is held too, a line diff between the two gives the position
-//!   directly ([`resolve_with_texts`]). A match that lands outside every
-//!   hunk is [`Placement::OutsideDiff`], not outdated.
-//! - **Tier 2** — [`corpus_from_diff_hunks`]: only a bare new diff/patch is
-//!   available, so the search is restricted to that diff's own visible
-//!   context/added/removed lines for the relevant side.
-//!
-//! Matching, in order:
-//! 1. If the file's digest on the anchor's side equals the anchor's own,
-//!    matching is skipped -- [`Resolution::Current`].
-//! 2. If the text of the version the anchor was written against is held,
-//!    the line diffs from it to the viewed version (through any intermediate
-//!    versions) give the position directly ([`resolve_with_texts`]).
-//! 3. Otherwise the corpus is searched for `context.target`: every exact
-//!    match, or -- with none -- every line-contiguous window at least
-//!    [`DEFAULT_SIMILARITY_THRESHOLD`] similar (via the `similar` crate's
-//!    character-diff ratio). Each candidate is scored on its content, on how
-//!    many of `context.before`/`after` surround it, and on how close it is to
-//!    where the range should be by now (the recorded position carried
-//!    forward by the line diffs when the texts are held, else as recorded).
-//!    The best wins unless another, separate place scores within
-//!    [`AMBIGUITY_MARGIN`] of it, in which case it is [`Resolution::Outdated`]
-//!    rather than a guess. Windows that aren't line-number-contiguous (e.g.
-//!    would straddle a hunk gap in a Tier 2 corpus) are never considered.
-//!
-//! A caller accepting a [`Resolution::Relocated`] anchor (silently, unless
-//! rejected — see the annotation format's `>>!reject`/`>!reanchor`) should
-//! persist it as the new authoritative anchor for future re-anchoring runs.
+//! Nothing here guesses. The bundle holds every version an anchor refers to,
+//! so where a range went is a matter of the two versions' texts: the line
+//! diff between them (through the intermediate versions some revision
+//! recorded, when there are any) says which lines survived, which were
+//! edited, and which were removed. [`locate`] follows a range that way;
+//! [`resolve_placement`] uses it to place a thread in a view.
 
-use crate::diff::{FileDiff, UnifiedDiff};
-use crate::model::{Anchor, Context, FileDigest, Side, SideAnchor};
-
-pub const DEFAULT_SIMILARITY_THRESHOLD: f32 = 0.6;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Resolution {
-    /// The stored context still matches exactly where expected (or the
-    /// file's current digest already matched the anchor's own digest).
-    Current,
-    /// Found elsewhere with reasonable confidence; not yet human-confirmed.
-    Relocated(SideAnchor),
-    /// No confident match; the thread is shown frozen, not placed inline.
-    Outdated,
-}
-
-/// One candidate line to search: `line` is its 1-based number on whichever
-/// side the corpus was built for.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CorpusLine {
-    pub line: u32,
-    pub content: String,
-}
-
-/// Tier 1 corpus: every line of a file's current full text.
-pub fn corpus_from_file_text(text: &str) -> Vec<CorpusLine> {
-    text.lines()
-        .enumerate()
-        .map(|(i, content)| CorpusLine {
-            line: (i + 1) as u32,
-            content: content.to_string(),
-        })
-        .collect()
-}
-
-/// Tier 2 corpus: only the lines of `file` that are visible on `side` in
-/// the diff currently being viewed (context lines are visible on both
-/// sides; added lines only on `New`; removed lines only on `Old`).
-pub fn corpus_from_diff_hunks(file: &FileDiff, side: Side) -> Vec<CorpusLine> {
-    let mut out = Vec::new();
-    for hunk in &file.hunks {
-        for line in &hunk.lines {
-            let line_no = match side {
-                Side::New => line.new_line,
-                Side::Old => line.old_line,
-            };
-            if let Some(line_no) = line_no {
-                out.push(CorpusLine {
-                    line: line_no,
-                    content: line.content.clone(),
-                });
-            }
-        }
-    }
-    out
-}
-
-/// Builds the `Context` for a freshly-created side anchor covering `len`
-/// lines from `start` in `corpus`, with up to `context_lines` around it. A
-/// `len` of 0 is an insertion point before line `start`: no target, just
-/// the lines around it. Returns `None` if a non-empty range isn't present
-/// (or isn't line-number-contiguous) in `corpus` -- callers get this from
-/// the same parsed diff the comment was just written against, so that
-/// should never happen in practice.
-pub fn context_for_span(
-    corpus: &[CorpusLine],
-    start: u32,
-    len: u32,
-    context_lines: u32,
-) -> Option<Context> {
-    let n = context_lines as usize;
-    if len == 0 {
-        let idx = corpus
-            .iter()
-            .position(|l| l.line >= start)
-            .unwrap_or(corpus.len());
-        return Some(extract_context(corpus, idx, 0, n, n, start));
-    }
-    let start_idx = corpus.iter().position(|l| l.line == start)?;
-    let len = len as usize;
-    if start_idx + len > corpus.len()
-        || !(0..len).all(|k| corpus[start_idx + k].line == start + k as u32)
-    {
-        return None;
-    }
-    Some(extract_context(corpus, start_idx, len, n, n, start))
-}
+use crate::diff::{FileDiff, LineKind, UnifiedDiff};
+use crate::digest::Blobs;
+use crate::model::{Anchor, FileDigest, LineRange, Side, TreeFile};
+use std::collections::HashSet;
 
 /// The digest of `file` on `side` in the revision described by `files`, if
 /// the file is one that revision's diff touches and has that side. `file`
@@ -138,542 +26,181 @@ pub fn digest_for<'a>(files: &'a [FileDigest], file: &str, side: Side) -> Option
     }
 }
 
-/// Re-finds one side of an anchor in `corpus`. `current_file_digest` is the
-/// digest of that side's file in the version being viewed, when known;
-/// `None` (unknown) never short-circuits, and a relocated anchor then
-/// records an empty digest, so it is simply re-matched next time.
-///
-/// An insertion/deletion point (empty target) has no text of its own to
-/// search for, so it is only ever `Current` (digest match) or `Outdated`
-/// here; callers place such a change through the other side of the anchor.
-pub fn resolve(
-    side: &SideAnchor,
-    current_file_digest: Option<&str>,
-    corpus: &[CorpusLine],
-) -> Resolution {
-    resolve_near(side, current_file_digest, corpus, side.start)
+/// Where a range is in another version of its file. `len == 0` is a point
+/// (see [`LineRange`]): either it was one already, or every line of the range
+/// was removed and this is where they were.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Located {
+    pub start: u32,
+    pub len: u32,
 }
 
-/// [`resolve`] for a range expected to start near line `expected` by now
-/// (where the recorded position has been carried to, when that is known).
-pub fn resolve_near(
-    side: &SideAnchor,
-    current_file_digest: Option<&str>,
-    corpus: &[CorpusLine],
-    expected: u32,
-) -> Resolution {
-    if current_file_digest == Some(side.digest.as_str()) {
-        return Resolution::Current;
-    }
-
-    let context = &side.context;
-    let target = &context.target;
-    if target.is_empty() {
-        return Resolution::Outdated;
-    }
-    let found = pick(corpus, &candidates(corpus, target), side, expected);
-    let (chosen, is_exact) = match found {
-        Some((idx, exact)) => (Some(idx), exact),
-        None => (None, false),
-    };
-
-    let Some(start_idx) = chosen else {
-        return Resolution::Outdated;
-    };
-
-    let start = corpus[start_idx].line;
-    // Only an *exact* match at the original position means nothing at all
-    // changed. A fuzzy match landing on the same line numbers still means
-    // the content itself drifted, so it must still be reported (and its
-    // context refreshed) as Relocated, not silently treated as Current.
-    if is_exact && start == side.start {
-        return Resolution::Current;
-    }
-
-    let new_context = extract_context(
-        corpus,
-        start_idx,
-        target.len(),
-        context.before.len(),
-        context.after.len(),
-        start,
-    );
-    Resolution::Relocated(SideAnchor {
-        file: side.file.clone(),
-        digest: current_file_digest.unwrap_or_default().to_string(),
-        start,
-        context: new_context,
-    })
-}
-
-/// Like [`resolve`], but when the text of the version the anchor was
-/// written against and of the version being viewed are both held, follows
-/// the line diffs from one to the other -- through each intermediate version
-/// some revision recorded, if there are any (see [`crate::digest::Blobs`]):
-/// a range that survives every step is at a known new position, with no
-/// searching or guessing. Anything else (a step edited the range beyond
-/// recognition, or a text is missing) falls back to [`resolve`]'s search of
-/// `corpus`, which must then be built from the current text.
-pub fn resolve_with_texts(
-    side: &SideAnchor,
-    current_file_digest: Option<&str>,
-    corpus: &[CorpusLine],
-    blobs: &crate::digest::Blobs,
-) -> Resolution {
-    let Some(current_digest) = current_file_digest else {
-        return resolve(side, None, corpus);
-    };
-    if current_digest == side.digest {
-        return Resolution::Current;
-    }
-    if let Some(chain) = blobs.chain(&side.digest, current_digest)
-        && let Some((start, len)) = follow(&chain, side.start, side.len())
-        && let Some(idx) = corpus.iter().position(|l| l.line == start)
-        && (len == 0
-            || corpus
-                .get(idx + len as usize - 1)
-                .is_some_and(|l| l.line == start + len - 1))
-    {
-        let context = extract_context(
-            corpus,
-            idx,
-            len as usize,
-            side.context.before.len(),
-            side.context.after.len(),
-            start,
-        );
-        // Same place and same text: nothing moved. An in-place edit keeps
-        // the position but not the text, so it is still reported (and its
-        // context refreshed) as relocated.
-        if start == side.start && context.target == side.context.target {
-            return Resolution::Current;
-        }
-        return Resolution::Relocated(SideAnchor {
-            file: side.file.clone(),
-            digest: current_digest.to_string(),
-            start,
-            context,
+/// Follows `range` to the version of its file with digest `target`. `None`
+/// when a needed version isn't held (a damaged bundle).
+pub fn locate(range: &LineRange, target: &str, blobs: &Blobs) -> Option<Located> {
+    if range.digest == target {
+        return Some(Located {
+            start: range.start,
+            len: range.len,
         });
     }
-    // The range itself couldn't be followed (it was edited, or moved), but
-    // the lines around it usually can: where it should be by now.
-    let expected = blobs
-        .chain(&side.digest, current_digest)
-        .map_or(side.start, |chain| expected_start(&chain, side.start));
-    resolve_near(side, current_file_digest, corpus, expected)
-}
-
-/// Where line `start` of the first text has got to by the last, following
-/// each step's line diff even through lines that were edited or removed
-/// (which land at their block's position).
-fn expected_start(texts: &[&str], start: u32) -> u32 {
-    texts
+    let chain = blobs.chain(&range.digest, target)?;
+    let (start, len) = chain
         .windows(2)
-        .fold(start, |at, pair| map_line_near(pair[0], pair[1], at))
+        .fold((range.start, range.len), |(at, len), pair| {
+            map_range(pair[0], pair[1], at, len)
+        });
+    Some(Located { start, len })
 }
 
-fn map_line_near(origin: &str, current: &str, line: u32) -> u32 {
-    let Some(first) = line.checked_sub(1).map(|l| l as usize) else {
-        return line;
-    };
+/// Where the `len` lines starting at `start` (1-based) of `origin` are in
+/// `current`, from the line diff between them:
+/// - an unchanged line goes to its counterpart;
+/// - an edited line goes to what replaced it (line for line when the edit
+///   kept the number of lines, else the whole replacing block);
+/// - a removed line goes nowhere.
+///
+/// The range becomes the span from the first to the last line any of its
+/// lines went to, so lines added inside it are inside it. If none went
+/// anywhere, the result is the point where they were (`len == 0`). A point
+/// (`len == 0`) stays before the line it was before.
+fn map_range(origin: &str, current: &str, start: u32, len: u32) -> (u32, u32) {
+    use similar::DiffOp;
     let diff = similar::TextDiff::from_lines(origin, current);
-    for op in diff.ops() {
-        let mapped = match *op {
-            similar::DiffOp::Equal {
-                old_index,
-                new_index,
-                len,
-            } if (old_index..old_index + len).contains(&first) => new_index + (first - old_index),
-            similar::DiffOp::Replace {
-                old_index,
-                old_len,
-                new_index,
-                new_len,
-            } if (old_index..old_index + old_len).contains(&first) => {
-                new_index + (first - old_index).min(new_len.saturating_sub(1))
-            }
-            similar::DiffOp::Delete {
-                old_index,
-                old_len,
-                new_index,
-            } if (old_index..old_index + old_len).contains(&first) => new_index,
-            _ => continue,
+    let ops = diff.ops();
+    let first = start.saturating_sub(1) as usize;
+
+    if len > 0 {
+        let end = first + len as usize;
+        let (mut lo, mut hi): (Option<usize>, Option<usize>) = (None, None);
+        let mut cover = |from: usize, to: usize| {
+            lo = Some(lo.map_or(from, |l| l.min(from)));
+            hi = Some(hi.map_or(to, |h| h.max(to)));
         };
-        return mapped as u32 + 1;
-    }
-    // Past the last line of the old text: keep the distance from its end.
-    let old_len = origin.lines().count() as i64;
-    (line as i64 - old_len + current.lines().count() as i64).max(1) as u32
-}
-
-/// Follows a range (`start`, `len`) through consecutive versions' texts;
-/// `None` as soon as one step can't place it. The length can change on the
-/// way (lines were added or removed inside the range).
-fn follow(texts: &[&str], start: u32, len: u32) -> Option<(u32, u32)> {
-    texts.windows(2).try_fold((start, len), |(at, len), pair| {
-        map_range(pair[0], pair[1], at, len)
-    })
-}
-
-/// A range that grew this much more than it was (in lines: four times its
-/// length plus ten) isn't followed: something else was written over it.
-const MAX_GROWTH_FACTOR: u32 = 4;
-const MAX_GROWTH_SLACK: u32 = 10;
-
-/// Where the `len` lines starting at `start` (1-based) of `origin` sit in
-/// `current`, as (start, len). Tried in order:
-/// 1. all inside one unchanged run, or inside a block that was edited in
-///    place (replaced by the same number of lines that still look like it,
-///    so line `k` of the old block is line `k` of the new one): same length;
-/// 2. the range's first and last lines followed separately, which follows
-///    lines added or removed *inside* the range. An end line that was itself
-///    edited or removed goes to the edge of its block, and the result must
-///    then still look like the original text.
-/// For an insertion point (`len == 0`) the line it sits before is followed.
-fn map_range(origin: &str, current: &str, start: u32, len: u32) -> Option<(u32, u32)> {
-    let first = start.checked_sub(1)? as usize;
-    let count = len.max(1) as usize;
-    let diff = similar::TextDiff::from_lines(origin, current);
-    let looks_alike = |old: std::ops::Range<usize>, new: std::ops::Range<usize>| {
-        let old_lines: String = diff.old_slices()[old].concat();
-        let new_lines: String = diff.new_slices()[new].concat();
-        similar::TextDiff::from_chars(&old_lines, &new_lines).ratio()
-            >= DEFAULT_SIMILARITY_THRESHOLD
-    };
-
-    let same_length = diff.ops().iter().find_map(|op| match *op {
-        similar::DiffOp::Equal {
-            old_index,
-            new_index,
-            len: run,
-        } if first >= old_index && first + count <= old_index + run => {
-            Some((new_index + (first - old_index)) as u32 + 1)
-        }
-        similar::DiffOp::Replace {
-            old_index,
-            old_len,
-            new_index,
-            new_len,
-        } if old_len == new_len
-            && first >= old_index
-            && first + count <= old_index + old_len
-            && looks_alike(old_index..old_index + old_len, new_index..new_index + new_len) =>
-        {
-            Some((new_index + (first - old_index)) as u32 + 1)
-        }
-        _ => None,
-    });
-    if let Some(new_start) = same_length {
-        return Some((new_start, len));
-    }
-    if len == 0 {
-        return None;
-    }
-
-    let last = first + count - 1;
-    let (new_first, first_exact) = map_edge(&diff, first, Edge::Start)?;
-    let (new_last, last_exact) = map_edge(&diff, last, Edge::End)?;
-    if new_last < new_first {
-        return None;
-    }
-    let new_len = new_last - new_first + 1;
-    if new_len > len * MAX_GROWTH_FACTOR + MAX_GROWTH_SLACK {
-        return None;
-    }
-    if !(first_exact && last_exact)
-        && !looks_alike(
-            first..last + 1,
-            new_first as usize - 1..new_last as usize,
-        )
-    {
-        return None;
-    }
-    Some((new_first, new_len))
-}
-
-#[derive(Clone, Copy)]
-enum Edge {
-    Start,
-    End,
-}
-
-/// Where the (0-based) old line `line`, taken as the start or end of a
-/// range, is in the new text (1-based), and whether it is the very same
-/// line. A line inside an edited block goes to that block's first (for a
-/// start) or last (for an end) line; a removed line to the first line after
-/// it (start) or the last line before it (end).
-fn map_edge(diff: &similar::TextDiff<'_, '_, '_, str>, line: usize, edge: Edge) -> Option<(u32, bool)> {
-    for op in diff.ops() {
-        match *op {
-            similar::DiffOp::Equal {
-                old_index,
-                new_index,
-                len,
-            } if (old_index..old_index + len).contains(&line) => {
-                return Some(((new_index + (line - old_index)) as u32 + 1, true));
+        for op in ops {
+            let old = op.old_range();
+            let (a, b) = (old.start.max(first), old.end.min(end));
+            if a >= b {
+                continue;
             }
-            similar::DiffOp::Replace {
-                old_index,
-                old_len,
-                new_index,
-                new_len,
-            } if (old_index..old_index + old_len).contains(&line) => {
-                let at = match edge {
-                    Edge::Start => new_index + 1,
-                    Edge::End => new_index + new_len,
-                };
-                return Some((at as u32, false));
-            }
-            similar::DiffOp::Delete {
-                old_index,
-                old_len,
-                new_index,
-            } if (old_index..old_index + old_len).contains(&line) => {
-                let at = match edge {
-                    Edge::Start => new_index + 1,
-                    Edge::End => new_index,
-                };
-                return (at > 0).then_some((at as u32, false));
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Starting corpus indices where `corpus[i..i+target.len()]` is
-/// content-equal to `target` line-by-line *and* line-number-contiguous
-/// (so a Tier 2 corpus with a hunk gap can never produce a spurious match
-/// straddling that gap).
-fn find_exact_matches(corpus: &[CorpusLine], target: &[String]) -> Vec<usize> {
-    if target.is_empty() || corpus.len() < target.len() {
-        return Vec::new();
-    }
-    let mut matches = Vec::new();
-    'windows: for i in 0..=(corpus.len() - target.len()) {
-        for (k, expected) in target.iter().enumerate() {
-            if corpus[i + k].content != *expected {
-                continue 'windows;
-            }
-            if k > 0 && corpus[i + k].line != corpus[i + k - 1].line + 1 {
-                continue 'windows;
+            match *op {
+                DiffOp::Equal { new_index, .. } => {
+                    cover(new_index + (a - old.start), new_index + (b - old.start) - 1);
+                }
+                DiffOp::Replace {
+                    new_index, new_len, ..
+                } => {
+                    if old.len() == new_len {
+                        cover(new_index + (a - old.start), new_index + (b - old.start) - 1);
+                    } else {
+                        cover(new_index, new_index + new_len - 1);
+                    }
+                }
+                DiffOp::Delete { .. } | DiffOp::Insert { .. } => {}
             }
         }
-        matches.push(i);
+        if let (Some(lo), Some(hi)) = (lo, hi) {
+            return (lo as u32 + 1, (hi - lo) as u32 + 1);
+        }
     }
-    matches
+    (point_before(ops, first) as u32 + 1, 0)
 }
 
-/// How many of `before`/`after` match, walking outward from the match and
-/// stopping at the first mismatch (context is expected to be contiguous).
-fn score_context(
-    corpus: &[CorpusLine],
-    match_start: usize,
-    match_len: usize,
-    before: &[String],
-    after: &[String],
-) -> usize {
-    let mut score = 0;
-
-    let mut idx = match_start;
-    for b in before.iter().rev() {
-        if idx == 0 {
-            break;
-        }
-        let candidate = idx - 1;
-        if corpus[candidate].content == *b && corpus[candidate].line + 1 == corpus[idx].line {
-            score += 1;
-            idx = candidate;
-        } else {
-            break;
-        }
-    }
-
-    let mut idx = match_start + match_len;
-    for a in after {
-        if idx >= corpus.len() {
-            break;
-        }
-        let prev_line = corpus[idx - 1].line;
-        if corpus[idx].content == *a && corpus[idx].line == prev_line + 1 {
-            score += 1;
-            idx += 1;
-        } else {
-            break;
-        }
-    }
-
-    score
-}
-
-/// How much each part of a candidate counts. Content decides whether a
-/// place is a candidate at all (see [`DEFAULT_SIMILARITY_THRESHOLD`]); among
-/// candidates, the surrounding lines and how far the place is from where the
-/// range should be by now separate the ones whose text alone is (nearly)
-/// the same.
-const WEIGHT_CONTENT: f32 = 0.5;
-const WEIGHT_CONTEXT: f32 = 0.3;
-const WEIGHT_POSITION: f32 = 0.2;
-/// A candidate this many lines from the expected position counts half as
-/// much as one right on it (`1 / (1 + distance / scale)`).
-const POSITION_SCALE: f32 = 8.0;
-/// The best candidate must beat the best *other* place by this much, or the
-/// range is reported as unplaceable rather than guessed.
-const AMBIGUITY_MARGIN: f32 = 0.05;
-
-/// Places where `target` might now be: every exact match, else -- when there
-/// is none -- every line-contiguous window whose text is similar enough.
-/// Each comes with its content score (1.0 for an exact match).
-fn candidates(corpus: &[CorpusLine], target: &[String]) -> Vec<(usize, f32)> {
-    let exact = find_exact_matches(corpus, target);
-    if !exact.is_empty() {
-        return exact.into_iter().map(|i| (i, 1.0)).collect();
-    }
-    if target.is_empty() || corpus.len() < target.len() {
-        return Vec::new();
-    }
-    let target_text = target.join("\n");
-    let mut out = Vec::new();
-    for i in 0..=(corpus.len() - target.len()) {
-        let contiguous =
-            (1..target.len()).all(|k| corpus[i + k].line == corpus[i + k - 1].line + 1);
-        if !contiguous {
+/// The (0-based) new line the point before old line `first` sits before.
+fn point_before(ops: &[similar::DiffOp], first: usize) -> usize {
+    use similar::DiffOp;
+    for op in ops {
+        if !op.old_range().contains(&first) {
             continue;
         }
-        let window_text = corpus[i..i + target.len()]
+        return match *op {
+            DiffOp::Equal {
+                old_index,
+                new_index,
+                ..
+            } => new_index + (first - old_index),
+            // Inside an edited or removed block: where the block is now.
+            DiffOp::Replace { new_index, .. } | DiffOp::Delete { new_index, .. } => new_index,
+            DiffOp::Insert { new_index, .. } => new_index,
+        };
+    }
+    // Past the last old line: right after wherever the last one went.
+    ops.iter()
+        .rev()
+        .find(|op| !op.old_range().is_empty())
+        .map_or(0, |op| op.new_range().end)
+}
+
+/// The file versions a view (a revision's diff) is between: the files its
+/// diff touches with both digests, and the head tree the revision recorded
+/// for the others.
+pub struct ViewVersions<'a> {
+    pub files: &'a [FileDigest],
+    pub tree: &'a [TreeFile],
+}
+
+impl ViewVersions<'_> {
+    fn entry(&self, file: &str) -> Option<&FileDigest> {
+        self.files
             .iter()
-            .map(|l| l.content.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        // Character-level, not line-level: a line-level diff treats two
-        // differing single lines as 100%-different no matter how much text
-        // they share, which makes it useless for exactly the case this is
-        // for (single-line targets that were lightly edited).
-        let ratio = similar::TextDiff::from_chars(&target_text, &window_text).ratio();
-        if ratio >= DEFAULT_SIMILARITY_THRESHOLD {
-            out.push((i, ratio));
+            .find(|f| f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file))
+    }
+
+    fn recorded(&self, file: &str) -> Option<&str> {
+        self.tree
+            .iter()
+            .find(|f| f.path == file)
+            .map(|f| f.digest.as_str())
+    }
+
+    /// The digest of `file` at the view's head. A file the diff doesn't touch
+    /// is the same on both sides, and is in the revision's recorded tree.
+    pub fn head(&self, file: &str) -> Option<&str> {
+        match self.entry(file) {
+            Some(e) => e.new.as_deref(),
+            None => self.recorded(file),
         }
     }
-    out
-}
 
-/// Chooses among `candidates` (corpus index, content score) for `side`,
-/// whose range is expected to start near line `expected`. Returns the corpus
-/// index and whether the text matched exactly; `None` when nothing qualifies
-/// or the best place isn't clearly better than every other one.
-fn pick(
-    corpus: &[CorpusLine],
-    candidates: &[(usize, f32)],
-    side: &SideAnchor,
-    expected: u32,
-) -> Option<(usize, bool)> {
-    let ctx = &side.context;
-    let len = ctx.target.len();
-    let context_total = ctx.before.len() + ctx.after.len();
-    let mut scored: Vec<(usize, f32, f32)> = candidates
-        .iter()
-        .map(|&(idx, content)| {
-            let context = if context_total == 0 {
-                0.0
-            } else {
-                score_context(corpus, idx, len, &ctx.before, &ctx.after) as f32
-                    / context_total as f32
-            };
-            let distance = corpus[idx].line.abs_diff(expected) as f32;
-            let position = 1.0 / (1.0 + distance / POSITION_SCALE);
-            let total =
-                WEIGHT_CONTENT * content + WEIGHT_CONTEXT * context + WEIGHT_POSITION * position;
-            (idx, content, total)
-        })
-        .collect();
-    scored.sort_by(|a, b| b.2.total_cmp(&a.2));
-    let &(best, content, best_score) = scored.first()?;
-    // Neighbouring windows of a fuzzy match overlap the best one and don't
-    // count as a rival place.
-    let rival = scored
-        .iter()
-        .skip(1)
-        .find(|(idx, _, _)| idx.abs_diff(best) >= len.max(1));
-    if let Some(&(_, _, rival_score)) = rival
-        && best_score - rival_score < AMBIGUITY_MARGIN
-    {
-        return None;
-    }
-    Some((best, content >= 1.0))
-}
-
-/// The context around the `match_len` lines starting at corpus index
-/// `match_start` (an insertion point when 0), whose first line -- or the line
-/// the point sits before -- is number `first_line`. Only lines that are
-/// really adjacent in the file count: a corpus built from a diff's hunks has
-/// gaps, and the far side of a gap is not "the line before".
-pub(crate) fn extract_context(
-    corpus: &[CorpusLine],
-    match_start: usize,
-    match_len: usize,
-    before_n: usize,
-    after_n: usize,
-    first_line: u32,
-) -> Context {
-    let mut before = Vec::new();
-    let (mut idx, mut want) = (match_start, first_line);
-    while before.len() < before_n && idx > 0 && corpus[idx - 1].line + 1 == want {
-        before.push(corpus[idx - 1].content.clone());
-        want = corpus[idx - 1].line;
-        idx -= 1;
-    }
-    before.reverse();
-
-    let target = corpus[match_start..match_start + match_len]
-        .iter()
-        .map(|l| l.content.clone())
-        .collect();
-
-    let mut after = Vec::new();
-    let (mut idx, mut want) = (match_start + match_len, first_line + match_len as u32);
-    while after.len() < after_n && idx < corpus.len() && corpus[idx].line == want {
-        after.push(corpus[idx].content.clone());
-        idx += 1;
-        want += 1;
-    }
-    Context {
-        before,
-        target,
-        after,
+    /// The digest of `file` at the view's base.
+    pub fn base(&self, file: &str) -> Option<&str> {
+        match self.entry(file) {
+            Some(e) => e.old.as_deref(),
+            None => self.recorded(file),
+        }
     }
 }
 
-/// Where a thread ends up being drawn, after resolving its anchor against a
-/// diff. Shared by the HTML exporter and round-trip annotation rendering.
+/// Where a thread is drawn in a view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Placement {
     Global,
     File(String),
+    /// On lines of the view's diff.
     Line {
         file: String,
-        /// The side the card is drawn on: the head side when the anchor
-        /// still has text there, else the base side (a deleted range).
+        /// The side the card is drawn on: the head side while the anchor's
+        /// lines still exist there, else the base side (they were removed by
+        /// this diff).
         side: Side,
         line_start: u32,
         line_end: u32,
-        /// The base-side range the anchor also covers when `side` is
-        /// `New` (e.g. a replaced block), so both get highlighted.
+        /// The base-side lines the anchor also covers when `side` is `New`
+        /// (e.g. a replaced block), so both get highlighted.
         old_range: Option<(u32, u32)>,
-        /// `Some(new_anchor)` if a side came from a `Relocated` guess (not
-        /// yet human-confirmed); `None` if every side matched where it was
-        /// recorded (nothing to accept/reject).
-        relocated: Option<Anchor>,
     },
-    /// Anchor is a `Span` but couldn't be confidently placed in `diff`.
-    Outdated {
+    /// The lines were removed before this view's head: the thread sits at
+    /// the point where they were, before head line `before`, and `was` is
+    /// what they said.
+    Point {
         file: String,
+        before: u32,
+        was: Vec<String>,
     },
-    /// The text still exists, but not on a line the diff shows, so it can't
-    /// be drawn inline. Distinct from `Outdated`; shown in the same
-    /// unplaced section.
-    OutsideDiff {
-        file: String,
-    },
+    /// The versions needed to place it aren't in the bundle.
+    Unplaced { file: String },
+    /// Placed, but not on any line the view's diff shows.
+    OutsideDiff { file: String },
 }
 
 pub fn find_file<'a>(diff: &'a UnifiedDiff, file: &str) -> Option<&'a FileDiff> {
@@ -682,129 +209,157 @@ pub fn find_file<'a>(diff: &'a UnifiedDiff, file: &str) -> Option<&'a FileDiff> 
         .find(|f| f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file))
 }
 
-/// What became of one side of a `Span` anchor in the diff being viewed.
-enum SideState {
-    /// No such side, or an insertion/deletion point with no text to place.
-    Absent,
-    Placed {
-        start: u32,
-        end: u32,
-        relocated: Option<SideAnchor>,
-    },
-    /// Found, but not on lines the diff shows.
-    Outside,
-    Outdated,
+/// The lines of `file` the diff shows on `side`.
+fn visible_lines(file: &FileDiff, side: Side) -> HashSet<u32> {
+    let mut out = HashSet::new();
+    for hunk in &file.hunks {
+        for line in &hunk.lines {
+            let n = match (side, line.kind) {
+                (Side::New, LineKind::Removed) | (Side::Old, LineKind::Added) => None,
+                (Side::New, _) => line.new_line,
+                (Side::Old, _) => line.old_line,
+            };
+            out.extend(n);
+        }
+    }
+    out
 }
 
-fn place_side(
-    side: &SideAnchor,
-    which: Side,
-    file_diff: &FileDiff,
-    current_files: &[FileDigest],
-    blobs: &crate::digest::Blobs,
-) -> SideState {
-    if side.is_empty() {
-        return SideState::Absent;
-    }
-    let current = digest_for(current_files, &side.file, which);
-    // Tier 1 when the full text of the version being viewed is held.
-    let full_text = current.and_then(|d| blobs.text(d));
-    let visible = corpus_from_diff_hunks(file_diff, which);
-    let corpus = match full_text {
-        Some(text) => corpus_from_file_text(text),
-        None => visible.clone(),
+/// The text of the range's lines, from the version it is a range of.
+pub fn text_of(range: &LineRange, blobs: &Blobs) -> Vec<String> {
+    let Some(text) = blobs.text(&range.digest) else {
+        return Vec::new();
     };
-    let (start, end, relocated) =
-        match resolve_with_texts(side, current, &corpus, blobs) {
-            Resolution::Outdated => return SideState::Outdated,
-            Resolution::Current => (side.start, side.end(), None),
-            Resolution::Relocated(a) => (a.start, a.end(), Some(a)),
-        };
-    if !(start..=end).all(|l| visible.iter().any(|v| v.line == l)) {
-        return SideState::Outside;
-    }
-    SideState::Placed {
-        start,
-        end,
-        relocated,
+    text.lines()
+        .skip(range.start as usize - 1)
+        .take(range.len as usize)
+        .map(str::to_string)
+        .collect()
+}
+
+/// The lines a thread was written about, as they were then: the first
+/// non-empty range of its anchor (head side first).
+pub fn original_text(anchor: &Anchor, blobs: &Blobs) -> Vec<String> {
+    match anchor {
+        Anchor::Span { base, head } => head
+            .iter()
+            .chain(base.iter())
+            .find(|r| !r.is_empty())
+            .map(|r| text_of(r, blobs))
+            .unwrap_or_default(),
+        _ => Vec::new(),
     }
 }
 
-/// `blobs` holds file versions by digest (the bundle's snapshots, plus
-/// whatever this session read). A side whose current version is held is
-/// searched against the whole file (Tier 1), and mapped from the version it
-/// was written against by a line diff when that is held too; otherwise it
-/// falls back to the diff's own visible lines (Tier 2).
+/// Places `anchor` in the view described by `diff` and `view`.
 ///
-/// A `Span` is drawn on its head side when that still resolves, else on its
-/// base side. If a side moved, the returned `relocated` anchor carries the
-/// new position of that side and keeps the other as recorded.
+/// A range is followed into both versions of the view. It is drawn on the
+/// head side if it still has lines there (looking first at the anchor's own
+/// head range, then its base range), else on the base side (the diff removed
+/// them: they show as removed lines), else -- everything it covered was
+/// removed at some point -- as a point where they were.
 pub fn resolve_placement(
     anchor: &Anchor,
     diff: &UnifiedDiff,
-    current_files: &[FileDigest],
-    blobs: &crate::digest::Blobs,
+    view: &ViewVersions,
+    blobs: &Blobs,
 ) -> Placement {
     match anchor {
         Anchor::Global { .. } => Placement::Global,
-        Anchor::File { base, head } => {
-            Placement::File(head.as_ref().or(base.as_ref()).map(|f| f.file.clone()).unwrap_or_default())
-        }
+        Anchor::File { base, head } => Placement::File(
+            head.as_ref()
+                .or(base.as_ref())
+                .map(|f| f.file.clone())
+                .unwrap_or_default(),
+        ),
         Anchor::Span { base, head } => {
-            let label = head.as_ref().or(base.as_ref()).map(|s| s.file.clone()).unwrap_or_default();
-            let file_diff = [head, base]
-                .into_iter()
-                .flatten()
-                .find_map(|s| find_file(diff, &s.file));
-            let Some(file_diff) = file_diff else {
-                return Placement::Outdated { file: label };
+            let ranges: Vec<&LineRange> = head.iter().chain(base.iter()).collect();
+            let label = ranges.first().map(|r| r.file.clone()).unwrap_or_default();
+            let file_diff = ranges.iter().find_map(|r| find_file(diff, &r.file));
+            let (head_path, base_path) = match file_diff {
+                Some(f) => (f.new_path.as_deref(), f.old_path.as_deref()),
+                None => (Some(label.as_str()), Some(label.as_str())),
             };
-            let head_state = head.as_ref().map_or(SideState::Absent, |s| {
-                place_side(s, Side::New, file_diff, current_files, blobs)
-            });
-            let base_state = base.as_ref().map_or(SideState::Absent, |s| {
-                place_side(s, Side::Old, file_diff, current_files, blobs)
-            });
+            let head_digest = head_path.and_then(|p| view.head(p));
+            let base_digest = base_path.and_then(|p| view.base(p));
 
-            let relocated = |h: &SideState, b: &SideState| {
-                let moved = |st: &SideState| match st {
-                    SideState::Placed { relocated, .. } => relocated.clone(),
-                    _ => None,
-                };
-                let (rh, rb) = (moved(h), moved(b));
-                if rh.is_none() && rb.is_none() {
-                    return None;
+            let non_empty = |rs: &[Option<&LineRange>]| -> Vec<LineRange> {
+                rs.iter()
+                    .flatten()
+                    .filter(|r| !r.is_empty())
+                    .map(|r| (*r).clone())
+                    .collect()
+            };
+            let head_first = non_empty(&[head.as_ref(), base.as_ref()]);
+            let base_first = non_empty(&[base.as_ref(), head.as_ref()]);
+
+            let mut found_any = false;
+            let mut into = |ranges: &[LineRange], digest: Option<&str>| -> (Option<Located>, Option<Located>) {
+                let mut lines = None;
+                let mut point = None;
+                for r in ranges {
+                    let Some(l) = digest.and_then(|d| locate(r, d, blobs)) else {
+                        continue;
+                    };
+                    found_any = true;
+                    if l.len > 0 {
+                        lines = Some(l);
+                        break;
+                    }
+                    point.get_or_insert(l);
                 }
-                Some(Anchor::Span {
-                    base: rb.or_else(|| base.clone()),
-                    head: rh.or_else(|| head.clone()),
-                })
+                (lines, point)
+            };
+            let (new_lines, new_point) = into(&head_first, head_digest);
+            let (old_lines, _) = into(&base_first, base_digest);
+
+            let shown = |side: Side| file_diff.map(|f| visible_lines(f, side));
+            let (shown_new, shown_old) = (shown(Side::New), shown(Side::Old));
+            let all_shown = |set: &Option<HashSet<u32>>, l: Located| {
+                set.as_ref()
+                    .is_some_and(|s| (l.start..l.start + l.len).all(|n| s.contains(&n)))
             };
 
-            match (&head_state, &base_state) {
-                (SideState::Placed { start, end, .. }, b) => Placement::Line {
-                    file: head.as_ref().map(|s| s.file.clone()).unwrap_or(label),
+            let old_range = old_lines
+                .filter(|l| all_shown(&shown_old, *l))
+                .map(|l| (l.start, l.start + l.len - 1));
+            if let Some(l) = new_lines.filter(|l| all_shown(&shown_new, *l)) {
+                return Placement::Line {
+                    file: file_diff.and_then(|f| f.new_path.clone()).unwrap_or(label),
                     side: Side::New,
-                    line_start: *start,
-                    line_end: *end,
-                    old_range: match b {
-                        SideState::Placed { start, end, .. } => Some((*start, *end)),
-                        _ => None,
-                    },
-                    relocated: relocated(&head_state, &base_state),
-                },
-                (_, SideState::Placed { start, end, .. }) => Placement::Line {
-                    file: base.as_ref().map(|s| s.file.clone()).unwrap_or(label),
+                    line_start: l.start,
+                    line_end: l.start + l.len - 1,
+                    old_range,
+                };
+            }
+            if let Some((start, end)) = old_range {
+                return Placement::Line {
+                    file: file_diff.and_then(|f| f.old_path.clone()).unwrap_or(label),
                     side: Side::Old,
-                    line_start: *start,
-                    line_end: *end,
+                    line_start: start,
+                    line_end: end,
                     old_range: None,
-                    relocated: relocated(&head_state, &base_state),
-                },
-                (SideState::Outside, _) | (_, SideState::Outside) => {
-                    Placement::OutsideDiff { file: label }
+                };
+            }
+            if new_lines.is_none()
+                && let Some(p) = new_point
+            {
+                // Drawn after the head line before the point (the first
+                // line, for a point at the very top).
+                let anchor_line = p.start.saturating_sub(1).max(1);
+                if shown_new.as_ref().is_some_and(|s| s.contains(&anchor_line)) {
+                    let file = file_diff.and_then(|f| f.new_path.clone()).unwrap_or(label);
+                    return Placement::Point {
+                        file,
+                        before: p.start,
+                        was: original_text(anchor, blobs),
+                    };
                 }
-                _ => Placement::Outdated { file: label },
+            }
+            if found_any {
+                Placement::OutsideDiff { file: label }
+            } else {
+                Placement::Unplaced { file: label }
             }
         }
     }
@@ -813,193 +368,515 @@ pub fn resolve_placement(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
-    fn corpus(lines: &[(u32, &str)]) -> Vec<CorpusLine> {
-        lines
+    use crate::digest::digest;
+
+    /// Lines of `text`, numbered from 1, as a tuple for terse assertions.
+    fn map(origin: &str, current: &str, start: u32, len: u32) -> (u32, u32) {
+        map_range(origin, current, start, len)
+    }
+
+    // ---- unchanged and shifted lines --------------------------------------
+
+    #[test]
+    fn identical_texts_keep_every_range() {
+        let t = "a\nb\nc\nd\n";
+        for (start, len) in [(1, 1), (2, 2), (1, 4), (4, 1)] {
+            assert_eq!(map(t, t, start, len), (start, len));
+        }
+    }
+
+    #[test]
+    fn lines_added_above_shift_a_range_down() {
+        assert_eq!(map("a\nb\nc\n", "x\ny\na\nb\nc\n", 2, 2), (4, 2));
+    }
+
+    #[test]
+    fn lines_added_below_leave_a_range_alone() {
+        assert_eq!(map("a\nb\nc\n", "a\nb\nc\nx\ny\n", 2, 1), (2, 1));
+    }
+
+    #[test]
+    fn lines_added_inside_a_range_grow_it() {
+        let (old, new) = ("a\nb\nc\nd\ne\n", "a\nb\nX\nY\nc\nd\ne\n");
+        assert_eq!(map(old, new, 2, 3), (2, 5), "b..d now spans b X Y c d");
+    }
+
+    #[test]
+    fn lines_removed_inside_a_range_shrink_it() {
+        assert_eq!(map("a\nb\nc\nd\ne\n", "a\nb\nd\ne\n", 2, 3), (2, 2));
+    }
+
+    #[test]
+    fn lines_removed_at_the_ends_of_a_range_shrink_it_to_what_is_left() {
+        let old = "a\nb\nc\nd\ne\n";
+        assert_eq!(map(old, "a\nc\nd\ne\n", 2, 3), (2, 2), "the first line went");
+        assert_eq!(map(old, "a\nb\nc\ne\n", 2, 3), (2, 2), "the last line went");
+        assert_eq!(map(old, "a\nd\ne\n", 2, 3), (2, 1), "only d is left");
+    }
+
+    // ---- edited lines ------------------------------------------------------
+
+    #[test]
+    fn an_edited_line_goes_to_what_replaced_it() {
+        assert_eq!(map("a\nb\nc\n", "a\nB\nc\n", 2, 1), (2, 1));
+        // ...even when the new text is nothing like the old.
+        assert_eq!(map("a\nb\nc\n", "a\n1234567890\nc\n", 2, 1), (2, 1));
+    }
+
+    #[test]
+    fn an_edit_that_kept_the_number_of_lines_maps_line_for_line() {
+        let (old, new) = ("a\nb1\nb2\nb3\nz\n", "a\nB1\nB2\nB3\nz\n");
+        assert_eq!(map(old, new, 3, 1), (3, 1), "b2 -> B2");
+        assert_eq!(map(old, new, 3, 2), (3, 2), "b2..b3 -> B2..B3");
+    }
+
+    #[test]
+    fn an_edit_that_changed_the_number_of_lines_maps_to_the_whole_new_block() {
+        let (old, new) = ("a\nb1\nb2\nz\n", "a\nX\nY\nW\nz\n");
+        assert_eq!(map(old, new, 2, 1), (2, 3), "b1 -> the block X Y W");
+        assert_eq!(map(old, new, 3, 1), (2, 3), "b2 -> the block X Y W");
+    }
+
+    #[test]
+    fn a_range_reaching_from_unchanged_lines_into_an_edit_covers_both() {
+        let (old, new) = ("a\nb\nc\nd\n", "a\nb\nCC\nDD\nEE\n");
+        // b (unchanged) .. c (edited into the 3-line block) -> b..EE.
+        assert_eq!(map(old, new, 2, 2), (2, 4));
+    }
+
+    #[test]
+    fn a_range_whose_lines_were_all_removed_becomes_the_point_where_they_were() {
+        let (old, new) = ("a\nb\nc\nd\n", "a\nd\n");
+        // b..c gone: the point between a and d, i.e. before line 2.
+        assert_eq!(map(old, new, 2, 2), (2, 0));
+        // Removal at the top and at the bottom.
+        assert_eq!(map("a\nb\nc\n", "c\n", 1, 2), (1, 0));
+        assert_eq!(map("a\nb\nc\n", "a\nb\n", 3, 1), (3, 0), "before the line past the end");
+    }
+
+    #[test]
+    fn a_whole_file_replaced_maps_to_the_whole_new_file() {
+        assert_eq!(map("a\nb\n", "x\ny\nz\n", 1, 2), (1, 3));
+        assert_eq!(map("a\nb\n", "", 1, 2), (1, 0), "or to nothing");
+        assert_eq!(map("", "a\nb\n", 1, 0), (1, 0), "an empty file's only point");
+    }
+
+    // ---- points ------------------------------------------------------------
+
+    #[test]
+    fn a_point_stays_before_the_line_it_was_before() {
+        let old = "a\nb\nc\n";
+        assert_eq!(map(old, "x\na\nb\nc\n", 2, 0), (3, 0), "shifted with `b`");
+        assert_eq!(map(old, "a\nb\nc\nx\n", 2, 0), (2, 0));
+        assert_eq!(map(old, "a\nx\ny\nb\nc\n", 2, 0), (4, 0), "after what was inserted at it");
+    }
+
+    #[test]
+    fn a_point_whose_next_line_was_edited_or_removed_goes_where_that_block_is() {
+        let old = "a\nb\nc\nd\n";
+        assert_eq!(map(old, "a\nB\nc\nd\n", 2, 0), (2, 0), "b edited in place");
+        assert_eq!(map(old, "a\nc\nd\n", 2, 0), (2, 0), "b removed: before c");
+        assert_eq!(map(old, "a\nd\n", 2, 0), (2, 0), "b, c removed: before d");
+    }
+
+    #[test]
+    fn a_point_at_the_end_of_the_file_follows_the_last_line() {
+        // Before "line 4", which doesn't exist: after `c`.
+        assert_eq!(map("a\nb\nc\n", "a\nb\nc\n", 4, 0), (4, 0));
+        assert_eq!(map("a\nb\nc\n", "x\na\nb\nc\n", 4, 0), (5, 0));
+        assert_eq!(map("a\nb\nc\n", "a\nb\nq\n", 4, 0), (4, 0), "c was edited");
+        assert_eq!(map("a\nb\nc\n", "a\nb\n", 4, 0), (3, 0), "c was removed");
+    }
+
+    // ---- shape of the answer ----------------------------------------------
+
+    #[test]
+    fn a_line_without_a_trailing_newline_is_still_a_line() {
+        assert_eq!(map("a\nb", "a\nb", 2, 1), (2, 1));
+        assert_eq!(map("a\nb", "x\na\nb", 2, 1), (3, 1));
+        assert_eq!(map("a\nb\n", "a\nb", 2, 1), (2, 1), "adding or losing the final newline");
+    }
+
+    // ---- randomized: against an oracle -----------------------------------
+
+    /// A tiny deterministic generator, so a failure is reproducible.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn next(&mut self, below: usize) -> usize {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((self.0 >> 33) as usize) % below.max(1)
+        }
+    }
+
+    /// Old lines have unique text `o<i>`; an edit is applied to a list of
+    /// `Option<usize>` (the old line an entry is, or `None` for an inserted
+    /// one), so where every surviving old line went is known exactly.
+    fn render(entries: &[Option<usize>]) -> String {
+        entries
             .iter()
-            .map(|(n, c)| CorpusLine {
-                line: *n,
-                content: c.to_string(),
+            .enumerate()
+            .map(|(i, e)| match e {
+                Some(old) => format!("o{old}\n"),
+                None => format!("new{i}\n"),
             })
             .collect()
     }
 
-    fn anchor(line_start: u32, line_end: u32, target: &[&str]) -> SideAnchor {
-        anchor_with(
-            line_start,
-            line_end,
-            Vec::new(),
-            target,
-            Vec::new(),
-            "old-digest",
+    #[test]
+    fn insertions_and_removals_apart_from_each_other_follow_an_exact_oracle() {
+        let mut rng = Lcg(0xD1FF);
+        for round in 0..400 {
+            let old_len = 1 + rng.next(12);
+            let old: String = (0..old_len).map(|i| format!("o{i}\n")).collect();
+            // Build the new version: keep, drop (only where the neighbours
+            // are kept, so no removal touches an insertion), or insert.
+            let mut entries: Vec<Option<usize>> = Vec::new();
+            let mut last_touched = false;
+            for i in 0..old_len {
+                let touched_now = match rng.next(6) {
+                    0 if !last_touched => true, // drop this line
+                    _ => false,
+                };
+                if rng.next(4) == 0 && !touched_now && !last_touched {
+                    for _ in 0..1 + rng.next(3) {
+                        entries.push(None);
+                    }
+                }
+                if !touched_now {
+                    entries.push(Some(i));
+                }
+                last_touched = touched_now;
+            }
+            let new = render(&entries);
+
+            let start = 1 + rng.next(old_len) as u32;
+            let len = 1 + rng.next((old_len as u32 - start + 1) as usize) as u32;
+            let got = map(&old, &new, start, len);
+
+            // Oracle: where the surviving lines of the range are.
+            let positions: Vec<usize> = entries
+                .iter()
+                .enumerate()
+                .filter_map(|(at, e)| match e {
+                    Some(o) if *o + 1 >= start as usize && *o + 1 < (start + len) as usize => {
+                        Some(at)
+                    }
+                    _ => None,
+                })
+                .collect();
+            let context = format!("round {round}: {old:?} -> {new:?}, range {start}+{len}");
+            if let (Some(lo), Some(hi)) = (positions.first(), positions.last()) {
+                assert_eq!(got, (*lo as u32 + 1, (hi - lo) as u32 + 1), "{context}");
+            } else {
+                // Everything in the range was removed: a point, and it sits
+                // between the last surviving line before the range and the
+                // first surviving line after it (inserted lines between are
+                // fine either side).
+                assert_eq!(got.1, 0, "{context}");
+                let before = entries
+                    .iter()
+                    .rposition(|e| matches!(e, Some(o) if *o + 1 < start as usize));
+                let after = entries
+                    .iter()
+                    .position(|e| matches!(e, Some(o) if *o + 1 >= (start + len) as usize));
+                let lo = before.map_or(1, |b| b as u32 + 2);
+                let hi = after.map_or(entries.len() as u32 + 1, |a| a as u32 + 1);
+                assert!((lo..=hi).contains(&got.0), "{context}: point {} not in {lo}..={hi}", got.0);
+            }
+        }
+    }
+
+    #[test]
+    fn a_range_is_always_inside_the_new_text() {
+        // Whatever the edit, the answer is a real place in the new file.
+        let mut rng = Lcg(0xBEEF);
+        for _ in 0..500 {
+            let mk = |rng: &mut Lcg| -> String {
+                (0..rng.next(10))
+                    .map(|_| format!("v{}\n", rng.next(5)))
+                    .collect()
+            };
+            let (old, new) = (mk(&mut rng), mk(&mut rng));
+            let old_len = old.lines().count() as u32;
+            let new_len = new.lines().count() as u32;
+            let start = 1 + rng.next(old_len as usize + 1) as u32;
+            let len = rng.next((old_len + 2 - start) as usize) as u32;
+            let (s, l) = map(&old, &new, start, len);
+            assert!(s >= 1, "{old:?} -> {new:?} {start}+{len}: start {s}");
+            assert!(
+                s + l <= new_len + 1,
+                "{old:?} -> {new:?} {start}+{len}: ({s},{l}) runs past {new_len} lines"
+            );
+        }
+    }
+
+    // ---- locate: chains, digests, missing versions --------------------------
+
+    fn range_in(text: &str, start: u32, len: u32) -> LineRange {
+        LineRange {
+            file: "f.txt".into(),
+            digest: digest(text),
+            start,
+            len,
+        }
+    }
+
+    fn blobs_of<'a>(texts: &[&'a str], linked: bool) -> Blobs<'a> {
+        let mut blobs = Blobs::default();
+        for t in texts {
+            blobs.add(t.as_bytes());
+        }
+        if linked {
+            for pair in texts.windows(2) {
+                blobs.link(&digest(pair[0]), &digest(pair[1]));
+            }
+        }
+        blobs
+    }
+
+    #[test]
+    fn locating_in_the_same_version_is_the_identity_and_needs_no_text() {
+        let r = range_in("a\nb\n", 2, 1);
+        assert_eq!(
+            locate(&r, &digest("a\nb\n"), &Blobs::default()),
+            Some(Located { start: 2, len: 1 })
+        );
+    }
+
+    #[test]
+    fn locating_needs_both_versions() {
+        let r = range_in("a\nb\n", 2, 1);
+        assert_eq!(locate(&r, &digest("x\n"), &blobs_of(&["a\nb\n"], false)), None);
+        assert_eq!(locate(&r, &digest("x\n"), &blobs_of(&["x\n"], false)), None);
+    }
+
+    #[test]
+    fn locating_follows_the_recorded_steps_and_each_can_change_the_length() {
+        let texts = [
+            "a\nb\nc\nd\n",
+            "a\nb\nX\nc\nd\n",      // a line inside b..c: grows to b..c (3)
+            "top\na\nb\nX\nc\nd\n",  // pushed down by one
+            "top\na\nb\nc\nd\n",     // X removed: shrinks back
+        ];
+        let r = range_in(texts[0], 2, 2);
+        let last = digest(texts[3]);
+        for linked in [true, false] {
+            assert_eq!(
+                locate(&r, &last, &blobs_of(&texts, linked)),
+                Some(Located { start: 3, len: 2 }),
+                "linked: {linked}"
+            );
+        }
+    }
+
+    #[test]
+    fn locating_can_go_backwards_to_an_older_version() {
+        let (old, new) = ("a\nb\nc\n", "x\na\nb\nc\n");
+        // Written against the newer version, viewed at the older.
+        assert_eq!(
+            locate(&range_in(new, 3, 1), &digest(old), &blobs_of(&[old, new], true)),
+            Some(Located { start: 2, len: 1 })
+        );
+        // A line the older version doesn't have: where it would be.
+        assert_eq!(
+            locate(&range_in(new, 1, 1), &digest(old), &blobs_of(&[old, new], true)),
+            Some(Located { start: 1, len: 0 })
+        );
+    }
+
+    #[test]
+    fn a_range_removed_along_the_way_stays_a_point_after_later_steps() {
+        let texts = ["a\nb\nc\n", "a\nc\n", "z\na\nc\n"];
+        let r = range_in(texts[0], 2, 1);
+        assert_eq!(
+            locate(&r, &digest(texts[2]), &blobs_of(&texts, true)),
+            Some(Located { start: 3, len: 0 })
+        );
+    }
+
+    // ---- placement in a view -------------------------------------------------
+
+    /// One view: the diff between `old` and `new` of a single file `f.txt`,
+    /// and every text given is held.
+    struct View {
+        diff: UnifiedDiff,
+        files: Vec<FileDigest>,
+        held: Vec<String>,
+    }
+
+    fn view(old: &str, new: &str, also_held: &[&str]) -> View {
+        let tree = |t: &str| -> crate::files::Tree {
+            [("f.txt".to_string(), t.as_bytes().to_vec())].into()
+        };
+        let (diff_text, files) = crate::files::diff_trees(&tree(old), &tree(new));
+        View {
+            diff: crate::diff::parse(&diff_text).unwrap(),
+            files,
+            held: [old, new]
+                .iter()
+                .chain(also_held)
+                .map(|s| s.to_string())
+                .collect(),
+        }
+    }
+
+    fn place(v: &View, anchor: &Anchor) -> Placement {
+        let mut blobs = Blobs::default();
+        for t in &v.held {
+            blobs.add(t.as_bytes());
+        }
+        // Every held text is a step from the previous one, in the order given.
+        for pair in v.held.windows(2) {
+            blobs.link(&digest(&pair[0]), &digest(&pair[1]));
+        }
+        resolve_placement(
+            anchor,
+            &v.diff,
+            &ViewVersions {
+                files: &v.files,
+                tree: &[],
+            },
+            &blobs,
         )
     }
 
-    fn anchor_with(
-        line_start: u32,
-        line_end: u32,
-        before: Vec<String>,
-        target: &[&str],
-        after: Vec<String>,
-        digest: &str,
-    ) -> SideAnchor {
-        let _ = line_end; // the range's length is `target.len()`
-        SideAnchor {
-            file: "src/lib.rs".to_string(),
-            digest: digest.to_string(),
-            start: line_start,
-            context: Context {
-                before,
-                target: target.iter().map(|s| s.to_string()).collect(),
-                after,
-            },
+    fn span(base: Option<LineRange>, head: Option<LineRange>) -> Anchor {
+        Anchor::Span { base, head }
+    }
+
+    fn line(side: Side, start: u32, end: u32, old: Option<(u32, u32)>) -> Placement {
+        Placement::Line {
+            file: "f.txt".into(),
+            side,
+            line_start: start,
+            line_end: end,
+            old_range: old,
         }
     }
 
-    fn span(head: SideAnchor) -> Anchor {
-        Anchor::Span {
-            base: None,
-            head: Some(head),
-        }
+    const OLD: &str = "a\nb\nc\nd\ne\n";
+    const NEW: &str = "a\nB\nc\nd\nE\ne2\n";
+
+    #[test]
+    fn a_thread_is_drawn_on_the_head_lines_where_the_anchor_is_current() {
+        let v = view(OLD, NEW, &[]);
+        // `B` replaced `b`: both sides.
+        let a = span(Some(range_in(OLD, 2, 1)), Some(range_in(NEW, 2, 1)));
+        assert_eq!(place(&v, &a), line(Side::New, 2, 2, Some((2, 2))));
+        // `e` was replaced by `E` and `e2`: a comment on the extra line is on
+        // the whole replacing block, so it is tied to `e` on the old side.
+        let a = span(Some(range_in(OLD, 5, 0)), Some(range_in(NEW, 6, 1)));
+        assert_eq!(place(&v, &a), line(Side::New, 6, 6, Some((5, 5))));
     }
 
     #[test]
-    fn same_digest_is_current_without_searching() {
-        let a = anchor_with(
-            1,
-            1,
-            Vec::new(),
-            &["whatever, never looked at"],
-            Vec::new(),
-            "same",
-        );
-        // An empty corpus would make any real search fail; this proves the
-        // fast path really does skip matching.
-        assert_eq!(resolve(&a, Some("same"), &[]), Resolution::Current);
+    fn a_purely_added_line_has_no_base_lines_to_highlight() {
+        let (old, new) = ("a\nb\nc\n", "a\nb\nc\nd\n");
+        let v = view(old, new, &[]);
+        let a = span(Some(range_in(old, 4, 0)), Some(range_in(new, 4, 1)));
+        assert_eq!(place(&v, &a), line(Side::New, 4, 4, None));
     }
 
     #[test]
-    fn exact_unique_match_at_the_same_position_is_current() {
-        let c = corpus(&[(10, "fn bar() {"), (11, "  self.value"), (12, "}")]);
-        let a = anchor(11, 11, &["  self.value"]);
-        assert_eq!(resolve(&a, Some("new-digest"), &c), Resolution::Current);
-    }
-
-    #[test]
-    fn exact_unique_match_at_a_new_position_is_relocated() {
-        let c = corpus(&[
-            (1, "// unrelated preamble"),
-            (2, "// more preamble"),
-            (10, "fn bar() {"),
-            (11, "  self.value"),
-            (12, "}"),
-        ]);
-        // Originally at line 5, the content now sits at line 11.
-        let a = anchor(5, 5, &["  self.value"]);
-        let resolved = resolve(&a, Some("new-digest"), &c);
-        let Resolution::Relocated(SideAnchor {
-            start,
-            digest,
-            context,
-            ..
-        }) = resolved
-        else {
-            panic!("expected Relocated, got something else");
+    fn the_anchors_head_range_decides_the_head_placement_before_its_base_range() {
+        // The comment was made on `b` -> `B` (revision v0 -> v1). The view is
+        // v1 -> v2, where a line `X` was added right above `B`. The head
+        // range (`B`) is at line 3 of v2; the base range (`b`), followed to
+        // v2, is the whole block X B (lines 2-3). The head range wins.
+        let (v0, v1, v2) = ("a\nb\nc\n", "a\nB\nc\n", "a\nX\nB\nc\n");
+        // (v0 is only linked to v2, so its range is followed in one jump.)
+        let view = View {
+            held: vec![v0.into(), v2.into(), v1.into()],
+            ..view(v1, v2, &[])
         };
-        assert_eq!(start, 11);
-        assert_eq!(digest, "new-digest");
-        assert_eq!(context.target, vec!["  self.value".to_string()]);
+        let a = span(Some(range_in(v0, 2, 1)), Some(range_in(v1, 2, 1)));
+        assert_eq!(place(&view, &a), line(Side::New, 3, 3, Some((2, 2))));
     }
 
     #[test]
-    fn ambiguous_exact_matches_are_disambiguated_by_surrounding_context() {
-        // "return x;" appears twice; only the second occurrence is preceded
-        // by "fn b() {" as recorded in the anchor's `before` context.
-        let c = corpus(&[
-            (1, "fn a() {"),
-            (2, "return x;"),
-            (3, "}"),
-            (4, "fn b() {"),
-            (5, "return x;"),
-            (6, "}"),
-        ]);
-        let a = anchor_with(
-            99,
-            99,
-            vec!["fn b() {".to_string()],
-            &["return x;"],
-            Vec::new(),
-            "old-digest",
-        );
-        let Resolution::Relocated(SideAnchor { start, .. }) =
-            resolve(&a, Some("new-digest"), &c)
-        else {
-            panic!("expected Relocated");
+    fn a_thread_on_removed_lines_is_drawn_on_the_base_side_of_the_view() {
+        let old = "a\nb\nc\nd\n";
+        let new = "a\nd\n";
+        let v = view(old, new, &[]);
+        let a = span(Some(range_in(old, 2, 2)), Some(range_in(new, 2, 0)));
+        assert_eq!(place(&v, &a), line(Side::Old, 2, 3, None));
+    }
+
+    #[test]
+    fn a_thread_on_the_base_side_of_a_later_change_shows_on_the_head_side_of_an_earlier_view() {
+        // Revision 1: c1 -> c2 adds `b`. Revision 2: c2 -> c3 removes it,
+        // and the reviewer commented on that removed line.
+        let (c1, c2, c3) = ("a\nc\n", "a\nb\nc\n", "a\nc\n");
+        let comment_on_removed = span(Some(range_in(c2, 2, 1)), Some(range_in(c3, 2, 0)));
+        // In revision 2's own view: the removed row.
+        let v2 = view(c2, c3, &[]);
+        assert_eq!(place(&v2, &comment_on_removed), line(Side::Old, 2, 2, None));
+        // In revision 1's view, `b` is an added line -- on the *head* side.
+        let v1 = view(c1, c2, &[c3]);
+        assert_eq!(place(&v1, &comment_on_removed), line(Side::New, 2, 2, None));
+    }
+
+    #[test]
+    fn a_thread_whose_lines_are_gone_from_the_head_is_a_point_with_what_it_said() {
+        // The comment was on `b` in c2; c3 (the view's head) has no `b`.
+        let (c2, c3, c4) = ("a\nb\nc\n", "a\nc\n", "a\nc\nd\n");
+        let anchor = span(None, Some(range_in(c2, 2, 1)));
+        let v = view(c3, c4, &[c2]);
+        // c2 is an older version linked before c3 in `held` order c3,c4,c2? Put
+        // the chain in order so c2 -> c3 -> c4 exists.
+        let v = View {
+            held: vec![c2.into(), c3.into(), c4.into()],
+            ..v
         };
-        assert_eq!(start, 5);
-    }
-
-    #[test]
-    fn ambiguous_exact_matches_with_no_disambiguation_are_outdated() {
-        let c = corpus(&[(1, "return x;"), (2, "return x;")]);
-        let a = anchor(99, 99, &["return x;"]);
-        assert_eq!(resolve(&a, Some("new-digest"), &c), Resolution::Outdated);
-    }
-
-    #[test]
-    fn fuzzy_match_above_threshold_is_relocated() {
-        // The commented line picked up an extra parameter since the
-        // original comment was made — still clearly "the same line" by
-        // content, just no longer an exact match.
-        let c = corpus(&[
-            (1, "impl Calc {"),
-            (2, "    fn baz(&self, factor: i32) -> i32 {"),
-            (3, "        self.value * factor"),
-            (4, "    }"),
-        ]);
-        let a = anchor(2, 2, &["    fn baz(&self) -> i32 {"]);
-        let Resolution::Relocated(SideAnchor { start, context, .. }) =
-            resolve(&a, Some("new-digest"), &c)
-        else {
-            panic!("expected Relocated");
-        };
-        assert_eq!(start, 2);
         assert_eq!(
-            context.target,
-            vec!["    fn baz(&self, factor: i32) -> i32 {".to_string()]
+            place(&v, &anchor),
+            Placement::Point {
+                file: "f.txt".into(),
+                before: 2,
+                was: vec!["b".to_string()],
+            }
         );
     }
 
     #[test]
-    fn fuzzy_match_below_threshold_is_outdated() {
-        let c = corpus(&[
-            (1, "totally unrelated content"),
-            (2, "nothing like the original"),
-        ]);
-        let a = anchor(5, 5, &["    fn baz(&self) -> i32 {"]);
-        assert_eq!(resolve(&a, Some("new-digest"), &c), Resolution::Outdated);
+    fn a_thread_on_lines_the_diff_does_not_show_is_still_placed_but_marked_outside() {
+        let old: String = (1..=30).map(|n| format!("l{n}\n")).collect();
+        let new = old.replace("l30\n", "L30\n");
+        let v = view(&old, &new, &[]);
+        let a = span(Some(range_in(&old, 3, 1)), Some(range_in(&new, 3, 1)));
+        assert_eq!(place(&v, &a), Placement::OutsideDiff { file: "f.txt".into() });
     }
 
     #[test]
-    fn an_insertion_point_is_current_by_digest_but_never_searched() {
-        let mut a = anchor(3, 3, &[]);
-        a.context.before = vec!["x".to_string()];
-        let c = corpus(&[(1, "x"), (2, "y")]);
-        assert_eq!(resolve(&a, Some("old-digest"), &c), Resolution::Current);
-        assert_eq!(resolve(&a, Some("new-digest"), &c), Resolution::Outdated);
+    fn a_thread_whose_version_is_missing_is_unplaced() {
+        let v = view(OLD, NEW, &[]);
+        let a = span(None, Some(range_in("something else entirely\n", 1, 1)));
+        assert_eq!(place(&v, &a), Placement::Unplaced { file: "f.txt".into() });
     }
 
     #[test]
-    fn global_and_file_anchors_are_placed_without_searching() {
-        let diff = crate::diff::parse(TIER1_DIFF).unwrap();
+    fn a_file_the_view_deletes_keeps_its_threads_on_the_removed_lines() {
+        let v = view("a\nb\n", "", &[]);
+        let a = span(Some(range_in("a\nb\n", 2, 1)), None);
+        assert_eq!(place(&v, &a), line(Side::Old, 2, 2, None));
+    }
+
+    #[test]
+    fn a_file_the_view_adds_places_head_threads() {
+        let v = view("", "a\nb\n", &[]);
+        let a = span(None, Some(range_in("a\nb\n", 2, 1)));
+        assert_eq!(place(&v, &a), line(Side::New, 2, 2, None));
+    }
+
+    #[test]
+    fn file_level_and_global_anchors_are_placed_without_looking_at_any_text() {
+        let v = view(OLD, NEW, &[]);
         let global = Anchor::Global {
             base: None,
             head: Some("rev".into()),
         };
-        assert_eq!(
-            resolve_placement(&global, &diff, &[], &Default::default()),
-            Placement::Global
-        );
+        assert_eq!(place(&v, &global), Placement::Global);
         let file = Anchor::File {
             base: None,
             head: Some(crate::model::FileRef {
@@ -1007,126 +884,82 @@ mod tests {
                 digest: "d".into(),
             }),
         };
+        assert_eq!(place(&v, &file), Placement::File("gone.rs".into()));
+    }
+
+    #[test]
+    fn untouched_files_are_looked_up_in_the_revisions_recorded_tree() {
+        let readme = "# title\nbody\n";
+        let v = view(OLD, NEW, &[readme]);
+        let mut blobs = Blobs::default();
+        for t in &v.held {
+            blobs.add(t.as_bytes());
+        }
+        let tree = [TreeFile {
+            path: "README.md".into(),
+            digest: digest(readme),
+        }];
+        let a = Anchor::Span {
+            base: None,
+            head: Some(LineRange {
+                file: "README.md".into(),
+                digest: digest(readme),
+                start: 2,
+                len: 1,
+            }),
+        };
+        let versions = ViewVersions {
+            files: &v.files,
+            tree: &tree,
+        };
+        // Found (same digest), but the diff doesn't show README.md yet.
         assert_eq!(
-            resolve_placement(&file, &diff, &[], &Default::default()),
-            Placement::File("gone.rs".into())
+            resolve_placement(&a, &v.diff, &versions, &blobs),
+            Placement::OutsideDiff {
+                file: "README.md".into()
+            }
+        );
+        // Without the tree entry the version at this revision is unknown.
+        let none = ViewVersions {
+            files: &v.files,
+            tree: &[],
+        };
+        assert_eq!(
+            resolve_placement(&a, &v.diff, &none, &blobs),
+            Placement::OutsideDiff {
+                file: "README.md".into()
+            }
+            .clone()
+            .into_unplaced()
         );
     }
 
-    #[test]
-    fn target_longer_than_corpus_is_outdated() {
-        let c = corpus(&[(1, "only one line")]);
-        let a = anchor(1, 2, &["line one", "line two"]);
-        assert_eq!(resolve(&a, Some("new-digest"), &c), Resolution::Outdated);
+    trait IntoUnplaced {
+        fn into_unplaced(self) -> Placement;
+    }
+    impl IntoUnplaced for Placement {
+        fn into_unplaced(self) -> Placement {
+            match self {
+                Placement::OutsideDiff { file } => Placement::Unplaced { file },
+                other => other,
+            }
+        }
     }
 
-    #[test]
-    fn tier2_corpus_never_matches_across_a_hunk_gap() {
-        // Lines 11 and 20 come from two different hunks of the same file
-        // (line 11 ends one hunk's visible range, line 20 starts another);
-        // nothing actually connects them in the real file. The target is an
-        // exact content match for that (11, 20) pair, but must still be
-        // rejected for not being line-number-contiguous, and no other
-        // window in the corpus is textually similar enough to match instead.
-        let c = corpus(&[
-            (10, "1234567890"),
-            (11, "QWERTYUIOP1"),
-            (20, "ASDFGHJKL2"),
-            (21, "0987654321"),
-        ]);
-        let a = anchor(1, 2, &["QWERTYUIOP1", "ASDFGHJKL2"]);
-        assert_eq!(resolve(&a, Some("new-digest"), &c), Resolution::Outdated);
-    }
-
-    #[test]
-    fn corpus_from_diff_hunks_picks_the_requested_side() {
-        let diff_text = "\
---- a/f.rs
-+++ b/f.rs
-@@ -1,2 +1,3 @@
- context1
--removed
-+added1
-+added2
-";
-        let parsed = crate::diff::parse(diff_text).expect("valid diff");
-        let file = &parsed.files[0];
-
-        let new_side = corpus_from_diff_hunks(file, Side::New);
-        assert_eq!(
-            new_side
-                .iter()
-                .map(|l| l.content.as_str())
-                .collect::<Vec<_>>(),
-            vec!["context1", "added1", "added2"]
-        );
-        assert_eq!(
-            new_side.iter().map(|l| l.line).collect::<Vec<_>>(),
-            vec![1, 2, 3]
-        );
-
-        let old_side = corpus_from_diff_hunks(file, Side::Old);
-        assert_eq!(
-            old_side
-                .iter()
-                .map(|l| l.content.as_str())
-                .collect::<Vec<_>>(),
-            vec!["context1", "removed"]
-        );
-        assert_eq!(
-            old_side.iter().map(|l| l.line).collect::<Vec<_>>(),
-            vec![1, 2]
-        );
-    }
-
-    #[test]
-    fn corpus_from_file_text_is_one_based() {
-        let c = corpus_from_file_text("a\nb\nc\n");
-        assert_eq!(c.iter().map(|l| l.line).collect::<Vec<_>>(), vec![1, 2, 3]);
-        assert_eq!(
-            c.iter().map(|l| l.content.as_str()).collect::<Vec<_>>(),
-            vec!["a", "b", "c"]
-        );
-    }
-
-    #[test]
-    fn context_for_span_grabs_surrounding_lines() {
-        let c = corpus_from_file_text("a\nb\nc\nd\ne\nf\ng\n");
-        let ctx = context_for_span(&c, 4, 2, 2).expect("range should be found");
-        assert_eq!(ctx.before, vec!["b".to_string(), "c".to_string()]);
-        assert_eq!(ctx.target, vec!["d".to_string(), "e".to_string()]);
-        assert_eq!(ctx.after, vec!["f".to_string(), "g".to_string()]);
-    }
-
-    #[test]
-    fn context_for_span_of_an_insertion_point_has_only_the_lines_around_it() {
-        let c = corpus_from_file_text("a\nb\nc\nd\n");
-        let ctx = context_for_span(&c, 3, 0, 1).unwrap();
-        assert_eq!(ctx.before, vec!["b".to_string()]);
-        assert!(ctx.target.is_empty());
-        assert_eq!(ctx.after, vec!["c".to_string()]);
-    }
-
-    #[test]
-    fn context_for_span_is_none_when_the_range_is_not_present() {
-        let c = corpus(&[(1, "a"), (2, "b"), (10, "c")]);
-        // Lines 2 and 10 exist individually but aren't contiguous.
-        assert_eq!(context_for_span(&c, 2, 9, 1), None);
-        assert_eq!(context_for_span(&c, 5, 2, 1), None);
-    }
+    // ---- small helpers -----------------------------------------------------
 
     #[test]
     fn digest_for_finds_a_file_by_either_path_and_side() {
         let files = vec![FileDigest {
             old_path: Some("old.rs".to_string()),
             new_path: Some("new.rs".to_string()),
-            old: Some("sha256:o".to_string()),
-            new: Some("sha256:n".to_string()),
+            old: Some("sha256:old".to_string()),
+            new: Some("sha256:new".to_string()),
         }];
-        assert_eq!(digest_for(&files, "new.rs", Side::New), Some("sha256:n"));
-        assert_eq!(digest_for(&files, "old.rs", Side::Old), Some("sha256:o"));
+        assert_eq!(digest_for(&files, "new.rs", Side::New), Some("sha256:new"));
+        assert_eq!(digest_for(&files, "old.rs", Side::Old), Some("sha256:old"));
+        assert_eq!(digest_for(&files, "old.rs", Side::New), Some("sha256:new"));
         assert_eq!(digest_for(&files, "other.rs", Side::New), None);
-
         let added = vec![FileDigest {
             old_path: None,
             new_path: Some("a.rs".to_string()),
@@ -1137,449 +970,45 @@ mod tests {
     }
 
     #[test]
-    fn unknown_current_digest_never_short_circuits() {
-        let a = anchor(3, 3, &["x"]);
-        let c = corpus(&[(1, "a"), (2, "b"), (3, "x")]);
-        // Matched by search instead; at the same place, so still Current --
-        // but through the search path, not the digest shortcut.
-        assert_eq!(resolve(&a, None, &c), Resolution::Current);
-    }
-    const TIER1_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
---- a/src/lib.rs
-+++ b/src/lib.rs
-@@ -1,3 +1,4 @@
- l1
-+l2
- l3
- l4
-";
-
-    const TIER1_TEXT: &str = "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\n";
-
-    fn tier1_digests() -> Vec<FileDigest> {
-        vec![FileDigest {
-            old_path: Some("src/lib.rs".into()),
-            new_path: Some("src/lib.rs".into()),
-            old: None,
-            new: Some(crate::digest::digest(TIER1_TEXT)),
-        }]
-    }
-
-    fn tier1_blobs() -> crate::digest::Blobs<'static> {
-        let mut blobs = crate::digest::Blobs::default();
-        blobs.add(TIER1_TEXT.as_bytes());
-        blobs
+    fn original_text_is_what_the_first_non_empty_range_covered() {
+        let t = "a\nb\nc\nd\n";
+        let blobs = blobs_of(&[t], false);
+        let head = span(None, Some(range_in(t, 2, 2)));
+        assert_eq!(original_text(&head, &blobs), ["b", "c"]);
+        // Head empty: the base range.
+        let removed = span(Some(range_in(t, 3, 1)), Some(range_in("x\n", 1, 0)));
+        assert_eq!(original_text(&removed, &blobs), ["c"]);
+        // Not held: nothing to show.
+        assert!(original_text(&span(None, Some(range_in("lost\n", 1, 1))), &blobs).is_empty());
+        assert!(original_text(&Anchor::Global { base: None, head: None }, &blobs).is_empty());
     }
 
     #[test]
-    fn full_text_finds_a_line_the_diff_shows_only_partially() {
-        let diff = crate::diff::parse(TIER1_DIFF).unwrap();
-        // `l3` used to be line 2; the new hunk shows it at line 3.
-        let a = span(anchor(2, 2, &["l3"]));
-        for (files, blobs) in [
-            (tier1_digests(), tier1_blobs()),
-            (Vec::new(), Default::default()),
-        ] {
-            let p = resolve_placement(&a, &diff, &files, &blobs);
-            let Placement::Line {
-                line_start,
-                relocated,
-                ..
-            } = p
-            else {
-                panic!("{p:?}")
-            };
-            assert_eq!(line_start, 3);
-            assert!(relocated.is_some());
-        }
-    }
-
-    #[test]
-    fn text_present_only_outside_the_hunks_is_outside_the_diff_not_outdated() {
-        let diff = crate::diff::parse(TIER1_DIFF).unwrap();
-        let a = span(anchor(8, 8, &["l8"]));
-        // The diff alone can't see line 8: nothing to say but "outdated".
-        assert_eq!(
-            resolve_placement(&a, &diff, &[], &Default::default()),
-            Placement::Outdated {
-                file: "src/lib.rs".into()
-            }
-        );
-        // With the full file it is found, but there is no hunk to draw it in.
-        assert_eq!(
-            resolve_placement(&a, &diff, &tier1_digests(), &tier1_blobs()),
-            Placement::OutsideDiff {
-                file: "src/lib.rs".into()
-            }
-        );
-        // Genuinely gone stays outdated even with the full file.
-        let gone = span(anchor(8, 8, &["completely different"]));
-        assert!(matches!(
-            resolve_placement(&gone, &diff, &tier1_digests(), &tier1_blobs()),
-            Placement::Outdated { .. }
-        ));
-    }
-
-    /// Blobs holding `texts`, with each consecutive pair linked as a step.
-    fn blobs_of<'a>(texts: &'a [&'a str], linked: bool) -> crate::digest::Blobs<'a> {
-        let mut blobs = crate::digest::Blobs::default();
-        for t in texts {
-            blobs.add(t.as_bytes());
-        }
-        if linked {
-            for pair in texts.windows(2) {
-                blobs.link(
-                    &crate::digest::digest(pair[0]),
-                    &crate::digest::digest(pair[1]),
-                );
-            }
-        }
-        blobs
-    }
-
-    fn resolve_through(
-        a: &SideAnchor,
-        texts: &[&str],
-        linked: bool,
-    ) -> Resolution {
-        let current = texts.last().unwrap();
-        let mut a = a.clone();
-        a.digest = crate::digest::digest(texts[0]);
-        resolve_with_texts(
-            &a,
-            Some(&crate::digest::digest(current)),
-            &corpus_from_file_text(current),
-            &blobs_of(texts, linked),
-        )
-    }
-
-    #[test]
-    fn a_line_diff_between_the_two_versions_gives_the_position_directly() {
-        // Identical-looking lines would defeat a text search; the diff
-        // between the versions still knows which one the range was.
-        let texts = ["x\nsame\nsame\ny\n", "new\nx\nsame\nsame\ny\n"];
-        let a = anchor(3, 3, &["same"]);
-        let Resolution::Relocated(moved) = resolve_through(&a, &texts, false) else {
-            panic!("expected Relocated");
-        };
-        assert_eq!(moved.start, 4);
-        // Without the origin text this is ambiguous, so it can't be placed.
-        let corpus = corpus_from_file_text(texts[1]);
-        assert_eq!(
-            resolve_with_texts(
-                &a,
-                Some(&crate::digest::digest(texts[1])),
-                &corpus,
-                &blobs_of(&texts[1..], false)
-            ),
-            Resolution::Outdated
-        );
-    }
-
-    #[test]
-    fn a_range_is_followed_through_intermediate_versions() {
-        // Step 1 edits the line in place, step 2 pushes it down.
-        let texts = [
-            "x\nreturn value\ny\n",
-            "x\nreturn values\ny\n",
-            "p\nq\nx\nreturn values\ny\n",
+    fn view_versions_prefer_the_diffs_digests_over_the_recorded_tree() {
+        let files = vec![FileDigest {
+            old_path: Some("a".into()),
+            new_path: Some("a".into()),
+            old: Some("sha256:a-old".into()),
+            new: Some("sha256:a-new".into()),
+        }];
+        let tree = [
+            TreeFile {
+                path: "a".into(),
+                digest: "sha256:ignored".into(),
+            },
+            TreeFile {
+                path: "b".into(),
+                digest: "sha256:b".into(),
+            },
         ];
-        let a = anchor(2, 2, &["return value"]);
-        for linked in [true, false] {
-            let Resolution::Relocated(moved) = resolve_through(&a, &texts, linked) else {
-                panic!("expected Relocated (linked: {linked})");
-            };
-            assert_eq!(moved.start, 4);
-            assert_eq!(moved.context.target, vec!["return values".to_string()]);
-        }
-    }
-
-    #[test]
-    fn a_line_edited_in_place_is_followed_only_while_it_still_looks_alike() {
-        let a = anchor(2, 2, &["return value"]);
-        let close = ["x\nreturn value\ny\n", "x\nreturn values\ny\n"];
-        assert!(matches!(
-            resolve_through(&a, &close, false),
-            Resolution::Relocated(_)
-        ));
-        // Same shape, unrelated text: the search fallback finds nothing either.
-        let far = ["x\nreturn value\ny\n", "x\nzzzzzzzzzzzz\ny\n"];
-        assert_eq!(resolve_through(&a, &far, false), Resolution::Outdated);
-    }
-
-    #[test]
-    fn chain_goes_through_linked_versions_and_falls_back_to_a_direct_pair() {
-        let texts = ["one\n", "two\n", "three\n"];
-        let linked = blobs_of(&texts, true);
-        let d = |t: &str| crate::digest::digest(t);
-        assert_eq!(
-            linked.chain(&d(texts[0]), &d(texts[2])).unwrap(),
-            vec!["one\n", "two\n", "three\n"]
-        );
-        let unlinked = blobs_of(&texts, false);
-        assert_eq!(
-            unlinked.chain(&d(texts[0]), &d(texts[2])).unwrap(),
-            vec!["one\n", "three\n"]
-        );
-        assert!(linked.chain("sha256:missing", &d(texts[2])).is_none());
-    }
-
-    #[test]
-    fn an_insertion_point_follows_the_line_it_sits_before() {
-        let texts = ["a\nb\n", "z\na\nb\n"];
-        let mut a = anchor(2, 2, &[]);
-        a.context.before = vec!["a".to_string()];
-        a.context.after = vec!["b".to_string()];
-        let Resolution::Relocated(moved) = resolve_through(&a, &texts, false) else {
-            panic!("expected Relocated");
+        let v = ViewVersions {
+            files: &files,
+            tree: &tree,
         };
-        assert_eq!(moved.start, 3);
-        assert!(moved.context.target.is_empty());
-    }
-
-    #[test]
-    fn context_never_reaches_across_a_gap_in_the_corpus() {
-        // Two hunks: lines 1-3 and 10-12.
-        let c = corpus(&[
-            (1, "a"),
-            (2, "b"),
-            (3, "c"),
-            (10, "j"),
-            (11, "k"),
-            (12, "l"),
-        ]);
-        let ctx = context_for_span(&c, 3, 1, 3).unwrap();
-        assert_eq!(ctx.before, vec!["a".to_string(), "b".to_string()]);
-        assert!(ctx.after.is_empty(), "{:?}", ctx.after);
-        let ctx = context_for_span(&c, 10, 1, 3).unwrap();
-        assert!(ctx.before.is_empty(), "{:?}", ctx.before);
-        assert_eq!(ctx.after, vec!["k".to_string(), "l".to_string()]);
-    }
-
-    #[test]
-    fn an_insertion_point_needs_its_neighbours_to_really_be_adjacent() {
-        let c = corpus(&[(1, "a"), (2, "b"), (10, "j"), (11, "k")]);
-        // Before line 3: line 2 is right there, but line 3 is not shown.
-        let ctx = context_for_span(&c, 3, 0, 2).unwrap();
-        assert_eq!(ctx.before, vec!["a".to_string(), "b".to_string()]);
-        assert!(ctx.after.is_empty());
-        // Before line 10: line 10 follows, but line 9 is not shown.
-        let ctx = context_for_span(&c, 10, 0, 2).unwrap();
-        assert!(ctx.before.is_empty());
-        assert_eq!(ctx.after, vec!["j".to_string(), "k".to_string()]);
-        // Past the last line shown.
-        let ctx = context_for_span(&c, 12, 0, 2).unwrap();
-        assert_eq!(ctx.before, vec!["j".to_string(), "k".to_string()]);
-        assert!(ctx.after.is_empty());
-    }
-
-    fn start_of(r: Resolution) -> Option<u32> {
-        match r {
-            Resolution::Relocated(a) => Some(a.start),
-            Resolution::Current => Some(u32::MAX),
-            Resolution::Outdated => None,
-        }
-    }
-
-    #[test]
-    fn identical_candidates_are_told_apart_by_how_far_they_are_from_the_old_position() {
-        let mut lines: Vec<(u32, String)> = (1..=40).map(|n| (n, format!("line {n}"))).collect();
-        lines[4].1 = "x".to_string();
-        lines[24].1 = "x".to_string();
-        let c: Vec<CorpusLine> = lines
-            .iter()
-            .map(|(n, t)| CorpusLine {
-                line: *n,
-                content: t.clone(),
-            })
-            .collect();
-        // Recorded at 24 (say a line was removed above): 25 is the one.
-        assert_eq!(
-            start_of(resolve(&anchor(24, 24, &["x"]), Some("new"), &c)),
-            Some(25)
-        );
-        // Recorded at 6: 5 is.
-        assert_eq!(
-            start_of(resolve(&anchor(6, 6, &["x"]), Some("new"), &c)),
-            Some(5)
-        );
-    }
-
-    #[test]
-    fn two_equally_near_candidates_are_not_guessed_between() {
-        let c = corpus(&[(8, "x"), (9, "a"), (10, "b"), (11, "c"), (12, "x")]);
-        assert_eq!(
-            resolve(&anchor(10, 10, &["x"]), Some("new"), &c),
-            Resolution::Outdated
-        );
-    }
-
-    #[test]
-    fn a_unique_match_is_found_however_far_it_moved() {
-        let c: Vec<CorpusLine> = (1..=100)
-            .map(|n| CorpusLine {
-                line: n,
-                content: if n == 90 {
-                    "the moved block".to_string()
-                } else {
-                    format!("filler {n}")
-                },
-            })
-            .collect();
-        assert_eq!(
-            start_of(resolve(&anchor(2, 2, &["the moved block"]), Some("new"), &c)),
-            Some(90)
-        );
-    }
-
-    #[test]
-    fn context_outweighs_a_slightly_closer_text_match_elsewhere() {
-        // `bar` is the closer character-level match to the recorded `baz`
-        // line, but the true (edited) line has the recorded neighbours.
-        let c = corpus(&[
-            (2, "    // the other one"),
-            (3, "    fn bar(&self) -> i32 {"),
-            (4, "        0"),
-            (18, "impl Calc {"),
-            (19, "    // helpers"),
-            (20, "    fn baz(&self, factor: i32) -> i32 {"),
-            (21, "        self.value * factor"),
-            (22, "    }"),
-        ]);
-        let mut a = anchor(12, 12, &["    fn baz(&self) -> i32 {"]);
-        a.context.before = vec!["impl Calc {".to_string(), "    // helpers".to_string()];
-        a.context.after = vec!["        self.value * 2".to_string()];
-        assert_eq!(start_of(resolve(&a, Some("new"), &c)), Some(20));
-    }
-
-    #[test]
-    fn the_expected_position_follows_the_lines_around_an_unfollowable_range() {
-        // The recorded line (10) was replaced by two lines, so it can't be
-        // followed directly; ten lines were also added on top. Another
-        // identical line sits at old line 3, which is nearer the *recorded*
-        // number than the true place is -- only knowing where the
-        // surroundings went says the true one is at 20.
-        let mut old: Vec<String> = (1..=30).map(|n| format!("old {n}")).collect();
-        old[2] = "dup".to_string();
-        old[9] = "dup".to_string();
-        let mut new: Vec<String> = (1..=10).map(|n| format!("added {n}")).collect();
-        for (i, l) in old.iter().enumerate() {
-            if i == 9 {
-                new.push("dup".to_string());
-                new.push("extra line".to_string());
-            } else {
-                new.push(l.clone());
-            }
-        }
-        let (old, new) = (old.join("\n") + "\n", new.join("\n") + "\n");
-        let a = anchor(10, 10, &["dup"]);
-        assert_eq!(
-            start_of(resolve_through(&a, &[&old, &new], false)),
-            Some(20)
-        );
-        // Without the texts the nearer one (13, the old line 3) would win.
-        let corpus = corpus_from_file_text(&new);
-        assert_eq!(start_of(resolve(&a, Some("cur"), &corpus)), Some(13));
-    }
-
-    #[test]
-    fn map_line_near_lands_edited_and_removed_lines_at_their_blocks() {
-        // b, c replaced by X.
-        let (old, new) = ("a\nb\nc\nd\n", "a\nX\nd\n");
-        assert_eq!(map_line_near(old, new, 1), 1);
-        assert_eq!(map_line_near(old, new, 2), 2);
-        // The second replaced line clamps to the end of the new block.
-        assert_eq!(map_line_near(old, new, 3), 2);
-        assert_eq!(map_line_near(old, new, 4), 3);
-        // b removed outright: it sits where the text after it now is.
-        let (old, new) = ("a\nb\nc\n", "a\nc\n");
-        assert_eq!(map_line_near(old, new, 2), 2);
-        assert_eq!(map_line_near(old, new, 3), 2);
-        // Past the end keeps its distance from the end.
-        assert_eq!(map_line_near(old, new, 4), 3);
-    }
-
-    fn range_after(origin: &str, current: &str, start: u32, len: u32) -> Option<(u32, u32)> {
-        map_range(origin, current, start, len)
-    }
-
-    #[test]
-    fn lines_added_inside_a_range_grow_it() {
-        let old = "a\nb\nc\nd\ne\n";
-        let new = "a\nb\nX\nY\nc\nd\ne\n";
-        // b..d (2..4) now spans b X Y c d (2..6).
-        assert_eq!(range_after(old, new, 2, 3), Some((2, 5)));
-    }
-
-    #[test]
-    fn lines_removed_inside_a_range_shrink_it() {
-        let old = "a\nb\nc\nd\ne\n";
-        let new = "a\nb\nd\ne\n";
-        assert_eq!(range_after(old, new, 2, 3), Some((2, 2)));
-    }
-
-    #[test]
-    fn a_range_whose_end_line_was_edited_extends_to_the_edited_block() {
-        let old = "a\nfn foo() {\n    body\n}\nz\n";
-        let new = "a\nfn foo() {\n    body\n    more body\n}\nz\n";
-        // The unchanged first/last lines still bound the (grown) range.
-        assert_eq!(range_after(old, new, 2, 3), Some((2, 4)));
-        // Replaced at the end by two lines that still look like it.
-        let new = "a\nfn foo() {\n    body\n}\n// end of foo\nz\n";
-        let (start, len) = range_after(old, new, 2, 3).unwrap();
-        assert_eq!(start, 2);
-        assert!(len >= 3);
-    }
-
-    #[test]
-    fn a_start_line_edited_into_more_lines_moves_to_the_start_of_that_block() {
-        let old = "a\nb\nc\nd\ne\n";
-        let new = "a\nb1\nb2\nc\nd\ne\n";
-        // `b` became `b1`,`b2`; the range b..d is now b1..d.
-        assert_eq!(range_after(old, new, 2, 3), Some((2, 4)));
-    }
-
-    #[test]
-    fn a_range_that_was_rewritten_into_something_else_is_not_followed() {
-        let old = "a\nthe first line\nthe second line\nz\n";
-        let new = "a\n1234567890\n0987654321\n5555\nz\n";
-        assert_eq!(range_after(old, new, 2, 2), None);
-    }
-
-    #[test]
-    fn a_range_is_not_followed_into_a_huge_insertion() {
-        let old = "a\nb\nc\nd\n";
-        let big: String = (0..100).map(|i| format!("new {i}\n")).collect();
-        let new = format!("a\nb\n{big}c\nd\n");
-        assert_eq!(range_after(old, &new, 2, 2), None);
-    }
-
-    #[test]
-    fn a_range_that_lost_its_last_line_ends_at_the_line_before_it() {
-        let old = "a\nb\nc\nd\ne\n";
-        let new = "a\nb\nc\ne\n";
-        // b..d with d removed: b..c.
-        assert_eq!(range_after(old, new, 2, 3), Some((2, 2)));
-    }
-
-    #[test]
-    fn the_new_length_is_carried_through_each_step() {
-        let texts = ["a\nb\nc\nd\n", "a\nb\nX\nc\nd\n", "top\na\nb\nX\nc\nd\n"];
-        // b..c grows to b..c (3 lines) in step one, then shifts down by one.
-        assert_eq!(follow(&texts, 2, 2), Some((3, 3)));
-    }
-
-    #[test]
-    fn resolving_returns_the_grown_range_with_refreshed_context() {
-        let texts = ["x\nb\nc\nd\ny\n", "x\nb\nc\nNEW\nd\ny\n"];
-        let a = anchor(2, 4, &["b", "c", "d"]);
-        let Resolution::Relocated(moved) = resolve_through(&a, &texts, false) else {
-            panic!("expected Relocated");
-        };
-        assert_eq!(moved.start, 2);
-        assert_eq!(
-            moved.context.target,
-            ["b", "c", "NEW", "d"].map(String::from).to_vec()
-        );
+        assert_eq!(v.head("a"), Some("sha256:a-new"));
+        assert_eq!(v.base("a"), Some("sha256:a-old"));
+        // Untouched: the same on both sides.
+        assert_eq!((v.head("b"), v.base("b")), (Some("sha256:b"), Some("sha256:b")));
+        assert_eq!(v.head("c"), None);
     }
 }

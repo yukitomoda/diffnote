@@ -1,38 +1,32 @@
 //! Turns the position a comment was written at in the editor (an
 //! [`AnchorScope`], derived from the diff's line counters) into the
-//! [`Anchor`] that is persisted: both sides' ranges, the digests of the file
-//! versions they refer to, and the surrounding text kept for re-anchoring.
+//! [`Anchor`] that is persisted: for each side, the file version (its
+//! digest) and the line range in it. No text is kept -- the versions
+//! themselves are in the bundle.
 
-use crate::anchor;
-use crate::model::Anchor;
+use crate::annotation::{AnchorScope, LineSpan};
+use crate::diff::UnifiedDiff;
+use crate::model::{Anchor, FileDigest, FileRef, LineRange, Side};
 
-/// `revisions` are the (base, head) ids of the reviewed change; `blobs`
-/// holds the file versions read this session. When the full text of a side is
-/// held, its context is taken from it; otherwise (a `--snapshot diff`
-/// review) from the lines the diff shows.
+/// `revisions` are the (base, head) ids of the reviewed change; `files` the
+/// digests of the files the diff touches.
 pub fn build_anchor(
-    scope: &crate::annotation::AnchorScope,
-    parsed_diff: &crate::diff::UnifiedDiff,
-    files: &[crate::model::FileDigest],
+    scope: &AnchorScope,
+    parsed_diff: &UnifiedDiff,
+    files: &[FileDigest],
     revisions: &(Option<String>, Option<String>),
-    blobs: &crate::digest::Blobs,
-    context_lines: u32,
 ) -> anyhow::Result<Anchor> {
-    use crate::annotation::AnchorScope;
-    let file_entry = |file: &str| {
-        files
-            .iter()
-            .find(|f| f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file))
-    };
     match scope {
         AnchorScope::Global => Ok(Anchor::Global {
             base: revisions.0.clone(),
             head: revisions.1.clone(),
         }),
         AnchorScope::File { file } => {
-            let entry = file_entry(file);
+            let entry = files
+                .iter()
+                .find(|f| f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file));
             let make = |path: Option<&String>, digest: Option<&String>| {
-                path.map(|p| crate::model::FileRef {
+                path.map(|p| FileRef {
                     file: p.clone(),
                     digest: digest.cloned().unwrap_or_default(),
                 })
@@ -58,38 +52,19 @@ pub fn build_anchor(
                 .ok_or_else(|| {
                     anyhow::anyhow!("internal error: file '{file}' not found in the parsed diff")
                 })?;
-            let side = |which: crate::model::Side,
-                        path: Option<&String>,
-                        span: &crate::annotation::LineSpan|
-             -> anyhow::Result<Option<crate::model::SideAnchor>> {
-                let Some(path) = path else { return Ok(None) };
-                let digest = anchor::digest_for(files, path, which).unwrap_or_default();
-                // The context comes from the whole file when it is held:
-                // complete, contiguous lines around the range. Only a
-                // diff-only review has to make do with what the hunks show.
-                let corpus = match blobs.text(digest) {
-                    Some(text) => anchor::corpus_from_file_text(text),
-                    None => anchor::corpus_from_diff_hunks(file_diff, which),
-                };
-                let context =
-                    anchor::context_for_span(&corpus, span.start, span.len, context_lines)
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "internal error: could not locate {path}:{}+{} in the parsed diff",
-                                span.start,
-                                span.len
-                            )
-                        })?;
-                Ok(Some(crate::model::SideAnchor {
+            let range = |which: Side, path: Option<&String>, span: &LineSpan| {
+                path.map(|path| LineRange {
                     file: path.clone(),
-                    digest: digest.to_string(),
+                    digest: crate::anchor::digest_for(files, path, which)
+                        .unwrap_or_default()
+                        .to_string(),
                     start: span.start,
-                    context,
-                }))
+                    len: span.len,
+                })
             };
             Ok(Anchor::Span {
-                base: side(crate::model::Side::Old, file_diff.old_path.as_ref(), base)?,
-                head: side(crate::model::Side::New, file_diff.new_path.as_ref(), head)?,
+                base: range(Side::Old, file_diff.old_path.as_ref(), base),
+                head: range(Side::New, file_diff.new_path.as_ref(), head),
             })
         }
     }
@@ -99,9 +74,8 @@ pub fn build_anchor(
 mod tests {
     use super::*;
     use crate::annotation::{self, Item};
-    use crate::digest::{Blobs, digest};
+    use crate::digest::digest;
     use crate::files::{Tree, diff_trees};
-    use crate::model::{FileDigest, SideAnchor};
 
     /// A one-file change: the unified diff between `old` and `new` (as the
     /// directory provider makes it) and the digests of both versions.
@@ -148,45 +122,44 @@ mod tests {
         (Some("base-rev".into()), Some("head-rev".into()))
     }
 
-    /// The anchor of a comment written right after the diff line `index`
-    /// (0-based, counting every line of `diff`), with the file texts held
-    /// (`held`) or not (a diff-only review).
-    fn anchor_after_line(c: &Change, index: usize, held: bool) -> Anchor {
-        let mut lines: Vec<&str> = c.diff.lines().collect();
-        lines.insert(index + 1, "> comment");
+    fn parse_with_comment(c: &Change, lines: Vec<String>) -> (crate::diff::UnifiedDiff, AnchorScope) {
         let text = lines.join("\n") + "\n";
         let parsed = annotation::parse(&text).unwrap();
         let Item::NewThread { scope, .. } = &parsed.items[0] else {
-            panic!("expected a thread");
+            panic!("expected a thread in:\n{text}\n({})", c.diff)
         };
-        let mut blobs = Blobs::default();
-        if held {
-            for t in [&c.old, &c.new].into_iter().flatten() {
-                blobs.add(t.as_bytes());
-            }
-        }
-        build_anchor(scope, &parsed.diff, &c.files, &revisions(), &blobs, 3).unwrap()
+        (parsed.diff.clone(), scope.clone())
+    }
+
+    /// The anchor of a comment written right after the diff line `index`
+    /// (0-based, counting every line of `diff`).
+    fn anchor_after_line(c: &Change, index: usize) -> Anchor {
+        let mut lines: Vec<String> = c.diff.lines().map(str::to_string).collect();
+        lines.insert(index + 1, "> comment".to_string());
+        let (diff, scope) = parse_with_comment(c, lines);
+        build_anchor(&scope, &diff, &c.files, &revisions()).unwrap()
     }
 
     /// The anchor for a comment after the first diff line equal to `line`.
-    fn anchor_after(c: &Change, line: &str, held: bool) -> Anchor {
+    fn anchor_after(c: &Change, line: &str) -> Anchor {
         let index = c
             .diff
             .lines()
             .position(|l| l == line)
             .unwrap_or_else(|| panic!("no diff line {line:?} in:\n{}", c.diff));
-        anchor_after_line(c, index, held)
+        anchor_after_line(c, index)
     }
 
-    fn sides(a: &Anchor) -> (Option<&SideAnchor>, Option<&SideAnchor>) {
+    fn ranges(a: &Anchor) -> (Option<&LineRange>, Option<&LineRange>) {
         let Anchor::Span { base, head } = a else {
             panic!("expected a span, got {a:?}")
         };
         (base.as_ref(), head.as_ref())
     }
 
-    fn strs(v: &[&str]) -> Vec<String> {
-        v.iter().map(|s| s.to_string()).collect()
+    fn at(r: Option<&LineRange>) -> (u32, u32) {
+        let r = r.expect("that side exists");
+        (r.start, r.len)
     }
 
     /// Two hunks with a gap between them: lines 2 and 19 of 20 changed.
@@ -199,64 +172,21 @@ mod tests {
     }
 
     #[test]
-    fn context_at_the_end_of_a_hunk_reaches_past_it_when_the_file_is_held() {
-        let c = two_hunks();
-        let a = anchor_after(&c, " l5", true);
-        let (base, head) = sides(&a);
-        let head = head.unwrap();
-        assert_eq!((head.start, &head.context.target), (5, &strs(&["l5"])));
-        assert_eq!(head.context.before, strs(&["L2", "l3", "l4"]));
-        assert_eq!(head.context.after, strs(&["l6", "l7", "l8"]));
-        let base = base.unwrap();
-        assert_eq!(base.context.before, strs(&["l2", "l3", "l4"]));
-        assert_eq!(base.context.after, strs(&["l6", "l7", "l8"]));
+    fn a_context_line_is_a_one_line_range_on_both_sides() {
+        let a = anchor_after(&two_hunks(), " l5");
+        let (base, head) = ranges(&a);
+        assert_eq!(at(base), (5, 1));
+        assert_eq!(at(head), (5, 1));
+        assert_eq!(base.unwrap().file, "f.txt");
+        assert_eq!(base.unwrap().digest, digest(numbered(20)));
+        assert_eq!(head.unwrap().digest, digest(edited(&numbered(20), &[(2, Some("L2")), (19, Some("L19"))])));
     }
 
     #[test]
-    fn diff_only_context_stops_at_the_edge_of_the_hunk() {
-        // Without the file, the lines after the hunk are simply unknown --
-        // in particular, the *next* hunk's lines must not be taken for them.
-        let c = two_hunks();
-        let a = anchor_after(&c, " l5", false);
-        let (base, head) = sides(&a);
-        assert!(head.unwrap().context.after.is_empty());
-        assert!(base.unwrap().context.after.is_empty());
-        assert_eq!(head.unwrap().context.before, strs(&["L2", "l3", "l4"]));
-
-        // ...and the same at the top of the second hunk.
-        let a = anchor_after(&c, " l16", false);
-        let (_, head) = sides(&a);
-        let head = head.unwrap();
-        assert_eq!(head.start, 16);
-        assert!(head.context.before.is_empty(), "{:?}", head.context.before);
-        assert_eq!(head.context.after, strs(&["l17", "l18", "L19"]));
-    }
-
-    #[test]
-    fn context_at_the_top_of_a_second_hunk_reaches_back_when_the_file_is_held() {
-        let a = anchor_after(&two_hunks(), " l16", true);
-        let (_, head) = sides(&a);
-        assert_eq!(head.unwrap().context.before, strs(&["l13", "l14", "l15"]));
-    }
-
-    #[test]
-    fn context_is_short_at_the_start_and_end_of_the_file() {
-        let c = change(Some("a\nb\nc\n"), Some("a\nB\nc\n"));
-        for held in [true, false] {
-            let a = anchor_after(&c, " a", held);
-            let (_, head) = sides(&a);
-            let head = head.unwrap();
-            assert_eq!(head.start, 1);
-            assert!(head.context.before.is_empty());
-            assert_eq!(head.context.after, strs(&["B", "c"]));
-
-            let a = anchor_after(&c, " c", held);
-            let (_, head) = sides(&a);
-            let head = head.unwrap();
-            assert_eq!(head.start, 3);
-            assert_eq!(head.context.before, strs(&["a", "B"]));
-            assert!(head.context.after.is_empty());
-        }
+    fn numbering_in_a_later_hunk_follows_the_diff_not_the_hunk() {
+        let a = anchor_after(&two_hunks(), " l16");
+        let (base, head) = ranges(&a);
+        assert_eq!((at(base), at(head)), ((16, 1), (16, 1)));
     }
 
     #[test]
@@ -265,17 +195,12 @@ mod tests {
             Some("a\nb\nc\nd\ne\nf\ng\n"),
             Some("a\nb\nc\nX\nd\ne\nf\ng\n"),
         );
-        let a = anchor_after(&c, "+X", true);
-        let (base, head) = sides(&a);
-        let (base, head) = (base.unwrap(), head.unwrap());
-        assert_eq!((head.start, &head.context.target), (4, &strs(&["X"])));
-        assert_eq!(head.context.before, strs(&["a", "b", "c"]));
-        assert_eq!(head.context.after, strs(&["d", "e", "f"]));
-        // Before base line 4 (`d`): nothing of its own, just the neighbours.
-        assert_eq!((base.start, base.len()), (4, 0));
-        assert!(base.is_empty());
-        assert_eq!(base.context.before, strs(&["a", "b", "c"]));
-        assert_eq!(base.context.after, strs(&["d", "e", "f"]));
+        let a = anchor_after(&c, "+X");
+        let (base, head) = ranges(&a);
+        assert_eq!(at(head), (4, 1));
+        // Between base lines 3 and 4: it sits before line 4 (`d`).
+        assert_eq!(at(base), (4, 0));
+        assert!(base.unwrap().is_empty());
     }
 
     #[test]
@@ -284,19 +209,14 @@ mod tests {
             Some("a\nb\nc\nd\ne\nf\ng\n"),
             Some("a\nb\nc\ne\nf\ng\n"),
         );
-        for held in [true, false] {
-            let a = anchor_after(&c, "-d", held);
-            let (base, head) = sides(&a);
-            let (base, head) = (base.unwrap(), head.unwrap());
-            assert_eq!((base.start, &base.context.target), (4, &strs(&["d"])));
-            assert_eq!((head.start, head.len()), (4, 0));
-            assert_eq!(head.context.before, strs(&["a", "b", "c"]));
-            assert_eq!(head.context.after.first().map(String::as_str), Some("e"));
-        }
+        let a = anchor_after(&c, "-d");
+        let (base, head) = ranges(&a);
+        assert_eq!(at(base), (4, 1));
+        assert_eq!(at(head), (4, 0));
     }
 
     #[test]
-    fn a_range_takes_its_whole_text_from_the_file() {
+    fn a_range_covers_its_lines_on_each_side() {
         let c = change(
             Some("a\nb\nc\nd\ne\nf\ng\nh\n"),
             Some("a\nb\nC\nD\nE\nf\ng\nh\n"),
@@ -307,77 +227,27 @@ mod tests {
         let close = lines.iter().position(|l| l == "+E").unwrap();
         lines.insert(close + 1, ">]r".to_string());
         lines.insert(close + 2, "> range".to_string());
-        let text = lines.join("\n") + "\n";
-        let parsed = annotation::parse(&text).unwrap();
-        let Item::NewThread { scope, .. } = &parsed.items[0] else {
-            panic!()
-        };
-        let mut blobs = Blobs::default();
-        for t in [&c.old, &c.new].into_iter().flatten() {
-            blobs.add(t.as_bytes());
-        }
-        let a = build_anchor(scope, &parsed.diff, &c.files, &revisions(), &blobs, 3).unwrap();
-        let (base, head) = sides(&a);
-        let (base, head) = (base.unwrap(), head.unwrap());
-        assert_eq!((head.start, &head.context.target), (3, &strs(&["C", "D", "E"])));
-        assert_eq!(head.context.before, strs(&["a", "b"]));
-        assert_eq!(head.context.after, strs(&["f", "g", "h"]));
-        assert_eq!((base.start, &base.context.target), (3, &strs(&["c", "d", "e"])));
+        let (diff, scope) = parse_with_comment(&c, lines);
+        let a = build_anchor(&scope, &diff, &c.files, &revisions()).unwrap();
+        let (base, head) = ranges(&a);
+        assert_eq!(at(base), (3, 3));
+        assert_eq!(at(head), (3, 3));
     }
 
     #[test]
-    fn added_and_deleted_files_have_only_one_side() {
-        let added = change(None, Some("a\nb\nc\n"));
-        for held in [true, false] {
-            let a = anchor_after(&added, "+b", held);
-            let (base, head) = sides(&a);
-            assert!(base.is_none());
-            let head = head.unwrap();
-            assert_eq!((head.start, &head.context.target), (2, &strs(&["b"])));
-            assert_eq!(head.context.before, strs(&["a"]));
-            assert_eq!(head.context.after, strs(&["c"]));
-        }
-        let deleted = change(Some("a\nb\nc\n"), None);
-        for held in [true, false] {
-            let a = anchor_after(&deleted, "-b", held);
-            let (base, head) = sides(&a);
-            assert!(head.is_none());
-            assert_eq!(base.unwrap().context.target, strs(&["b"]));
-        }
-    }
-
-    #[test]
-    fn the_digests_are_those_of_the_file_versions_whether_or_not_they_are_held() {
-        let c = change(Some("a\nb\nc\n"), Some("a\nB\nc\n"));
-        for held in [true, false] {
-            let a = anchor_after(&c, " a", held);
-            let (base, head) = sides(&a);
-            assert_eq!(base.unwrap().digest, digest("a\nb\nc\n"));
-            assert_eq!(head.unwrap().digest, digest("a\nB\nc\n"));
-        }
-    }
-
-    #[test]
-    fn text_that_isnt_the_recorded_version_is_not_used() {
-        // Same digests in `files`, but the blobs hold something else: the
-        // context must come from the hunks rather than from a wrong file.
-        let old = numbered(20);
-        let c = change(Some(&old), Some(&edited(&old, &[(2, Some("L2"))])));
-        let lines: Vec<&str> = c.diff.lines().collect();
-        let index = lines.iter().position(|l| *l == " l5").unwrap();
-        let mut with_comment = lines.clone();
-        with_comment.insert(index + 1, "> comment");
-        let parsed = annotation::parse(&(with_comment.join("\n") + "\n")).unwrap();
-        let Item::NewThread { scope, .. } = &parsed.items[0] else {
-            panic!()
-        };
-        let mut blobs = Blobs::default();
-        blobs.add(b"something\nelse\nentirely\n");
-        let a = build_anchor(scope, &parsed.diff, &c.files, &revisions(), &blobs, 3).unwrap();
-        let (_, head) = sides(&a);
-        // From the hunk (which ends at line 5), not from the wrong text.
-        assert_eq!(head.unwrap().context.before, strs(&["L2", "l3", "l4"]));
-        assert!(head.unwrap().context.after.is_empty());
+    fn a_range_of_only_added_lines_is_empty_on_the_base_side() {
+        let c = change(Some("a\nb\n"), Some("a\nX\nY\nb\n"));
+        let mut lines: Vec<String> = c.diff.lines().map(str::to_string).collect();
+        let open = lines.iter().position(|l| l == "+X").unwrap();
+        lines.insert(open, ">[r".to_string());
+        let close = lines.iter().position(|l| l == "+Y").unwrap();
+        lines.insert(close + 1, ">]r".to_string());
+        lines.insert(close + 2, "> two new lines".to_string());
+        let (diff, scope) = parse_with_comment(&c, lines);
+        let a = build_anchor(&scope, &diff, &c.files, &revisions()).unwrap();
+        let (base, head) = ranges(&a);
+        assert_eq!(at(head), (2, 2));
+        assert_eq!(at(base), (2, 0));
     }
 
     #[test]
@@ -386,16 +256,37 @@ mod tests {
         let c = change(Some(&old), Some(&edited(&old, &[(6, Some("L6")), (7, None)])));
         // A comment straight after the hunk header.
         let index = c.diff.lines().position(|l| l.starts_with("@@")).unwrap();
-        let a = anchor_after_line(&c, index, true);
-        let (base, head) = sides(&a);
-        let (base, head) = (base.unwrap(), head.unwrap());
-        assert_eq!((base.start, base.len()), (3, 8));
-        assert_eq!((head.start, head.len()), (3, 7));
-        assert_eq!(base.context.target.first().map(String::as_str), Some("l3"));
-        assert_eq!(base.context.target.last().map(String::as_str), Some("l10"));
-        assert_eq!(head.context.target.last().map(String::as_str), Some("l10"));
-        assert_eq!(head.context.after, strs(&["l11", "l12"]));
-        assert_eq!(head.context.before, strs(&["l1", "l2"]));
+        let a = anchor_after_line(&c, index);
+        let (base, head) = ranges(&a);
+        // Old lines 3..=10, new lines 3..=9.
+        assert_eq!(at(base), (3, 8));
+        assert_eq!(at(head), (3, 7));
+    }
+
+    #[test]
+    fn added_and_deleted_files_have_only_one_side() {
+        let added = change(None, Some("a\nb\nc\n"));
+        let a = anchor_after(&added, "+b");
+        let (base, head) = ranges(&a);
+        assert!(base.is_none());
+        assert_eq!(at(head), (2, 1));
+        assert_eq!(head.unwrap().digest, digest("a\nb\nc\n"));
+
+        let deleted = change(Some("a\nb\nc\n"), None);
+        let a = anchor_after(&deleted, "-b");
+        let (base, head) = ranges(&a);
+        assert!(head.is_none());
+        assert_eq!(at(base), (2, 1));
+        assert_eq!(base.unwrap().digest, digest("a\nb\nc\n"));
+    }
+
+    #[test]
+    fn each_side_records_the_digest_of_its_own_version() {
+        let c = change(Some("a\nb\nc\n"), Some("a\nB\nc\n"));
+        let a = anchor_after(&c, " a");
+        let (base, head) = ranges(&a);
+        assert_eq!(base.unwrap().digest, digest("a\nb\nc\n"));
+        assert_eq!(head.unwrap().digest, digest("a\nB\nc\n"));
     }
 
     #[test]
@@ -424,34 +315,21 @@ rename to new.txt
             old: Some(digest("a\nb\nc\n")),
             new: Some(digest("a\nB\nc\n")),
         }];
-        let mut blobs = Blobs::default();
-        blobs.add(b"a\nb\nc\n");
-        blobs.add(b"a\nB\nc\n");
-        let a = build_anchor(scope, &parsed.diff, &files, &revisions(), &blobs, 3).unwrap();
-        let (base, head) = sides(&a);
+        let a = build_anchor(scope, &parsed.diff, &files, &revisions()).unwrap();
+        let (base, head) = ranges(&a);
         let (base, head) = (base.unwrap(), head.unwrap());
         assert_eq!((base.file.as_str(), head.file.as_str()), ("old.txt", "new.txt"));
         assert_eq!(base.digest, digest("a\nb\nc\n"));
         assert_eq!(head.digest, digest("a\nB\nc\n"));
         // The comment is after the trailing context line ` c`.
-        assert_eq!((base.start, head.start), (3, 3));
-        assert_eq!(head.context.target, strs(&["c"]));
-        assert_eq!(head.context.before, strs(&["a", "B"]));
-        assert_eq!(base.context.before, strs(&["a", "b"]));
+        assert_eq!((at(Some(base)), at(Some(head))), ((3, 1), (3, 1)));
     }
 
     #[test]
     fn global_and_file_anchors_record_the_revisions_and_both_file_versions() {
         let c = change(Some("a\nb\n"), Some("a\nB\n"));
-        let parsed = annotation::parse(&format!("> global\n\n{}> file\n", {
-            let mut d = String::new();
-            for l in c.diff.lines().take(3) {
-                d.push_str(l);
-                d.push('\n');
-            }
-            d
-        }))
-        .unwrap();
+        let header: String = c.diff.lines().take(3).map(|l| format!("{l}\n")).collect();
+        let parsed = annotation::parse(&format!("> global\n\n{header}> file\n")).unwrap();
         let scopes: Vec<_> = parsed
             .items
             .iter()
@@ -460,8 +338,7 @@ rename to new.txt
                 _ => panic!(),
             })
             .collect();
-        let blobs = Blobs::default();
-        let g = build_anchor(&scopes[0], &parsed.diff, &c.files, &revisions(), &blobs, 3).unwrap();
+        let g = build_anchor(&scopes[0], &parsed.diff, &c.files, &revisions()).unwrap();
         assert_eq!(
             g,
             Anchor::Global {
@@ -469,7 +346,7 @@ rename to new.txt
                 head: Some("head-rev".into())
             }
         );
-        let f = build_anchor(&scopes[1], &parsed.diff, &c.files, &revisions(), &blobs, 3).unwrap();
+        let f = build_anchor(&scopes[1], &parsed.diff, &c.files, &revisions()).unwrap();
         let Anchor::File { base, head } = f else {
             panic!()
         };
@@ -477,70 +354,44 @@ rename to new.txt
         assert_eq!(head.unwrap().digest, digest("a\nB\n"));
     }
 
-    /// For a comment after *every* line of a diff: the anchor's ranges are
-    /// where the text really is in the file, and the diff-only context is
-    /// always a prefix/suffix of the full-file one (never something else).
+    /// For a comment after *every* line of a diff: each side's range is where
+    /// the diff's line really is in that version of the file (and a side with
+    /// no line there is an empty range).
     fn check_every_position(c: &Change) {
-        let (old, new) = (c.old.as_deref().unwrap_or(""), c.new.as_deref().unwrap_or(""));
-        let text_of = |t: &str, start: u32, len: u32| -> Vec<String> {
-            t.lines()
-                .skip(start as usize - 1)
-                .take(len as usize)
-                .map(str::to_string)
-                .collect()
-        };
+        let old_lines: Vec<&str> = c.old.as_deref().unwrap_or("").lines().collect();
+        let new_lines: Vec<&str> = c.new.as_deref().unwrap_or("").lines().collect();
         let first_hunk = c.diff.lines().position(|l| l.starts_with("@@")).unwrap();
         for (i, line) in c.diff.lines().enumerate().skip(first_hunk + 1) {
-            if !(line.starts_with(' ') || line.starts_with('+') || line.starts_with('-')) {
-                continue; // `diff --git` of the next file etc.
-            }
-            let full = anchor_after_line(c, i, true);
-            let bare = anchor_after_line(c, i, false);
-            let (fb, fh) = sides(&full);
-            let (bb, bh) = sides(&bare);
-            for (text, f, b) in [(old, fb, bb), (new, fh, bh)] {
-                let (Some(f), Some(b)) = (f, b) else {
-                    assert!(f.is_none() && b.is_none(), "line {i}: {line:?}");
+            let (marker, content) = match line.chars().next() {
+                Some(m @ (' ' | '+' | '-')) => (m, &line[1..]),
+                _ => continue, // the next file's header etc.
+            };
+            let a = anchor_after_line(c, i);
+            let (base, head) = ranges(&a);
+            let (has_base, has_head) = (marker != '+', marker != '-');
+            for (r, has, lines) in [(base, has_base, &old_lines), (head, has_head, &new_lines)] {
+                let Some(r) = r else {
+                    assert!(lines.is_empty(), "{line:?}: side missing but the file has lines");
                     continue;
                 };
-                assert_eq!((f.start, &f.context.target), (b.start, &b.context.target), "{line:?}");
-                assert_eq!(
-                    f.context.target,
-                    text_of(text, f.start, f.len()),
-                    "range text is not what the file has at those lines ({line:?})"
-                );
-                assert!(
-                    f.context.before.ends_with(&b.context.before),
-                    "{line:?}: {:?} vs {:?}",
-                    f.context.before,
-                    b.context.before
-                );
-                assert!(
-                    f.context.after.starts_with(&b.context.after),
-                    "{line:?}: {:?} vs {:?}",
-                    f.context.after,
-                    b.context.after
-                );
-                // The full context is exactly the (up to 3) lines around it.
-                let (s, n) = (f.start as usize, f.len() as usize);
-                let lines: Vec<&str> = text.lines().collect();
-                let want_before: Vec<String> = lines[s.saturating_sub(4).min(s - 1)..s - 1]
-                    .iter()
-                    .map(|l| l.to_string())
-                    .collect();
-                let want_after: Vec<String> = lines[(s - 1 + n).min(lines.len())..]
-                    .iter()
-                    .take(3)
-                    .map(|l| l.to_string())
-                    .collect();
-                assert_eq!(f.context.before, want_before, "{line:?}");
-                assert_eq!(f.context.after, want_after, "{line:?}");
+                if has {
+                    assert_eq!(r.len, 1, "{line:?}");
+                    assert_eq!(
+                        lines[r.start as usize - 1], content,
+                        "{line:?} is not at line {} of its version",
+                        r.start
+                    );
+                } else {
+                    // A point: it sits between the line before and the one after.
+                    assert_eq!(r.len, 0, "{line:?}");
+                    assert!(r.start >= 1 && r.start as usize <= lines.len() + 1, "{line:?}");
+                }
             }
         }
     }
 
     #[test]
-    fn every_comment_position_anchors_to_where_its_text_really_is() {
+    fn every_comment_position_anchors_to_where_its_line_really_is() {
         let old = numbered(30);
         let new = edited(
             &old,
@@ -558,5 +409,7 @@ rename to new.txt
         check_every_position(&two_hunks());
         check_every_position(&change(Some("a\nb\nc\n"), Some("a\nb\nc\nd\n")));
         check_every_position(&change(Some("a\nb\nc\nd\n"), Some("d\n")));
+        check_every_position(&change(None, Some("only\nnew\n")));
+        check_every_position(&change(Some("only\nold\n"), None));
     }
 }

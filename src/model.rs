@@ -71,26 +71,18 @@ impl Source {
     }
 }
 
-/// A few lines of frozen source text kept alongside an anchor so a comment
-/// stays meaningful even if the file it points at can no longer be found
-/// (see re-anchoring in the `anchor` module).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Context {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub before: Vec<String>,
-    pub target: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub after: Vec<String>,
-}
-
 /// Where a comment points, always expressed against the two revisions of
 /// the diff it was written on: `base` (before) and `head` (after). A `None`
 /// side means that revision has no such thing (a file that was added has no
 /// base file; a review of a first commit has no base revision).
 ///
-/// Whether a line was "added" or "removed" is deliberately *not* stored: it
-/// follows from which side has content at the position (an addition is an
-/// empty `base` range plus a non-empty `head` one), and from the diff.
+/// An anchor is a *place*, never text: a line range of an immutable file
+/// version (named by the digest of its full text, which the bundle always
+/// holds). Whether a line was "added" or "removed" is deliberately not
+/// stored: it follows from which side has lines at the position (an addition
+/// is an empty `base` range plus a non-empty `head` one), and from the diff.
+/// Where a place ends up in some other version of the file is worked out from
+/// the two versions' texts (see `anchor`), not stored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "scope", rename_all = "lowercase")]
 pub enum Anchor {
@@ -113,9 +105,9 @@ pub enum Anchor {
     /// Lines of a file. At least one side has a non-empty range.
     Span {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        base: Option<SideAnchor>,
+        base: Option<LineRange>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        head: Option<SideAnchor>,
+        head: Option<LineRange>,
     },
 }
 
@@ -126,36 +118,28 @@ pub struct FileRef {
     pub digest: String,
 }
 
-/// A range of lines in one version of one file, with the frozen text needed
-/// to find it again after the file moves on.
+/// A run of lines in one version of one file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SideAnchor {
+pub struct LineRange {
     pub file: String,
-    /// Digest (`sha256:...`) of the full text of `file` on this side. If it
-    /// equals the digest of the version being viewed, re-anchoring can be
-    /// skipped entirely.
+    /// Digest (`sha256:...`) of the full text of `file` in this version.
     pub digest: String,
-    /// First line of the range (1-based). With an empty `context.target`
-    /// this is instead the line an insertion point sits *before*.
+    /// First line of the range (1-based). For an empty range this is the
+    /// line the insertion (or deletion) point sits *before*: the point is
+    /// between line `start - 1` and line `start`.
     pub start: u32,
-    /// `context.target` is the text of the range, so its length is the
-    /// range's length; empty means an insertion/deletion point.
-    pub context: Context,
+    /// Number of lines; 0 is an insertion or deletion point.
+    pub len: u32,
 }
 
-impl SideAnchor {
-    /// Number of lines in the range (0 for an insertion point).
-    pub fn len(&self) -> u32 {
-        self.context.target.len() as u32
-    }
-
+impl LineRange {
     pub fn is_empty(&self) -> bool {
-        self.context.target.is_empty()
+        self.len == 0
     }
 
     /// Last line of a non-empty range.
     pub fn end(&self) -> u32 {
-        self.start + self.len().saturating_sub(1)
+        self.start + self.len.saturating_sub(1)
     }
 }
 
