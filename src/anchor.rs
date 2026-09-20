@@ -16,25 +16,22 @@
 //!   context/added/removed lines for the relevant side.
 //!
 //! Matching, in order:
-//! 1. If the file's current digest on the anchor's side matches the
-//!    anchor's own `origin_file_digest`, skip matching entirely —
-//!    [`Resolution::Current`].
-//! 2. Exact, line-number-contiguous match of `context.target` in the
-//!    corpus. Zero candidates falls through to fuzzy matching (3); exactly
-//!    one is used directly; more than one is disambiguated using
-//!    `context.before`/`context.after` (whichever candidate gains a
-//!    strictly higher context-match score than every other), and a
-//!    remaining tie is treated as unresolvable ([`Resolution::Outdated`]
-//!    rather than guessing).
-//! 3. A fixed-length (`target.len()`) sliding-window similarity search
-//!    (via the `similar` crate's character-diff ratio) over the corpus. The
-//!    best-scoring window is used if its ratio is at least
-//!    [`DEFAULT_SIMILARITY_THRESHOLD`], as [`Resolution::Relocated`];
-//!    otherwise [`Resolution::Outdated`]. Windows that aren't
-//!    line-number-contiguous (e.g. would straddle a hunk gap in a Tier 2
-//!    corpus) are never considered. A target whose surrounding lines
-//!    shifted by a different number of lines than the target itself grew
-//!    or shrank is a known limitation of this fixed-length window.
+//! 1. If the file's digest on the anchor's side equals the anchor's own,
+//!    matching is skipped -- [`Resolution::Current`].
+//! 2. If the text of the version the anchor was written against is held,
+//!    the line diffs from it to the viewed version (through any intermediate
+//!    versions) give the position directly ([`resolve_with_texts`]).
+//! 3. Otherwise the corpus is searched for `context.target`: every exact
+//!    match, or -- with none -- every line-contiguous window at least
+//!    [`DEFAULT_SIMILARITY_THRESHOLD`] similar (via the `similar` crate's
+//!    character-diff ratio). Each candidate is scored on its content, on how
+//!    many of `context.before`/`after` surround it, and on how close it is to
+//!    where the range should be by now (the recorded position carried
+//!    forward by the line diffs when the texts are held, else as recorded).
+//!    The best wins unless another, separate place scores within
+//!    [`AMBIGUITY_MARGIN`] of it, in which case it is [`Resolution::Outdated`]
+//!    rather than a guess. Windows that aren't line-number-contiguous (e.g.
+//!    would straddle a hunk gap in a Tier 2 corpus) are never considered.
 //!
 //! A caller accepting a [`Resolution::Relocated`] anchor (silently, unless
 //! rejected — see the annotation format's `>>!reject`/`>!reanchor`) should
@@ -154,6 +151,17 @@ pub fn resolve(
     current_file_digest: Option<&str>,
     corpus: &[CorpusLine],
 ) -> Resolution {
+    resolve_near(side, current_file_digest, corpus, side.start)
+}
+
+/// [`resolve`] for a range expected to start near line `expected` by now
+/// (where the recorded position has been carried to, when that is known).
+pub fn resolve_near(
+    side: &SideAnchor,
+    current_file_digest: Option<&str>,
+    corpus: &[CorpusLine],
+    expected: u32,
+) -> Resolution {
     if current_file_digest == Some(side.digest.as_str()) {
         return Resolution::Current;
     }
@@ -163,17 +171,10 @@ pub fn resolve(
     if target.is_empty() {
         return Resolution::Outdated;
     }
-    let exact = find_exact_matches(corpus, target);
-    let (chosen, is_exact) = match exact.as_slice() {
-        [] => (
-            find_best_fuzzy_match(corpus, target, DEFAULT_SIMILARITY_THRESHOLD),
-            false,
-        ),
-        [single] => (Some(*single), true),
-        many => (
-            disambiguate(corpus, many, target.len(), &context.before, &context.after),
-            true,
-        ),
+    let found = pick(corpus, &candidates(corpus, target), side, expected);
+    let (chosen, is_exact) = match found {
+        Some((idx, exact)) => (Some(idx), exact),
+        None => (None, false),
     };
 
     let Some(start_idx) = chosen else {
@@ -251,7 +252,55 @@ pub fn resolve_with_texts(
             context,
         });
     }
-    resolve(side, current_file_digest, corpus)
+    // The range itself couldn't be followed (it was edited, or moved), but
+    // the lines around it usually can: where it should be by now.
+    let expected = blobs
+        .chain(&side.digest, current_digest)
+        .map_or(side.start, |chain| expected_start(&chain, side.start));
+    resolve_near(side, current_file_digest, corpus, expected)
+}
+
+/// Where line `start` of the first text has got to by the last, following
+/// each step's line diff even through lines that were edited or removed
+/// (which land at their block's position).
+fn expected_start(texts: &[&str], start: u32) -> u32 {
+    texts
+        .windows(2)
+        .fold(start, |at, pair| map_line_near(pair[0], pair[1], at))
+}
+
+fn map_line_near(origin: &str, current: &str, line: u32) -> u32 {
+    let Some(first) = line.checked_sub(1).map(|l| l as usize) else {
+        return line;
+    };
+    let diff = similar::TextDiff::from_lines(origin, current);
+    for op in diff.ops() {
+        let mapped = match *op {
+            similar::DiffOp::Equal {
+                old_index,
+                new_index,
+                len,
+            } if (old_index..old_index + len).contains(&first) => new_index + (first - old_index),
+            similar::DiffOp::Replace {
+                old_index,
+                old_len,
+                new_index,
+                new_len,
+            } if (old_index..old_index + old_len).contains(&first) => {
+                new_index + (first - old_index).min(new_len.saturating_sub(1))
+            }
+            similar::DiffOp::Delete {
+                old_index,
+                old_len,
+                new_index,
+            } if (old_index..old_index + old_len).contains(&first) => new_index,
+            _ => continue,
+        };
+        return mapped as u32 + 1;
+    }
+    // Past the last line of the old text: keep the distance from its end.
+    let old_len = origin.lines().count() as i64;
+    (line as i64 - old_len + current.lines().count() as i64).max(1) as u32
 }
 
 /// Follows a range through consecutive versions' texts; `None` as soon as
@@ -360,57 +409,34 @@ fn score_context(
     score
 }
 
-/// Picks the exact-match candidate with a strictly-highest context score.
-/// A tie is reported as unresolvable (`None`) rather than guessed.
-fn disambiguate(
-    corpus: &[CorpusLine],
-    candidates: &[usize],
-    match_len: usize,
-    before: &[String],
-    after: &[String],
-) -> Option<usize> {
-    let mut best: Option<(usize, usize)> = None;
-    let mut unique = true;
-    for &idx in candidates {
-        let score = score_context(corpus, idx, match_len, before, after);
-        match best {
-            None => best = Some((idx, score)),
-            Some((_, best_score)) if score > best_score => {
-                best = Some((idx, score));
-                unique = true;
-            }
-            Some((_, best_score)) if score == best_score => {
-                unique = false;
-            }
-            _ => {}
-        }
-    }
-    if unique {
-        best.map(|(idx, _)| idx)
-    } else {
-        None
-    }
-}
+/// How much each part of a candidate counts. Content decides whether a
+/// place is a candidate at all (see [`DEFAULT_SIMILARITY_THRESHOLD`]); among
+/// candidates, the surrounding lines and how far the place is from where the
+/// range should be by now separate the ones whose text alone is (nearly)
+/// the same.
+const WEIGHT_CONTENT: f32 = 0.5;
+const WEIGHT_CONTEXT: f32 = 0.3;
+const WEIGHT_POSITION: f32 = 0.2;
+/// A candidate this many lines from the expected position counts half as
+/// much as one right on it (`1 / (1 + distance / scale)`).
+const POSITION_SCALE: f32 = 8.0;
+/// The best candidate must beat the best *other* place by this much, or the
+/// range is reported as unplaceable rather than guessed.
+const AMBIGUITY_MARGIN: f32 = 0.05;
 
-/// Known v1 limitation: unlike `disambiguate`, this scores candidates on
-/// `target` content alone and never consults `context.before`/`after`. A
-/// line that drifted can lose to a *different*, unrelated line elsewhere in
-/// the corpus that simply happens to be a closer character-level match
-/// (e.g. a one-character `+`/`-` difference outscoring a renamed
-/// identifier). Confirmed live with `anchor::resolve` chained across
-/// several revisions of a real file — deliberately left as-is for now
-/// rather than chasing precision; revisit if false relocations turn out to
-/// be common in practice.
-fn find_best_fuzzy_match(
-    corpus: &[CorpusLine],
-    target: &[String],
-    threshold: f32,
-) -> Option<usize> {
+/// Places where `target` might now be: every exact match, else -- when there
+/// is none -- every line-contiguous window whose text is similar enough.
+/// Each comes with its content score (1.0 for an exact match).
+fn candidates(corpus: &[CorpusLine], target: &[String]) -> Vec<(usize, f32)> {
+    let exact = find_exact_matches(corpus, target);
+    if !exact.is_empty() {
+        return exact.into_iter().map(|i| (i, 1.0)).collect();
+    }
     if target.is_empty() || corpus.len() < target.len() {
-        return None;
+        return Vec::new();
     }
     let target_text = target.join("\n");
-    let mut best: Option<(usize, f32)> = None;
+    let mut out = Vec::new();
     for i in 0..=(corpus.len() - target.len()) {
         let contiguous =
             (1..target.len()).all(|k| corpus[i + k].line == corpus[i + k - 1].line + 1);
@@ -427,12 +453,56 @@ fn find_best_fuzzy_match(
         // they share, which makes it useless for exactly the case this is
         // for (single-line targets that were lightly edited).
         let ratio = similar::TextDiff::from_chars(&target_text, &window_text).ratio();
-        if best.is_none_or(|(_, best_ratio)| ratio > best_ratio) {
-            best = Some((i, ratio));
+        if ratio >= DEFAULT_SIMILARITY_THRESHOLD {
+            out.push((i, ratio));
         }
     }
-    best.filter(|(_, ratio)| *ratio >= threshold)
-        .map(|(idx, _)| idx)
+    out
+}
+
+/// Chooses among `candidates` (corpus index, content score) for `side`,
+/// whose range is expected to start near line `expected`. Returns the corpus
+/// index and whether the text matched exactly; `None` when nothing qualifies
+/// or the best place isn't clearly better than every other one.
+fn pick(
+    corpus: &[CorpusLine],
+    candidates: &[(usize, f32)],
+    side: &SideAnchor,
+    expected: u32,
+) -> Option<(usize, bool)> {
+    let ctx = &side.context;
+    let len = ctx.target.len();
+    let context_total = ctx.before.len() + ctx.after.len();
+    let mut scored: Vec<(usize, f32, f32)> = candidates
+        .iter()
+        .map(|&(idx, content)| {
+            let context = if context_total == 0 {
+                0.0
+            } else {
+                score_context(corpus, idx, len, &ctx.before, &ctx.after) as f32
+                    / context_total as f32
+            };
+            let distance = corpus[idx].line.abs_diff(expected) as f32;
+            let position = 1.0 / (1.0 + distance / POSITION_SCALE);
+            let total =
+                WEIGHT_CONTENT * content + WEIGHT_CONTEXT * context + WEIGHT_POSITION * position;
+            (idx, content, total)
+        })
+        .collect();
+    scored.sort_by(|a, b| b.2.total_cmp(&a.2));
+    let &(best, content, best_score) = scored.first()?;
+    // Neighbouring windows of a fuzzy match overlap the best one and don't
+    // count as a rival place.
+    let rival = scored
+        .iter()
+        .skip(1)
+        .find(|(idx, _, _)| idx.abs_diff(best) >= len.max(1));
+    if let Some(&(_, _, rival_score)) = rival
+        && best_score - rival_score < AMBIGUITY_MARGIN
+    {
+        return None;
+    }
+    Some((best, content >= 1.0))
 }
 
 /// The context around the `match_len` lines starting at corpus index
@@ -1204,5 +1274,131 @@ mod tests {
         let ctx = context_for_span(&c, 12, 0, 2).unwrap();
         assert_eq!(ctx.before, vec!["j".to_string(), "k".to_string()]);
         assert!(ctx.after.is_empty());
+    }
+
+    fn start_of(r: Resolution) -> Option<u32> {
+        match r {
+            Resolution::Relocated(a) => Some(a.start),
+            Resolution::Current => Some(u32::MAX),
+            Resolution::Outdated => None,
+        }
+    }
+
+    #[test]
+    fn identical_candidates_are_told_apart_by_how_far_they_are_from_the_old_position() {
+        let mut lines: Vec<(u32, String)> = (1..=40).map(|n| (n, format!("line {n}"))).collect();
+        lines[4].1 = "x".to_string();
+        lines[24].1 = "x".to_string();
+        let c: Vec<CorpusLine> = lines
+            .iter()
+            .map(|(n, t)| CorpusLine {
+                line: *n,
+                content: t.clone(),
+            })
+            .collect();
+        // Recorded at 24 (say a line was removed above): 25 is the one.
+        assert_eq!(
+            start_of(resolve(&anchor(24, 24, &["x"]), Some("new"), &c)),
+            Some(25)
+        );
+        // Recorded at 6: 5 is.
+        assert_eq!(
+            start_of(resolve(&anchor(6, 6, &["x"]), Some("new"), &c)),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn two_equally_near_candidates_are_not_guessed_between() {
+        let c = corpus(&[(8, "x"), (9, "a"), (10, "b"), (11, "c"), (12, "x")]);
+        assert_eq!(
+            resolve(&anchor(10, 10, &["x"]), Some("new"), &c),
+            Resolution::Outdated
+        );
+    }
+
+    #[test]
+    fn a_unique_match_is_found_however_far_it_moved() {
+        let c: Vec<CorpusLine> = (1..=100)
+            .map(|n| CorpusLine {
+                line: n,
+                content: if n == 90 {
+                    "the moved block".to_string()
+                } else {
+                    format!("filler {n}")
+                },
+            })
+            .collect();
+        assert_eq!(
+            start_of(resolve(&anchor(2, 2, &["the moved block"]), Some("new"), &c)),
+            Some(90)
+        );
+    }
+
+    #[test]
+    fn context_outweighs_a_slightly_closer_text_match_elsewhere() {
+        // `bar` is the closer character-level match to the recorded `baz`
+        // line, but the true (edited) line has the recorded neighbours.
+        let c = corpus(&[
+            (2, "    // the other one"),
+            (3, "    fn bar(&self) -> i32 {"),
+            (4, "        0"),
+            (18, "impl Calc {"),
+            (19, "    // helpers"),
+            (20, "    fn baz(&self, factor: i32) -> i32 {"),
+            (21, "        self.value * factor"),
+            (22, "    }"),
+        ]);
+        let mut a = anchor(12, 12, &["    fn baz(&self) -> i32 {"]);
+        a.context.before = vec!["impl Calc {".to_string(), "    // helpers".to_string()];
+        a.context.after = vec!["        self.value * 2".to_string()];
+        assert_eq!(start_of(resolve(&a, Some("new"), &c)), Some(20));
+    }
+
+    #[test]
+    fn the_expected_position_follows_the_lines_around_an_unfollowable_range() {
+        // The recorded line (10) was replaced by two lines, so it can't be
+        // followed directly; ten lines were also added on top. Another
+        // identical line sits at old line 3, which is nearer the *recorded*
+        // number than the true place is -- only knowing where the
+        // surroundings went says the true one is at 20.
+        let mut old: Vec<String> = (1..=30).map(|n| format!("old {n}")).collect();
+        old[2] = "dup".to_string();
+        old[9] = "dup".to_string();
+        let mut new: Vec<String> = (1..=10).map(|n| format!("added {n}")).collect();
+        for (i, l) in old.iter().enumerate() {
+            if i == 9 {
+                new.push("dup".to_string());
+                new.push("extra line".to_string());
+            } else {
+                new.push(l.clone());
+            }
+        }
+        let (old, new) = (old.join("\n") + "\n", new.join("\n") + "\n");
+        let a = anchor(10, 10, &["dup"]);
+        assert_eq!(
+            start_of(resolve_through(&a, &[&old, &new], false)),
+            Some(20)
+        );
+        // Without the texts the nearer one (13, the old line 3) would win.
+        let corpus = corpus_from_file_text(&new);
+        assert_eq!(start_of(resolve(&a, Some("cur"), &corpus)), Some(13));
+    }
+
+    #[test]
+    fn map_line_near_lands_edited_and_removed_lines_at_their_blocks() {
+        // b, c replaced by X.
+        let (old, new) = ("a\nb\nc\nd\n", "a\nX\nd\n");
+        assert_eq!(map_line_near(old, new, 1), 1);
+        assert_eq!(map_line_near(old, new, 2), 2);
+        // The second replaced line clamps to the end of the new block.
+        assert_eq!(map_line_near(old, new, 3), 2);
+        assert_eq!(map_line_near(old, new, 4), 3);
+        // b removed outright: it sits where the text after it now is.
+        let (old, new) = ("a\nb\nc\n", "a\nc\n");
+        assert_eq!(map_line_near(old, new, 2), 2);
+        assert_eq!(map_line_near(old, new, 3), 2);
+        // Past the end keeps its distance from the end.
+        assert_eq!(map_line_near(old, new, 4), 3);
     }
 }
