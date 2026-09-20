@@ -95,3 +95,5 @@ diffnote edit --show src/main.rs:40-60      # 行の範囲(`:40` なら 1 行)
 ```sh
 cargo test
 ```
+
+統合テスト(`tests/cli.rs`)は、Linux と Windows のどちらでも動きます。エディタの代わりに、テストの実行ファイル自身を `$EDITOR` として再起動するので、シェルなどは要りません(git は要ります)。別の場所で作った実行ファイルを試すときは、環境変数 `DIFFNOTE_BIN` にそのパスを指定します。

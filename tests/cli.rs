@@ -1,14 +1,21 @@
 //! End-to-end tests: the real `diffnote` binary, driven through a fake
-//! `$EDITOR` (a shell script that inserts a comment after a given diff line).
-//! Unix only, since the fake editor is `sh`/`awk`.
-#![cfg(unix)]
+//! `$EDITOR` that inserts a comment after a given diff line. The fake editor
+//! is this very test executable started again (see `fake_editor_entry`), so
+//! the tests need nothing but Rust and git, on any platform.
 
 use diffnote::bundle;
 use diffnote::model::Event;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const BIN: &str = env!("CARGO_BIN_EXE_diffnote");
+/// The binary under test. `DIFFNOTE_BIN` points at another one, which lets a
+/// test executable built elsewhere (for another platform) run against a
+/// binary that lives at a different path there.
+fn bin() -> PathBuf {
+    std::env::var_os("DIFFNOTE_BIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_diffnote")))
+}
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -21,45 +28,63 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8(out.stdout).unwrap().trim().to_string()
 }
 
-/// A fake editor: for each `AFTER<TAB>TEXT` line in `$DN_SCRIPT` (a file),
-/// inserts `> TEXT` after the first buffer line equal to `AFTER`. An `AFTER`
-/// of `GLOBAL` puts the comment on top instead.
-fn fake_editor(dir: &Path) -> PathBuf {
-    let path = dir.join("editor.sh");
-    std::fs::write(
-        &path,
-        r#"#!/bin/sh
-buf="$1"
-out="$buf.new"
-cp "$buf" "$out"
-while IFS="$(printf '\t')" read -r after text; do
-  [ -z "$after" ] && continue
-  if [ "$after" = "GLOBAL" ]; then
-    { printf '> %s\n\n' "$text"; cat "$out"; } > "$out.2" && mv "$out.2" "$out"
-  else
-    awk -v after="$after" -v text="$text" '{print} !done && $0 == after {print "> " text; done=1}' "$out" > "$out.2" && mv "$out.2" "$out"
-  fi
-done < "$DN_SCRIPT"
-mv "$out" "$buf"
-"#,
-    )
-    .unwrap();
-    let mut perms = std::fs::metadata(&path).unwrap().permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
-    std::fs::set_permissions(&path, perms).unwrap();
-    path
+/// The fake editor. For each `AFTER<TAB>TEXT` line in the file `$DN_SCRIPT`
+/// it inserts `> TEXT` after the first buffer line equal to `AFTER`; an
+/// `AFTER` of `GLOBAL` puts the comment on top instead.
+///
+/// It is not a test. `diffnote` runs `$EDITOR <buffer>`, and `$EDITOR` is set
+/// to this test executable with the arguments that select only this function
+/// (`--exact fake_editor_entry`), so the buffer path arrives as a further
+/// (harmless) test-name filter, last on the command line. Run as an ordinary
+/// test, without `DN_FAKE_EDITOR`, it does nothing.
+#[test]
+fn fake_editor_entry() {
+    if std::env::var_os("DN_FAKE_EDITOR").is_none() {
+        return;
+    }
+    let buffer = PathBuf::from(std::env::args().last().expect("the buffer path"));
+    let script = std::env::var_os("DN_SCRIPT").expect("DN_SCRIPT");
+    let script = std::fs::read_to_string(script).unwrap();
+    let mut lines: Vec<String> = std::fs::read_to_string(&buffer)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    for entry in script.lines().filter(|l| !l.is_empty()) {
+        let Some((after, text)) = entry.split_once('\t') else {
+            continue;
+        };
+        let comment = format!("> {text}");
+        if after == "GLOBAL" {
+            lines.splice(0..0, [comment, String::new()]);
+        } else if let Some(at) = lines.iter().position(|l| l == after) {
+            lines.insert(at + 1, comment);
+        }
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    std::fs::write(&buffer, out).unwrap();
+}
+
+/// `$EDITOR` for the fake editor: this executable, quoted (it may have
+/// spaces in its path), started to run just `fake_editor_entry`.
+fn fake_editor_command() -> String {
+    let exe = std::env::current_exe().unwrap();
+    format!("\"{}\" --exact fake_editor_entry --nocapture", exe.display())
 }
 
 struct Env {
     dir: tempfile::TempDir,
-    editor: PathBuf,
+    editor: String,
 }
 
 impl Env {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let editor = fake_editor(dir.path());
-        Env { dir, editor }
+        Env {
+            dir,
+            editor: fake_editor_command(),
+        }
     }
 
     fn path(&self, name: &str) -> PathBuf {
@@ -75,9 +100,10 @@ impl Env {
             .map(|(a, t)| format!("{a}\t{t}\n"))
             .collect();
         std::fs::write(&script, body).unwrap();
-        Command::new(BIN)
+        Command::new(bin())
             .current_dir(cwd)
             .env("EDITOR", &self.editor)
+            .env("DN_FAKE_EDITOR", "1")
             .env("DN_SCRIPT", &script)
             .args(args)
             .output()
@@ -995,7 +1021,7 @@ fn a_reader_that_has_gone_is_not_an_error() {
     env.ok(&repo, &[("+B", "why?")], &["edit", "-f", arg, "c1..c2"]);
     let (reader, writer) = std::io::pipe().unwrap();
     drop(reader);
-    let out = Command::new(BIN)
+    let out = Command::new(bin())
         .current_dir(&repo)
         .args(["show", "-f", arg])
         .stdout(writer)
