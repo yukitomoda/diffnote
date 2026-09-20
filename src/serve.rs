@@ -219,10 +219,13 @@ impl Server {
             .get("revision")
             .and_then(|r| r.as_u64())
             .ok_or_else(|| bad("リビジョンが指定されていません"))? as usize;
-        let file = value
-            .get("file")
-            .and_then(|f| f.as_str())
-            .ok_or_else(|| bad("ファイルが指定されていません"))?;
+        // What the thread is about: lines (the default), a whole file, or the
+        // whole review.
+        let kind = value
+            .get("scope")
+            .and_then(|s| s.as_str())
+            .unwrap_or("lines");
+        let file = value.get("file").and_then(|f| f.as_str());
         let span = |side: &str| -> Result<LineSpan, Failure> {
             let part = value
                 .get(side)
@@ -240,29 +243,41 @@ impl Server {
             }
             Ok(LineSpan { start, len })
         };
-        let (base, head) = (span("base")?, span("head")?);
-        if base.len == 0 && head.len == 0 {
-            return Err(bad("行が選ばれていません"));
-        }
+        let scope = match kind {
+            "lines" => {
+                let file = file.ok_or_else(|| bad("ファイルが指定されていません"))?;
+                let (base, head) = (span("base")?, span("head")?);
+                if base.len == 0 && head.len == 0 {
+                    return Err(bad("行が選ばれていません"));
+                }
+                AnchorScope::Span {
+                    file: file.to_string(),
+                    base,
+                    head,
+                }
+            }
+            "file" => AnchorScope::File {
+                file: file
+                    .ok_or_else(|| bad("ファイルが指定されていません"))?
+                    .to_string(),
+            },
+            "global" => AnchorScope::Global,
+            _ => return Err(bad("コメントの種類が不正です")),
+        };
 
         let loaded = bundle::load(&self.review).map_err(internal)?;
-        let (rev, diff) = html::revision_at(&loaded, revision)
+        let (rev, diff, files) = html::anchor_view(&loaded, revision)
             .ok_or_else(|| Failure(404, "そのリビジョンはありません".into()))?;
-        if anchor::find_file(&diff, file).is_none() {
+        // Lines and files are those of the page's diff (of the revision, and
+        // the files it doesn't touch that threads have brought in).
+        if let AnchorScope::Span { file, .. } | AnchorScope::File { file } = &scope
+            && anchor::find_file(&diff, file).is_none()
+        {
             return Err(bad("そのファイルはこのリビジョンの差分にありません"));
         }
-        let scope = AnchorScope::Span {
-            file: file.to_string(),
-            base,
-            head,
-        };
-        let anchor = create::build_anchor(
-            &scope,
-            &diff,
-            &rev.files,
-            &rev.source.revisions(&rev.digest),
-        )
-        .map_err(internal)?;
+        let anchor =
+            create::build_anchor(&scope, &diff, &files, &rev.source.revisions(&rev.digest))
+                .map_err(internal)?;
         let id = Ulid::new();
         self.append(Event::Comment {
             id,
@@ -288,17 +303,30 @@ impl Server {
         match html::thread_patch(&loaded, id, revision) {
             Some(patch) => {
                 let row = |r: &html::RowRef| serde_json::json!({ "file": r.file, "old": r.old, "new": r.new });
-                answer["patch"] = serde_json::json!({
-                    "card_row": patch.card_row,
-                    "after": row(&patch.after),
-                    "rows": patch.rows.iter().map(|m| serde_json::json!({
-                        "row": row(&m.row),
-                        "threads": m.threads,
-                        "bars": m.bars,
-                    })).collect::<Vec<_>>(),
-                    "list_item": patch.list_item,
-                    "list_before": patch.list_before.map(|u| u.to_string()),
-                });
+                let mut out = match &patch.place {
+                    html::PatchPlace::Lines {
+                        card_row,
+                        after,
+                        rows,
+                    } => serde_json::json!({
+                        "kind": "lines",
+                        "card_row": card_row,
+                        "after": row(after),
+                        "rows": rows.iter().map(|m| serde_json::json!({
+                            "row": row(&m.row),
+                            "threads": m.threads,
+                            "bars": m.bars,
+                        })).collect::<Vec<_>>(),
+                    }),
+                    html::PatchPlace::Card { card, file } => serde_json::json!({
+                        "kind": "card",
+                        "card": card,
+                        "file": file,
+                    }),
+                };
+                out["list_item"] = serde_json::json!(patch.list_item);
+                out["list_before"] = serde_json::json!(patch.list_before.map(|u| u.to_string()));
+                answer["patch"] = out;
             }
             None => answer["reload"] = serde_json::json!(true),
         }
@@ -1227,6 +1255,224 @@ mod tests {
         assert!(!export.contains(r#" data-diffnote-old-next=""#));
         assert!(!export.contains(r#"<table class="diffnote-diff" data-diffnote-file="#));
         assert!(export.contains(r#"<table class="diffnote-diff">"#));
+    }
+
+    // ---- threads on a file or on the whole review -----------------------------
+
+    #[test]
+    fn a_file_thread_is_anchored_to_the_files_versions_and_comes_back_as_a_card() {
+        let f = fixture();
+        let reply = new_thread(
+            &f,
+            r#"{"scope":"file","revision":0,"file":"f.txt","body":"about the whole file"}"#,
+        );
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        let Anchor::File { base, head } = last_anchor(&f) else {
+            panic!("a file anchor");
+        };
+        assert_eq!(base.as_ref().unwrap().digest, digest(BASE));
+        assert_eq!(head.as_ref().unwrap().digest, digest(HEAD));
+        assert_eq!(head.unwrap().file, "f.txt");
+        let answer = json(&reply);
+        let patch = &answer["patch"];
+        assert_eq!(patch["kind"], "card");
+        assert_eq!(patch["file"], "f.txt");
+        let card = patch["card"].as_str().unwrap();
+        let id = answer["thread"].as_str().unwrap();
+        assert!(
+            card.contains(&format!(r#"id="r0-thread-{id}""#))
+                && card.contains("about the whole file"),
+            "{card}"
+        );
+        // The location is just the path; the list has it after the line thread?
+        // No: file threads come before the lines of their file.
+        assert!(card.contains(r#"data-diffnote-copy="f.txt""#), "{card}");
+        assert_eq!(
+            patch["list_before"].as_str(),
+            Some(f.thread.to_string().as_str())
+        );
+    }
+
+    #[test]
+    fn a_review_wide_thread_has_no_file_and_points_at_the_revisions() {
+        let f = fixture();
+        let reply = new_thread(&f, r#"{"scope":"global","revision":0,"body":"overall"}"#);
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        let Anchor::Global { base, head } = last_anchor(&f) else {
+            panic!("a global anchor");
+        };
+        // A directory review: no base, the head is the revision's own digest.
+        assert_eq!(base, None);
+        assert_eq!(head, Some(digest("revision")));
+        let answer = json(&reply);
+        assert_eq!(answer["patch"]["kind"], "card");
+        assert!(answer["patch"]["file"].is_null());
+        // Review-wide threads lead the list.
+        assert_eq!(
+            answer["patch"]["list_before"].as_str(),
+            Some(f.thread.to_string().as_str())
+        );
+        let card = answer["patch"]["card"].as_str().unwrap();
+        assert!(
+            !card.contains("data-diffnote-copy"),
+            "no location to copy: {card}"
+        );
+    }
+
+    #[test]
+    fn a_file_or_review_wide_thread_can_be_replied_to_like_any_other() {
+        let f = fixture();
+        let id = json(&new_thread(
+            &f,
+            r#"{"scope":"global","revision":0,"body":"overall"}"#,
+        ))["thread"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let reply = f.post(
+            &format!("/api/threads/{id}/replies"),
+            r#"{"body":"agreed"}"#,
+        );
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        assert!(
+            json(&reply)["views"][0]["card"]
+                .as_str()
+                .unwrap()
+                .contains("agreed")
+        );
+    }
+
+    #[test]
+    fn a_bad_scope_or_a_file_outside_the_diff_is_refused() {
+        let f = fixture();
+        for body in [
+            r#"{"scope":"file","revision":0,"body":"x"}"#,
+            r#"{"scope":"file","revision":0,"file":"nope.txt","body":"x"}"#,
+            r#"{"scope":"file","revision":0,"file":"f.txt","body":"  "}"#,
+            r#"{"scope":"weird","revision":0,"body":"x"}"#,
+            r#"{"scope":"global","body":"x"}"#,
+        ] {
+            assert_eq!(new_thread(&f, body).status, 400, "{body}");
+        }
+        assert_eq!(
+            new_thread(&f, r#"{"scope":"global","revision":7,"body":"x"}"#).status,
+            404
+        );
+        assert_eq!(f.events().len(), 3, "nothing was written");
+    }
+
+    #[test]
+    fn the_served_page_has_a_place_and_a_button_for_each_kind_of_thread() {
+        let f = fixture();
+        let page = text(&f.request("GET", "/", &[], ""));
+        // The review-wide section is there even with no such thread yet.
+        assert!(
+            page.contains(r#"<section class="diffnote-global-comments" data-diffnote-global>"#),
+            "{page}"
+        );
+        assert!(page.contains(r#"data-diffnote-add="global""#));
+        // The file: named, with a button in its header and a place for cards.
+        assert!(
+            page.contains(
+                r#"<section class="diffnote-file" id="r0-file-f-txt" data-diffnote-file="f.txt">"#
+            ),
+            "{page}"
+        );
+        assert!(page.contains(r#"data-diffnote-add="file""#));
+        assert!(page.contains("data-diffnote-cards"));
+        // The static export has none of it.
+        let export = html::render_bundle(&bundle::load(&f.path).unwrap()).unwrap();
+        assert!(!export.contains(r#"<button type="button" class="diffnote-mini""#));
+        assert!(!export.contains(r#"data-diffnote-global>"#));
+        assert!(!export.contains(r#"<div data-diffnote-cards>"#));
+    }
+
+    /// The fixture plus a file the diff doesn't touch (`g.txt`, kept in the
+    /// bundle) with a thread on it, so the page shows that file as context.
+    fn fixture_with_an_untouched_file() -> (Fixture, String) {
+        use crate::model::TreeFile;
+        let f = fixture();
+        let g = "one\ntwo\nthree\n";
+        let loaded = bundle::load(&f.path).unwrap();
+        let revision = loaded.revisions().next().unwrap().id;
+        let mut events = loaded.events.clone();
+        events.push(Event::Pin {
+            revision,
+            files: vec![TreeFile {
+                path: "g.txt".into(),
+                digest: digest(g),
+            }],
+        });
+        events.push(Event::Comment {
+            id: Ulid::new(),
+            parent: None,
+            author: "r@example.com".into(),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            anchor: Some(Anchor::Span {
+                base: None,
+                head: Some(LineRange {
+                    file: "g.txt".into(),
+                    digest: digest(g),
+                    start: 2,
+                    len: 1,
+                }),
+            }),
+            body: "on g".into(),
+        });
+        let more = Additions {
+            diff: None,
+            blobs: vec![g.as_bytes().to_vec()],
+        };
+        bundle::save(&f.path, &loaded, &events, &more).unwrap();
+        (f, g.to_string())
+    }
+
+    #[test]
+    fn a_file_the_diff_does_not_touch_can_be_commented_on_when_the_page_shows_it() {
+        let (f, g) = fixture_with_an_untouched_file();
+        // The page shows it (as context, for the thread it has), with a button.
+        let page = text(&f.request("GET", "/", &[], ""));
+        assert!(page.contains(r#"data-diffnote-file="g.txt""#), "{page}");
+        // A file thread: the file's one version on both sides.
+        let reply = new_thread(
+            &f,
+            r#"{"scope":"file","revision":0,"file":"g.txt","body":"about g"}"#,
+        );
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        let Anchor::File { base, head } = last_anchor(&f) else {
+            panic!("a file anchor");
+        };
+        for side in [base, head] {
+            let side = side.unwrap();
+            assert_eq!(
+                (side.file.as_str(), side.digest.as_str()),
+                ("g.txt", digest(&g).as_str())
+            );
+        }
+        // A line thread on a row of the context.
+        let reply = new_thread(
+            &f,
+            r#"{"revision":0,"file":"g.txt","base":{"start":1,"len":1},"head":{"start":1,"len":1},"body":"line 1 of g"}"#,
+        );
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        let Anchor::Span { head, .. } = last_anchor(&f) else {
+            panic!("a span");
+        };
+        let head = head.unwrap();
+        assert_eq!(
+            (head.start, head.len, head.digest.as_str()),
+            (1, 1, digest(&g).as_str())
+        );
+        assert_eq!(json(&reply)["patch"]["kind"], "lines");
+        // A file that is neither in the diff nor shown is still refused.
+        assert_eq!(
+            new_thread(
+                &f,
+                r#"{"scope":"file","revision":0,"file":"h.txt","body":"x"}"#
+            )
+            .status,
+            400
+        );
     }
 
     // ---- over a real socket ----------------------------------------------

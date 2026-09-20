@@ -181,13 +181,11 @@ pub struct RowMark {
     pub bars: String,
 }
 
-/// What the page needs to show a new thread on lines of the view it is in,
-/// without drawing the view again: the card as a table row to put after a
-/// row, the rows its range now covers, and its place in the thread list.
+/// What the page needs to show a new thread in the view it is in, without
+/// drawing the view again: the card, where it goes, and its place in the
+/// thread list.
 pub struct ThreadPatch {
-    pub card_row: String,
-    pub after: RowRef,
-    pub rows: Vec<RowMark>,
+    pub place: PatchPlace,
     pub list_item: String,
     /// The thread the new entry goes in front of (`None`: at the end).
     pub list_before: Option<Ulid>,
@@ -195,8 +193,22 @@ pub struct ThreadPatch {
     pub all: usize,
 }
 
+pub enum PatchPlace {
+    /// On lines of a diff table: the card as a table row to put after a row,
+    /// and the rows its range now covers.
+    Lines {
+        card_row: String,
+        after: RowRef,
+        rows: Vec<RowMark>,
+    },
+    /// Outside the tables: a review-wide thread (`file` is `None`) or one of
+    /// a file, as its card.
+    Card { card: String, file: Option<String> },
+}
+
 /// The patch for thread `id` in view `revision`, or `None` if the thread is
-/// not drawn on lines there (the whole view is then drawn again instead).
+/// drawn neither on lines nor as a review-wide or file card there (the whole
+/// view is then drawn again instead).
 pub fn thread_patch(
     loaded: &crate::bundle::Loaded,
     id: Ulid,
@@ -209,6 +221,33 @@ pub fn thread_patch(
     let thread = threads.iter().find(|t| t.root_id == id)?;
     let blobs = loaded.blobs();
     let placed = place(&threads, view, &blobs, true);
+
+    let ordered = ordered_threads(&threads, &placed.file_order, &placed.marks);
+    let at = ordered.iter().position(|t| t.root_id == id)?;
+    let finish = |place: PatchPlace| ThreadPatch {
+        place,
+        list_item: prefix_ids(&thread_list_item(thread, &placed.marks), revision),
+        list_before: ordered.get(at + 1).map(|t| t.root_id),
+        open: threads.iter().filter(|t| !t.resolved).count(),
+        all: threads.len(),
+    };
+    // A review-wide or a file's thread is a card outside the tables.
+    if placed.global.iter().any(|t| t.root_id == id) {
+        return Some(finish(PatchPlace::Card {
+            card: prefix_ids(&render_thread_html(thread, &placed.marks), revision),
+            file: None,
+        }));
+    }
+    if let Some((file, _)) = placed
+        .by_file
+        .iter()
+        .find(|(_, ts)| ts.iter().any(|t| t.root_id == id))
+    {
+        return Some(finish(PatchPlace::Card {
+            card: prefix_ids(&render_thread_html(thread, &placed.marks), revision),
+            file: Some(file.clone()),
+        }));
+    }
 
     let ((file, side, line), _) = placed
         .by_line
@@ -254,17 +293,11 @@ pub fn thread_patch(
         rows.push(RowMark { row, threads, bars });
     }
 
-    let ordered = ordered_threads(&threads, &placed.file_order, &placed.marks);
-    let at = ordered.iter().position(|t| t.root_id == id)?;
-    Some(ThreadPatch {
+    Some(finish(PatchPlace::Lines {
         card_row: prefix_ids(&thread_row(thread, &placed.marks), revision),
         after: row_ref(file, *side, *line),
         rows,
-        list_item: prefix_ids(&thread_list_item(thread, &placed.marks), revision),
-        list_before: ordered.get(at + 1).map(|t| t.root_id),
-        open: threads.iter().filter(|t| !t.resolved).count(),
-        all: threads.len(),
-    })
+    }))
 }
 
 /// The (old, new) line numbers of the row of `file` that has line `line` on
@@ -307,14 +340,25 @@ pub fn render_view_inner(loaded: &crate::bundle::Loaded, revision: usize) -> Opt
     ))
 }
 
-/// The revision shown as view `index`, with its parsed diff.
-pub fn revision_at(
+/// What a thread written in view `index` is anchored against: the revision,
+/// the diff as the page shows it (with the context that files the diff
+/// doesn't touch appear in) and the digests of the files in it.
+pub fn anchor_view(
     loaded: &crate::bundle::Loaded,
     index: usize,
-) -> Option<(crate::model::Revision, UnifiedDiff)> {
+) -> Option<(
+    crate::model::Revision,
+    UnifiedDiff,
+    Vec<crate::model::FileDigest>,
+)> {
     let shown = shown_revisions(loaded).ok()?;
-    let s = shown.into_iter().nth(index)?;
-    Some((s.revision.clone(), s.diff))
+    let views = revision_views(&shown);
+    let view = views.get(index)?;
+    let threads = build_threads(&loaded.events);
+    let placed = place(&threads, view, &loaded.blobs(), true);
+    let mut files = view.files.to_vec();
+    files.extend(placed.synthetic_files);
+    Some((shown[index].revision.clone(), placed.diff, files))
 }
 
 /// How many revision views the page has.
@@ -415,6 +459,9 @@ pub fn render_with(
 struct Placed<'a> {
     /// The view's diff plus context around threads it doesn't show.
     diff: UnifiedDiff,
+    /// The files that context adds (files the diff doesn't touch), as
+    /// unchanged files.
+    synthetic_files: Vec<crate::model::FileDigest>,
     global: Vec<&'a Thread>,
     by_file: HashMap<String, Vec<&'a Thread>>,
     /// Where a thread's card is drawn: keyed by the *last* line of its range.
@@ -445,7 +492,7 @@ fn place<'a>(
         .map(|t| anchor::resolve_placement(&t.anchor, view.diff, &versions, blobs))
         .collect();
     let wants: Vec<expand::Want> = placements.iter().filter_map(expand::want_of).collect();
-    let (expanded, _) = expand::expand(view.diff, &wants, &versions, blobs);
+    let (expanded, synthetic) = expand::expand(view.diff, &wants, &versions, blobs);
     let diff = &expanded;
     let mut global: Vec<&Thread> = Vec::new();
     let mut by_file: HashMap<String, Vec<&Thread>> = HashMap::new();
@@ -553,7 +600,22 @@ fn place<'a>(
         }
     }
 
+    // What a thread on a file the diff doesn't touch is anchored to: that
+    // file's one version, on both sides.
+    let synthetic_files = synthetic
+        .iter()
+        .filter_map(|p| {
+            let digest = versions.head(p)?.to_string();
+            Some(crate::model::FileDigest {
+                old_path: Some(p.clone()),
+                new_path: Some(p.clone()),
+                old: Some(digest.clone()),
+                new: Some(digest),
+            })
+        })
+        .collect();
     Placed {
+        synthetic_files,
         diff: expanded,
         global,
         by_file,
@@ -575,6 +637,7 @@ fn render_view(
 ) -> String {
     let Placed {
         diff,
+        synthetic_files: _,
         global,
         by_file,
         by_line,
@@ -605,7 +668,15 @@ fn render_view(
     body.push_str(&render_thread_list(threads, &file_order, &marks));
     body.push_str("</aside>\n");
 
-    if !global.is_empty() {
+    if marks.interactive {
+        // Always there on the served page, for a review-wide comment to be
+        // added to (its button, and where the cards go).
+        body.push_str(r#"<section class="diffnote-global-comments" data-diffnote-global><div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global">レビュー全体にコメントする</button></div><div data-diffnote-cards>"#);
+        for t in &global {
+            body.push_str(&render_thread_html(t, &marks));
+        }
+        body.push_str("</div></section>\n");
+    } else if !global.is_empty() {
         body.push_str(r#"<section class="diffnote-global-comments">"#);
         for t in &global {
             body.push_str(&render_thread_html(t, &marks));
@@ -668,8 +739,20 @@ fn render_file(
     let is_binary = file_diff.is_some_and(|f| f.is_binary);
     let is_rename = file_diff.is_some_and(|f| f.is_rename);
 
+    // On the served page: which file the section is of, and a button to
+    // comment on the file (one of the diff, so it has versions to point at).
+    let file_attr = if marks.interactive {
+        format!(r#" data-diffnote-file="{}""#, escape_html(key))
+    } else {
+        String::new()
+    };
+    let add = if marks.interactive && file_diff.is_some() {
+        r#"<button type="button" class="diffnote-mini" data-diffnote-add="file" title="このファイルにコメントする">コメント</button>"#
+    } else {
+        ""
+    };
     out.push_str(&format!(
-        r#"<section class="diffnote-file" id="file-{id}"><details{open_attr}><summary><h2>{name}{binary}{rename}</h2>{copy}</summary>"#,
+        r#"<section class="diffnote-file" id="file-{id}"{file_attr}><details{open_attr}><summary><h2>{name}{binary}{rename}</h2>{copy}{add}</summary>"#,
         id = html_id(key),
         name = escape_html(key),
         copy = copy_button(key, "パスをコピー"),
@@ -677,8 +760,14 @@ fn render_file(
         rename = if is_rename { " (名前変更)" } else { "" },
     ));
 
+    if marks.interactive {
+        out.push_str("<div data-diffnote-cards>");
+    }
     for t in file_threads {
         out.push_str(&render_thread_html(t, marks));
+    }
+    if marks.interactive {
+        out.push_str("</div>");
     }
 
     match file_diff {
@@ -1237,8 +1326,12 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-threadlist__where { font-family: var(--diffnote-font-mono); font-size: 12px; font-weight: 600; word-break: break-all; }
 .diffnote-threadlist__state { margin-left: 6px; font-size: 11px; color: var(--diffnote-color-muted); border: 1px solid var(--diffnote-color-border); border-radius: 1em; padding: 0 6px; white-space: nowrap; }
 .diffnote-threadlist__preview { display: block; margin-left: 16px; color: var(--diffnote-color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.diffnote-copy { margin-left: 8px; padding: 0 7px; font: inherit; font-size: 11px; font-weight: 400; line-height: 18px; color: var(--diffnote-color-muted); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 4px; cursor: pointer; vertical-align: baseline; }
-.diffnote-copy:hover { color: var(--diffnote-color-fg); border-color: var(--diffnote-color-muted); }
+.diffnote-add { padding: 8px 12px 0; }
+.diffnote-compose-wrap { padding: 8px 12px; }
+.diffnote-global-comments .diffnote-add { padding: 0; }
+.diffnote-global-comments .diffnote-compose-wrap { padding: 8px 0 0; }
+.diffnote-copy, .diffnote-mini { margin-left: 8px; padding: 0 7px; font: inherit; font-size: 11px; font-weight: 400; line-height: 18px; color: var(--diffnote-color-muted); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 4px; cursor: pointer; vertical-align: baseline; }
+.diffnote-copy:hover, .diffnote-mini:hover { color: var(--diffnote-color-fg); border-color: var(--diffnote-color-muted); }
 .diffnote-copy.is-done { color: #1a7f37; border-color: #1a7f37; }
 body[data-diffnote-api] .diffnote-line__gutter-old, body[data-diffnote-api] .diffnote-line__gutter-new { cursor: pointer; }
 body[data-diffnote-api] .diffnote-line__gutter-new { position: relative; }
@@ -1712,11 +1805,13 @@ const SCRIPT: &str = r#"
       composer = null;
       unchoose();
       sel = null;
+      slice.call(document.querySelectorAll('.diffnote-compose-wrap')).forEach(function (w) { w.remove(); });
     };
 
     var openComposer = function () {
       var draft = composer ? composer.querySelector('textarea').value : '';
       if (composer) composer.remove();
+      slice.call(document.querySelectorAll('.diffnote-compose-wrap')).forEach(function (w) { w.remove(); });
       var last = sel.rows[sel.rows.length - 1];
       var tr = document.createElement('tr');
       tr.className = 'diffnote-composer-row';
@@ -1767,10 +1862,25 @@ const SCRIPT: &str = r#"
     var sendThread = function (form) {
       var box = form.querySelector('textarea');
       var text = box.value.trim();
-      if (!text || form.classList.contains('is-sending') || !sel) return;
-      var c = counters();
-      var table = sel.table;
-      var revision = +table.closest('.diffnote-revision').getAttribute('data-diffnote-revision');
+      // A box for a file or the whole review says so; the others are for lines.
+      var scope = form.getAttribute('data-diffnote-scope');
+      if (!text || form.classList.contains('is-sending') || (!scope && !sel)) return;
+      var request;
+      if (scope) {
+        request = {
+          scope: scope, body: text,
+          revision: +form.getAttribute('data-diffnote-revision'),
+          file: form.getAttribute('data-diffnote-target') || undefined
+        };
+      } else {
+        var c = counters();
+        var table = sel.table;
+        request = {
+          revision: +table.closest('.diffnote-revision').getAttribute('data-diffnote-revision'),
+          file: table.getAttribute('data-diffnote-file'),
+          base: c.base, head: c.head, body: text
+        };
+      }
       form.classList.add('is-sending');
       box.disabled = true;
       var cell = form.parentNode;
@@ -1780,10 +1890,7 @@ const SCRIPT: &str = r#"
       pending.innerHTML = '<p class="diffnote-comment__author">保存中…</p><div class="diffnote-comment__body"></div>';
       pending.querySelector('.diffnote-comment__body').textContent = text;
       cell.appendChild(pending);
-      post('/api/threads', {
-        revision: revision, file: table.getAttribute('data-diffnote-file'),
-        base: c.base, head: c.head, body: text
-      }).then(function (res) {
+      post('/api/threads', request).then(function (res) {
         pending.remove();
         form.style.display = '';
         form.classList.remove('is-sending');
@@ -1822,6 +1929,16 @@ const SCRIPT: &str = r#"
 
     // The new thread is put into the view it was written in; the other views
     // are marked stale and drawn again when they are opened.
+    var insertListItem = function (section, p) {
+      var ol = section.querySelector('.diffnote-threadlist ol');
+      if (!ol) return;
+      var tpl = document.createElement('template');
+      tpl.innerHTML = p.list_item.trim();
+      var item = tpl.content.firstElementChild;
+      var before = p.list_before && ol.querySelector('a[data-diffnote-jump=' + JSON.stringify(p.list_before) + ']');
+      ol.insertBefore(item, before ? before.parentElement : null);
+    };
+
     var applyNewThread = function (res) {
       var section = document.getElementById('rev-' + res.revision);
       views.forEach(function (v, k) { if (k !== res.revision) v.setAttribute('data-stale', ''); });
@@ -1829,6 +1946,25 @@ const SCRIPT: &str = r#"
       if (res.reload || !res.patch) { refreshView(res.revision); return; }
       if (active) clear();
       var p = res.patch;
+      if (p.kind === 'card') {
+        // A review-wide or a file's thread: a card at the end of its place.
+        var owner = p.file === null || p.file === undefined
+          ? section.querySelector('[data-diffnote-global]')
+          : slice.call(section.querySelectorAll('section.diffnote-file')).filter(function (s) {
+              return s.getAttribute('data-diffnote-file') === p.file;
+            })[0];
+        var cards = owner && owner.querySelector('[data-diffnote-cards]');
+        if (!cards) { refreshView(res.revision); return; }
+        var holder = document.createElement('template');
+        holder.innerHTML = p.card.trim();
+        var fresh = holder.content.firstElementChild;
+        cards.appendChild(fresh);
+        var details = fresh.closest('details.diffnote-file, .diffnote-file > details');
+        if (details) details.open = true;
+        insertListItem(section, p);
+        fresh.scrollIntoView({ block: 'nearest' });
+        return;
+      }
       var table = tableOf(section, p.after.file);
       var after = table && rowAt(table, p.after);
       if (!after) { refreshView(res.revision); return; }
@@ -1844,14 +1980,7 @@ const SCRIPT: &str = r#"
       while (at && at.classList.contains('diffnote-thread-row')) { at = at.nextElementSibling; }
       var row = parseRow(p.card_row);
       after.parentNode.insertBefore(row, at);
-      var ol = section.querySelector('.diffnote-threadlist ol');
-      if (ol) {
-        var tpl = document.createElement('template');
-        tpl.innerHTML = p.list_item.trim();
-        var item = tpl.content.firstElementChild;
-        var before = p.list_before && ol.querySelector('a[data-diffnote-jump=' + JSON.stringify(p.list_before) + ']');
-        ol.insertBefore(item, before ? before.parentElement : null);
-      }
+      insertListItem(section, p);
       var card = row.querySelector('.diffnote-thread');
       if (card) {
         pinned = card.getAttribute('data-diffnote-thread-id');
@@ -1869,11 +1998,47 @@ const SCRIPT: &str = r#"
     document.addEventListener('keydown', function (e) {
       var form = e.target.closest ? e.target.closest('.diffnote-compose') : null;
       if (form && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendThread(form); }
-      if (e.key === 'Escape' && composer) closeComposer();
+      if (e.key === 'Escape' && (composer || document.querySelector('.diffnote-compose-wrap'))) closeComposer();
     });
     document.addEventListener('click', function (e) {
       if (e.target.closest && e.target.closest('[data-diffnote-cancel]')) closeComposer();
     });
+
+    // "Comment on this file" / "on the whole review": a box at the top of the
+    // file (opened if it was folded) or of the page.
+    var openScopeComposer = function (button) {
+      var scope = button.getAttribute('data-diffnote-add');
+      var section = button.closest('.diffnote-revision');
+      var owner = scope === 'global' ? button.closest('[data-diffnote-global]') : button.closest('section.diffnote-file');
+      var file = scope === 'file' ? owner.getAttribute('data-diffnote-file') : '';
+      closeComposer();
+      var wrap = document.createElement('div');
+      wrap.className = 'diffnote-compose-wrap';
+      wrap.innerHTML = '<form class="diffnote-compose"><div class="diffnote-compose__where"></div>' +
+        '<textarea rows="3" placeholder="コメントを書く(Ctrl+Enter で送信)"></textarea>' +
+        '<div class="diffnote-reply__buttons"><button type="submit" class="diffnote-button diffnote-button--primary">コメントする</button>' +
+        '<button type="button" class="diffnote-button" data-diffnote-cancel>キャンセル</button></div></form>';
+      var form = wrap.querySelector('form');
+      form.setAttribute('data-diffnote-scope', scope);
+      form.setAttribute('data-diffnote-revision', section.getAttribute('data-diffnote-revision'));
+      if (file) form.setAttribute('data-diffnote-target', file);
+      wrap.querySelector('.diffnote-compose__where').textContent = scope === 'global' ? 'レビュー全体へのコメント' : file + ' へのコメント';
+      if (scope === 'global') {
+        button.parentElement.after(wrap);
+      } else {
+        var details = owner.querySelector('details');
+        details.open = true;
+        details.querySelector('summary').after(wrap);
+      }
+      wrap.querySelector('textarea').focus();
+    };
+    document.addEventListener('click', function (e) {
+      var button = e.target.closest ? e.target.closest('[data-diffnote-add]') : null;
+      if (!button) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openScopeComposer(button);
+    }, true);
   }
 
   // --- The file list follows what is on screen ---------------------------
