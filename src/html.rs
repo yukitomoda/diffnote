@@ -109,8 +109,12 @@ pub fn render(
     let theme_set = ThemeSet::load_defaults();
     let theme = &theme_set.themes["InspiredGitHub"];
 
+    let title = crate::review::title(events);
+    let heading = escape_html(title.unwrap_or(DEFAULT_TITLE));
     let mut body = String::new();
-    body.push_str(r#"<div class="diffnote-topbar"><header class="diffnote-summary"><h1>diffnote レビュー</h1>"#);
+    body.push_str(&format!(
+        r#"<div class="diffnote-topbar"><header class="diffnote-summary"><h1>{heading}</h1>"#
+    ));
     body.push_str(&format!(
         "<p>スレッド {} 件(解決済み {} 件)</p></header>\n",
         threads.len(),
@@ -140,7 +144,7 @@ pub fn render(
             escape_html(&view.label)
         ));
     }
-    wrap_document(&body)
+    wrap_document(&body, title.unwrap_or(DEFAULT_TITLE))
 }
 
 fn render_view(
@@ -558,9 +562,9 @@ fn render_thread_html(t: &Thread, marks: &Marks) -> String {
     if marks.absent.contains_key(&t.root_id) {
         out.push_str(&render_snippet(marks.was.get(&t.root_id), "diffnote-deleted__snippet"));
     }
-    out.push_str(&render_comment_article(&t.author, &t.body));
+    out.push_str(&render_comment_article(&t.author, t.created_at, &t.body));
     for r in &t.replies {
-        out.push_str(&render_comment_article(&r.author, &r.body));
+        out.push_str(&render_comment_article(&r.author, r.created_at, &r.body));
     }
     out.push_str("</details>");
     out
@@ -588,11 +592,29 @@ fn render_outdated(t: &Thread, marks: &Marks) -> String {
     out
 }
 
-fn render_comment_article(author: &str, body: &str) -> String {
+fn render_comment_article(author: &str, created_at: time::OffsetDateTime, body: &str) -> String {
     format!(
-        r#"<article class="diffnote-comment"><p class="diffnote-comment__author">{}</p><div class="diffnote-comment__body">{}</div></article>"#,
+        r#"<article class="diffnote-comment"><p class="diffnote-comment__author">{}{}</p><div class="diffnote-comment__body">{}</div></article>"#,
         escape_html(author),
+        time_tag(created_at),
         markdown_to_html(body),
+    )
+}
+
+/// The moment a comment was written, small and easy to overlook. Drawn in UTC
+/// so it is right without a script; the script rewrites it to the viewer's
+/// local time, keeping the exact time as a tooltip.
+fn time_tag(at: time::OffsetDateTime) -> String {
+    use time::format_description::well_known::Rfc3339;
+    let utc = at.to_offset(time::UtcOffset::UTC);
+    format!(
+        r#"<time class="diffnote-comment__time" datetime="{iso}" title="{iso}">{y:04}-{mo:02}-{d:02} {h:02}:{mi:02} UTC</time>"#,
+        iso = utc.format(&Rfc3339).unwrap_or_default(),
+        y = utc.year(),
+        mo = u8::from(utc.month()),
+        d = utc.day(),
+        h = utc.hour(),
+        mi = utc.minute(),
     )
 }
 
@@ -646,14 +668,17 @@ fn escape_html(s: &str) -> String {
     out
 }
 
-fn wrap_document(body: &str) -> String {
+/// What the page is called when the review has no title.
+const DEFAULT_TITLE: &str = "diffnote レビュー";
+
+fn wrap_document(body: &str, title: &str) -> String {
     format!(
         r##"<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>diffnote レビュー</title>
+<title>{title}</title>
 <style>
 {css}
 </style>
@@ -668,6 +693,7 @@ fn wrap_document(body: &str) -> String {
 </body>
 </html>
 "##,
+        title = escape_html(title),
         css = STYLE,
         js = SCRIPT,
     )
@@ -766,6 +792,7 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-comment { border-top: 1px solid var(--diffnote-color-border); padding: 6px 0; }
 .diffnote-comment:first-of-type { border-top: none; }
 .diffnote-comment__author { font-weight: 600; margin: 0; font-size: 12.5px; color: var(--diffnote-color-muted); }
+.diffnote-comment__time { margin-left: 0.7em; font-weight: 400; font-size: 11px; color: #8b949e; white-space: nowrap; }
 .diffnote-comment__body { font-size: 14px; }
 .diffnote-comment__body p { margin: 2px 0; }
 .diffnote-comment__body pre { overflow-x: auto; background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; padding: 8px 12px; font-family: var(--diffnote-font-mono); font-size: 12.5px; }
@@ -907,6 +934,16 @@ const SCRIPT: &str = r#"
       a.addEventListener('click', function (e) { e.preventDefault(); show(k); });
     });
   }
+
+  // --- Times in the viewer's own time zone -------------------------------
+  function two(n) { return (n < 10 ? '0' : '') + n; }
+  slice.call(document.querySelectorAll('time[datetime]')).forEach(function (t) {
+    var d = new Date(t.getAttribute('datetime'));
+    if (isNaN(d.getTime())) return;
+    t.textContent = d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate()) +
+      ' ' + two(d.getHours()) + ':' + two(d.getMinutes());
+    t.title = d.toLocaleString();
+  });
 
   // --- The file list follows what is on screen ---------------------------
   if ('IntersectionObserver' in window) {
@@ -1274,6 +1311,85 @@ mod tests {
         let s = scenario();
         assert!(s.html.contains(r#"style="--diffnote-bars: inset 3px 0 0 0 #"#));
         assert!(!s.html.contains(r#"style="box-shadow"#));
+    }
+
+    /// One revision, one comment made at 2026-09-20 09:19:43 UTC, and a reply
+    /// at 2026-09-21 00:05 UTC, plus the given extra events.
+    fn dated(extra: Vec<Event>) -> String {
+        let id = Ulid::new();
+        let at = |secs| OffsetDateTime::from_unix_timestamp(secs).unwrap();
+        let mut events = vec![
+            Event::Comment {
+                id,
+                parent: None,
+                author: "a@example.com".into(),
+                created_at: at(1_789_895_983),
+                anchor: Some(Anchor::Span {
+                    base: Some(range(2, 1, R1_BASE)),
+                    head: Some(range(2, 1, R1_HEAD)),
+                }),
+                body: "first".into(),
+            },
+            Event::Comment {
+                id: Ulid::new(),
+                parent: Some(id),
+                author: "b@example.com".into(),
+                created_at: at(1_789_949_100),
+                anchor: None,
+                body: "second".into(),
+            },
+        ];
+        events.extend(extra);
+        let (_dir, loaded) = bundle_of(&[(R1_BASE, R1_HEAD, files_source(None))], events);
+        render_bundle(&loaded).unwrap()
+    }
+
+    fn title_event(title: &str) -> Event {
+        Event::Title {
+            title: title.into(),
+            author: "a@example.com".into(),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn without_a_title_the_page_has_the_default_heading() {
+        let html = dated(Vec::new());
+        assert!(html.contains("<h1>diffnote レビュー</h1>"), "{html}");
+        assert!(html.contains("<title>diffnote レビュー</title>"));
+    }
+
+    #[test]
+    fn the_title_takes_the_headings_place_and_is_escaped() {
+        let html = dated(vec![title_event("ログイン改修 <v2> & co")]);
+        assert!(html.contains("<h1>ログイン改修 &lt;v2&gt; &amp; co</h1>"), "{html}");
+        assert!(html.contains("<title>ログイン改修 &lt;v2&gt; &amp; co</title>"));
+        assert!(!html.contains("<h1>diffnote レビュー</h1>"));
+    }
+
+    #[test]
+    fn the_last_title_wins_and_an_empty_one_takes_it_away() {
+        let html = dated(vec![title_event("first"), title_event("second")]);
+        assert!(html.contains("<h1>second</h1>"));
+        let html = dated(vec![title_event("first"), title_event("  ")]);
+        assert!(html.contains("<h1>diffnote レビュー</h1>"));
+    }
+
+    #[test]
+    fn every_comment_and_reply_shows_when_it_was_written_small() {
+        let html = dated(Vec::new());
+        // Root and reply each get one, in UTC (the script localizes them), with
+        // the exact instant in `datetime`.
+        assert!(
+            html.contains(r#"<time class="diffnote-comment__time" datetime="2026-09-20T09:19:43Z" title="2026-09-20T09:19:43Z">2026-09-20 09:19 UTC</time>"#),
+            "{html}"
+        );
+        assert!(html.contains("2026-09-21 00:05 UTC"), "{html}");
+        assert_eq!(html.matches("<time ").count(), 2);
+        // Quiet: a small, gray, unbold style.
+        let style = &html[html.find(".diffnote-comment__time {").unwrap()..];
+        let rule = &style[..style.find('}').unwrap()];
+        assert!(rule.contains("font-size: 11px") && rule.contains("color: #8b949e"), "{rule}");
     }
 
     #[test]

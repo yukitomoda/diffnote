@@ -37,6 +37,32 @@ pub struct Reply {
     pub body: String,
 }
 
+/// The review's title: that of the last `Title` event, if it isn't empty.
+pub fn title(events: &[Event]) -> Option<&str> {
+    events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            Event::Title { title, .. } => Some(title.trim()),
+            _ => None,
+        })
+        .filter(|t| !t.is_empty())
+}
+
+/// The `Title` event that makes `wanted` the title, if it isn't already.
+/// An empty `wanted` takes the title away.
+pub fn title_change(events: &[Event], wanted: &str, author: &str) -> Option<Event> {
+    let wanted = wanted.trim();
+    if title(events).unwrap_or("") == wanted {
+        return None;
+    }
+    Some(Event::Title {
+        title: wanted.to_string(),
+        author: author.to_string(),
+        created_at: time::OffsetDateTime::now_utc(),
+    })
+}
+
 /// Groups a flat event stream into threads, in the order their root
 /// comment first appeared. Replies/resolve/reopen/reanchor events for a
 /// thread that was never actually created (a malformed file) are silently
@@ -187,5 +213,48 @@ mod tests {
         std::fs::write(&path, content).unwrap();
         let err = load(&path).unwrap_err();
         assert!(err.to_string().contains(":2:"));
+    }
+
+    fn title_event(title: &str) -> Event {
+        Event::Title {
+            title: title.to_string(),
+            author: "a@example.com".to_string(),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn the_title_is_the_last_non_empty_one() {
+        assert_eq!(title(&[]), None);
+        assert_eq!(title(&[title_event("a")]), Some("a"));
+        assert_eq!(title(&[title_event("a"), title_event(" b ")]), Some("b"));
+        assert_eq!(title(&[title_event("a"), title_event("")]), None, "cleared");
+        assert_eq!(title(&[title_event("a"), title_event(""), title_event("c")]), Some("c"));
+    }
+
+    #[test]
+    fn a_title_event_is_only_made_when_the_title_would_change() {
+        let none: Vec<Event> = Vec::new();
+        assert!(title_change(&none, "", "me").is_none(), "nothing to clear");
+        assert!(title_change(&none, "  ", "me").is_none());
+        let Some(Event::Title { title: t, author, .. }) = title_change(&none, " new ", "me") else {
+            panic!("a title should be set");
+        };
+        assert_eq!((t.as_str(), author.as_str()), ("new", "me"));
+        let has = [title_event("new")];
+        assert!(title_change(&has, "new", "me").is_none(), "same title");
+        assert!(title_change(&has, "other", "me").is_some());
+        let Some(Event::Title { title: t, .. }) = title_change(&has, "", "me") else {
+            panic!("clearing is an event too");
+        };
+        assert_eq!(t, "");
+    }
+
+    #[test]
+    fn a_title_event_round_trips_as_jsonl() {
+        let line = serde_json::to_string(&title_event("ログイン改修")).unwrap();
+        assert!(line.contains(r#""kind":"title""#), "{line}");
+        let back: Event = serde_json::from_str(&line).unwrap();
+        assert_eq!(title(&[back]), Some("ログイン改修"));
     }
 }

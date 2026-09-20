@@ -787,3 +787,118 @@ fn a_thread_survives_a_second_review_from_the_same_base_with_a_longer_range() {
     assert!(!summary.contains("削除された行"), "{summary}");
     assert!(!summary.contains("まだない行") && !summary.contains("この版にない行"), "{summary}");
 }
+
+fn titles(review: &Path) -> Vec<String> {
+    bundle::load(review)
+        .unwrap()
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Title { title, .. } => Some(title.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn exported(env: &Env, repo: &Path, review: &Path) -> String {
+    let html = env.path("t.html");
+    env.ok(
+        repo,
+        &[],
+        &["export", "-f", review.to_str().unwrap(), "-o", html.to_str().unwrap()],
+    );
+    std::fs::read_to_string(html).unwrap()
+}
+
+#[test]
+fn a_title_given_with_the_first_comment_names_the_export_and_show() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let arg = review.to_str().unwrap();
+    let out = env.ok(
+        &repo,
+        &[("+B", "why?")],
+        &["edit", "-f", arg, "--title", "ログイン改修 <v2>", "c1..c2"],
+    );
+    assert!(out.contains("タイトルを設定しました"), "{out}");
+    assert_eq!(titles(&review), ["ログイン改修 <v2>"]);
+    let shown = env.ok(&repo, &[], &["show", "-f", arg]);
+    assert!(shown.contains("[タイトル] ログイン改修 <v2>"), "{shown}");
+    let html = exported(&env, &repo, &review);
+    assert!(html.contains("<h1>ログイン改修 &lt;v2&gt;</h1>"), "{html}");
+    assert!(html.contains("<title>ログイン改修 &lt;v2&gt;</title>"));
+}
+
+#[test]
+fn without_a_title_the_export_keeps_the_default_heading() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    env.ok(&repo, &[("+B", "why?")], &["edit", "-f", review.to_str().unwrap(), "c1..c2"]);
+    assert!(titles(&review).is_empty());
+    assert!(exported(&env, &repo, &review).contains("<h1>diffnote レビュー</h1>"));
+}
+
+#[test]
+fn a_title_can_be_changed_kept_and_cleared_later() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let arg = review.to_str().unwrap();
+    env.ok(&repo, &[("+B", "why?")], &["edit", "-f", arg, "--title", "first", "c1..c2"]);
+    // Changed by a session that also comments.
+    env.ok(&repo, &[(" a", "and here")], &["edit", "-f", arg, "--title", "second", "c1..c2"]);
+    assert_eq!(titles(&review), ["first", "second"]);
+    // The same title again records nothing new.
+    let out = env.ok(&repo, &[(" c", "more")], &["edit", "-f", arg, "--title", "second", "c1..c2"]);
+    assert!(!out.contains("タイトルを設定しました"), "{out}");
+    assert_eq!(titles(&review), ["first", "second"]);
+    assert!(exported(&env, &repo, &review).contains("<h1>second</h1>"));
+    // An empty title takes it away.
+    env.ok(&repo, &[], &["edit", "-f", arg, "--title", "", "c1..c2"]);
+    assert_eq!(titles(&review), ["first", "second", ""]);
+    assert!(exported(&env, &repo, &review).contains("<h1>diffnote レビュー</h1>"));
+}
+
+#[test]
+fn a_title_alone_is_enough_to_save_a_session() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let arg = review.to_str().unwrap();
+    // No comment, but a title: the review is created with it.
+    let out = env.ok(&repo, &[], &["edit", "-f", arg, "--title", "only a title", "c1..c2"]);
+    assert!(out.contains("タイトルを設定しました"), "{out}");
+    assert_eq!(titles(&review), ["only a title"]);
+    // ...and it can be changed on its own too.
+    env.ok(&repo, &[], &["edit", "-f", arg, "--title", "renamed", "c1..c2"]);
+    assert_eq!(titles(&review), ["only a title", "renamed"]);
+    // Without a title and without comments nothing is saved, as before.
+    let before = std::fs::read(&review).unwrap();
+    env.ok(&repo, &[], &["edit", "-f", arg, "c1..c2"]);
+    assert_eq!(std::fs::read(&review).unwrap(), before);
+}
+
+#[test]
+fn a_directory_review_takes_a_title_at_init() {
+    let env = Env::new();
+    let dir = env.path("proj");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    let review = env.path("d.diffnote");
+    env.ok(
+        &dir,
+        &[],
+        &["init", "-f", review.to_str().unwrap(), "--title", "設計レビュー"],
+    );
+    assert_eq!(titles(&review), ["設計レビュー"]);
+    assert!(exported_dir(&env, &dir, &review).contains("<h1>設計レビュー</h1>"));
+}
+
+/// Like `exported`, for a review with no comment yet: give it one first.
+fn exported_dir(env: &Env, dir: &Path, review: &Path) -> String {
+    std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+    env.ok(dir, &[("+two", "changed")], &["edit", "-f", review.to_str().unwrap()]);
+    exported(env, dir, review)
+}

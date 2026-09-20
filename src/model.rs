@@ -197,6 +197,14 @@ pub enum Event {
         description: Option<String>,
         context_lines: u32,
     },
+    /// The review's title, shown where the export names the review. The last
+    /// one wins; an empty title takes the title away again.
+    Title {
+        title: String,
+        author: String,
+        #[serde(with = "time::serde::rfc3339")]
+        created_at: OffsetDateTime,
+    },
     /// A version of the reviewed content that some edit session was made
     /// against. Appended the first time a session that adds anything sees a
     /// diff (by `digest`) the bundle hasn't recorded yet.

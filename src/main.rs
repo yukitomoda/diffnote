@@ -48,6 +48,9 @@ enum Cmd {
         /// スナップショットを取るディレクトリ。省略時はカレントディレクトリ。`.diffnoteignore`(なければ`.gitignore`)に一致するファイルは含めない。
         #[arg(value_name = "DIR", default_value = ".", hide_default_value = true)]
         dir: PathBuf,
+        /// レビューのタイトル。エクスポートの見出しに使われる(省略できる)。
+        #[arg(long, value_name = "TITLE")]
+        title: Option<String>,
     },
     /// レビュー対象を $EDITOR で開いてコメントを書き、レビューバンドルに追記する(git のレビューでは、バンドルがなければ作成する)。
     Edit {
@@ -63,6 +66,9 @@ enum Cmd {
         /// ファイル(`PATH`)またはその一部の行(`PATH:START-END`、`PATH:LINE`)をバッファに入れる。差分が触れていない箇所にもコメントを書ける。レビューの head 側の内容が対象。繰り返し指定できる。差分がすでに表示している箇所の前後 3 行は、重ねて追加されない。
         #[arg(long = "show", value_name = "PATH[:START[-END]]")]
         show: Vec<String>,
+        /// レビューのタイトルを設定する。エクスポートの見出しに使われる。すでにあるタイトルを変えるときにも使い、空文字列(`--title ""`)で取り消す。
+        #[arg(long, value_name = "TITLE")]
+        title: Option<String>,
     },
     /// レビューバンドルに保存されたスレッドと返信を表示する。
     Show {
@@ -90,13 +96,14 @@ fn main() -> Result<()> {
         Cli::from_arg_matches(&command().get_matches())?
     };
     match cli.command {
-        Cmd::Init { review, dir } => cmd_init(review, dir),
+        Cmd::Init { review, dir, title } => cmd_init(review, dir, title),
         Cmd::Edit {
             review,
             targets,
             snapshot,
             show,
-        } => cmd_edit(review, targets, snapshot, show),
+            title,
+        } => cmd_edit(review, targets, snapshot, show, title),
         Cmd::Show { review } => cmd_show(review),
         Cmd::Export {
             review,
@@ -245,7 +252,7 @@ fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Resu
     })
 }
 
-fn cmd_init(review_path: PathBuf, dir: PathBuf) -> Result<()> {
+fn cmd_init(review_path: PathBuf, dir: PathBuf, title: Option<String>) -> Result<()> {
     if review_path.exists() {
         anyhow::bail!("{} はすでに存在します", review_path.display());
     }
@@ -253,14 +260,16 @@ fn cmd_init(review_path: PathBuf, dir: PathBuf) -> Result<()> {
     let digest = diffnote::files::tree_digest(&tree);
     let size: u64 = tree.values().map(|b| b.len() as u64).sum();
     confirm_snapshot_size(bundle::SnapshotMode::Full, false, size);
-    let events = vec![
-        Event::Meta {
-            version: 1,
-            created_at: OffsetDateTime::now_utc(),
-            description: None,
-            context_lines: 3,
-        },
-        Event::Revision(diffnote::model::Revision {
+    let mut events = vec![Event::Meta {
+        version: 1,
+        created_at: OffsetDateTime::now_utc(),
+        description: None,
+        context_lines: 3,
+    }];
+    if let Some(title) = title.as_deref() {
+        events.extend(review::title_change(&events, title, &resolve_author()));
+    }
+    events.push(Event::Revision(diffnote::model::Revision {
             id: Ulid::new(),
             created_at: OffsetDateTime::now_utc(),
             digest: digest.clone(),
@@ -271,8 +280,7 @@ fn cmd_init(review_path: PathBuf, dir: PathBuf) -> Result<()> {
                 .iter()
                 .map(|(path, bytes)| diffnote::record::tree_file(path, bytes))
                 .collect(),
-        }),
-    ];
+    }));
     let count = tree.len();
     let additions = bundle::Additions {
         diff: Some((digest, String::new())),
@@ -293,6 +301,7 @@ fn cmd_edit(
     targets: Vec<String>,
     snapshot_override: Option<bundle::SnapshotMode>,
     show_specs: Vec<String>,
+    title: Option<String>,
 ) -> Result<()> {
     let shows: Vec<diffnote::show::Show> = show_specs
         .iter()
@@ -339,7 +348,25 @@ fn cmd_edit(
         head_some,
         head_all,
     } = input;
+    let author = resolve_author();
+    let title_event = title
+        .as_deref()
+        .and_then(|t| review::title_change(&loaded.events, t, &author));
     if diff_text.trim().is_empty() {
+        // Nothing to review, but a title can still be given to a review that exists.
+        if let Some(event) = title_event
+            && !loaded.events.is_empty()
+        {
+            let mut all_events = loaded.events.clone();
+            all_events.push(event);
+            let none = bundle::Additions {
+                diff: None,
+                blobs: Vec::new(),
+            };
+            bundle::save(&review_path, &loaded, &all_events, &none)?;
+            println!("タイトルを設定しました");
+            return Ok(());
+        }
         println!("レビューする変更がありません(差分が空です)");
         return Ok(());
     }
@@ -476,12 +503,11 @@ fn cmd_edit(
     // any draft from an earlier failed attempt is now stale.
     let _ = std::fs::remove_file(&draft_path);
 
-    if existing_events.is_empty() && parsed.items.is_empty() {
+    if existing_events.is_empty() && parsed.items.is_empty() && title_event.is_none() {
         println!("コメントは追加されませんでした");
         return Ok(());
     }
 
-    let author = resolve_author();
     let mut new_events = Vec::new();
     if existing_events.is_empty() {
         new_events.push(Event::Meta {
@@ -491,6 +517,8 @@ fn cmd_edit(
             context_lines: 3,
         });
     }
+    let title_set = title_event.is_some();
+    new_events.extend(title_event);
 
     let mut thread_ids: Vec<Ulid> = Vec::new();
     for item in &parsed.items {
@@ -605,6 +633,9 @@ fn cmd_edit(
     let mut all_events = loaded.events.clone();
     all_events.extend(new_events.iter().cloned());
     bundle::save(&review_path, &loaded, &all_events, &additions)?;
+    if title_set {
+        println!("タイトルを設定しました");
+    }
     println!(
         "コメント {comment_count} 件({} 件のイベント)を {} に書き込みました",
         new_events.len(),
@@ -636,6 +667,9 @@ fn cmd_show(review_path: PathBuf) -> Result<()> {
                     },
                     r.snapshot_mode
                 );
+            }
+            Event::Title { title, author, .. } => {
+                println!("[タイトル] {title} -- {author}");
             }
             Event::Pin { revision, files } => {
                 println!("[固定] リビジョン {revision}: {} 個のファイル", files.len());
