@@ -227,14 +227,17 @@ pub fn resolve_with_texts(
         return Resolution::Current;
     }
     if let Some(chain) = blobs.chain(&side.digest, current_digest)
-        && let Some(start) = follow(&chain, side.start, side.len())
+        && let Some((start, len)) = follow(&chain, side.start, side.len())
         && let Some(idx) = corpus.iter().position(|l| l.line == start)
-        && idx + side.context.target.len() <= corpus.len()
+        && (len == 0
+            || corpus
+                .get(idx + len as usize - 1)
+                .is_some_and(|l| l.line == start + len - 1))
     {
         let context = extract_context(
             corpus,
             idx,
-            side.context.target.len(),
+            len as usize,
             side.context.before.len(),
             side.context.after.len(),
             start,
@@ -303,29 +306,47 @@ fn map_line_near(origin: &str, current: &str, line: u32) -> u32 {
     (line as i64 - old_len + current.lines().count() as i64).max(1) as u32
 }
 
-/// Follows a range through consecutive versions' texts; `None` as soon as
-/// one step can't place it.
-fn follow(texts: &[&str], start: u32, len: u32) -> Option<u32> {
-    texts
-        .windows(2)
-        .try_fold(start, |at, pair| map_range(pair[0], pair[1], at, len))
+/// Follows a range (`start`, `len`) through consecutive versions' texts;
+/// `None` as soon as one step can't place it. The length can change on the
+/// way (lines were added or removed inside the range).
+fn follow(texts: &[&str], start: u32, len: u32) -> Option<(u32, u32)> {
+    texts.windows(2).try_fold((start, len), |(at, len), pair| {
+        map_range(pair[0], pair[1], at, len)
+    })
 }
 
+/// A range that grew this much more than it was (in lines: four times its
+/// length plus ten) isn't followed: something else was written over it.
+const MAX_GROWTH_FACTOR: u32 = 4;
+const MAX_GROWTH_SLACK: u32 = 10;
+
 /// Where the `len` lines starting at `start` (1-based) of `origin` sit in
-/// `current`, if they all fall inside one unchanged run -- or inside a block
-/// that was edited in place (replaced by the same number of lines that still
-/// look like it, so line `k` of the old block is line `k` of the new one).
+/// `current`, as (start, len). Tried in order:
+/// 1. all inside one unchanged run, or inside a block that was edited in
+///    place (replaced by the same number of lines that still look like it,
+///    so line `k` of the old block is line `k` of the new one): same length;
+/// 2. the range's first and last lines followed separately, which follows
+///    lines added or removed *inside* the range. An end line that was itself
+///    edited or removed goes to the edge of its block, and the result must
+///    then still look like the original text.
 /// For an insertion point (`len == 0`) the line it sits before is followed.
-fn map_range(origin: &str, current: &str, start: u32, len: u32) -> Option<u32> {
+fn map_range(origin: &str, current: &str, start: u32, len: u32) -> Option<(u32, u32)> {
     let first = start.checked_sub(1)? as usize;
     let count = len.max(1) as usize;
     let diff = similar::TextDiff::from_lines(origin, current);
-    diff.ops().iter().find_map(|op| match *op {
+    let looks_alike = |old: std::ops::Range<usize>, new: std::ops::Range<usize>| {
+        let old_lines: String = diff.old_slices()[old].concat();
+        let new_lines: String = diff.new_slices()[new].concat();
+        similar::TextDiff::from_chars(&old_lines, &new_lines).ratio()
+            >= DEFAULT_SIMILARITY_THRESHOLD
+    };
+
+    let same_length = diff.ops().iter().find_map(|op| match *op {
         similar::DiffOp::Equal {
             old_index,
             new_index,
-            len,
-        } if first >= old_index && first + count <= old_index + len => {
+            len: run,
+        } if first >= old_index && first + count <= old_index + run => {
             Some((new_index + (first - old_index)) as u32 + 1)
         }
         similar::DiffOp::Replace {
@@ -333,15 +354,91 @@ fn map_range(origin: &str, current: &str, start: u32, len: u32) -> Option<u32> {
             old_len,
             new_index,
             new_len,
-        } if old_len == new_len && first >= old_index && first + count <= old_index + old_len => {
-            let old_lines: String = diff.old_slices()[old_index..old_index + old_len].concat();
-            let new_lines: String = diff.new_slices()[new_index..new_index + new_len].concat();
-            let ratio = similar::TextDiff::from_chars(&old_lines, &new_lines).ratio();
-            (ratio >= DEFAULT_SIMILARITY_THRESHOLD)
-                .then(|| (new_index + (first - old_index)) as u32 + 1)
+        } if old_len == new_len
+            && first >= old_index
+            && first + count <= old_index + old_len
+            && looks_alike(old_index..old_index + old_len, new_index..new_index + new_len) =>
+        {
+            Some((new_index + (first - old_index)) as u32 + 1)
         }
         _ => None,
-    })
+    });
+    if let Some(new_start) = same_length {
+        return Some((new_start, len));
+    }
+    if len == 0 {
+        return None;
+    }
+
+    let last = first + count - 1;
+    let (new_first, first_exact) = map_edge(&diff, first, Edge::Start)?;
+    let (new_last, last_exact) = map_edge(&diff, last, Edge::End)?;
+    if new_last < new_first {
+        return None;
+    }
+    let new_len = new_last - new_first + 1;
+    if new_len > len * MAX_GROWTH_FACTOR + MAX_GROWTH_SLACK {
+        return None;
+    }
+    if !(first_exact && last_exact)
+        && !looks_alike(
+            first..last + 1,
+            new_first as usize - 1..new_last as usize,
+        )
+    {
+        return None;
+    }
+    Some((new_first, new_len))
+}
+
+#[derive(Clone, Copy)]
+enum Edge {
+    Start,
+    End,
+}
+
+/// Where the (0-based) old line `line`, taken as the start or end of a
+/// range, is in the new text (1-based), and whether it is the very same
+/// line. A line inside an edited block goes to that block's first (for a
+/// start) or last (for an end) line; a removed line to the first line after
+/// it (start) or the last line before it (end).
+fn map_edge(diff: &similar::TextDiff<'_, '_, '_, str>, line: usize, edge: Edge) -> Option<(u32, bool)> {
+    for op in diff.ops() {
+        match *op {
+            similar::DiffOp::Equal {
+                old_index,
+                new_index,
+                len,
+            } if (old_index..old_index + len).contains(&line) => {
+                return Some(((new_index + (line - old_index)) as u32 + 1, true));
+            }
+            similar::DiffOp::Replace {
+                old_index,
+                old_len,
+                new_index,
+                new_len,
+            } if (old_index..old_index + old_len).contains(&line) => {
+                let at = match edge {
+                    Edge::Start => new_index + 1,
+                    Edge::End => new_index + new_len,
+                };
+                return Some((at as u32, false));
+            }
+            similar::DiffOp::Delete {
+                old_index,
+                old_len,
+                new_index,
+            } if (old_index..old_index + old_len).contains(&line) => {
+                let at = match edge {
+                    Edge::Start => new_index + 1,
+                    Edge::End => new_index,
+                };
+                return (at > 0).then_some((at as u32, false));
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Starting corpus indices where `corpus[i..i+target.len()]` is
@@ -1400,5 +1497,89 @@ mod tests {
         assert_eq!(map_line_near(old, new, 3), 2);
         // Past the end keeps its distance from the end.
         assert_eq!(map_line_near(old, new, 4), 3);
+    }
+
+    fn range_after(origin: &str, current: &str, start: u32, len: u32) -> Option<(u32, u32)> {
+        map_range(origin, current, start, len)
+    }
+
+    #[test]
+    fn lines_added_inside_a_range_grow_it() {
+        let old = "a\nb\nc\nd\ne\n";
+        let new = "a\nb\nX\nY\nc\nd\ne\n";
+        // b..d (2..4) now spans b X Y c d (2..6).
+        assert_eq!(range_after(old, new, 2, 3), Some((2, 5)));
+    }
+
+    #[test]
+    fn lines_removed_inside_a_range_shrink_it() {
+        let old = "a\nb\nc\nd\ne\n";
+        let new = "a\nb\nd\ne\n";
+        assert_eq!(range_after(old, new, 2, 3), Some((2, 2)));
+    }
+
+    #[test]
+    fn a_range_whose_end_line_was_edited_extends_to_the_edited_block() {
+        let old = "a\nfn foo() {\n    body\n}\nz\n";
+        let new = "a\nfn foo() {\n    body\n    more body\n}\nz\n";
+        // The unchanged first/last lines still bound the (grown) range.
+        assert_eq!(range_after(old, new, 2, 3), Some((2, 4)));
+        // Replaced at the end by two lines that still look like it.
+        let new = "a\nfn foo() {\n    body\n}\n// end of foo\nz\n";
+        let (start, len) = range_after(old, new, 2, 3).unwrap();
+        assert_eq!(start, 2);
+        assert!(len >= 3);
+    }
+
+    #[test]
+    fn a_start_line_edited_into_more_lines_moves_to_the_start_of_that_block() {
+        let old = "a\nb\nc\nd\ne\n";
+        let new = "a\nb1\nb2\nc\nd\ne\n";
+        // `b` became `b1`,`b2`; the range b..d is now b1..d.
+        assert_eq!(range_after(old, new, 2, 3), Some((2, 4)));
+    }
+
+    #[test]
+    fn a_range_that_was_rewritten_into_something_else_is_not_followed() {
+        let old = "a\nthe first line\nthe second line\nz\n";
+        let new = "a\n1234567890\n0987654321\n5555\nz\n";
+        assert_eq!(range_after(old, new, 2, 2), None);
+    }
+
+    #[test]
+    fn a_range_is_not_followed_into_a_huge_insertion() {
+        let old = "a\nb\nc\nd\n";
+        let big: String = (0..100).map(|i| format!("new {i}\n")).collect();
+        let new = format!("a\nb\n{big}c\nd\n");
+        assert_eq!(range_after(old, &new, 2, 2), None);
+    }
+
+    #[test]
+    fn a_range_that_lost_its_last_line_ends_at_the_line_before_it() {
+        let old = "a\nb\nc\nd\ne\n";
+        let new = "a\nb\nc\ne\n";
+        // b..d with d removed: b..c.
+        assert_eq!(range_after(old, new, 2, 3), Some((2, 2)));
+    }
+
+    #[test]
+    fn the_new_length_is_carried_through_each_step() {
+        let texts = ["a\nb\nc\nd\n", "a\nb\nX\nc\nd\n", "top\na\nb\nX\nc\nd\n"];
+        // b..c grows to b..c (3 lines) in step one, then shifts down by one.
+        assert_eq!(follow(&texts, 2, 2), Some((3, 3)));
+    }
+
+    #[test]
+    fn resolving_returns_the_grown_range_with_refreshed_context() {
+        let texts = ["x\nb\nc\nd\ny\n", "x\nb\nc\nNEW\nd\ny\n"];
+        let a = anchor(2, 4, &["b", "c", "d"]);
+        let Resolution::Relocated(moved) = resolve_through(&a, &texts, false) else {
+            panic!("expected Relocated");
+        };
+        assert_eq!(moved.start, 2);
+        assert_eq!(
+            moved.context.target,
+            ["b", "c", "NEW", "d"].map(String::from).to_vec()
+        );
     }
 }
