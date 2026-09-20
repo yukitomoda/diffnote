@@ -12,10 +12,10 @@
 //!   so a following `>>`/`>>!<dir>` targets it same as a same-session `>`
 //!   thread would. Always carries the *thread root's* id, even for a
 //!   rendered reply, since threading is flat.
-//! - `>#[<ulid>` decorative marker before the first row of an existing
-//!   comment's lines (drawn only when it covers more than its own row), so
-//!   the range it covers -- from this line to just before its `>#@` header --
-//!   can be seen; ignored on parse like any `>#` text.
+//! - `>#[<ulid>` / `>#]<ulid>` decorative markers around an existing
+//!   comment's lines (before its first row, and just before its `>#@`
+//!   header, after its last), drawn only when it covers more than its own
+//!   row, so the range can be seen; ignored on parse like any `>#` text.
 //! - `>#<text>` decorative body line for a rendered comment/reply above —
 //!   purely for human reading, ignored on parse (never affects `last_thread`
 //!   beyond what the `>#@` header already set).
@@ -849,7 +849,9 @@ pub fn render_for_edit(
     let mut old_no: u32 = 0;
     let mut new_no: u32 = 0;
 
-    let mut started: std::collections::HashSet<Ulid> = std::collections::HashSet::new();
+    // Threads whose range start was reached (`seen`), and those that got a
+    // `>#[` marker and so get its `>#]` closing pair too (`marked`).
+    let mut marks = RangeMarks::default();
 
     for raw_line in diff_text.lines() {
         let row_start = out.len();
@@ -919,22 +921,22 @@ pub fn render_for_edit(
         match raw_line.chars().next() {
             Some(' ') => {
                 let keys = [(Side::Old, old_no), (Side::New, new_no)];
-                mark_starts(&mut out, row_start, &starts, &by_line, &mut started, &file, &keys);
-                emit_line_threads(&mut out, &by_line, &file, Side::New, new_no);
-                emit_line_threads(&mut out, &by_line, &file, Side::Old, old_no);
+                mark_starts(&mut out, row_start, &starts, &by_line, &mut marks, &file, &keys);
+                emit_line_threads(&mut out, &by_line, &marks, &file, Side::New, new_no);
+                emit_line_threads(&mut out, &by_line, &marks, &file, Side::Old, old_no);
                 old_no += 1;
                 new_no += 1;
             }
             Some('+') => {
                 let keys = [(Side::New, new_no)];
-                mark_starts(&mut out, row_start, &starts, &by_line, &mut started, &file, &keys);
-                emit_line_threads(&mut out, &by_line, &file, Side::New, new_no);
+                mark_starts(&mut out, row_start, &starts, &by_line, &mut marks, &file, &keys);
+                emit_line_threads(&mut out, &by_line, &marks, &file, Side::New, new_no);
                 new_no += 1;
             }
             Some('-') => {
                 let keys = [(Side::Old, old_no)];
-                mark_starts(&mut out, row_start, &starts, &by_line, &mut started, &file, &keys);
-                emit_line_threads(&mut out, &by_line, &file, Side::Old, old_no);
+                mark_starts(&mut out, row_start, &starts, &by_line, &mut marks, &file, &keys);
+                emit_line_threads(&mut out, &by_line, &marks, &file, Side::Old, old_no);
                 old_no += 1;
             }
             _ => {}
@@ -942,6 +944,14 @@ pub fn render_for_edit(
     }
 
     (out, synthetic_files)
+}
+
+/// Which threads have had their range's start reached, and which of those
+/// got a `>#[` marker (and so get a `>#]` before their card).
+#[derive(Default)]
+struct RangeMarks {
+    seen: std::collections::HashSet<Ulid>,
+    drawn: std::collections::HashSet<Ulid>,
 }
 
 /// Draws `>#[<id>` at byte `at` (before the row just written) for each thread
@@ -953,7 +963,7 @@ fn mark_starts(
     at: usize,
     starts: &HashMap<(String, Side, u32), Vec<Ulid>>,
     by_line: &ByLine,
-    started: &mut std::collections::HashSet<Ulid>,
+    marks: &mut RangeMarks,
     file: &str,
     keys: &[(Side, u32)],
 ) {
@@ -967,7 +977,8 @@ fn mark_starts(
     let mut markers = String::new();
     for &(side, line) in keys {
         for id in starts.get(&(file.to_string(), side, line)).into_iter().flatten() {
-            if started.insert(*id) && !card_here(id) {
+            if marks.seen.insert(*id) && !card_here(id) {
+                marks.drawn.insert(*id);
                 markers.push_str(&format!(">#[{id}\n"));
             }
         }
@@ -975,9 +986,19 @@ fn mark_starts(
     out.insert_str(at, &markers);
 }
 
-fn emit_line_threads(out: &mut String, by_line: &ByLine, file: &str, side: Side, line: u32) {
+fn emit_line_threads(
+    out: &mut String,
+    by_line: &ByLine,
+    marks: &RangeMarks,
+    file: &str,
+    side: Side,
+    line: u32,
+) {
     if let Some(ts) = by_line.get(&(file.to_string(), side, line)) {
         for (t, absent) in ts {
+            if marks.drawn.contains(&t.root_id) {
+                out.push_str(&format!(">#]{}\n", t.root_id));
+            }
             render_thread_block(out, t, absent.as_ref().map(|(w, k)| (w.as_slice(), *k)));
         }
     }
@@ -1627,7 +1648,7 @@ diff --git a/f.rs b/f.rs
             &[],
             &[thread_with(id, on_new_lines(14, 2), "about baz")],
         );
-        let (marker, card) = (format!(">#[{id}\n"), format!(">#@{id}"));
+        let (marker, card) = (format!(">#[{id}\n"), format!(">#]{id}\n>#@{id}"));
         let (m, c) = (rendered.find(&marker).unwrap(), rendered.find(&card).unwrap());
         let first = rendered.find("+    fn baz").unwrap();
         let last = rendered.find("        self.value * 2").unwrap();
@@ -1722,11 +1743,34 @@ diff --git a/f.rs b/f.rs
             &[],
         );
         assert!(
-            rendered.contains(&format!(">#[{block}\n-long\n+short\n>#@{block}")),
+            rendered.contains(&format!(">#[{block}\n-long\n+short\n>#]{block}\n>#@{block}")),
             "{rendered}"
         );
         assert!(!rendered.contains(&format!(">#[{context}")), "{rendered}");
         assert!(rendered.contains(&format!(" semver\n>#@{context}")), "{rendered}");
+    }
+
+    #[test]
+    fn a_thread_with_replies_has_one_opening_and_one_closing_marker() {
+        let id = Ulid::new();
+        let mut thread = thread_with(id, on_new_lines(14, 2), "about baz");
+        for body in ["first reply", "second reply"] {
+            thread.replies.push(crate::review::Reply {
+                author: "other@example.com".to_string(),
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                body: body.to_string(),
+            });
+        }
+        let rendered = render(&fixture(), &[], &[thread]);
+        // Three `>#@` headers (root and two replies), but the range is one.
+        assert_eq!(rendered.matches(&format!(">#@{id}")).count(), 3, "{rendered}");
+        assert_eq!(rendered.matches(&format!(">#[{id}\n")).count(), 1, "{rendered}");
+        assert_eq!(rendered.matches(&format!(">#]{id}\n")).count(), 1, "{rendered}");
+        // The closing marker sits right before the first header, not between.
+        let close = rendered.find(&format!(">#]{id}\n")).unwrap();
+        let first_header = rendered.find(&format!(">#@{id}")).unwrap();
+        assert_eq!(first_header, close + format!(">#]{id}\n").len(), "{rendered}");
+        assert!(parse(&rendered).unwrap().items.is_empty());
     }
 
     #[test]
