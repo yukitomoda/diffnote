@@ -8,4 +8,5 @@ pub mod files;
 pub mod git;
 pub mod html;
 pub mod model;
+pub mod record;
 pub mod review;

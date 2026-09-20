@@ -43,12 +43,12 @@ enum Cmd {
         /// snapshot (default: the current directory).
         #[arg(value_name = "REV|DIR", num_args = 0..)]
         targets: Vec<String>,
-        /// What to snapshot into the bundle the first time a new diff digest
-        /// is seen and this session actually adds something: `diff` (just
-        /// the diff text), `changed` (+ the touched files' full content), or
-        /// `full` (+ the whole source tree). Defaults to the bundle's own
+        /// What to keep in the bundle the first time a new diff digest is
+        /// seen and this session actually adds something: `changed` (both
+        /// sides of every touched file, plus every file a comment refers to)
+        /// or `full` (+ the whole head tree). Defaults to the bundle's own
         /// previously-established mode if it has one, otherwise `full`.
-        /// Directory reviews always snapshot the full tree.
+        /// Directory reviews always keep the full tree.
         #[arg(long, value_enum)]
         snapshot: Option<diffnote::bundle::SnapshotMode>,
     },
@@ -106,46 +106,22 @@ fn main() -> Result<()> {
 
 fn cmd_export(review_path: PathBuf, output_path: PathBuf) -> Result<()> {
     let loaded = bundle::load(&review_path)?;
-
-    // One view per recorded revision that has a diff (a fresh `init`
-    // snapshot has none), oldest first; the last is the latest.
-    let mut parsed = Vec::new();
-    for revision in loaded.revisions() {
-        let Some(text) = loaded.revision_diff(revision).filter(|t| !t.trim().is_empty()) else {
-            continue;
-        };
-        let diff = diffnote::diff::parse(&text).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let source = match &revision.source {
-            diffnote::model::Source::Git(g) => g.spec.clone(),
-            diffnote::model::Source::Files { .. } => "directory".to_string(),
-        };
-        let label = format!("#{} {source} ({})", parsed.len() + 1, revision.created_at.date());
-        parsed.push((label, diff, revision));
-    }
-    if parsed.is_empty() {
-        anyhow::bail!(
+    let html = diffnote::html::render_bundle(&loaded).with_context(|| {
+        format!(
             "{} has no captured diff yet; run `diffnote edit` first",
             review_path.display()
-        );
-    }
-    let views: Vec<diffnote::html::RevisionView> = parsed
-        .iter()
-        .map(|(label, diff, revision)| diffnote::html::RevisionView {
-            label: label.clone(),
-            diff,
-            files: &revision.files,
-        })
-        .collect();
-
-    let html = diffnote::html::render(&loaded.events, &views, &loaded.blobs());
+        )
+    })?;
     std::fs::write(&output_path, html)
         .with_context(|| format!("failed to write {}", output_path.display()))?;
     println!("Wrote {}", output_path.display());
     Ok(())
 }
 
-/// Produces the files to store for a snapshot mode.
-type SnapshotFiles = Box<dyn FnOnce(bundle::SnapshotMode) -> Result<Vec<(String, Vec<u8>)>>>;
+/// Reads the head-side content of the given paths (those that exist).
+type HeadSome = Box<dyn Fn(&[String]) -> Result<Vec<(String, Vec<u8>)>>>;
+/// Reads the whole head tree.
+type HeadAll = Box<dyn FnOnce() -> Result<Vec<(String, Vec<u8>)>>>;
 
 /// What one edit session reviews: the diff, plus everything needed to
 /// record it as a `Revision` if the session ends up adding anything.
@@ -153,12 +129,10 @@ struct Input {
     diff_text: String,
     /// Per-file digests of the files the diff touches.
     files: Vec<diffnote::model::FileDigest>,
-    /// Full head-side content of the files the diff touches, for Tier 1
-    /// re-anchoring.
+    /// Full head-side content of the files the diff touches.
     new_files: diffnote::files::Tree,
-    /// The base-side counterparts, when the base isn't already a snapshot in
-    /// the bundle (git reviews; a directory review's base is its previous
-    /// revision).
+    /// The base-side counterparts, when the base isn't already in the bundle
+    /// (git reviews; a directory review's base is its previous revision).
     base_files: diffnote::files::Tree,
     source: diffnote::model::Source,
     /// The revision's digest (see `Revision::digest`).
@@ -167,8 +141,10 @@ struct Input {
     forced_snapshot_mode: Option<bundle::SnapshotMode>,
     /// Total size of the tree a `full` snapshot would store.
     tree_size: u64,
-    /// The files to store for a given mode.
-    snapshot_files: SnapshotFiles,
+    /// The head content of specific files (the ones comments refer to).
+    head_some: HeadSome,
+    /// The whole head tree (for a `full` snapshot).
+    head_all: HeadAll,
 }
 
 fn git_input(targets: &[String]) -> Result<Input> {
@@ -179,21 +155,35 @@ fn git_input(targets: &[String]) -> Result<Input> {
     let head_tree = repo.ls_tree(&range.head)?;
     let base_tree = repo.ls_tree(&range.base)?;
     let files = file_digests(&repo, &base_tree, &head_tree, &parsed)?;
-    let new_files = snapshot_files(&repo, bundle::SnapshotMode::Changed, &head_tree, &parsed)?
-        .into_iter()
+    let touched_new: Vec<String> = parsed
+        .files
+        .iter()
+        .filter_map(|f| f.new_path.clone())
         .collect();
-    let base_files = base_snapshot_files(&repo, &base_tree, &parsed)?
-        .into_iter()
+    let touched_old: Vec<String> = parsed
+        .files
+        .iter()
+        .filter_map(|f| f.old_path.clone())
         .collect();
+    let new_files = repo.read_paths(&head_tree, &touched_new)?.into_iter().collect();
+    let base_files = repo.read_paths(&base_tree, &touched_old)?.into_iter().collect();
+    let tree_size = head_tree.iter().map(|e| e.size).sum();
+    let repo = std::rc::Rc::new(repo);
+    let head_tree = std::rc::Rc::new(head_tree);
+    let (repo_all, tree_all) = (repo.clone(), head_tree.clone());
     Ok(Input {
         digest: digest(&diff_text),
-        tree_size: head_tree.iter().map(|e| e.size).sum(),
+        tree_size,
         source: diffnote::model::Source::Git(range),
         files,
         new_files,
         base_files,
         forced_snapshot_mode: None,
-        snapshot_files: Box::new(move |mode| snapshot_files(&repo, mode, &head_tree, &parsed)),
+        head_some: Box::new(move |paths| repo.read_paths(&head_tree, paths)),
+        head_all: Box::new(move || {
+            let all: Vec<String> = tree_all.iter().map(|e| e.path.clone()).collect();
+            repo_all.read_paths(&tree_all, &all)
+        }),
         diff_text,
     })
 }
@@ -203,7 +193,7 @@ fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Resu
     let previous = loaded
         .revisions()
         .last()
-        .map(|r| loaded.snapshot_files(&r.digest))
+        .map(|r| loaded.tree_of(r))
         .context("the bundle has no snapshot to compare with")?;
     let current = diffnote::files::read_tree(dir, exclude)?;
     let digest = diffnote::files::tree_digest(&current);
@@ -224,15 +214,22 @@ fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Resu
             (text, files, latest.map(|(rev, _)| rev.digest.clone()))
         }
     };
+    let (some_tree, all_tree) = (current.clone(), current.clone());
     Ok(Input {
         digest,
         tree_size: current.values().map(|b| b.len() as u64).sum(),
         source: diffnote::model::Source::Files { base },
         files,
-        new_files: current.clone(),
+        new_files: current,
         base_files: Default::default(),
         forced_snapshot_mode: Some(bundle::SnapshotMode::Full),
-        snapshot_files: Box::new(move |_| Ok(current.into_iter().collect())),
+        head_some: Box::new(move |paths| {
+            Ok(paths
+                .iter()
+                .filter_map(|p| Some((p.clone(), some_tree.get(p)?.clone())))
+                .collect())
+        }),
+        head_all: Box::new(move || Ok(all_tree.into_iter().collect())),
         diff_text,
     })
 }
@@ -257,20 +254,22 @@ fn cmd_init(review_path: PathBuf, dir: PathBuf) -> Result<()> {
             source: diffnote::model::Source::Files { base: None },
             snapshot_mode: bundle::SnapshotMode::Full,
             files: Vec::new(),
+            tree: tree
+                .iter()
+                .map(|(path, bytes)| diffnote::record::tree_file(path, bytes))
+                .collect(),
         }),
     ];
     let count = tree.len();
-    let snapshot = bundle::NewSnapshot {
-        digest,
-        diff_text: String::new(),
-        files: tree.into_iter().collect(),
-        base_files: Vec::new(),
+    let additions = bundle::Additions {
+        diff: Some((digest, String::new())),
+        blobs: tree.into_values().collect(),
     };
     bundle::save(
         &review_path,
         &bundle::load(&review_path)?,
         &events,
-        Some(&snapshot),
+        &additions,
     )?;
     println!("Snapshotted {count} file(s) into {}", review_path.display());
     Ok(())
@@ -310,7 +309,8 @@ fn cmd_edit(
         digest: diff_digest,
         forced_snapshot_mode,
         tree_size,
-        snapshot_files,
+        head_some,
+        head_all,
     } = input;
     if diff_text.trim().is_empty() {
         println!("No changes to review (diff is empty).");
@@ -526,36 +526,25 @@ fn cmd_edit(
     // Only record a not-yet-seen diff when this session actually produced
     // something -- an idle "opened it, looked, closed it" pass shouldn't
     // grow the bundle.
-    let new_snapshot = if loaded.has_revision(&diff_digest) {
-        None
-    } else {
-        let snapshot_mode = forced_snapshot_mode.unwrap_or_else(|| {
-            resolve_snapshot_mode(snapshot_override, loaded.snapshot_mode(), tree_size)
-        });
-        // Right after Meta if this session creates it, else first.
-        let at = usize::from(matches!(new_events.first(), Some(Event::Meta { .. })));
-        new_events.insert(
-            at,
-            Event::Revision(diffnote::model::Revision {
-                id: Ulid::new(),
-                created_at: OffsetDateTime::now_utc(),
-                digest: diff_digest.clone(),
-                source,
-                snapshot_mode,
-                files: files.clone(),
-            }),
-        );
-        Some(bundle::NewSnapshot {
-            digest: diff_digest.clone(),
-            diff_text: diff_text.clone(),
-            files: snapshot_files(snapshot_mode)?,
-            base_files: if snapshot_mode == bundle::SnapshotMode::Diff {
-                Vec::new()
-            } else {
-                base_files.into_iter().collect()
-            },
-        })
-    };
+    let additions = diffnote::record::record_session(
+        &loaded,
+        &mut new_events,
+        diffnote::record::Capture {
+            diff_text: &diff_text,
+            diff_digest: &diff_digest,
+            source,
+            files: &files,
+            new_files: &new_files,
+            base_files: &base_files,
+        },
+        &|| {
+            forced_snapshot_mode.unwrap_or_else(|| {
+                resolve_snapshot_mode(snapshot_override, loaded.snapshot_mode(), tree_size)
+            })
+        },
+        &*head_some,
+        head_all,
+    )?;
 
     let comment_count = new_events
         .iter()
@@ -563,7 +552,7 @@ fn cmd_edit(
         .count();
     let mut all_events = loaded.events.clone();
     all_events.extend(new_events.iter().cloned());
-    bundle::save(&review_path, &loaded, &all_events, new_snapshot.as_ref())?;
+    bundle::save(&review_path, &loaded, &all_events, &additions)?;
     println!(
         "Wrote {comment_count} comment(s) ({} event(s) total) to {}",
         new_events.len(),
@@ -595,6 +584,9 @@ fn cmd_show(review_path: PathBuf) -> Result<()> {
                     },
                     r.snapshot_mode
                 );
+            }
+            Event::Pin { revision, files } => {
+                println!("[pin] revision {revision}: {} file(s)", files.len());
             }
             Event::Comment {
                 id,
@@ -802,52 +794,6 @@ fn resolve_snapshot_mode(
     } else {
         mode
     }
-}
-
-/// The committed (head-side) files `mode` calls for.
-/// The base-side content of the files `diff` touches (by their old paths).
-fn base_snapshot_files(
-    repo: &diffnote::git::Repo,
-    base_tree: &[diffnote::git::TreeEntry],
-    diff: &diffnote::diff::UnifiedDiff,
-) -> Result<Vec<(String, Vec<u8>)>> {
-    let touched: std::collections::HashSet<&str> = diff
-        .files
-        .iter()
-        .filter_map(|f| f.old_path.as_deref())
-        .collect();
-    let wanted: Vec<&diffnote::git::TreeEntry> = base_tree
-        .iter()
-        .filter(|e| touched.contains(e.path.as_str()))
-        .collect();
-    let oids: Vec<&str> = wanted.iter().map(|e| e.oid.as_str()).collect();
-    let blobs = repo.read_blobs(&oids)?;
-    Ok(wanted.iter().map(|e| e.path.clone()).zip(blobs).collect())
-}
-
-fn snapshot_files(
-    repo: &diffnote::git::Repo,
-    mode: bundle::SnapshotMode,
-    tree: &[diffnote::git::TreeEntry],
-    diff: &diffnote::diff::UnifiedDiff,
-) -> Result<Vec<(String, Vec<u8>)>> {
-    let wanted: Vec<&diffnote::git::TreeEntry> = match mode {
-        bundle::SnapshotMode::Diff => Vec::new(),
-        bundle::SnapshotMode::Full => tree.iter().collect(),
-        bundle::SnapshotMode::Changed => {
-            let touched: std::collections::HashSet<&str> = diff
-                .files
-                .iter()
-                .filter_map(|f| f.new_path.as_deref())
-                .collect();
-            tree.iter()
-                .filter(|e| touched.contains(e.path.as_str()))
-                .collect()
-        }
-    };
-    let oids: Vec<&str> = wanted.iter().map(|e| e.oid.as_str()).collect();
-    let blobs = repo.read_blobs(&oids)?;
-    Ok(wanted.iter().map(|e| e.path.clone()).zip(blobs).collect())
 }
 
 fn resolve_author() -> String {

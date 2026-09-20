@@ -27,6 +27,12 @@ impl<'a> Blobs<'a> {
         self.data.entry(digest(bytes)).or_insert(bytes);
     }
 
+    /// Adds bytes whose digest is already known (the bundle names its blobs
+    /// by digest), without hashing them again.
+    pub fn add_known(&mut self, digest: String, bytes: &'a [u8]) {
+        self.data.entry(digest).or_insert(bytes);
+    }
+
     /// Records that a revision turned the file version `old` into `new`.
     pub fn link(&mut self, old: &str, new: &str) {
         self.links

@@ -29,6 +29,43 @@ use syntect::html::{IncludeBackground, styled_line_to_highlighted_html};
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 use ulid::Ulid;
 
+/// Renders a whole bundle: one view per recorded revision that has a diff
+/// (a fresh `init` snapshot has none), oldest first.
+pub fn render_bundle(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
+    let mut parsed = Vec::new();
+    for revision in loaded.revisions() {
+        let Some(text) = loaded
+            .revision_diff(revision)
+            .filter(|t| !t.trim().is_empty())
+        else {
+            continue;
+        };
+        let diff = crate::diff::parse(&text).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let source = match &revision.source {
+            crate::model::Source::Git(g) => g.spec.clone(),
+            crate::model::Source::Files { .. } => "directory".to_string(),
+        };
+        let label = format!(
+            "#{} {source} ({})",
+            parsed.len() + 1,
+            revision.created_at.date()
+        );
+        parsed.push((label, diff, revision));
+    }
+    if parsed.is_empty() {
+        anyhow::bail!("the bundle has no captured diff");
+    }
+    let views: Vec<RevisionView> = parsed
+        .iter()
+        .map(|(label, diff, revision)| RevisionView {
+            label: label.clone(),
+            diff,
+            files: &revision.files,
+        })
+        .collect();
+    Ok(render(&loaded.events, &views, &loaded.blobs()))
+}
+
 /// One revision of the review to show: its diff and per-file digests, and a
 /// short label for the switcher.
 pub struct RevisionView<'a> {
@@ -669,3 +706,391 @@ const SCRIPT: &str = r#"
   });
 })();
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bundle::{self, Additions};
+    use crate::digest::digest;
+    use crate::files::{Tree, diff_trees};
+    use crate::model::{
+        Context, FileRef, GitSource, Revision, SideAnchor, SnapshotMode, Source,
+    };
+    use time::OffsetDateTime;
+
+    const R1_BASE: &str = "a\nb\nc\nd\n";
+    const R1_HEAD: &str = "a\nB\nc\nd\n";
+    const R2_HEAD: &str = "top\na\nB\nc\nD\n";
+
+    fn tree(text: &str) -> Tree {
+        [("f.txt".to_string(), text.as_bytes().to_vec())].into()
+    }
+
+    fn side(start: u32, target: &[&str], text: &str) -> SideAnchor {
+        SideAnchor {
+            file: "f.txt".to_string(),
+            digest: digest(text),
+            start,
+            context: Context {
+                before: Vec::new(),
+                target: target.iter().map(|s| s.to_string()).collect(),
+                after: Vec::new(),
+            },
+        }
+    }
+
+    fn comment(id: Ulid, anchor: Anchor, body: &str) -> Event {
+        Event::Comment {
+            id,
+            parent: None,
+            author: "r@example.com".into(),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            anchor: Some(anchor),
+            body: body.into(),
+        }
+    }
+
+    /// Saves and reloads a bundle with one revision per `(base, head, source)`
+    /// (each with its diff and both file versions snapshotted), then all of
+    /// `extra` events.
+    fn bundle_of(
+        revisions: &[(&str, &str, Source)],
+        extra: Vec<Event>,
+    ) -> (tempfile::TempDir, bundle::Loaded) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.diffnote");
+        let mut events = vec![Event::Meta {
+            version: 1,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            description: None,
+            context_lines: 3,
+        }];
+        for (i, (base, head, source)) in revisions.iter().enumerate() {
+            let (diff_text, files) = diff_trees(&tree(base), &tree(head));
+            let key = digest(format!("revision {i}"));
+            events.push(Event::Revision(Revision {
+                id: Ulid::new(),
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                digest: key.clone(),
+                source: source.clone(),
+                snapshot_mode: SnapshotMode::Full,
+                files,
+                tree: Vec::new(),
+            }));
+            let additions = Additions {
+                diff: Some((key, diff_text)),
+                blobs: vec![head.as_bytes().to_vec(), base.as_bytes().to_vec()],
+            };
+            let loaded = bundle::load(&path).unwrap();
+            bundle::save(&path, &loaded, &events, &additions).unwrap();
+        }
+        events.extend(extra);
+        let loaded = bundle::load(&path).unwrap();
+        bundle::save(&path, &loaded, &events, &Additions::default()).unwrap();
+        (dir, bundle::load(&path).unwrap())
+    }
+
+    fn files_source(base: Option<&str>) -> Source {
+        Source::Files {
+            base: base.map(str::to_string),
+        }
+    }
+
+    /// The HTML of view `i`.
+    fn view(html: &str, i: usize) -> &str {
+        let start = html
+            .find(&format!(r#"id="rev-{i}""#))
+            .unwrap_or_else(|| panic!("no view {i}"));
+        let rest = &html[start..];
+        let end = rest[1..]
+            .find(r#"<section class="diffnote-revision"#)
+            .map_or(rest.len(), |e| e + 1);
+        // The whole review sits in one <article>; comments have their own.
+        let end = rest[..end].find("\n</article>\n<script>").unwrap_or(end);
+        &rest[..end]
+    }
+
+    /// The (old, new) gutter numbers of the diff rows highlighted for `id`.
+    fn rows_of(view: &str, id: Ulid) -> Vec<(String, String)> {
+        let marker = format!(r#"data-diffnote-threads="{id}""#);
+        let cell = |row: &str, class: &str| {
+            let at = row.find(&format!(r#"class="{class}">"#)).unwrap()
+                + class.len()
+                + r#"class="">"#.len();
+            row[at..row[at..].find("</td>").unwrap() + at].to_string()
+        };
+        let mut out = Vec::new();
+        let mut from = 0;
+        while let Some(at) = view[from..].find(&marker) {
+            let at = from + at;
+            let start = view[..at].rfind("<tr").unwrap();
+            let end = view[at..].find("</tr>").unwrap() + at;
+            let row = &view[start..end];
+            out.push((
+                cell(row, "diffnote-line__gutter-old"),
+                cell(row, "diffnote-line__gutter-new"),
+            ));
+            from = end;
+        }
+        out
+    }
+
+    fn all_ids(html: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = html;
+        while let Some(at) = rest.find(r#" id=""#) {
+            rest = &rest[at + 5..];
+            out.push(rest[..rest.find('"').unwrap()].to_string());
+        }
+        out
+    }
+
+    struct Scenario {
+        html: String,
+        t1: Ulid,
+        t2: Ulid,
+        t3: Ulid,
+        t4: Ulid,
+        global: Ulid,
+        _dir: tempfile::TempDir,
+    }
+
+    /// Two revisions of one file, and threads made on each of them.
+    fn scenario() -> Scenario {
+        let (t1, t2, t3, t4, global) = (
+            Ulid::new(),
+            Ulid::new(),
+            Ulid::new(),
+            Ulid::new(),
+            Ulid::new(),
+        );
+        let events = vec![
+            // Written on revision 1: `b` became `B`.
+            comment(
+                t1,
+                Anchor::Span {
+                    base: Some(side(2, &["b"], R1_BASE)),
+                    head: Some(side(2, &["B"], R1_HEAD)),
+                },
+                "about B",
+            ),
+            Event::Comment {
+                id: Ulid::new(),
+                parent: Some(t1),
+                author: "author@example.com".into(),
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                anchor: None,
+                body: "a reply".into(),
+            },
+            // Written on revision 2: `d` became `D`.
+            comment(
+                t2,
+                Anchor::Span {
+                    base: Some(side(4, &["d"], R1_HEAD)),
+                    head: Some(side(5, &["D"], R2_HEAD)),
+                },
+                "about D",
+            ),
+            // A whole-file thread that has been resolved.
+            comment(
+                t3,
+                Anchor::File {
+                    base: None,
+                    head: Some(FileRef {
+                        file: "f.txt".into(),
+                        digest: digest(R1_HEAD),
+                    }),
+                },
+                "file thread",
+            ),
+            Event::Resolve {
+                parent: t3,
+                author: "r@example.com".into(),
+                created_at: OffsetDateTime::UNIX_EPOCH,
+            },
+            // Written on revision 2, about a line revision 1 doesn't have.
+            comment(
+                t4,
+                Anchor::Span {
+                    base: Some(side(1, &[], R1_HEAD)),
+                    head: Some(side(1, &["top"], R2_HEAD)),
+                },
+                "about top",
+            ),
+            comment(
+                global,
+                Anchor::Global {
+                    base: None,
+                    head: Some("rev".into()),
+                },
+                "overall",
+            ),
+        ];
+        let (dir, loaded) = bundle_of(
+            &[
+                (R1_BASE, R1_HEAD, files_source(None)),
+                (R1_HEAD, R2_HEAD, files_source(Some("x"))),
+            ],
+            events,
+        );
+        Scenario {
+            html: render_bundle(&loaded).unwrap(),
+            t1,
+            t2,
+            t3,
+            t4,
+            global,
+            _dir: dir,
+        }
+    }
+
+    #[test]
+    fn every_revision_is_a_view_and_the_latest_is_the_current_one() {
+        let s = scenario();
+        assert_eq!(s.html.matches(r#"<section class="diffnote-revision"#).count(), 2);
+        assert!(view(&s.html, 1).starts_with(r#"id="rev-1" data-diffnote-revision="1""#));
+        assert!(s.html.contains(r#"class="diffnote-revision is-current" id="rev-1""#));
+        assert!(s.html.contains(r#"class="diffnote-revision" id="rev-0""#));
+        // The switcher links to both, and the script only switches views.
+        assert!(s.html.contains(r##"href="#rev-0""##));
+        assert!(s.html.contains(r##"href="#rev-1""##));
+        assert!(s.html.contains("diffnote-js"));
+    }
+
+    #[test]
+    fn element_ids_are_unique_across_the_views() {
+        let s = scenario();
+        let ids = all_ids(&s.html);
+        let unique: std::collections::HashSet<&String> = ids.iter().collect();
+        assert_eq!(ids.len(), unique.len(), "duplicate ids in {ids:?}");
+        assert!(ids.contains(&"r0-file-f-txt".to_string()));
+        assert!(ids.contains(&"r1-file-f-txt".to_string()));
+        // File-list links point at their own view's file section.
+        assert!(view(&s.html, 0).contains(r##"href="#r0-file-f-txt""##));
+        assert!(view(&s.html, 1).contains(r##"href="#r1-file-f-txt""##));
+    }
+
+    #[test]
+    fn every_thread_appears_in_every_view() {
+        let s = scenario();
+        for id in [s.t1, s.t2, s.t3, s.t4, s.global] {
+            for i in 0..2 {
+                assert_eq!(
+                    view(&s.html, i)
+                        .matches(&format!(r#"data-diffnote-thread-id="{id}""#))
+                        .count(),
+                    1,
+                    "thread {id} in view {i}"
+                );
+            }
+        }
+        for i in 0..2 {
+            assert!(view(&s.html, i).contains("a reply"), "reply in view {i}");
+        }
+    }
+
+    #[test]
+    fn a_thread_is_at_its_exact_lines_in_the_revision_it_was_made_on() {
+        let s = scenario();
+        // Revision 1: `b` (old 2) became `B` (new 2).
+        let rows = rows_of(view(&s.html, 0), s.t1);
+        assert!(rows.contains(&("2".into(), "".into())), "{rows:?}");
+        assert!(rows.contains(&("".into(), "2".into())), "{rows:?}");
+        // Revision 2: `d` (old 4) became `D` (new 5).
+        let rows = rows_of(view(&s.html, 1), s.t2);
+        assert!(rows.contains(&("4".into(), "".into())), "{rows:?}");
+        assert!(rows.contains(&("".into(), "5".into())), "{rows:?}");
+    }
+
+    #[test]
+    fn a_thread_from_another_revision_follows_its_lines_into_the_view() {
+        let s = scenario();
+        // Revision 1's `B` is now a context line, at old 2 / new 3.
+        let rows = rows_of(view(&s.html, 1), s.t1);
+        assert_eq!(rows, vec![("2".to_string(), "3".to_string())]);
+        // Revision 2's `d` -> `D` shows in revision 1 on the unchanged `d`
+        // (old 4 / new 4): the new text doesn't exist there.
+        let rows = rows_of(view(&s.html, 0), s.t2);
+        assert_eq!(rows, vec![("4".to_string(), "4".to_string())]);
+    }
+
+    #[test]
+    fn a_thread_that_cannot_be_placed_is_listed_as_unplaced_in_that_view_only() {
+        let s = scenario();
+        let (v0, v1) = (view(&s.html, 0), view(&s.html, 1));
+        let unplaced = v0.find("diffnote-outdated").expect("unplaced section in view 0");
+        assert!(v0[unplaced..].contains(&format!(r#"data-diffnote-thread-id="{}""#, s.t4)));
+        assert!(rows_of(v0, s.t4).is_empty());
+        assert!(!v1.contains("diffnote-outdated"));
+        assert_eq!(rows_of(v1, s.t4), vec![("".to_string(), "1".to_string())]);
+    }
+
+    #[test]
+    fn resolved_threads_are_shown_collapsed_in_every_view() {
+        let s = scenario();
+        for i in 0..2 {
+            let v = view(&s.html, i);
+            let at = v
+                .find(&format!(r#"id="r{i}-thread-{}""#, s.t3))
+                .unwrap_or_else(|| panic!("resolved thread missing in view {i}"));
+            let tag = &v[v[..at].rfind("<details").unwrap()..at + 80];
+            assert!(tag.contains("diffnote-thread--resolved"), "{tag}");
+            assert!(!tag.contains(" open"), "{tag}");
+            // ...whereas an unresolved one is open.
+            let at = v.find(&format!(r#"id="r{i}-thread-{}""#, s.t1)).unwrap();
+            let tag = &v[at..v[at..].find('>').unwrap() + at];
+            assert!(tag.contains(" open"), "{tag}");
+        }
+    }
+
+    #[test]
+    fn global_threads_are_shown_once_per_view() {
+        let s = scenario();
+        for i in 0..2 {
+            let v = view(&s.html, i);
+            assert_eq!(v.matches("overall").count(), 1, "view {i}");
+            assert!(v.contains("diffnote-global-comments"));
+        }
+    }
+
+    #[test]
+    fn one_revision_has_no_switcher_and_is_shown() {
+        let (_dir, loaded) = bundle_of(&[(R1_BASE, R1_HEAD, files_source(None))], Vec::new());
+        let html = render_bundle(&loaded).unwrap();
+        assert!(!html.contains(r#"<nav class="diffnote-revisions""#));
+        assert_eq!(html.matches(r#"<section class="diffnote-revision"#).count(), 1);
+        assert!(html.contains(r#"class="diffnote-revision is-current" id="rev-0""#));
+    }
+
+    #[test]
+    fn revision_labels_are_escaped() {
+        let git = Source::Git(GitSource {
+            base: "b".into(),
+            head: "h".into(),
+            spec: "<script>alert(1)</script>&x".into(),
+        });
+        let (_dir, loaded) = bundle_of(
+            &[(R1_BASE, R1_HEAD, git), (R1_HEAD, R2_HEAD, files_source(None))],
+            Vec::new(),
+        );
+        let html = render_bundle(&loaded).unwrap();
+        assert!(!html.contains("<script>alert(1)"));
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;&amp;x"));
+    }
+
+    #[test]
+    fn a_revision_without_a_diff_is_not_a_view_and_a_bundle_of_only_those_is_an_error() {
+        // Same tree on both sides: an `init` snapshot, whose diff is empty.
+        let (_dir, loaded) = bundle_of(&[(R1_BASE, R1_BASE, files_source(None))], Vec::new());
+        assert!(render_bundle(&loaded).is_err());
+        let (_dir, loaded) = bundle_of(
+            &[
+                (R1_BASE, R1_BASE, files_source(None)),
+                (R1_BASE, R1_HEAD, files_source(None)),
+            ],
+            Vec::new(),
+        );
+        let html = render_bundle(&loaded).unwrap();
+        assert_eq!(html.matches(r#"<section class="diffnote-revision"#).count(), 1);
+    }
+}

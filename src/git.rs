@@ -211,6 +211,19 @@ impl Repo {
         Ok(entries)
     }
 
+    /// The content of the files at `paths` in `tree` (a listing from
+    /// [`Repo::ls_tree`]), in tree order. Paths not in the tree are skipped.
+    pub fn read_paths(&self, tree: &[TreeEntry], paths: &[String]) -> Result<Vec<(String, Vec<u8>)>> {
+        let wanted: std::collections::HashSet<&str> = paths.iter().map(String::as_str).collect();
+        let entries: Vec<&TreeEntry> = tree
+            .iter()
+            .filter(|e| wanted.contains(e.path.as_str()))
+            .collect();
+        let oids: Vec<&str> = entries.iter().map(|e| e.oid.as_str()).collect();
+        let blobs = self.read_blobs(&oids)?;
+        Ok(entries.iter().map(|e| e.path.clone()).zip(blobs).collect())
+    }
+
     /// Reads blobs by id, in order, through a single `git cat-file --batch`.
     pub fn read_blobs(&self, oids: &[&str]) -> Result<Vec<Vec<u8>>> {
         if oids.is_empty() {
@@ -392,5 +405,52 @@ mod tests {
             let blobs = repo.read_blobs(&oids).unwrap();
             assert_eq!(blobs, [b"version 3\n".to_vec(), b"b\n".to_vec()]);
         });
+    }
+
+    #[test]
+    fn read_paths_returns_only_the_requested_files_that_exist() {
+        with_repo(|_, repo, commits| {
+            let tree = repo.ls_tree("HEAD").unwrap();
+            let want = |names: &[&str]| -> Vec<String> { names.iter().map(|s| s.to_string()).collect() };
+
+            let got = repo
+                .read_paths(&tree, &want(&["dir/b.txt", "not-there.txt"]))
+                .unwrap();
+            assert_eq!(got, [("dir/b.txt".to_string(), b"b\n".to_vec())]);
+
+            // In tree order, whatever the request's, and each file once.
+            let got = repo
+                .read_paths(&tree, &want(&["dir/b.txt", "a.txt", "a.txt"]))
+                .unwrap();
+            let names: Vec<&str> = got.iter().map(|(p, _)| p.as_str()).collect();
+            assert_eq!(names, ["a.txt", "dir/b.txt"]);
+
+            // Nothing asked for, or nothing found: no git process, no error.
+            assert!(repo.read_paths(&tree, &[]).unwrap().is_empty());
+            assert!(repo.read_paths(&tree, &want(&["nope"])).unwrap().is_empty());
+
+            // An older commit's tree gives that commit's content.
+            let old = repo.ls_tree(&commits[0]).unwrap();
+            let got = repo.read_paths(&old, &want(&["a.txt"])).unwrap();
+            assert_eq!(got[0].1, b"version 1\n");
+        });
+    }
+
+    #[test]
+    fn read_paths_handles_binary_and_empty_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git_in(p, &["init", "-q", "-b", "main"]);
+        std::fs::write(p.join("bin.dat"), [0u8, 159, 146, 150, 255, 0]).unwrap();
+        std::fs::write(p.join("empty.txt"), b"").unwrap();
+        git_in(p, &["add", "-A"]);
+        git_in(p, &["commit", "-q", "-m", "c"]);
+        let repo = Repo::at(p);
+        let tree = repo.ls_tree("HEAD").unwrap();
+        let got = repo
+            .read_paths(&tree, &["bin.dat".to_string(), "empty.txt".to_string()])
+            .unwrap();
+        assert_eq!(got[0], ("bin.dat".to_string(), vec![0u8, 159, 146, 150, 255, 0]));
+        assert_eq!(got[1], ("empty.txt".to_string(), Vec::new()));
     }
 }

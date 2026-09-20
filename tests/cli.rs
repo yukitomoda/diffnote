@@ -1,0 +1,346 @@
+//! End-to-end tests: the real `diffnote` binary, driven through a fake
+//! `$EDITOR` (a shell script that inserts a comment after a given diff line).
+//! Unix only, since the fake editor is `sh`/`awk`.
+#![cfg(unix)]
+
+use diffnote::bundle;
+use diffnote::model::Event;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+const BIN: &str = env!("CARGO_BIN_EXE_diffnote");
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .current_dir(dir)
+        .args(["-c", "user.email=t@example.com", "-c", "user.name=T"])
+        .args(args)
+        .output()
+        .expect("git is installed");
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+/// A fake editor: for each `AFTER<TAB>TEXT` line in `$DN_SCRIPT` (a file),
+/// inserts `> TEXT` after the first buffer line equal to `AFTER`. An `AFTER`
+/// of `GLOBAL` puts the comment on top instead.
+fn fake_editor(dir: &Path) -> PathBuf {
+    let path = dir.join("editor.sh");
+    std::fs::write(
+        &path,
+        r#"#!/bin/sh
+buf="$1"
+out="$buf.new"
+cp "$buf" "$out"
+while IFS="$(printf '\t')" read -r after text; do
+  [ -z "$after" ] && continue
+  if [ "$after" = "GLOBAL" ]; then
+    { printf '> %s\n\n' "$text"; cat "$out"; } > "$out.2" && mv "$out.2" "$out"
+  else
+    awk -v after="$after" -v text="$text" '{print} !done && $0 == after {print "> " text; done=1}' "$out" > "$out.2" && mv "$out.2" "$out"
+  fi
+done < "$DN_SCRIPT"
+mv "$out" "$buf"
+"#,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&path).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&path, perms).unwrap();
+    path
+}
+
+struct Env {
+    dir: tempfile::TempDir,
+    editor: PathBuf,
+}
+
+impl Env {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let editor = fake_editor(dir.path());
+        Env { dir, editor }
+    }
+
+    fn path(&self, name: &str) -> PathBuf {
+        self.dir.path().join(name)
+    }
+
+    /// Runs `diffnote args...` in `cwd`; the fake editor applies `comments`
+    /// (`(after-line, text)` pairs).
+    fn run(&self, cwd: &Path, comments: &[(&str, &str)], args: &[&str]) -> Output {
+        let script = self.path("comments.tsv");
+        let body: String = comments
+            .iter()
+            .map(|(a, t)| format!("{a}\t{t}\n"))
+            .collect();
+        std::fs::write(&script, body).unwrap();
+        Command::new(BIN)
+            .current_dir(cwd)
+            .env("EDITOR", &self.editor)
+            .env("DN_SCRIPT", &script)
+            .args(args)
+            .output()
+            .expect("diffnote runs")
+    }
+
+    fn ok(&self, cwd: &Path, comments: &[(&str, &str)], args: &[&str]) -> String {
+        let out = self.run(cwd, comments, args);
+        assert!(
+            out.status.success(),
+            "diffnote {args:?} failed:\n{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).to_string()
+    }
+}
+
+fn bundle_names(path: &Path) -> Vec<String> {
+    let file = std::fs::File::open(path).unwrap();
+    zip::ZipArchive::new(file)
+        .unwrap()
+        .file_names()
+        .map(str::to_string)
+        .collect()
+}
+
+fn comment_bodies(loaded: &bundle::Loaded) -> Vec<String> {
+    loaded
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Comment { body, .. } => Some(body.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn count_blobs(path: &Path) -> usize {
+    bundle_names(path)
+        .iter()
+        .filter(|n| n.starts_with("blobs/"))
+        .count()
+}
+
+#[test]
+fn a_directory_review_over_several_sessions() {
+    let env = Env::new();
+    let dir = env.path("project");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "x\n").unwrap();
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+
+    let out = env.ok(&dir, &[], &["init", "-f", review_arg, "."]);
+    assert!(out.contains("Snapshotted 2 file(s)"), "{out}");
+    assert_eq!(count_blobs(&review), 2);
+
+    // Session 1: a.txt changes.
+    std::fs::write(dir.join("a.txt"), "one\nTWO\nthree\n").unwrap();
+    let out = env.ok(
+        &dir,
+        &[("+TWO", "why uppercase?"), ("GLOBAL", "overall remark")],
+        &["edit", "-f", review_arg, "."],
+    );
+    assert!(out.contains("Wrote 2 comment(s)"), "{out}");
+
+    let loaded = bundle::load(&review).unwrap();
+    let revisions: Vec<_> = loaded.revisions().collect();
+    // The init snapshot, then this session's revision.
+    assert_eq!(revisions.len(), 2);
+    let latest = revisions[1];
+    let touched: Vec<_> = latest
+        .files
+        .iter()
+        .filter_map(|f| f.new_path.as_deref())
+        .collect();
+    assert_eq!(touched, ["a.txt"]);
+    // A directory review keeps the whole tree, every time.
+    let mut tree: Vec<_> = loaded.manifest(latest).into_iter().map(|f| f.path).collect();
+    tree.sort();
+    assert_eq!(tree, ["a.txt", "b.txt"]);
+    let read = loaded.tree_of(latest);
+    assert_eq!(read["a.txt"], b"one\nTWO\nthree\n");
+    assert_eq!(read["b.txt"], b"x\n");
+    // b.txt is unchanged, so it is stored once: 2 (init) + 1 new a.txt.
+    assert_eq!(count_blobs(&review), 3);
+
+    // Session 2: only b.txt changes. The comparison base must be session 1's
+    // tree (read back from the bundle), not the original.
+    std::fs::write(dir.join("b.txt"), "x\ny\n").unwrap();
+    let out = env.ok(
+        &dir,
+        &[("+y", "new line")],
+        &["edit", "-f", review_arg, "."],
+    );
+    assert!(out.contains("Wrote 1 comment(s)"), "{out}");
+    let loaded = bundle::load(&review).unwrap();
+    let revisions: Vec<_> = loaded.revisions().collect();
+    assert_eq!(revisions.len(), 3);
+    let touched: Vec<_> = revisions[2]
+        .files
+        .iter()
+        .filter_map(|f| f.new_path.as_deref())
+        .collect();
+    assert_eq!(touched, ["b.txt"], "a.txt did not change since session 1");
+    assert_eq!(
+        comment_bodies(&loaded),
+        ["overall remark", "why uppercase?", "new line"]
+    );
+
+    // Export: one view per revision that has a diff, with every comment.
+    let html_path = env.path("out.html");
+    env.ok(&dir, &[], &["export", "-f", review_arg, "-o", html_path.to_str().unwrap()]);
+    let html = std::fs::read_to_string(&html_path).unwrap();
+    assert_eq!(html.matches(r#"<section class="diffnote-revision"#).count(), 2);
+    for body in ["why uppercase?", "overall remark", "new line"] {
+        assert_eq!(html.matches(body).count(), 2, "{body} once per view");
+    }
+}
+
+#[test]
+fn an_unchanged_directory_reopens_the_last_diff_and_records_nothing_new() {
+    let env = Env::new();
+    let dir = env.path("project");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    env.ok(&dir, &[], &["init", "-f", review_arg, "."]);
+    std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+    env.ok(&dir, &[("+two", "first")], &["edit", "-f", review_arg, "."]);
+    let blobs_before = count_blobs(&review);
+
+    // Nothing changed since: the diff of the last revision comes back, so a
+    // reply-like comment can still be added, and nothing else is recorded.
+    let out = env.ok(&dir, &[("+two", "second")], &["edit", "-f", review_arg, "."]);
+    assert!(out.contains("Wrote 1 comment(s)"), "{out}");
+    let loaded = bundle::load(&review).unwrap();
+    assert_eq!(loaded.revisions().count(), 2);
+    assert_eq!(count_blobs(&review), blobs_before);
+    assert_eq!(comment_bodies(&loaded), ["first", "second"]);
+}
+
+fn git_repo(env: &Env) -> PathBuf {
+    let repo = env.path("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("calc.txt"), "a\nb\nc\n").unwrap();
+    std::fs::write(repo.join("README.md"), "# calc\n").unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "c1"]);
+    git(&repo, &["tag", "c1"]);
+    std::fs::write(repo.join("calc.txt"), "a\nB\nc\n").unwrap();
+    std::fs::write(repo.join("README.md"), "# calc\n\nA calculator.\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c2"]);
+    git(&repo, &["tag", "c2"]);
+    std::fs::write(repo.join("calc.txt"), "a\nB\nc\nd\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c3"]);
+    git(&repo, &["tag", "c3"]);
+    repo
+}
+
+#[test]
+fn a_git_review_keeps_files_that_comments_refer_to_even_when_a_later_diff_leaves_them_alone() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+
+    // Session 1 (c1..c2): a comment on the README, which that diff touches.
+    env.ok(
+        &repo,
+        &[("+A calculator.", "more detail please"), ("+B", "why B?")],
+        &["edit", "-f", review_arg, "--snapshot", "changed", "c1..c2"],
+    );
+    let loaded = bundle::load(&review).unwrap();
+    let first = loaded.revisions().next().unwrap();
+    assert_eq!(
+        loaded.manifest(first).len(),
+        2,
+        "calc.txt and README.md, both touched"
+    );
+
+    // Session 2 (c2..c3) doesn't touch README.md at all, but the thread on
+    // it must stay placeable, so its content is kept for this revision too.
+    env.ok(
+        &repo,
+        &[("+d", "new line")],
+        &["edit", "-f", review_arg, "c2..c3"],
+    );
+    let loaded = bundle::load(&review).unwrap();
+    let second = loaded.revisions().nth(1).unwrap();
+    assert_eq!(second.snapshot_mode, bundle::SnapshotMode::Changed, "inherited");
+    let touched: Vec<_> = second
+        .files
+        .iter()
+        .filter_map(|f| f.new_path.as_deref())
+        .collect();
+    assert_eq!(touched, ["calc.txt"]);
+    let mut manifest: Vec<_> = loaded.manifest(second).into_iter().map(|f| f.path).collect();
+    manifest.sort();
+    assert_eq!(manifest, ["README.md", "calc.txt"]);
+    let tree = loaded.tree_of(second);
+    assert_eq!(tree["README.md"], b"# calc\n\nA calculator.\n");
+    assert_eq!(tree["calc.txt"], b"a\nB\nc\nd\n");
+    // calc.txt c1, c2, c3; README c1, c2 (c3 is the same as c2): five blobs.
+    assert_eq!(count_blobs(&review), 5, "{:?}", bundle_names(&review));
+}
+
+#[test]
+fn full_snapshots_keep_the_whole_tree_and_changed_ones_do_not() {
+    for (mode, expect_untouched) in [("full", true), ("changed", false)] {
+        let env = Env::new();
+        let repo = git_repo(&env);
+        std::fs::write(repo.join("other.txt"), "unrelated\n").unwrap();
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-q", "-m", "c4"]);
+        let review = env.path("review.diffnote");
+        env.ok(
+            &repo,
+            &[("+d", "hello")],
+            &["edit", "-f", review.to_str().unwrap(), "--snapshot", mode, "c2..c3"],
+        );
+        let loaded = bundle::load(&review).unwrap();
+        let rev = loaded.revisions().next().unwrap();
+        let paths: Vec<_> = loaded.manifest(rev).into_iter().map(|f| f.path).collect();
+        // The range is c2..c3, so `other.txt` (added in c4) is not in it.
+        assert_eq!(
+            paths.iter().any(|p| p == "README.md"),
+            expect_untouched,
+            "{mode}: {paths:?}"
+        );
+        assert!(paths.iter().any(|p| p == "calc.txt"));
+        assert!(!paths.iter().any(|p| p == "other.txt"), "not in c3");
+    }
+}
+
+#[test]
+fn an_edit_that_adds_nothing_leaves_no_bundle_behind() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let out = env.ok(
+        &repo,
+        &[],
+        &["edit", "-f", review.to_str().unwrap(), "c1..c2"],
+    );
+    assert!(out.contains("No comments added"), "{out}");
+    assert!(!review.exists());
+}
+
+#[test]
+fn a_bad_range_fails_without_touching_the_bundle() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let out = env.run(
+        &repo,
+        &[("+d", "x")],
+        &["edit", "-f", review.to_str().unwrap(), "no-such-rev"],
+    );
+    assert!(!out.status.success());
+    assert!(!review.exists());
+}

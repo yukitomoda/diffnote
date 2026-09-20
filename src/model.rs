@@ -26,13 +26,12 @@ pub enum Side {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum SnapshotMode {
-    /// Only the diff text -- no source files at all.
-    Diff,
-    /// The diff text, plus a full copy of every file the diff touches.
+    /// A copy of every file the diff touches (both sides), plus every file a
+    /// comment refers to.
     Changed,
-    /// The diff text, plus a full copy of the entire source tree
-    /// (respecting .gitignore), for reviews of folders with no other
-    /// history to fall back on.
+    /// Everything `Changed` keeps, plus the entire head tree (respecting
+    /// .gitignore), for reviews of folders with no other history to fall
+    /// back on.
     Full,
 }
 
@@ -178,6 +177,13 @@ pub struct FileDigest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TreeFile {
+    pub path: String,
+    /// Digest of the file's full text at this revision's head.
+    pub digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Revision {
     pub id: Ulid,
     #[serde(with = "time::serde::rfc3339")]
@@ -188,7 +194,14 @@ pub struct Revision {
     pub digest: String,
     pub source: Source,
     pub snapshot_mode: SnapshotMode,
+    /// What the diff changed, per file (both sides' digests).
     pub files: Vec<FileDigest>,
+    /// The head tree as far as this revision recorded it, by digest: every
+    /// file for `Full`; for `Changed`, the files the diff touches plus the
+    /// ones comments referred to. Later `Pin` events add to it. The
+    /// contents are in the bundle's blob store.
+    #[serde(default)]
+    pub tree: Vec<TreeFile>,
 }
 
 /// One line of the JSONL document.
@@ -207,6 +220,12 @@ pub enum Event {
     /// against. Appended the first time a session that adds anything sees a
     /// diff (by `digest`) the bundle hasn't recorded yet.
     Revision(Revision),
+    /// Adds files to the head tree a recorded revision knows about, when a
+    /// later session refers to files the revision hadn't recorded.
+    Pin {
+        revision: Ulid,
+        files: Vec<TreeFile>,
+    },
     /// A thread root (`parent: None`, carries an `anchor`) or a reply
     /// (`parent: Some(root_id)`, no `anchor` — threading is flat, like a
     /// GitHub PR review thread, not an arbitrary tree).
