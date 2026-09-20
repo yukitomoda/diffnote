@@ -41,9 +41,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
-          components: clippy
+          components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        # Formatting doesn't depend on the platform, so once is enough.
+        if: matrix.toolchain == 'stable' && runner.os == 'Linux'
+        run: cargo fmt --all --check
 
       - name: Clippy
         # Warnings are errors, but only on stable: a new Rust adds lints, and
