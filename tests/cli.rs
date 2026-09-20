@@ -983,3 +983,25 @@ fn init_takes_an_author_for_its_title() {
     });
     assert_eq!(author, Some("作成者"));
 }
+
+#[test]
+fn a_reader_that_has_gone_is_not_an_error() {
+    // `diffnote show | head` style: nobody reads stdout any more. It should
+    // stop quietly rather than panic on the broken pipe.
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let arg = review.to_str().unwrap();
+    env.ok(&repo, &[("+B", "why?")], &["edit", "-f", arg, "c1..c2"]);
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let out = Command::new(BIN)
+        .current_dir(&repo)
+        .args(["show", "-f", arg])
+        .stdout(writer)
+        .output()
+        .expect("diffnote runs");
+    assert!(out.status.success(), "{:?}", out.status);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("panicked") && err.is_empty(), "{err}");
+}

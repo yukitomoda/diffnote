@@ -1,5 +1,21 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+
+/// `println!` that stops quietly when the reader has gone (`diffnote show |
+/// head`), as other commands do, instead of panicking on the broken pipe.
+macro_rules! println {
+    ($($arg:tt)*) => {{
+        use std::io::Write;
+        if let Err(e) = writeln!(std::io::stdout(), $($arg)*) {
+            if e.kind() == std::io::ErrorKind::BrokenPipe {
+                std::process::exit(0);
+            }
+            eprintln!("標準出力に書き込めませんでした: {e}");
+            std::process::exit(1);
+        }
+    }};
+}
+
 use diffnote::digest::digest;
 use diffnote::model::{Anchor, Event};
 use diffnote::{annotation, bundle, review};
