@@ -166,6 +166,162 @@ pub fn thread_fragments(loaded: &crate::bundle::Loaded, id: Ulid) -> Option<Thre
     })
 }
 
+/// A row of a diff table, by the line number it has on one side (a number
+/// is unique among the rows of a file on its side).
+pub struct RowRef {
+    pub file: String,
+    pub old: Option<u32>,
+    pub new: Option<u32>,
+}
+
+/// A row that now belongs to (more) threads: their ids and color bars.
+pub struct RowMark {
+    pub row: RowRef,
+    pub threads: String,
+    pub bars: String,
+}
+
+/// What the page needs to show a new thread on lines of the view it is in,
+/// without drawing the view again: the card as a table row to put after a
+/// row, the rows its range now covers, and its place in the thread list.
+pub struct ThreadPatch {
+    pub card_row: String,
+    pub after: RowRef,
+    pub rows: Vec<RowMark>,
+    pub list_item: String,
+    /// The thread the new entry goes in front of (`None`: at the end).
+    pub list_before: Option<Ulid>,
+    pub open: usize,
+    pub all: usize,
+}
+
+/// The patch for thread `id` in view `revision`, or `None` if the thread is
+/// not drawn on lines there (the whole view is then drawn again instead).
+pub fn thread_patch(
+    loaded: &crate::bundle::Loaded,
+    id: Ulid,
+    revision: usize,
+) -> Option<ThreadPatch> {
+    let shown = shown_revisions(loaded).ok()?;
+    let views = revision_views(&shown);
+    let view = views.get(revision)?;
+    let threads = build_threads(&loaded.events);
+    let thread = threads.iter().find(|t| t.root_id == id)?;
+    let blobs = loaded.blobs();
+    let placed = place(&threads, view, &blobs, true);
+
+    let ((file, side, line), _) = placed
+        .by_line
+        .iter()
+        .find(|(_, ts)| ts.iter().any(|t| t.root_id == id))?;
+    let row_ref = |file: &str, side: Side, line: u32| RowRef {
+        file: file.to_string(),
+        old: (side == Side::Old).then_some(line),
+        new: (side == Side::New).then_some(line),
+    };
+
+    // Every row of the thread's range, with all the threads that now cover it.
+    let mut rows = Vec::new();
+    for ((f, s, l), ids) in &placed.highlighted {
+        if !ids.contains(&id) {
+            continue;
+        }
+        let Some(numbers) = row_numbers(&placed.diff, f, *s, *l) else {
+            continue;
+        };
+        let mut covering: Vec<Ulid> = Vec::new();
+        for (side, n) in [(Side::New, numbers.1), (Side::Old, numbers.0)] {
+            if let Some(n) = n
+                && let Some(ids) = placed.highlighted.get(&(f.clone(), side, n))
+            {
+                covering.extend(ids.iter().copied());
+            }
+        }
+        covering.dedup();
+        let (threads, bars) = bars_for(&covering, &placed.marks);
+        let row = RowRef {
+            file: f.clone(),
+            old: numbers.0,
+            new: numbers.1,
+        };
+        // A context row is in the map under both of its numbers.
+        if rows
+            .iter()
+            .any(|m: &RowMark| (&m.row.file, m.row.old, m.row.new) == (&row.file, row.old, row.new))
+        {
+            continue;
+        }
+        rows.push(RowMark { row, threads, bars });
+    }
+
+    let ordered = ordered_threads(&threads, &placed.file_order, &placed.marks);
+    let at = ordered.iter().position(|t| t.root_id == id)?;
+    Some(ThreadPatch {
+        card_row: prefix_ids(&thread_row(thread, &placed.marks), revision),
+        after: row_ref(file, *side, *line),
+        rows,
+        list_item: prefix_ids(&thread_list_item(thread, &placed.marks), revision),
+        list_before: ordered.get(at + 1).map(|t| t.root_id),
+        open: threads.iter().filter(|t| !t.resolved).count(),
+        all: threads.len(),
+    })
+}
+
+/// The (old, new) line numbers of the row of `file` that has line `line` on
+/// `side`.
+fn row_numbers(
+    diff: &UnifiedDiff,
+    file: &str,
+    side: Side,
+    line: u32,
+) -> Option<(Option<u32>, Option<u32>)> {
+    let file_diff = diff.files.iter().find(|f| file_key(f) == file)?;
+    file_diff
+        .hunks
+        .iter()
+        .flat_map(|h| &h.lines)
+        .find(|l| match side {
+            Side::New => l.new_line == Some(line),
+            Side::Old => l.old_line == Some(line),
+        })
+        .map(|l| (l.old_line, l.new_line))
+}
+
+/// The inside of revision `revision`'s section of the page (its title and
+/// view), for when the page has to draw a view again.
+pub fn render_view_inner(loaded: &crate::bundle::Loaded, revision: usize) -> Option<String> {
+    let shown = shown_revisions(loaded).ok()?;
+    let views = revision_views(&shown);
+    let view = views.get(revision)?;
+    let threads = build_threads(&loaded.events);
+    let syntax_set = SyntaxSet::load_defaults_newlines();
+    let theme_set = ThemeSet::load_defaults();
+    let theme = &theme_set.themes["InspiredGitHub"];
+    let inner = prefix_ids(
+        &render_view(&threads, view, &loaded.blobs(), &syntax_set, theme, true),
+        revision,
+    );
+    Some(format!(
+        r#"<h2 class="diffnote-revision__title">{}</h2>{inner}"#,
+        escape_html(&view.label)
+    ))
+}
+
+/// The revision shown as view `index`, with its parsed diff.
+pub fn revision_at(
+    loaded: &crate::bundle::Loaded,
+    index: usize,
+) -> Option<(crate::model::Revision, UnifiedDiff)> {
+    let shown = shown_revisions(loaded).ok()?;
+    let s = shown.into_iter().nth(index)?;
+    Some((s.revision.clone(), s.diff))
+}
+
+/// How many revision views the page has.
+pub fn view_count(loaded: &crate::bundle::Loaded) -> usize {
+    shown_revisions(loaded).map_or(0, |s| s.len())
+}
+
 /// Element ids must be unique across the views, so a view's ids carry its
 /// number.
 fn prefix_ids(html: &str, view: usize) -> String {
@@ -533,7 +689,15 @@ fn render_file(
         }
         Some(file_diff) if !file_diff.hunks.is_empty() => {
             let syntax = guess_syntax(key, syntax_set);
-            out.push_str(r#"<div class="diffnote-diff-scroll"><table class="diffnote-diff">"#);
+            // Which file a row is of, for selecting lines on the served page.
+            let named = if marks.interactive {
+                format!(r#" data-diffnote-file="{}""#, escape_html(key))
+            } else {
+                String::new()
+            };
+            out.push_str(&format!(
+                r#"<div class="diffnote-diff-scroll"><table class="diffnote-diff"{named}>"#
+            ));
             for hunk in &file_diff.hunks {
                 out.push_str(&render_hunk(
                     key,
@@ -585,6 +749,10 @@ fn render_hunk(
     ));
 
     let mut highlighter = HighlightLines::new(syntax, theme);
+    // The next line number on each side, before each row: with the row's own
+    // numbers, enough to say which lines a selection of rows covers (a range
+    // starts at these counters and ends at where they are after its last row).
+    let (mut old_next, mut new_next) = (hunk.old_start, hunk.new_start);
     for line in &hunk.lines {
         let class = match line.kind {
             LineKind::Context => "diffnote-line--context",
@@ -608,7 +776,16 @@ fn render_hunk(
             covering.extend(ids.iter().copied());
         }
         covering.dedup();
-        let (row_class, row_attrs) = commented_row_markup(class, &covering, marks);
+        let (row_class, mut row_attrs) = commented_row_markup(class, &covering, marks);
+        if marks.interactive {
+            row_attrs.push_str(&format!(
+                r#" data-diffnote-old="{}" data-diffnote-new="{}" data-diffnote-old-next="{old_next}" data-diffnote-new-next="{new_next}""#,
+                line.old_line.map(|n| n.to_string()).unwrap_or_default(),
+                line.new_line.map(|n| n.to_string()).unwrap_or_default(),
+            ));
+        }
+        old_next += u32::from(line.old_line.is_some());
+        new_next += u32::from(line.new_line.is_some());
         let content_html = highlight_line(&mut highlighter, &line.content, syntax_set);
         out.push_str(&format!(
             r#"<tr class="{row_class}"{row_attrs}><td class="diffnote-line__gutter-old">{old}</td><td class="diffnote-line__gutter-new">{new}</td><td class="diffnote-line__content"><code>{content}</code></td></tr>"#,
@@ -655,6 +832,17 @@ fn commented_row_markup(base_class: &str, covering: &[Ulid], marks: &Marks) -> (
         return (base_class.to_string(), String::new());
     }
     let class = format!("{base_class} diffnote-line--commented");
+    let (ids, bars) = bars_for(covering, marks);
+    let attrs = format!(
+        r#" style="--diffnote-bars: {bars}" data-diffnote-threads="{ids}""#,
+        bars = escape_html(&bars),
+    );
+    (class, attrs)
+}
+
+/// For a line covered by these threads: their ids (space-separated, as the
+/// hover script reads them) and the stacked color bars, one per thread.
+fn bars_for(covering: &[Ulid], marks: &Marks) -> (String, String) {
     let mut bars = Vec::new();
     let mut ids = Vec::new();
     for (i, id) in covering.iter().enumerate() {
@@ -667,12 +855,7 @@ fn commented_row_markup(base_class: &str, covering: &[Ulid], marks: &Marks) -> (
         bars.push(format!("inset {offset}px 0 0 0 {color}"));
         ids.push(id.to_string());
     }
-    let attrs = format!(
-        r#" style="--diffnote-bars: {bars}" data-diffnote-threads="{ids}""#,
-        bars = escape_html(&bars.join(", ")),
-        ids = ids.join(" "),
-    );
-    (class, attrs)
+    (ids.join(" "), bars.join(", "))
 }
 
 fn thread_row(t: &Thread, marks: &Marks) -> String {
@@ -754,10 +937,13 @@ fn thread_list_item(t: &Thread, marks: &Marks) -> String {
 
 /// Every thread in reading order -- review-wide ones, then by file and line --
 /// each a link to its card.
-fn render_thread_list(threads: &[Thread], file_order: &[String], marks: &Marks) -> String {
-    if threads.is_empty() {
-        return String::new();
-    }
+/// The threads in reading order: review-wide ones first, then by file and
+/// line.
+fn ordered_threads<'a>(
+    threads: &'a [Thread],
+    file_order: &[String],
+    marks: &Marks,
+) -> Vec<&'a Thread> {
     let mut items: Vec<(Option<usize>, u32, &Thread)> = threads
         .iter()
         .map(|t| {
@@ -769,12 +955,20 @@ fn render_thread_list(threads: &[Thread], file_order: &[String], marks: &Marks) 
         })
         .collect();
     items.sort_by_key(|(file, start, t)| (*file, *start, t.created_at));
+    items.into_iter().map(|(_, _, t)| t).collect()
+}
+
+fn render_thread_list(threads: &[Thread], file_order: &[String], marks: &Marks) -> String {
+    // Where a thread added later goes, so the page has it even with none yet.
+    if threads.is_empty() && !marks.interactive {
+        return String::new();
+    }
     let mut out = format!(
         r#"<details class="diffnote-side" open><summary>スレッド <span class="diffnote-badge" title="未解決 / 全部">{} / {}</span></summary><nav class="diffnote-threadlist"><ol>"#,
         threads.iter().filter(|t| !t.resolved).count(),
         threads.len(),
     );
-    for (_, _, t) in items {
+    for t in ordered_threads(threads, file_order, marks) {
         out.push_str(&thread_list_item(t, marks));
     }
     out.push_str("</ol></nav></details>");
@@ -1046,6 +1240,18 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-copy { margin-left: 8px; padding: 0 7px; font: inherit; font-size: 11px; font-weight: 400; line-height: 18px; color: var(--diffnote-color-muted); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 4px; cursor: pointer; vertical-align: baseline; }
 .diffnote-copy:hover { color: var(--diffnote-color-fg); border-color: var(--diffnote-color-muted); }
 .diffnote-copy.is-done { color: #1a7f37; border-color: #1a7f37; }
+body[data-diffnote-api] .diffnote-line__gutter-old, body[data-diffnote-api] .diffnote-line__gutter-new { cursor: pointer; }
+body[data-diffnote-api] .diffnote-line__gutter-new { position: relative; }
+body[data-diffnote-api] .diffnote-line__gutter-new::before { content: "+"; position: absolute; left: 4px; top: 2px; width: 16px; height: 16px; line-height: 16px; text-align: center; font-weight: 700; color: #fff; background: var(--diffnote-color-accent); border-radius: 4px; opacity: 0; }
+body[data-diffnote-api] .diffnote-diff tr:hover .diffnote-line__gutter-new::before { opacity: 1; }
+body.is-selecting { user-select: none; }
+.diffnote-diff .diffnote-select > td { background-image: linear-gradient(rgba(9, 105, 218, 0.16), rgba(9, 105, 218, 0.16)); }
+.diffnote-diff .diffnote-select > td:first-child { --dn-l: inset 4px 0 0 0 var(--diffnote-color-accent); }
+.diffnote-composer-row > td { background: var(--diffnote-color-bg); padding: 6px 16px 6px 124px !important; white-space: normal; font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; }
+.diffnote-compose { max-width: 960px; border: 1px solid var(--diffnote-color-accent); border-radius: 6px; padding: 8px 12px; background: var(--diffnote-color-thread-bg); }
+.diffnote-compose__where { margin-bottom: 4px; font-family: var(--diffnote-font-mono); font-size: 12px; color: var(--diffnote-color-muted); }
+.diffnote-compose textarea { display: block; width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; resize: vertical; border: 1px solid var(--diffnote-color-border); border-radius: 6px; background: var(--diffnote-color-bg); }
+.diffnote-compose textarea:focus { outline: 2px solid var(--diffnote-color-accent); outline-offset: -1px; }
 .diffnote-topbar__quit { margin-left: auto; }
 .diffnote-button { font: inherit; font-size: 12.5px; padding: 3px 12px; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; cursor: pointer; }
 .diffnote-button:hover { background: var(--diffnote-color-gutter); }
@@ -1273,6 +1479,9 @@ const SCRIPT: &str = r#"
   document.addEventListener('click', function (e) {
     var link = e.target.closest ? e.target.closest('a[data-diffnote-jump]') : null;
     if (link) { e.preventDefault(); jump(link); return; }
+    // A line number on the served page starts a selection, not a pin.
+    if (document.body.hasAttribute('data-diffnote-api') && e.target.closest &&
+        e.target.closest('.diffnote-line__gutter-old, .diffnote-line__gutter-new')) return;
     var el = target(e.target);
     if (!el) { pinned = null; clear(); return; }
     var scope = scopeOf(el);
@@ -1287,11 +1496,14 @@ const SCRIPT: &str = r#"
   });
 
   // --- Revisions ---------------------------------------------------------
+  // Set by the served page: draws a view again (see `refresh` below).
+  var refreshView = null;
   function show(i) {
     pinned = null;
     clear();
     views.forEach(function (v, k) { v.classList.toggle('is-current', k === i); });
     links.forEach(function (a, k) { a.classList.toggle('is-current', k === i); });
+    if (refreshView && views[i].hasAttribute('data-stale')) refreshView(i);
   }
   if (views.length > 1) {
     document.documentElement.classList.add('diffnote-js');
@@ -1437,23 +1649,250 @@ const SCRIPT: &str = r#"
         }
       });
     });
+
+    // --- A new thread on lines ---------------------------------------------
+    // Press a line number, or drag over several (Shift+click extends the last
+    // choice); a box opens under the last line. Sent as counters on each side:
+    // where they stand before the first line, and after the last.
+    var sel = null;       // { table, rows, from } while lines are chosen
+    var dragging = false;
+    var composer = null;  // the open box's <tr>
+
+    var diffRows = function (table) {
+      return slice.call(table.querySelectorAll('tr[data-diffnote-old-next]'));
+    };
+    var rowOf = function (node) {
+      var td = node.closest ? node.closest('.diffnote-line__gutter-old, .diffnote-line__gutter-new') : null;
+      var tr = td && td.closest('tr[data-diffnote-old-next]');
+      return tr && tr.closest('table[data-diffnote-file]') ? tr : null;
+    };
+    var num = function (tr, name) { return +tr.getAttribute('data-diffnote-' + name); };
+    var has = function (tr, name) { return tr.getAttribute('data-diffnote-' + name) !== ''; };
+
+    var choose = function (table, from, to) {
+      if (sel) sel.rows.forEach(function (r) { r.classList.remove('diffnote-select'); });
+      var rows = diffRows(table);
+      var a = rows.indexOf(from), b = rows.indexOf(to);
+      var picked = rows.slice(Math.min(a, b), Math.max(a, b) + 1);
+      picked.forEach(function (r) { r.classList.add('diffnote-select'); });
+      sel = { table: table, rows: picked, from: from };
+    };
+
+    // The lines the chosen rows cover, per side.
+    var counters = function () {
+      var first = sel.rows[0], last = sel.rows[sel.rows.length - 1];
+      var span = function (side) {
+        var start = num(first, side + '-next');
+        var after = num(last, side + '-next') + (has(last, side) ? 1 : 0);
+        return { start: start, len: after - start };
+      };
+      return { base: span('old'), head: span('new') };
+    };
+    var whereText = function () {
+      var c = counters();
+      var part = c.head.len > 0 ? c.head : c.base;
+      var end = part.start + part.len - 1;
+      return sel.table.getAttribute('data-diffnote-file') + ':' + (end > part.start ? part.start + '-' + end : part.start);
+    };
+
+    var closeComposer = function () {
+      if (composer) composer.remove();
+      composer = null;
+      if (sel) sel.rows.forEach(function (r) { r.classList.remove('diffnote-select'); });
+      sel = null;
+    };
+
+    var openComposer = function () {
+      var draft = composer ? composer.querySelector('textarea').value : '';
+      if (composer) composer.remove();
+      var last = sel.rows[sel.rows.length - 1];
+      var tr = document.createElement('tr');
+      tr.className = 'diffnote-composer-row';
+      var td = document.createElement('td');
+      td.colSpan = 3;
+      td.innerHTML = '<form class="diffnote-compose"><div class="diffnote-compose__where"></div>' +
+        '<textarea rows="3" placeholder="コメントを書く(Ctrl+Enter で送信)"></textarea>' +
+        '<div class="diffnote-reply__buttons"><button type="submit" class="diffnote-button diffnote-button--primary">コメントする</button>' +
+        '<button type="button" class="diffnote-button" data-diffnote-cancel>キャンセル</button></div></form>';
+      td.querySelector('.diffnote-compose__where').textContent = whereText();
+      tr.appendChild(td);
+      last.after(tr);
+      composer = tr;
+      var box = tr.querySelector('textarea');
+      box.value = draft;
+      box.focus();
+    };
+
+    document.addEventListener('mousedown', function (e) {
+      if (e.button !== 0) return;
+      var row = rowOf(e.target);
+      if (!row) return;
+      var table = row.closest('table');
+      e.preventDefault();
+      if (e.shiftKey && sel && sel.table === table) {
+        choose(table, sel.from, row);
+      } else {
+        choose(table, row, row);
+      }
+      dragging = true;
+      document.body.classList.add('is-selecting');
+    });
+    document.addEventListener('mouseover', function (e) {
+      if (!dragging) return;
+      var row = rowOf(e.target);
+      if (row && row.closest('table') === sel.table) choose(sel.table, sel.from, row);
+    });
+    document.addEventListener('mouseup', function () {
+      if (!dragging) return;
+      dragging = false;
+      document.body.classList.remove('is-selecting');
+      if (sel) openComposer();
+    });
+
+    var sendThread = function (form) {
+      var box = form.querySelector('textarea');
+      var text = box.value.trim();
+      if (!text || form.classList.contains('is-sending') || !sel) return;
+      var c = counters();
+      var table = sel.table;
+      var revision = +table.closest('.diffnote-revision').getAttribute('data-diffnote-revision');
+      form.classList.add('is-sending');
+      box.disabled = true;
+      var cell = form.parentNode;
+      form.style.display = 'none';
+      var pending = document.createElement('article');
+      pending.className = 'diffnote-comment is-pending';
+      pending.innerHTML = '<p class="diffnote-comment__author">保存中…</p><div class="diffnote-comment__body"></div>';
+      pending.querySelector('.diffnote-comment__body').textContent = text;
+      cell.appendChild(pending);
+      post('/api/threads', {
+        revision: revision, file: table.getAttribute('data-diffnote-file'),
+        base: c.base, head: c.head, body: text
+      }).then(function (res) {
+        pending.remove();
+        form.style.display = '';
+        form.classList.remove('is-sending');
+        box.disabled = false;
+        if (!res.ok) {
+          showError(form, res.error || '保存できませんでした');
+          box.focus();
+          return;
+        }
+        closeComposer();
+        applyNewThread(res);
+      });
+    };
+
+    var rowAt = function (table, ref) {
+      if (ref.new !== null && ref.new !== undefined) return table.querySelector('tr[data-diffnote-new="' + ref.new + '"]');
+      return table.querySelector('tr[data-diffnote-old="' + ref.old + '"]');
+    };
+    var tableOf = function (section, file) {
+      return slice.call(section.querySelectorAll('table[data-diffnote-file]')).filter(function (t) {
+        return t.getAttribute('data-diffnote-file') === file;
+      })[0];
+    };
+    var parseRow = function (html) {
+      var tpl = document.createElement('template');
+      tpl.innerHTML = '<table><tbody>' + html + '</tbody></table>';
+      return tpl.content.querySelector('tr');
+    };
+    var setCounts = function (open, all) {
+      slice.call(document.querySelectorAll('.diffnote-side .diffnote-badge[title]')).forEach(function (b) {
+        b.textContent = open + ' / ' + all;
+      });
+      var summary = document.querySelector('.diffnote-summary p');
+      if (summary) summary.textContent = 'スレッド ' + all + ' 件(解決済み ' + (all - open) + ' 件)';
+    };
+
+    // The new thread is put into the view it was written in; the other views
+    // are marked stale and drawn again when they are opened.
+    var applyNewThread = function (res) {
+      var section = document.getElementById('rev-' + res.revision);
+      views.forEach(function (v, k) { if (k !== res.revision) v.setAttribute('data-stale', ''); });
+      setCounts(res.open, res.all);
+      if (res.reload || !res.patch) { refreshView(res.revision); return; }
+      if (active) clear();
+      var p = res.patch;
+      var table = tableOf(section, p.after.file);
+      var after = table && rowAt(table, p.after);
+      if (!after) { refreshView(res.revision); return; }
+      p.rows.forEach(function (m) {
+        var t = tableOf(section, m.row.file);
+        var tr = t && rowAt(t, m.row);
+        if (!tr) return;
+        tr.classList.add('diffnote-line--commented');
+        tr.setAttribute('data-diffnote-threads', m.threads);
+        tr.style.setProperty('--diffnote-bars', m.bars);
+      });
+      var at = after.nextElementSibling;
+      while (at && at.classList.contains('diffnote-thread-row')) { at = at.nextElementSibling; }
+      var row = parseRow(p.card_row);
+      after.parentNode.insertBefore(row, at);
+      var ol = section.querySelector('.diffnote-threadlist ol');
+      if (ol) {
+        var tpl = document.createElement('template');
+        tpl.innerHTML = p.list_item.trim();
+        var item = tpl.content.firstElementChild;
+        var before = p.list_before && ol.querySelector('a[data-diffnote-jump=' + JSON.stringify(p.list_before) + ']');
+        ol.insertBefore(item, before ? before.parentElement : null);
+      }
+      var card = row.querySelector('.diffnote-thread');
+      if (card) {
+        pinned = card.getAttribute('data-diffnote-thread-id');
+        activate(section, pinned);
+        card.scrollIntoView({ block: 'nearest' });
+      }
+    };
+
+    document.addEventListener('submit', function (e) {
+      var form = e.target.closest ? e.target.closest('.diffnote-compose') : null;
+      if (!form) return;
+      e.preventDefault();
+      sendThread(form);
+    });
+    document.addEventListener('keydown', function (e) {
+      var form = e.target.closest ? e.target.closest('.diffnote-compose') : null;
+      if (form && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendThread(form); }
+      if (e.key === 'Escape' && composer) closeComposer();
+    });
+    document.addEventListener('click', function (e) {
+      if (e.target.closest && e.target.closest('[data-diffnote-cancel]')) closeComposer();
+    });
   }
 
   // --- The file list follows what is on screen ---------------------------
-  if ('IntersectionObserver' in window) {
-    views.forEach(function (v) {
-      var byId = {};
-      slice.call(v.querySelectorAll('.diffnote-filelist a')).forEach(function (a) {
-        byId[(a.getAttribute('href') || '').slice(1)] = a;
-      });
-      var io = new IntersectionObserver(function (entries) {
-        entries.forEach(function (en) {
-          var a = byId[en.target.id];
-          if (a) a.classList.toggle('is-visible', en.isIntersecting);
-        });
-      }, { rootMargin: '-48px 0px -55% 0px' });
-      slice.call(v.querySelectorAll('.diffnote-file')).forEach(function (f) { io.observe(f); });
+  var watchers = [];
+  function watchFiles(k) {
+    var v = views[k];
+    if (watchers[k]) watchers[k].disconnect();
+    if (!('IntersectionObserver' in window)) return;
+    var byId = {};
+    slice.call(v.querySelectorAll('.diffnote-filelist a')).forEach(function (a) {
+      byId[(a.getAttribute('href') || '').slice(1)] = a;
     });
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        var a = byId[en.target.id];
+        if (a) a.classList.toggle('is-visible', en.isIntersecting);
+      });
+    }, { rootMargin: '-48px 0px -55% 0px' });
+    slice.call(v.querySelectorAll('.diffnote-file')).forEach(function (f) { io.observe(f); });
+    watchers[k] = io;
+  }
+  views.forEach(function (v, k) { watchFiles(k); });
+  if (document.body.hasAttribute('data-diffnote-api')) {
+    // A view the page can't patch (or that another change made stale) is
+    // fetched again and put in place of the old one.
+    refreshView = function (k) {
+      return fetch('/api/views/' + k, { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (res) {
+        if (!res.ok) return;
+        if (active) clear();
+        views[k].innerHTML = res.html;
+        views[k].removeAttribute('data-stale');
+        watchFiles(k);
+      });
+    };
   }
 })();
 "#;

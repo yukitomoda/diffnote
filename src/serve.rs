@@ -15,8 +15,9 @@
 //! its name, is refused); and every request needs the token printed at start,
 //! which the first visit turns into a cookie.
 
+use crate::annotation::{AnchorScope, LineSpan};
 use crate::model::Event;
-use crate::{author, bundle, html, review};
+use crate::{anchor, author, bundle, create, html, review};
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use time::OffsetDateTime;
@@ -155,6 +156,7 @@ impl Server {
 
         match (request.method, path) {
             ("GET", "/") => self.page(),
+            ("GET", p) if p.starts_with("/api/views/") => self.view(&p["/api/views/".len()..]),
             ("POST", _) => {
                 // A page from another site can't set this header without
                 // asking the server first (which it doesn't allow).
@@ -184,6 +186,125 @@ impl Server {
         }
     }
 
+    /// The inside of one revision's section, drawn afresh: for a view the
+    /// page has let go stale, or one a patch can't be made for.
+    fn view(&self, index: &str) -> Reply {
+        let loaded = match bundle::load(&self.review) {
+            Ok(l) => l,
+            Err(e) => return Reply::error(500, &format!("処理に失敗しました: {e}")),
+        };
+        match index
+            .parse::<usize>()
+            .ok()
+            .and_then(|i| html::render_view_inner(&loaded, i))
+        {
+            Some(inner) => Reply::json(200, &serde_json::json!({ "ok": true, "html": inner })),
+            None => Reply::error(404, "そのリビジョンはありません"),
+        }
+    }
+
+    /// A new thread on lines of a revision's diff. The page says which lines
+    /// as counters on each side (see `data-diffnote-*-next` in `html`).
+    fn create_thread(&self, body: &[u8]) -> Result<Reply, Failure> {
+        let bad = |m: &str| Failure(400, m.to_string());
+        let value: serde_json::Value =
+            serde_json::from_slice(body).map_err(|_| bad("送られた内容を読めません"))?;
+        let text = value
+            .get("body")
+            .and_then(|b| b.as_str())
+            .map(str::trim)
+            .filter(|b| !b.is_empty())
+            .ok_or_else(|| bad("コメントの本文が空です"))?;
+        let revision = value
+            .get("revision")
+            .and_then(|r| r.as_u64())
+            .ok_or_else(|| bad("リビジョンが指定されていません"))? as usize;
+        let file = value
+            .get("file")
+            .and_then(|f| f.as_str())
+            .ok_or_else(|| bad("ファイルが指定されていません"))?;
+        let span = |side: &str| -> Result<LineSpan, Failure> {
+            let part = value
+                .get(side)
+                .ok_or_else(|| bad("行の範囲が指定されていません"))?;
+            let number = |key: &str| {
+                part.get(key)
+                    .and_then(|n| n.as_u64())
+                    .filter(|n| *n <= 100_000_000)
+                    .map(|n| n as u32)
+                    .ok_or_else(|| bad("行の範囲が不正です"))
+            };
+            let (start, len) = (number("start")?, number("len")?);
+            if start == 0 {
+                return Err(bad("行番号は 1 から始まります"));
+            }
+            Ok(LineSpan { start, len })
+        };
+        let (base, head) = (span("base")?, span("head")?);
+        if base.len == 0 && head.len == 0 {
+            return Err(bad("行が選ばれていません"));
+        }
+
+        let loaded = bundle::load(&self.review).map_err(internal)?;
+        let (rev, diff) = html::revision_at(&loaded, revision)
+            .ok_or_else(|| Failure(404, "そのリビジョンはありません".into()))?;
+        if anchor::find_file(&diff, file).is_none() {
+            return Err(bad("そのファイルはこのリビジョンの差分にありません"));
+        }
+        let scope = AnchorScope::Span {
+            file: file.to_string(),
+            base,
+            head,
+        };
+        let anchor = create::build_anchor(
+            &scope,
+            &diff,
+            &rev.files,
+            &rev.source.revisions(&rev.digest),
+        )
+        .map_err(internal)?;
+        let id = Ulid::new();
+        self.append(Event::Comment {
+            id,
+            parent: None,
+            author: self.author.clone(),
+            created_at: OffsetDateTime::now_utc(),
+            anchor: Some(anchor),
+            body: text.to_string(),
+        })?;
+
+        let loaded = bundle::load(&self.review).map_err(internal)?;
+        let threads = review::build_threads(&loaded.events);
+        let mut answer = serde_json::json!({
+            "ok": true,
+            "thread": id.to_string(),
+            "revision": revision,
+            "views": html::view_count(&loaded),
+            "open": threads.iter().filter(|t| !t.resolved).count(),
+            "all": threads.len(),
+        });
+        // Where the thread sits is drawn as a patch; anything else (it is
+        // not on lines of this view) means the view is drawn afresh.
+        match html::thread_patch(&loaded, id, revision) {
+            Some(patch) => {
+                let row = |r: &html::RowRef| serde_json::json!({ "file": r.file, "old": r.old, "new": r.new });
+                answer["patch"] = serde_json::json!({
+                    "card_row": patch.card_row,
+                    "after": row(&patch.after),
+                    "rows": patch.rows.iter().map(|m| serde_json::json!({
+                        "row": row(&m.row),
+                        "threads": m.threads,
+                        "bars": m.bars,
+                    })).collect::<Vec<_>>(),
+                    "list_item": patch.list_item,
+                    "list_before": patch.list_before.map(|u| u.to_string()),
+                });
+            }
+            None => answer["reload"] = serde_json::json!(true),
+        }
+        Ok(Reply::json(200, &answer))
+    }
+
     fn post(&self, path: &str, request: &Request) -> Reply {
         if request.body.len() > MAX_BODY {
             return Reply::error(413, "送られた内容が大きすぎます");
@@ -195,6 +316,7 @@ impl Server {
         }
         let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
         let result = match segments.as_slice() {
+            ["api", "threads"] => self.create_thread(request.body),
             ["api", "threads", id, "replies"] => {
                 self.with_thread(id, |thread| self.reply(thread, request.body))
             }
@@ -882,6 +1004,229 @@ mod tests {
             !f.post(&format!("/api/threads/{}/resolve", f.thread), "{}")
                 .shutdown
         );
+    }
+
+    // ---- new threads on lines ------------------------------------------------
+
+    fn new_thread(f: &Fixture, body: &str) -> Reply {
+        f.post("/api/threads", body)
+    }
+
+    /// The anchor of the last thread in the file.
+    fn last_anchor(f: &Fixture) -> Anchor {
+        f.events()
+            .into_iter()
+            .rev()
+            .find_map(|e| match e {
+                Event::Comment {
+                    parent: None,
+                    anchor: Some(a),
+                    ..
+                } => Some(a),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    fn span(a: &Anchor) -> ((u32, u32), (u32, u32)) {
+        let Anchor::Span { base, head } = a else {
+            panic!("{a:?}");
+        };
+        let side = |r: &Option<LineRange>| r.as_ref().map_or((0, 0), |r| (r.start, r.len));
+        (side(base), side(head))
+    }
+
+    #[test]
+    fn a_thread_on_lines_is_anchored_to_those_lines_of_that_revision() {
+        let f = fixture();
+        // `c` (context line 3 on both sides) and `d` (4): a two-line range.
+        let reply = new_thread(
+            &f,
+            r#"{"revision":0,"file":"f.txt","base":{"start":3,"len":2},"head":{"start":3,"len":2},"body":" a note "}"#,
+        );
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        let anchor = last_anchor(&f);
+        assert_eq!(span(&anchor), ((3, 2), (3, 2)));
+        // The place is in the revision's own file versions (by digest).
+        let Anchor::Span { base, head } = &anchor else {
+            unreachable!()
+        };
+        assert_eq!(base.as_ref().unwrap().digest, digest(BASE));
+        assert_eq!(head.as_ref().unwrap().digest, digest(HEAD));
+        assert_eq!(base.as_ref().unwrap().file, "f.txt");
+        let comments = f.comments();
+        assert_eq!(
+            comments.last().unwrap(),
+            &(None, "tester".to_string(), "a note".to_string())
+        );
+    }
+
+    #[test]
+    fn an_added_or_removed_line_has_an_empty_span_on_the_other_side() {
+        let f = fixture();
+        // Line 2 changed: `b` (old) became `B` (new). Choosing only the added
+        // row: the base is the point before old line 2.
+        new_thread(
+            &f,
+            r#"{"revision":0,"file":"f.txt","base":{"start":2,"len":0},"head":{"start":2,"len":1},"body":"added"}"#,
+        );
+        assert_eq!(span(&last_anchor(&f)), ((2, 0), (2, 1)));
+        new_thread(
+            &f,
+            r#"{"revision":0,"file":"f.txt","base":{"start":2,"len":1},"head":{"start":3,"len":0},"body":"removed"}"#,
+        );
+        assert_eq!(span(&last_anchor(&f)), ((2, 1), (3, 0)));
+    }
+
+    #[test]
+    fn the_answer_has_a_patch_for_the_view_it_was_written_in() {
+        let f = fixture();
+        let reply = new_thread(
+            &f,
+            r#"{"revision":0,"file":"f.txt","base":{"start":3,"len":1},"head":{"start":3,"len":1},"body":"about c"}"#,
+        );
+        let answer = json(&reply);
+        assert_eq!(answer["ok"], true);
+        assert_eq!(
+            (answer["open"].as_u64(), answer["all"].as_u64()),
+            (Some(2), Some(2))
+        );
+        assert_eq!(answer["views"].as_u64(), Some(1));
+        assert_eq!(answer["revision"].as_u64(), Some(0));
+        let id = answer["thread"].as_str().unwrap();
+        let patch = &answer["patch"];
+        // The card, as a table row for the diff, with this view's ids.
+        let row = patch["card_row"].as_str().unwrap();
+        assert!(
+            row.starts_with(r#"<tr class="diffnote-thread-row">"#),
+            "{row}"
+        );
+        assert!(
+            row.contains(&format!(r#"id="r0-thread-{id}""#)) && row.contains("about c"),
+            "{row}"
+        );
+        // After the row of the line's last number (the new side for a context row).
+        assert_eq!(patch["after"]["file"], "f.txt");
+        assert_eq!(patch["after"]["new"].as_u64(), Some(3));
+        // The row now belongs to the thread, with a bar of its color.
+        let rows = patch["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0]["row"]["old"].as_u64(), Some(3));
+        assert_eq!(rows[0]["row"]["new"].as_u64(), Some(3));
+        assert_eq!(rows[0]["threads"], id);
+        assert!(
+            rows[0]["bars"]
+                .as_str()
+                .unwrap()
+                .starts_with("inset 3px 0 0 0 #"),
+            "{rows:?}"
+        );
+        // In the list, after the earlier thread (line 2), so at the end.
+        assert!(patch["list_item"].as_str().unwrap().contains(id));
+        assert!(patch["list_before"].is_null());
+        assert!(answer.get("reload").is_none());
+    }
+
+    #[test]
+    fn a_thread_above_another_goes_before_it_in_the_list() {
+        let f = fixture();
+        // Line 1 is above the fixture's thread on line 2.
+        let answer = json(&new_thread(
+            &f,
+            r#"{"revision":0,"file":"f.txt","base":{"start":1,"len":1},"head":{"start":1,"len":1},"body":"about a"}"#,
+        ));
+        assert_eq!(
+            answer["patch"]["list_before"].as_str(),
+            Some(f.thread.to_string().as_str())
+        );
+    }
+
+    #[test]
+    fn a_row_already_commented_lists_both_threads_in_its_mark() {
+        let f = fixture();
+        // The fixture's thread is on line 2 (new); comment on the same line.
+        let answer = json(&new_thread(
+            &f,
+            r#"{"revision":0,"file":"f.txt","base":{"start":2,"len":0},"head":{"start":2,"len":1},"body":"same line"}"#,
+        ));
+        let rows = answer["patch"]["rows"].as_array().unwrap();
+        let mark = rows
+            .iter()
+            .find(|r| r["row"]["new"].as_u64() == Some(2))
+            .unwrap();
+        let ids: Vec<&str> = mark["threads"].as_str().unwrap().split(' ').collect();
+        assert_eq!(ids.len(), 2, "{mark:?}");
+        assert!(ids.contains(&f.thread.to_string().as_str()));
+        assert_eq!(mark["bars"].as_str().unwrap().matches("inset").count(), 2);
+    }
+
+    #[test]
+    fn a_bad_new_thread_is_refused_and_writes_nothing() {
+        let f = fixture();
+        let ok = |r: &str, file: &str, b: (u32, u32), h: (u32, u32), body: &str| {
+            format!(
+                r#"{{"revision":{r},"file":"{file}","base":{{"start":{},"len":{}}},"head":{{"start":{},"len":{}}},"body":"{body}"}}"#,
+                b.0, b.1, h.0, h.1
+            )
+        };
+        let cases = [
+            (400, "".to_string()),
+            (400, "not json".to_string()),
+            (400, ok("0", "f.txt", (3, 1), (3, 1), "  ")),
+            (400, ok("0", "f.txt", (3, 0), (3, 0), "x")), // nothing chosen
+            (400, ok("0", "f.txt", (0, 1), (3, 1), "x")), // lines start at 1
+            (400, ok("0", "nope.txt", (3, 1), (3, 1), "x")), // not in the diff
+            (404, ok("5", "f.txt", (3, 1), (3, 1), "x")), // no such revision
+            (400, r#"{"revision":0,"file":"f.txt","body":"x"}"#.to_string()),
+            (400, r#"{"revision":-1,"file":"f.txt","base":{"start":1,"len":1},"head":{"start":1,"len":1},"body":"x"}"#.to_string()),
+        ];
+        for (status, body) in cases {
+            assert_eq!(new_thread(&f, &body).status, status, "{body}");
+        }
+        assert_eq!(f.events().len(), 3, "nothing was written");
+    }
+
+    #[test]
+    fn a_view_can_be_drawn_afresh_with_the_new_thread_in_it() {
+        let f = fixture();
+        new_thread(
+            &f,
+            r#"{"revision":0,"file":"f.txt","base":{"start":3,"len":1},"head":{"start":3,"len":1},"body":"fresh one"}"#,
+        );
+        let reply = f.request("GET", "/api/views/0", &[], "");
+        assert_eq!(reply.status, 200);
+        let html = json(&reply)["html"].as_str().unwrap().to_string();
+        assert!(
+            html.contains("fresh one") && html.contains("why B?"),
+            "{html}"
+        );
+        assert!(html.contains(r#"data-diffnote-file="f.txt""#));
+        assert_eq!(f.request("GET", "/api/views/9", &[], "").status, 404);
+        assert_eq!(f.request("GET", "/api/views/x", &[], "").status, 404);
+        // Reading needs the token like everything else.
+        let bare = f.server.handle(&Request {
+            method: "GET",
+            target: "/api/views/0",
+            headers: vec![("host".into(), "127.0.0.1:4242".into())],
+            body: b"",
+        });
+        assert_eq!(bare.status, 403);
+    }
+
+    #[test]
+    fn the_served_page_names_every_row_and_table_for_selection() {
+        let f = fixture();
+        let page = text(&f.request("GET", "/", &[], ""));
+        assert!(page.contains(r#"<table class="diffnote-diff" data-diffnote-file="f.txt">"#));
+        // The changed line: removed row (old 2), added row (new 2); counters
+        // before each row.
+        assert!(page.contains(r#"data-diffnote-old="2" data-diffnote-new="" data-diffnote-old-next="2" data-diffnote-new-next="2""#), "{page}");
+        assert!(page.contains(r#"data-diffnote-old="" data-diffnote-new="2" data-diffnote-old-next="3" data-diffnote-new-next="2""#), "{page}");
+        // The static export has none of it.
+        let export = html::render_bundle(&bundle::load(&f.path).unwrap()).unwrap();
+        assert!(!export.contains(r#" data-diffnote-old-next=""#));
+        assert!(!export.contains(r#"<table class="diffnote-diff" data-diffnote-file="#));
+        assert!(export.contains(r#"<table class="diffnote-diff">"#));
     }
 
     // ---- over a real socket ----------------------------------------------
