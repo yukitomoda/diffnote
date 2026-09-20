@@ -50,6 +50,12 @@ jobs:
         if: matrix.toolchain == 'stable' && runner.os == 'Linux'
         run: cargo fmt --all --check
 
+      - name: JavaScript syntax
+        # The page's script is a plain file (see ui/README.md); Node is on
+        # the runner.
+        if: matrix.toolchain == 'stable' && runner.os == 'Linux'
+        run: node --check ui/app.js
+
       - name: Clippy
         # Warnings are errors, but only on stable: a new Rust adds lints, and
         # the oldest one is here to check that the code builds and passes.
