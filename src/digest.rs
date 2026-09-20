@@ -2,12 +2,17 @@
 //! is stored or compared.
 
 use sha2::{Digest, Sha256};
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 pub fn digest(bytes: impl AsRef<[u8]>) -> String {
     let hash = Sha256::digest(bytes.as_ref());
     format!("sha256:{hash:x}")
 }
+
+/// Two file versions, by digest: where a step or path starts and ends.
+type VersionPair = (String, String);
 
 /// File contents looked up by their digest. Anchors record the digest of the
 /// file version they were written against, so a viewer can find that text
@@ -22,21 +27,36 @@ pub struct Blobs<'a> {
     links: HashMap<String, Vec<String>>,
     /// The same steps, in the direction a revision took them (old -> new).
     forward: HashMap<String, Vec<String>>,
+    // What has been worked out already, so a review with hundreds of threads
+    // doesn't redo it for each: whether a version is valid UTF-8, the path of
+    // steps between two versions, and the line diff of a step.
+    texts: RefCell<HashMap<String, Option<&'a str>>>,
+    paths: RefCell<HashMap<VersionPair, Option<Rc<Vec<String>>>>>,
+    steps: RefCell<HashMap<VersionPair, Rc<Vec<similar::DiffOp>>>>,
 }
 
 impl<'a> Blobs<'a> {
+    fn forget(&mut self) {
+        self.texts.get_mut().clear();
+        self.paths.get_mut().clear();
+        self.steps.get_mut().clear();
+    }
+
     pub fn add(&mut self, bytes: &'a [u8]) {
+        self.forget();
         self.data.entry(digest(bytes)).or_insert(bytes);
     }
 
     /// Adds bytes whose digest is already known (the bundle names its blobs
     /// by digest), without hashing them again.
     pub fn add_known(&mut self, digest: String, bytes: &'a [u8]) {
+        self.forget();
         self.data.entry(digest).or_insert(bytes);
     }
 
     /// Records that a revision turned the file version `old` into `new`.
     pub fn link(&mut self, old: &str, new: &str) {
+        self.forget();
         self.forward
             .entry(old.to_string())
             .or_default()
@@ -74,24 +94,44 @@ impl<'a> Blobs<'a> {
 
     /// The text with this digest, if held and valid UTF-8.
     pub fn text(&self, digest: &str) -> Option<&'a str> {
-        std::str::from_utf8(self.data.get(digest)?).ok()
+        if let Some(known) = self.texts.borrow().get(digest) {
+            return *known;
+        }
+        // Validating a big file's UTF-8 is not free, and is asked for often.
+        let text = self
+            .data
+            .get(digest)
+            .and_then(|bytes| std::str::from_utf8(bytes).ok());
+        self.texts.borrow_mut().insert(digest.to_string(), text);
+        text
     }
 
-    /// The texts along the shortest path of linked versions from `from` to
+    /// The digests along the shortest path of linked versions from `from` to
     /// `to`, both ends included, going only through versions whose text is
     /// held. With no such path but both ends held, just those two (a direct
-    /// comparison).
-    pub fn chain(&self, from: &str, to: &str) -> Option<Vec<&'a str>> {
-        let (start, goal) = (self.text(from)?, self.text(to)?);
+    /// comparison). `None` if either end isn't held.
+    pub fn path(&self, from: &str, to: &str) -> Option<Rc<Vec<String>>> {
+        let key = (from.to_string(), to.to_string());
+        if let Some(known) = self.paths.borrow().get(&key) {
+            return known.clone();
+        }
+        let found = self.find_path(from, to).map(Rc::new);
+        self.paths.borrow_mut().insert(key, found.clone());
+        found
+    }
+
+    fn find_path(&self, from: &str, to: &str) -> Option<Vec<String>> {
+        self.text(from)?;
+        self.text(to)?;
         let mut previous: HashMap<&str, &str> = HashMap::new();
         let mut queue = std::collections::VecDeque::from([from]);
         let mut seen: std::collections::HashSet<&str> = [from].into();
         while let Some(at) = queue.pop_front() {
             if at == to {
-                let mut path = vec![goal];
+                let mut path = vec![at.to_string()];
                 let mut node = at;
                 while let Some(&before) = previous.get(node) {
-                    path.push(self.text(before)?);
+                    path.push(before.to_string());
                     node = before;
                 }
                 path.reverse();
@@ -104,7 +144,25 @@ impl<'a> Blobs<'a> {
                 }
             }
         }
-        Some(vec![start, goal])
+        Some(vec![from.to_string(), to.to_string()])
+    }
+
+    /// The texts along [`Blobs::path`].
+    pub fn chain(&self, from: &str, to: &str) -> Option<Vec<&'a str>> {
+        self.path(from, to)?.iter().map(|d| self.text(d)).collect()
+    }
+
+    /// The line diff turning the version `from` into the version `to`, worked
+    /// out once however often it is asked for.
+    pub fn steps(&self, from: &str, to: &str) -> Option<Rc<Vec<similar::DiffOp>>> {
+        let key = (from.to_string(), to.to_string());
+        if let Some(known) = self.steps.borrow().get(&key) {
+            return Some(known.clone());
+        }
+        let (old, new) = (self.text(from)?, self.text(to)?);
+        let ops = Rc::new(crate::linediff::line_diff(old, new));
+        self.steps.borrow_mut().insert(key, ops.clone());
+        Some(ops)
     }
 }
 

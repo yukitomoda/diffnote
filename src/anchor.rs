@@ -43,12 +43,12 @@ pub fn locate(range: &LineRange, target: &str, blobs: &Blobs) -> Option<Located>
             len: range.len,
         });
     }
-    let chain = blobs.chain(&range.digest, target)?;
-    let (start, len) = chain
+    let path = blobs.path(&range.digest, target)?;
+    let (start, len) = path
         .windows(2)
-        .fold((range.start, range.len), |(at, len), pair| {
-            map_range(pair[0], pair[1], at, len)
-        });
+        .try_fold((range.start, range.len), |(at, len), pair| {
+            Some(map_range(&blobs.steps(&pair[0], &pair[1])?, at, len))
+        })?;
     Some(Located { start, len })
 }
 
@@ -63,10 +63,8 @@ pub fn locate(range: &LineRange, target: &str, blobs: &Blobs) -> Option<Located>
 /// lines went to, so lines added inside it are inside it. If none went
 /// anywhere, the result is the point where they were (`len == 0`). A point
 /// (`len == 0`) stays before the line it was before.
-fn map_range(origin: &str, current: &str, start: u32, len: u32) -> (u32, u32) {
+fn map_range(ops: &[similar::DiffOp], start: u32, len: u32) -> (u32, u32) {
     use similar::DiffOp;
-    let diff = similar::TextDiff::from_lines(origin, current);
-    let ops = diff.ops();
     let first = start.saturating_sub(1) as usize;
 
     if len > 0 {
@@ -76,7 +74,7 @@ fn map_range(origin: &str, current: &str, start: u32, len: u32) -> (u32, u32) {
             lo = Some(lo.map_or(from, |l| l.min(from)));
             hi = Some(hi.map_or(to, |h| h.max(to)));
         };
-        for op in ops {
+        for op in ops.iter() {
             let old = op.old_range();
             let (a, b) = (old.start.max(first), old.end.min(end));
             if a >= b {
@@ -358,7 +356,7 @@ mod tests {
 
     /// Lines of `text`, numbered from 1, as a tuple for terse assertions.
     fn map(origin: &str, current: &str, start: u32, len: u32) -> (u32, u32) {
-        map_range(origin, current, start, len)
+        map_range(&crate::linediff::line_diff(origin, current), start, len)
     }
 
     // ---- unchanged and shifted lines --------------------------------------
@@ -438,6 +436,13 @@ mod tests {
         // Removal at the top and at the bottom.
         assert_eq!(map("a\nb\nc\n", "c\n", 1, 2), (1, 0));
         assert_eq!(map("a\nb\nc\n", "a\nb\n", 3, 1), (3, 0), "before the line past the end");
+    }
+
+    #[test]
+    fn removed_lines_are_placed_where_the_script_really_is() {
+        // similar reports the first removal of this diff at new line 1; the
+        // point is before new line 1 (line 0 of the new text has nothing).
+        assert_eq!(map("v2\nv2\nv1\nv2\n", "v1\nv1\n", 1, 2), (1, 0));
     }
 
     #[test]

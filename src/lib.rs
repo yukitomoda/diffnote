@@ -8,6 +8,7 @@ pub mod digest;
 pub mod files;
 pub mod git;
 pub mod html;
+pub mod linediff;
 pub mod model;
 pub mod record;
 pub mod review;
