@@ -8,81 +8,87 @@ use std::process::Command;
 use time::OffsetDateTime;
 use ulid::Ulid;
 
-/// diffnote: comment on a git diff locally, share the review as a file.
+/// diffnote: git の差分やディレクトリにローカルでコメントし、レビューをファイルで共有する。
 #[derive(Debug, Parser)]
-#[command(name = "diffnote", version)]
+#[command(name = "diffnote", version, disable_help_flag = true, disable_version_flag = true, disable_help_subcommand = true, next_help_heading = "オプション", subcommand_help_heading = "コマンド", subcommand_value_name = "コマンド", help_template = HELP_TEMPLATE)]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
+    /// ヘルプを表示する
+    #[arg(short = 'h', long, global = true, action = clap::ArgAction::Help)]
+    help: Option<bool>,
+    /// バージョンを表示する
+    #[arg(short = 'V', long, action = clap::ArgAction::Version)]
+    version: Option<bool>,
 }
+
+/// clap の組み込みの見出し(Usage など)を日本語にしたコマンド定義。
+fn command() -> clap::Command {
+    use clap::CommandFactory;
+    Cli::command().mut_subcommands(|sub| {
+        sub.help_template(HELP_TEMPLATE)
+                        .mut_args(|a| {
+                {
+                    let heading = if a.is_positional() { "引数" } else { "オプション" };
+                    a.help_heading(heading)
+                }
+            })
+    })
+}
+
+const HELP_TEMPLATE: &str = "{about}\n\n使い方: {usage}\n\n{all-args}";
 
 #[derive(Debug, Subcommand)]
 enum Cmd {
-    /// Snapshot a plain directory (no git) into a new review bundle, so later
-    /// `edit` runs can review what changed since. Not needed for git reviews.
+    /// git を使わないディレクトリのスナップショットを新しいレビューバンドルに保存する。以降の `edit` で、その時点からの変更をレビューできる。git のレビューでは不要。
     Init {
-        /// Path of the diffnote review bundle to create (.diffnote, a zip).
-        #[arg(short = 'f', long = "file", default_value = ".diffnote")]
+        /// 作成するレビューバンドル(.diffnote、zip 形式)のパス。省略時は ./.diffnote。
+        #[arg(short = 'f', long = "file", default_value = ".diffnote", hide_default_value = true)]
         review: PathBuf,
-        /// The directory to snapshot. Files matched by `.diffnoteignore`
-        /// (or, if there is none, `.gitignore`) are left out.
-        #[arg(value_name = "DIR", default_value = ".")]
+        /// スナップショットを取るディレクトリ。省略時はカレントディレクトリ。`.diffnoteignore`(なければ`.gitignore`)に一致するファイルは含めない。
+        #[arg(value_name = "DIR", default_value = ".", hide_default_value = true)]
         dir: PathBuf,
     },
-    /// Open what is being reviewed for annotation in $EDITOR, appending new
-    /// comments to a review bundle (created if missing, for git reviews).
+    /// レビュー対象を $EDITOR で開いてコメントを書き、レビューバンドルに追記する(git のレビューでは、バンドルがなければ作成する)。
     Edit {
-        /// Path to the diffnote review bundle (.diffnote, a zip).
-        #[arg(short = 'f', long = "file", default_value = ".diffnote")]
+        /// レビューバンドル(.diffnote、zip 形式)のパス。省略時は ./.diffnote。
+        #[arg(short = 'f', long = "file", default_value = ".diffnote", hide_default_value = true)]
         review: PathBuf,
-        /// Git review: the commits, resolved by git itself -- `A..B` or
-        /// `A B` (A -> B), `A...B` (merge-base of A and B -> B), or a single
-        /// commit (its first parent -> it). Only committed content is
-        /// reviewed. Directory review (bundle made by `init`): at most one
-        /// argument, the directory to compare with the bundle's last
-        /// snapshot (default: the current directory).
+        /// git のレビュー: git 自身が解決するコミット指定。`A..B` または `A B`(A → B)、`A...B`(A と B のマージベース → B)、単一のコミット(その第一親 → そのコミット)。コミット済みの内容だけをレビューする。ディレクトリのレビュー(`init` で作ったバンドル): 引数は多くても 1 つで、バンドルの最後のスナップショットと比べるディレクトリ(省略時はカレント)。
         #[arg(value_name = "REV|DIR", num_args = 0..)]
         targets: Vec<String>,
-        /// What to keep in the bundle the first time a new diff digest is
-        /// seen and this session actually adds something: `changed` (both
-        /// sides of every touched file, plus every file a comment refers to)
-        /// or `full` (+ the whole head tree). Defaults to the bundle's own
-        /// previously-established mode if it has one, otherwise `changed` for
-        /// git reviews (git itself has the rest). Directory reviews always
-        /// keep the full tree, so `--snapshot changed` is an error there.
-        #[arg(long, value_enum)]
+        /// 新しい差分を初めて見て、かつこの回で何かを追加したときに、バンドルへ保存する内容。`changed`(差分が触れた全ファイルの両側と、コメントが参照する全ファイル)か、`full`(それに加えて head 全体のツリー)。省略時は、バンドルにすでに決まっているモード、なければ git のレビューでは `changed`(残りは git が持っている)。ディレクトリのレビューは常に全体を保存するので、そこで `--snapshot changed` を指定するとエラーになる。
+        #[arg(long, value_enum, hide_possible_values = true)]
         snapshot: Option<diffnote::bundle::SnapshotMode>,
-        /// Put a file (`PATH`) or some of its lines (`PATH:START-END`, or
-        /// `PATH:LINE`) in the buffer as context, so comments can be written
-        /// on them though the diff doesn't touch them. From the head of the
-        /// review; repeat for more. Three lines around what the diff already
-        /// shows are not added twice.
+        /// ファイル(`PATH`)またはその一部の行(`PATH:START-END`、`PATH:LINE`)をバッファに入れる。差分が触れていない箇所にもコメントを書ける。レビューの head 側の内容が対象。繰り返し指定できる。差分がすでに表示している箇所の前後 3 行は、重ねて追加されない。
         #[arg(long = "show", value_name = "PATH[:START[-END]]")]
         show: Vec<String>,
     },
-    /// Print the threads/replies stored in a review bundle.
+    /// レビューバンドルに保存されたスレッドと返信を表示する。
     Show {
-        /// Path to the diffnote review bundle (.diffnote).
-        #[arg(short = 'f', long = "file", default_value = ".diffnote")]
+        /// レビューバンドル(.diffnote)のパス。省略時は ./.diffnote。
+        #[arg(short = 'f', long = "file", default_value = ".diffnote", hide_default_value = true)]
         review: PathBuf,
     },
-    /// Render a review bundle to a self-contained HTML file.
+    /// レビューバンドルを、単体で開ける HTML ファイルに書き出す。
     Export {
-        /// Path to the diffnote review bundle (.diffnote).
-        #[arg(short = 'f', long = "file", default_value = ".diffnote")]
+        /// レビューバンドル(.diffnote)のパス。省略時は ./.diffnote。
+        #[arg(short = 'f', long = "file", default_value = ".diffnote", hide_default_value = true)]
         review: PathBuf,
-        /// Output HTML path, e.g. `-o out.html`.
+        /// 出力する HTML のパス。例: `-o out.html`。
         #[arg(long, short)]
         output: Option<PathBuf>,
-        /// Output HTML path, given positionally instead of via -o/--output,
-        /// e.g. `diffnote export out.html`.
+        /// -o/--output の代わりに位置引数で渡す出力パス。例: `diffnote export out.html`。
         #[arg(index = 1, value_name = "OUTPUT")]
         output_pos: Option<PathBuf>,
     },
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = {
+        use clap::FromArgMatches;
+        Cli::from_arg_matches(&command().get_matches())?
+    };
     match cli.command {
         Cmd::Init { review, dir } => cmd_init(review, dir),
         Cmd::Edit {
@@ -101,11 +107,11 @@ fn main() -> Result<()> {
                 (Some(o), None) | (None, Some(o)) => o,
                 (Some(_), Some(_)) => {
                     anyhow::bail!(
-                        "pass the output path either positionally or via -o/--output, not both"
+                        "出力パスは位置引数か -o/--output のどちらか一方で指定してください"
                     )
                 }
                 (None, None) => {
-                    anyhow::bail!("missing output path (pass it positionally or via -o/--output)")
+                    anyhow::bail!("出力パスがありません(位置引数か -o/--output で指定してください)")
                 }
             };
             cmd_export(review, output)
@@ -117,13 +123,13 @@ fn cmd_export(review_path: PathBuf, output_path: PathBuf) -> Result<()> {
     let loaded = bundle::load(&review_path)?;
     let html = diffnote::html::render_bundle(&loaded).with_context(|| {
         format!(
-            "{} has no captured diff yet; run `diffnote edit` first",
+            "{} にはまだ記録された差分がありません。先に `diffnote edit` を実行してください",
             review_path.display()
         )
     })?;
     std::fs::write(&output_path, html)
-        .with_context(|| format!("failed to write {}", output_path.display()))?;
-    println!("Wrote {}", output_path.display());
+        .with_context(|| format!("{} を書き込めませんでした", output_path.display()))?;
+    println!("{} を書き出しました", output_path.display());
     Ok(())
 }
 
@@ -200,7 +206,7 @@ fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Resu
         .revisions()
         .last()
         .map(|r| loaded.tree_of(r))
-        .context("the bundle has no snapshot to compare with")?;
+        .context("バンドルに、比べる対象のスナップショットがありません")?;
     let current = diffnote::files::read_tree(dir, exclude)?;
     let digest = diffnote::files::tree_digest(&current);
     // Unchanged since the last recorded snapshot: reopen the diff that
@@ -241,7 +247,7 @@ fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Resu
 
 fn cmd_init(review_path: PathBuf, dir: PathBuf) -> Result<()> {
     if review_path.exists() {
-        anyhow::bail!("{} already exists", review_path.display());
+        anyhow::bail!("{} はすでに存在します", review_path.display());
     }
     let tree = diffnote::files::read_tree(&dir, std::slice::from_ref(&review_path))?;
     let digest = diffnote::files::tree_digest(&tree);
@@ -278,7 +284,7 @@ fn cmd_init(review_path: PathBuf, dir: PathBuf) -> Result<()> {
         &events,
         &additions,
     )?;
-    println!("Snapshotted {count} file(s) into {}", review_path.display());
+    println!("{count} 個のファイルを {} に保存しました", review_path.display());
     Ok(())
 }
 
@@ -299,14 +305,14 @@ fn cmd_edit(
         Some(diffnote::model::Source::Files { .. }) => {
             if snapshot_override == Some(bundle::SnapshotMode::Changed) {
                 anyhow::bail!(
-                    "`--snapshot changed` isn't possible for a directory review: with no git to \
-                    read the rest from, the next edit needs the whole tree to compare against, \
-                    so it is always kept in full. Leave out what a review doesn't need with a \
-                    `.diffnoteignore` file instead."
+                    "ディレクトリのレビューでは `--snapshot changed` は指定できません。git のように\
+                    残りを読み出す手段がなく、次の edit で比べるためにツリー全体が必要なので、\
+                    常に全体を保存します。レビューに不要なものは `.diffnoteignore` で除外して\
+                    ください。"
                 );
             }
             if targets.len() > 1 {
-                anyhow::bail!("a directory review takes at most one argument: the directory");
+                anyhow::bail!("ディレクトリのレビューが受け取る引数は、ディレクトリ 1 つまでです");
             }
             let dir = PathBuf::from(targets.first().map_or(".", String::as_str));
             files_input(
@@ -317,8 +323,8 @@ fn cmd_edit(
         }
         Some(diffnote::model::Source::Git(_)) => git_input(&targets)?,
         None if targets.is_empty() => anyhow::bail!(
-            "specify the commit(s) to review, e.g. `diffnote edit HEAD~3..HEAD`; \
-            to review a plain directory instead, run `diffnote init` first"
+            "レビューするコミットを指定してください(例: `diffnote edit HEAD~3..HEAD`)。\
+            git を使わないディレクトリをレビューするには、先に `diffnote init` を実行してください"
         ),
         None => git_input(&targets)?,
     };
@@ -334,7 +340,7 @@ fn cmd_edit(
         head_all,
     } = input;
     if diff_text.trim().is_empty() {
-        println!("No changes to review (diff is empty).");
+        println!("レビューする変更がありません(差分が空です)");
         return Ok(());
     }
     let parsed_diff = diffnote::diff::parse(&diff_text).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -407,7 +413,7 @@ fn cmd_edit(
         .chain(synthetic_files)
         .collect();
 
-    let temp_dir = tempfile::tempdir().context("failed to create a temp directory")?;
+    let temp_dir = tempfile::tempdir().context("一時ディレクトリを作れませんでした")?;
     let temp_path = temp_dir.path().join("review.diff");
 
     // If a previous session's edits failed to parse (or the editor itself
@@ -417,7 +423,7 @@ fn cmd_edit(
     let initial_text = match std::fs::read_to_string(&draft_path) {
         Ok(draft) => {
             println!(
-                "Resuming a draft saved after a previous edit didn't save cleanly: {}",
+                "前回の編集がうまく保存できなかったときの下書きから再開します: {}",
                 draft_path.display()
             );
             draft
@@ -425,22 +431,22 @@ fn cmd_edit(
         Err(_) => temp_text.clone(),
     };
     std::fs::write(&temp_path, &initial_text)
-        .context("failed to write the temp annotation file")?;
+        .context("一時ファイルにコメント用のバッファを書き込めませんでした")?;
 
     let editor = default_editor();
     let status = Command::new(&editor)
         .arg(&temp_path)
         .status()
-        .with_context(|| format!("failed to launch editor '{editor}' (set $EDITOR)"))?;
+        .with_context(|| format!("エディタ '{editor}' を起動できませんでした($EDITOR を設定してください)"))?;
 
     let annotated =
-        std::fs::read_to_string(&temp_path).context("failed to read back the annotated file")?;
+        std::fs::read_to_string(&temp_path).context("編集したファイルを読み戻せませんでした")?;
 
     if !status.success() {
         save_draft(&draft_path, &annotated)?;
         anyhow::bail!(
-            "editor '{editor}' exited with a failure status; your edits were saved to {} \
-            -- fix them and rerun `diffnote edit` to resume, aborting",
+            "エディタ '{editor}' が異常終了しました。編集内容は {} に保存しました。\
+            直してから `diffnote edit` を再実行すると続きから再開できます",
             draft_path.display()
         );
     }
@@ -450,15 +456,15 @@ fn cmd_edit(
         Err(e) => {
             save_draft(&draft_path, &annotated)?;
             anyhow::bail!(
-                "failed to parse your edits: {e}\n\nYour changes were saved to {} -- fix the \
-                error and run `diffnote edit` again to resume where you left off.",
+                "編集内容を解釈できませんでした: {e}\n\n編集内容は {} に保存しました。\
+                誤りを直して `diffnote edit` を再実行すると、続きから再開できます。",
                 draft_path.display()
             );
         }
     };
 
     for warning in &parsed.warnings {
-        eprintln!("warning: {warning}");
+        eprintln!("警告: {warning}");
     }
 
     // Parsing succeeded, so nothing here is at risk of being lost anymore --
@@ -466,7 +472,7 @@ fn cmd_edit(
     let _ = std::fs::remove_file(&draft_path);
 
     if existing_events.is_empty() && parsed.items.is_empty() {
-        println!("No comments added.");
+        println!("コメントは追加されませんでした");
         return Ok(());
     }
 
@@ -496,14 +502,14 @@ fn cmd_edit(
                 {
                     if directives.len() != 1 || body.is_some() {
                         anyhow::bail!(
-                            "'>!reanchor' cannot be combined with comment text or other directives in the same block"
+                            "'>!reanchor' は、同じブロックの中でコメント本文や他のディレクティブと併用できません"
                         );
                     }
                     let annotation::Directive::Reanchor(id_str) = &directives[pos] else {
                         unreachable!()
                     };
                     let target_id = Ulid::from_string(id_str).map_err(|_| {
-                        anyhow::anyhow!("'>!reanchor {id_str}': not a valid thread id")
+                        anyhow::anyhow!("'>!reanchor {id_str}': スレッド ID として正しくありません")
                     })?;
                     let new_anchor = diffnote::create::build_anchor(scope, &parsed.diff, &anchor_files, &revisions)?;
                     new_events.push(Event::Reanchor {
@@ -537,7 +543,7 @@ fn cmd_edit(
             } => {
                 let target_id = match target {
                     annotation::ThreadRef::New(tid) => *thread_ids.get(tid.0).ok_or_else(|| {
-                        anyhow::anyhow!("internal error: unknown thread reference")
+                        anyhow::anyhow!("内部エラー: 不明なスレッド参照です")
                     })?,
                     annotation::ThreadRef::Existing(ulid) => *ulid,
                 };
@@ -560,7 +566,7 @@ fn cmd_edit(
     }
 
     if new_events.is_empty() {
-        println!("No changes.");
+        println!("変更はありません");
         return Ok(());
     }
 
@@ -595,7 +601,7 @@ fn cmd_edit(
     all_events.extend(new_events.iter().cloned());
     bundle::save(&review_path, &loaded, &all_events, &additions)?;
     println!(
-        "Wrote {comment_count} comment(s) ({} event(s) total) to {}",
+        "コメント {comment_count} 件({} 件のイベント)を {} に書き込みました",
         new_events.len(),
         review_path.display()
     );
@@ -606,28 +612,28 @@ fn cmd_show(review_path: PathBuf) -> Result<()> {
     let loaded = bundle::load(&review_path)?;
     let events = loaded.events;
     if events.is_empty() {
-        println!("{} is empty.", review_path.display());
+        println!("{} は空です", review_path.display());
         return Ok(());
     }
     for event in &events {
         match event {
             Event::Meta { context_lines, .. } => {
-                println!("[meta] context_lines={context_lines}");
+                println!("[メタ] context_lines={context_lines}");
             }
             Event::Revision(r) => {
                 println!(
-                    "[revision] {} digest={} source={} snapshot={:?}",
+                    "[リビジョン] {} digest={} 対象={} スナップショット={:?}",
                     r.id,
                     r.digest,
                     match &r.source {
                         diffnote::model::Source::Git(g) => g.spec.as_str(),
-                        diffnote::model::Source::Files { .. } => "(directory)",
+                        diffnote::model::Source::Files { .. } => "(ディレクトリ)",
                     },
                     r.snapshot_mode
                 );
             }
             Event::Pin { revision, files } => {
-                println!("[pin] revision {revision}: {} file(s)", files.len());
+                println!("[固定] リビジョン {revision}: {} 個のファイル", files.len());
             }
             Event::Comment {
                 id,
@@ -638,7 +644,7 @@ fn cmd_show(review_path: PathBuf) -> Result<()> {
                 ..
             } => {
                 println!(
-                    "[{id}] NEW  {} -- {author}",
+                    "[{id}] 新規  {} -- {author}",
                     describe_anchor(anchor.as_ref())
                 );
                 print_body(body);
@@ -650,14 +656,14 @@ fn cmd_show(review_path: PathBuf) -> Result<()> {
                 body,
                 ..
             } => {
-                println!("[{id}] REPLY -> {parent} -- {author}");
+                println!("[{id}] 返信 -> {parent} -- {author}");
                 print_body(body);
             }
             Event::Resolve { parent, author, .. } => {
-                println!("      RESOLVE {parent} -- {author}");
+                println!("      解決 {parent} -- {author}");
             }
             Event::Reopen { parent, author, .. } => {
-                println!("      REOPEN {parent} -- {author}");
+                println!("      再オープン {parent} -- {author}");
             }
             Event::Reanchor {
                 parent,
@@ -666,7 +672,7 @@ fn cmd_show(review_path: PathBuf) -> Result<()> {
                 ..
             } => {
                 println!(
-                    "      REANCHOR {parent} -> {} -- {author}",
+                    "      再アンカー {parent} -> {} -- {author}",
                     describe_anchor(Some(anchor))
                 );
             }
@@ -694,7 +700,7 @@ fn describe_anchor(anchor: Option<&Anchor>) -> String {
     };
     match anchor {
         None => "?".to_string(),
-        Some(Anchor::Global { .. }) => "diff全体".to_string(),
+        Some(Anchor::Global { .. }) => "差分全体".to_string(),
         Some(Anchor::File { base, head }) => format!(
             "ファイル全体: {}",
             head.as_ref().or(base.as_ref()).map_or("?", |f| f.file.as_str())
@@ -732,7 +738,7 @@ fn push_simple_directive(
             created_at: OffsetDateTime::now_utc(),
         }),
         Directive::Reanchor(_) => {
-            anyhow::bail!("internal error: {directive:?} should have been handled by the caller");
+            anyhow::bail!("内部エラー: {directive:?} は呼び出し側で処理されるはずです");
         }
     }
     Ok(())
@@ -750,7 +756,7 @@ fn draft_path_for(review_path: &Path) -> PathBuf {
 
 fn save_draft(draft_path: &Path, content: &str) -> Result<()> {
     std::fs::write(draft_path, content)
-        .with_context(|| format!("failed to save draft to {}", draft_path.display()))
+        .with_context(|| format!("下書きを {} に保存できませんでした", draft_path.display()))
 }
 
 /// The per-file digests of every file `diff` touches: old side read from
@@ -808,12 +814,12 @@ fn confirm_snapshot_size(
     let Some(warning) = diffnote::record::full_snapshot_warning(tree_size) else {
         return mode;
     };
-    eprintln!("warning: {warning}.");
+    eprintln!("警告: {warning}");
     if !is_git {
-        eprintln!("Exclude what a review doesn't need with a `.diffnoteignore` file.");
+        eprintln!("レビューに不要なものは `.diffnoteignore` で除外してください。");
         return mode;
     }
-    eprint!("Use `changed` instead (only the files this diff touches)? [y/N] ");
+    eprint!("代わりに `changed`(この差分が触れるファイルだけ)にしますか? [y/N] ");
     std::io::Write::flush(&mut std::io::stdout()).ok();
     let mut answer = String::new();
     std::io::stdin().read_line(&mut answer).ok();

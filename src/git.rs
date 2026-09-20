@@ -41,20 +41,20 @@ fn base_command(dir: &Path) -> Command {
 fn run(mut cmd: Command) -> Result<Vec<u8>> {
     let output = cmd
         .output()
-        .context("failed to run git (is it installed and on PATH?)")?;
+        .context("git を実行できませんでした(インストールされていて PATH に通っていますか)")?;
     if !output.status.success() {
         let first_line = String::from_utf8_lossy(&output.stderr)
             .lines()
             .next()
-            .unwrap_or("(no output)")
+            .unwrap_or("(出力なし)")
             .to_string();
-        bail!("git failed: {first_line}");
+        bail!("git が失敗しました: {first_line}");
     }
     Ok(output.stdout)
 }
 
 fn run_text(cmd: Command) -> Result<String> {
-    String::from_utf8(run(cmd)?).context("git produced non-UTF-8 output")
+    String::from_utf8(run(cmd)?).context("git の出力が UTF-8 ではありません")
 }
 
 fn is_object_id(s: &str) -> bool {
@@ -91,8 +91,8 @@ impl Repo {
     pub fn resolve_range(&self, args: &[String]) -> Result<GitSource> {
         if args.is_empty() {
             bail!(
-                "specify the commit(s) to review, e.g. `diffnote edit HEAD~3..HEAD`, \
-                `diffnote edit main feature`, or `diffnote edit <commit>`"
+                "レビューするコミットを指定してください(例: `diffnote edit HEAD~3..HEAD`、\
+                `diffnote edit main feature`、`diffnote edit <commit>`)"
             );
         }
         let mut cmd = self.git();
@@ -106,8 +106,8 @@ impl Repo {
                 Some(oid) if is_object_id(oid) => negatives.push(oid.to_string()),
                 None if is_object_id(line) => positives.push(line.to_string()),
                 _ => bail!(
-                    "unsupported argument '{line}': diffnote edit takes only commit revisions \
-                    (e.g. `A..B`, `A...B`, `A B`, or a single commit), not options or paths"
+                    "引数 '{line}' は使えません。diffnote edit が受け付けるのはコミットの指定\
+                    (`A..B`、`A...B`、`A B`、単一のコミット)だけで、オプションやパスは指定できません"
                 ),
             }
         }
@@ -125,13 +125,13 @@ impl Repo {
                 })?;
                 if expected.trim() != mb {
                     bail!(
-                        "unsupported revision combination; use `A..B`, `A...B`, `A B`, or one commit"
+                        "この組み合わせのコミット指定は使えません。`A..B`、`A...B`、`A B`、または単一のコミットにしてください"
                     );
                 }
                 (mb.clone(), b.clone())
             }
             _ => {
-                bail!("unsupported revision combination; use `A..B`, `A...B`, `A B`, or one commit")
+                bail!("この組み合わせのコミット指定は使えません。`A..B`、`A...B`、`A B`、または単一のコミットにしてください")
             }
         };
 
@@ -152,7 +152,7 @@ impl Repo {
                 Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
             }
             Ok(_) => self.empty_tree(),
-            Err(e) => Err(e).context("failed to run git"),
+            Err(e) => Err(e).context("git を実行できませんでした"),
         }
     }
 
@@ -165,7 +165,7 @@ impl Repo {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .context("failed to run git")?;
+            .context("git を実行できませんでした")?;
         drop(child.stdin.take());
         let mut out = String::new();
         child.stdout.take().unwrap().read_to_string(&mut out)?;
@@ -236,7 +236,7 @@ impl Repo {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .context("failed to run git cat-file")?;
+            .context("git cat-file を実行できませんでした")?;
         let mut stdin = child.stdin.take().unwrap();
         let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
 
@@ -256,9 +256,9 @@ impl Repo {
                 let (Some(_), Some("blob"), Some(size)) =
                     (fields.next(), fields.next(), fields.next())
                 else {
-                    bail!("git cat-file could not read blob {oid}: {}", header.trim());
+                    bail!("git cat-file が blob {oid} を読めませんでした: {}", header.trim());
                 };
-                let size: usize = size.parse().context("bad size from git cat-file")?;
+                let size: usize = size.parse().context("git cat-file が不正なサイズを返しました")?;
                 let mut content = vec![0u8; size + 1]; // + trailing newline
                 stdout.read_exact(&mut content)?;
                 content.pop();

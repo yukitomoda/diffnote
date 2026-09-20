@@ -50,7 +50,7 @@ pub fn read_tree(root: &Path, exclude: &[PathBuf]) -> Result<Tree> {
 
     let mut tree = Tree::new();
     for entry in builder.build() {
-        let entry = entry.context("failed to walk the directory")?;
+        let entry = entry.context("ディレクトリをたどれませんでした")?;
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
@@ -62,7 +62,7 @@ pub fn read_tree(root: &Path, exclude: &[PathBuf]) -> Result<Tree> {
             continue;
         };
         let bytes =
-            std::fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+            std::fs::read(path).with_context(|| format!("{} を読めませんでした", path.display()))?;
         tree.insert(rel.to_string_lossy().replace('\\', "/"), bytes);
     }
     Ok(tree)

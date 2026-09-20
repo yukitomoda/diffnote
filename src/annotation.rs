@@ -133,7 +133,7 @@ pub struct Parsed {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum AnnotationError {
-    #[error("line {line}: {message}")]
+    #[error("{line} 行目: {message}")]
     Malformed { line: usize, message: String },
 }
 
@@ -224,7 +224,7 @@ fn validate_range_id(id: &str, line_no: usize) -> Result<(), AnnotationError> {
     {
         Ok(())
     } else {
-        Err(err(line_no, format!("invalid range id {id:?}")))
+        Err(err(line_no, format!("範囲の ID が不正です: {id:?}")))
     }
 }
 
@@ -245,15 +245,15 @@ fn parse_directive(
             Ok(Directive::Reanchor(id.to_string()))
         }
         ("reanchor", Target::New, None) => {
-            Err(err(line_no, "'reanchor' requires a thread id argument"))
+            Err(err(line_no, "'reanchor' にはスレッド ID の引数が必要です"))
         }
         ("reanchor", Target::Reply, _) => Err(err(
             line_no,
-            "'reanchor' must be written as '>!reanchor <id>', not '>>!reanchor'",
+            "'reanchor' は '>>!reanchor' ではなく '>!reanchor <id>' と書いてください",
         )),
         _ => Err(err(
             line_no,
-            format!("unknown or malformed directive {rest:?}"),
+            format!("ディレクティブが未知か、書式が不正です: {rest:?}"),
         )),
     }
 }
@@ -302,7 +302,7 @@ fn flush_pending(
             let target = last_thread.ok_or_else(|| {
                 err(
                     p.start_line,
-                    "'>>' reply with no preceding thread (new or rendered) to reply to",
+                    "'>>' の返信先になるスレッド(新規または表示済み)が直前にありません",
                 )
             })?;
             items.push(Item::Reply {
@@ -360,12 +360,12 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                     )?;
                     validate_range_id(id, line_no)?;
                     if open_ranges.contains_key(id) {
-                        return Err(err(line_no, format!("range '{id}' is already open")));
+                        return Err(err(line_no, format!("範囲 '{id}' はすでに開いています")));
                     }
                     let file = current_file
                         .as_ref()
                         .map(file_label)
-                        .ok_or_else(|| err(line_no, "range marker outside of a file"))?;
+                        .ok_or_else(|| err(line_no, "ファイルの外に範囲マーカーがあります"))?;
                     open_ranges.insert(
                         id.to_string(),
                         RangeStart {
@@ -384,13 +384,13 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                     )?;
                     let start = open_ranges
                         .remove(id)
-                        .ok_or_else(|| err(line_no, format!("range '{id}' was never opened")))?;
+                        .ok_or_else(|| err(line_no, format!("範囲 '{id}' は開かれていません")))?;
                     warn_unused_range(&mut unused_range, &mut warnings);
                     unused_range = Some((id.to_string(), line_no));
                     let base = LineSpan::new(start.start_old_line, old_no - start.start_old_line);
                     let head = LineSpan::new(start.start_new_line, new_no - start.start_new_line);
                     if base.len == 0 && head.len == 0 {
-                        return Err(err(line_no, format!("range '{id}' is empty")));
+                        return Err(err(line_no, format!("範囲 '{id}' が空です")));
                     }
                     current_scope = AnchorScope::Span {
                         file: start.file,
@@ -409,7 +409,7 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                     let ulid = Ulid::from_string(id_token).map_err(|_| {
                         err(
                             line_no,
-                            format!("'>#@' header has an invalid thread id {id_token:?}"),
+                            format!("'>#@' ヘッダのスレッド ID が不正です: {id_token:?}"),
                         )
                     })?;
                     last_thread = Some(ThreadRef::Existing(ulid));
@@ -560,7 +560,7 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
         if let Some(rest) = raw_line.strip_prefix("+++ ") {
             let file = current_file
                 .as_mut()
-                .ok_or_else(|| err(line_no, "'+++' line outside of a file header"))?;
+                .ok_or_else(|| err(line_no, "ファイルヘッダの外に '+++' 行があります"))?;
             file.new_path = diff::parse_path(rest);
             current_scope = AnchorScope::File {
                 file: file_label(file),
@@ -572,7 +572,7 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
             diff::finish_hunk(&mut current_file, &mut current_hunk);
             let file = current_file
                 .as_ref()
-                .ok_or_else(|| err(line_no, "hunk header outside of a file"))?;
+                .ok_or_else(|| err(line_no, "ファイルの外にハンクヘッダがあります"))?;
             let file_lbl = file_label(file);
             let (old_start, old_lines, new_start, new_lines, section_heading) =
                 diff::parse_hunk_header(raw_line, line_no).map_err(from_diff_err)?;
@@ -600,7 +600,7 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
         if raw_line.strip_prefix('\\').is_some() {
             let hunk = current_hunk
                 .as_mut()
-                .ok_or_else(|| err(line_no, "'\\' marker outside of a hunk"))?;
+                .ok_or_else(|| err(line_no, "ハンクの外に '\\' マーカーがあります"))?;
             if let Some(last) = hunk.lines.last_mut() {
                 last.no_newline_at_eof = true;
             }
@@ -613,10 +613,10 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
         let file_lbl = current_file
             .as_ref()
             .map(file_label)
-            .ok_or_else(|| err(line_no, "diff content outside of a file"))?;
+            .ok_or_else(|| err(line_no, "ファイルの外に差分の内容があります"))?;
         let hunk = current_hunk
             .as_mut()
-            .ok_or_else(|| err(line_no, "diff content outside of a hunk"))?;
+            .ok_or_else(|| err(line_no, "ハンクの外に差分の内容があります"))?;
         let line = match prefix_char {
             ' ' => {
                 let l = DiffLine {
@@ -670,7 +670,7 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
             other => {
                 return Err(err(
                     line_no,
-                    format!("unrecognized diff line prefix {other:?}"),
+                    format!("差分の行頭が認識できません: {other:?}"),
                 ));
             }
         };
@@ -689,7 +689,7 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
     if let Some(id) = open_ranges.into_keys().next() {
         return Err(err(
             last_line_no + 1,
-            format!("range '{id}' was never closed"),
+            format!("範囲 '{id}' が閉じられていません"),
         ));
     }
 
@@ -703,12 +703,12 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
 fn warn_unused_range(unused: &mut Option<(String, usize)>, warnings: &mut Vec<String>) {
     if let Some((id, line)) = unused.take() {
         let name = if id.is_empty() {
-            "range".to_string()
+            "範囲".to_string()
         } else {
-            format!("range '{id}'")
+            format!("範囲 '{id}'")
         };
         warnings.push(format!(
-            "line {line}: {name} was closed but has no comment, so nothing was recorded for it"
+            "{line} 行目: {name} は閉じられていますが、コメントがないため何も記録されません"
         ));
     }
 }
@@ -718,8 +718,8 @@ fn warn_unused_range(unused: &mut Option<(String, usize)>, warnings: &mut Vec<St
 /// with existing `threads` interleaved as read-only `>#@`/`>#` blocks at
 /// their resolved position -- same `anchor::resolve_placement` used by HTML
 /// export. A thread whose lines the view doesn't have is drawn at the point
-/// where they are or were, tagged `[deleted]` (removed since), `[not-yet]`
-/// (only in a later version) or `[absent]`, with what they say quoted (`>#|`).
+/// where they are or were, tagged `[削除済み]` (removed since), `[まだない]`
+/// (only in a later version) or `[不在]`, with what they say quoted (`>#|`).
 ///
 /// Known limitation: a comment body containing a line that happens to look
 /// like a `>#@<ulid> ...` header (vanishingly unlikely in practice) would
@@ -812,7 +812,7 @@ pub fn render_for_edit(
     let mut out = String::new();
     if !outdated.is_empty() {
         out.push_str(
-            ">#--- 現在のdiffに配置できなかった既存コメントです。>!reanchor <id> で位置を指定できます ---\n",
+            ">#--- 現在の差分に配置できなかった既存コメントです。>!reanchor <id> で位置を指定できます ---\n",
         );
         for ts in outdated.values() {
             for t in ts {
@@ -926,13 +926,13 @@ fn emit_line_threads(out: &mut String, by_line: &ByLine, file: &str, side: Side,
 fn render_thread_block(out: &mut String, t: &Thread, absent: Option<(&[String], Absence)>) {
     let mut tags = String::new();
     if t.resolved {
-        tags.push_str(" [resolved]");
+        tags.push_str(" [解決済み]");
     }
     if let Some((_, kind)) = absent {
         tags.push_str(match kind {
-            Absence::Deleted => " [deleted]",
-            Absence::NotYet => " [not-yet]",
-            Absence::Unknown => " [absent]",
+            Absence::Deleted => " [削除済み]",
+            Absence::NotYet => " [まだない]",
+            Absence::Unknown => " [不在]",
         });
     }
     let quoted: Vec<String> = absent
@@ -1304,17 +1304,17 @@ diff --git a/f.rs b/f.rs
         assert!(parsed.items.is_empty());
         assert_eq!(parsed.warnings.len(), 1);
         assert!(
-            parsed.warnings[0].contains("range 'a'"),
+            parsed.warnings[0].contains("範囲 'a'"),
             "{:?}",
             parsed.warnings
         );
-        assert!(parsed.warnings[0].starts_with("line "));
+        assert!(parsed.warnings[0].contains(" 行目: "));
 
         // ...and the same for an anonymous range.
         let parsed = parse(&with_range("", "")).unwrap();
         assert_eq!(parsed.warnings.len(), 1);
         assert!(
-            parsed.warnings[0].contains("range was closed"),
+            parsed.warnings[0].contains("範囲 は閉じられて"),
             "{:?}",
             parsed.warnings
         );
@@ -1519,7 +1519,7 @@ diff --git a/f.rs b/f.rs
         ];
 
         let rendered = render(&fixture(), &[], &threads);
-        assert!(!rendered.contains("[deleted]"));
+        assert!(!rendered.contains("[削除済み]"));
 
         let global_pos = rendered.find(&format!(">#@{global_id}")).unwrap();
         let diff_git_pos = rendered.find("diff --git").unwrap();
@@ -1569,7 +1569,7 @@ diff --git a/f.rs b/f.rs
         let target_pos = rendered.find("self.value * 2").unwrap();
         let after = rendered.find("+    }\n").unwrap();
         assert!(target_pos < header_pos && header_pos < after);
-        assert!(!rendered.contains("[deleted]"));
+        assert!(!rendered.contains("[削除済み]"));
     }
 
     #[test]
@@ -1588,7 +1588,7 @@ diff --git a/f.rs b/f.rs
             "why is this here",
         );
         let rendered = render(&fixture(), &[&older], std::slice::from_ref(&thread));
-        assert!(rendered.contains(" [deleted]"), "{rendered}");
+        assert!(rendered.contains(" [削除済み]"), "{rendered}");
         assert!(rendered.contains(">#|     // gone soon"), "{rendered}");
         // Between the lines it was between: after `    }` (line 12), before
         // the added blank line.

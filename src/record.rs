@@ -64,7 +64,7 @@ pub fn pick_snapshot_mode(
 pub fn full_snapshot_warning(bytes: u64) -> Option<String> {
     (bytes >= FULL_SNAPSHOT_WARN_BYTES).then(|| {
         format!(
-            "a `full` snapshot of the reviewed tree would be about {:.1} MB",
+            "レビュー対象のツリーの `full` スナップショットは約 {:.1} MB になります",
             bytes as f64 / (1024.0 * 1024.0)
         )
     })

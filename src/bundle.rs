@@ -161,10 +161,10 @@ pub fn load(path: &Path) -> Result<Loaded> {
     }
 
     let file =
-        std::fs::File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
+        std::fs::File::open(path).with_context(|| format!("{} を開けませんでした", path.display()))?;
     let mut archive = ZipArchive::new(file).with_context(|| {
         format!(
-            "{} doesn't look like a .diffnote bundle (not a zip)",
+            "{} は .diffnote バンドルではないようです(zip ではありません)",
             path.display()
         )
     })?;
@@ -175,19 +175,19 @@ pub fn load(path: &Path) -> Result<Loaded> {
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
-            .with_context(|| format!("failed to read entry {i} of {}", path.display()))?;
+            .with_context(|| format!("{} の {i} 番目のエントリを読めませんでした", path.display()))?;
         let name = entry.name().to_string();
         let mut bytes = Vec::new();
         entry
             .read_to_end(&mut bytes)
-            .with_context(|| format!("failed to read {name} from {}", path.display()))?;
+            .with_context(|| format!("{} から {name} を読めませんでした", path.display()))?;
 
         if name == "review.jsonl" {
             let text = String::from_utf8(bytes).with_context(|| {
-                format!("review.jsonl in {} is not valid UTF-8", path.display())
+                format!("{} の review.jsonl が UTF-8 ではありません", path.display())
             })?;
             events =
-                crate::review::parse_jsonl(&text, &format!("review.jsonl in {}", path.display()))?;
+                crate::review::parse_jsonl(&text, &format!("{} の review.jsonl", path.display()))?;
         } else {
             carried_entries.push((name, bytes));
         }
@@ -212,10 +212,10 @@ pub fn save(path: &Path, loaded: &Loaded, events: &[Event], additions: &Addition
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
     if let Some(parent) = parent {
         std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
+            .with_context(|| format!("{} を作れませんでした", parent.display()))?;
     }
     let temp = tempfile::NamedTempFile::new_in(parent.unwrap_or_else(|| Path::new(".")))
-        .context("failed to create a temp file for the bundle")?;
+        .context("バンドル用の一時ファイルを作れませんでした")?;
 
     {
         let mut writer = ZipWriter::new(temp.as_file());
@@ -224,7 +224,7 @@ pub fn save(path: &Path, loaded: &Loaded, events: &[Event], additions: &Addition
 
         writer.start_file("review.jsonl", options)?;
         for event in events {
-            let line = serde_json::to_string(event).context("failed to serialize event")?;
+            let line = serde_json::to_string(event).context("イベントを JSON にできませんでした")?;
             writer.write_all(line.as_bytes())?;
             writer.write_all(b"\n")?;
         }
@@ -256,11 +256,11 @@ pub fn save(path: &Path, loaded: &Loaded, events: &[Event], additions: &Addition
 
         writer
             .finish()
-            .context("failed to finalize the bundle zip")?;
+            .context("バンドルの zip を完成できませんでした")?;
     }
 
     temp.persist(path)
-        .with_context(|| format!("failed to save {}", path.display()))?;
+        .with_context(|| format!("{} を保存できませんでした", path.display()))?;
     Ok(())
 }
 

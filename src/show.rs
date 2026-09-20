@@ -31,11 +31,11 @@ pub fn parse(spec: &str) -> Result<Show, String> {
     };
     let path = path.strip_prefix("./").unwrap_or(path);
     if path.is_empty() {
-        return Err("no file name".to_string());
+        return Err("ファイル名がありません".to_string());
     }
     if path.starts_with('/') || path.split('/').any(|c| c == "..") {
         return Err(format!(
-            "{path:?} isn't a path inside the reviewed tree (no absolute paths or `..`)"
+            "{path:?} はレビュー対象のツリー内のパスではありません(絶対パスや `..` は使えません)"
         ));
     }
     let lines = match range {
@@ -43,17 +43,17 @@ pub fn parse(spec: &str) -> Result<Show, String> {
         Some(r) => {
             let number = |s: &str| {
                 s.parse::<u32>()
-                    .map_err(|_| format!("{r:?} isn't a line or a range of lines"))
+                    .map_err(|_| format!("{r:?} は行番号でも行の範囲でもありません"))
             };
             let (start, end) = match r.split_once('-') {
                 Some((a, b)) => (number(a)?, number(b)?),
                 None => (number(r)?, number(r)?),
             };
             if start == 0 {
-                return Err("lines are numbered from 1".to_string());
+                return Err("行番号は 1 から始まります".to_string());
             }
             if end < start {
-                return Err(format!("{r:?} runs backwards"));
+                return Err(format!("{r:?} は終わりが始まりより前です"));
             }
             Some((start, end))
         }
@@ -76,26 +76,26 @@ pub fn wants(shows: &[Show], view: &ViewVersions, blobs: &Blobs) -> Result<Vec<W
                 .iter()
                 .any(|f| f.old_path.as_deref() == Some(show.path.as_str()) && f.new.is_none());
             return Err(if deleted {
-                format!("{}: this diff deletes it, so there is nothing at the head to show", show.path)
+                format!("{}: この差分で削除されているので、head 側に表示するものがありません", show.path)
             } else {
-                format!("{}: no such file at the head of this review", show.path)
+                format!("{}: このレビューの head にそのファイルはありません", show.path)
             });
         };
         let Some(text) = blobs.text(digest) else {
             return Err(format!(
-                "{}: not a text file (or its content isn't available)",
+                "{}: テキストファイルではありません(または内容を取得できません)",
                 show.path
             ));
         };
         let total = text.lines().count() as u32;
         if total == 0 {
-            return Err(format!("{}: the file is empty, there is nothing to show", show.path));
+            return Err(format!("{}: ファイルが空なので、表示するものがありません", show.path));
         }
         let (start, end) = match show.lines {
             None => (1, total),
             Some((start, _)) if start > total => {
                 return Err(format!(
-                    "{}: the file has {total} line(s); line {start} is past the end",
+                    "{}: ファイルは {total} 行ですが、{start} 行目は末尾を過ぎています",
                     show.path
                 ));
             }
@@ -152,18 +152,18 @@ mod tests {
     #[test]
     fn nonsense_is_refused_with_a_reason() {
         for (spec, why) in [
-            ("", "no file name"),
-            (":5", "no file name"),
-            ("a.rs:0", "from 1"),
-            ("a.rs:0-3", "from 1"),
-            ("a.rs:9-3", "backwards"),
-            ("a.rs:1-2-3", "isn't a line"),
-            ("a.rs:-", "isn't a line"),
-            ("a.rs:-5", "isn't a line"),
-            ("/etc/passwd", "inside the reviewed tree"),
-            ("../secret", "inside the reviewed tree"),
-            ("a/../../b", "inside the reviewed tree"),
-            ("a.rs:99999999999", "isn't a line"),
+            ("", "ファイル名がありません"),
+            (":5", "ファイル名がありません"),
+            ("a.rs:0", "1 から"),
+            ("a.rs:0-3", "1 から"),
+            ("a.rs:9-3", "終わりが始まりより前"),
+            ("a.rs:1-2-3", "行番号でも"),
+            ("a.rs:-", "行番号でも"),
+            ("a.rs:-5", "行番号でも"),
+            ("/etc/passwd", "ツリー内のパスではありません"),
+            ("../secret", "ツリー内のパスではありません"),
+            ("a/../../b", "ツリー内のパスではありません"),
+            ("a.rs:99999999999", "行番号でも"),
         ] {
             let err = parse(spec).unwrap_err();
             assert!(err.contains(why), "{spec:?}: {err}");
@@ -254,22 +254,22 @@ mod tests {
     #[test]
     fn a_start_past_the_end_is_an_error_that_says_how_long_the_file_is() {
         let err = check(&["README.md:4"]).unwrap_err();
-        assert!(err.contains("README.md") && err.contains("3 line") && err.contains("line 4"), "{err}");
+        assert!(err.contains("README.md") && err.contains("3 行") && err.contains("4 行目"), "{err}");
     }
 
     #[test]
     fn a_file_that_is_not_there_says_so_and_a_deleted_one_says_why() {
         let err = check(&["nope.txt"]).unwrap_err();
-        assert!(err.contains("no such file"), "{err}");
+        assert!(err.contains("そのファイルはありません"), "{err}");
         let err = check(&["deleted.rs"]).unwrap_err();
-        assert!(err.contains("deletes it"), "{err}");
+        assert!(err.contains("削除されている"), "{err}");
     }
 
     #[test]
     fn a_file_that_is_not_text_or_not_kept_or_empty_is_refused() {
-        assert!(check(&["logo.png"]).unwrap_err().contains("not a text file"));
-        assert!(check(&["missing-blob.txt"]).unwrap_err().contains("not a text file"));
-        assert!(check(&["empty.txt"]).unwrap_err().contains("empty"));
+        assert!(check(&["logo.png"]).unwrap_err().contains("テキストファイルではありません"));
+        assert!(check(&["missing-blob.txt"]).unwrap_err().contains("テキストファイルではありません"));
+        assert!(check(&["empty.txt"]).unwrap_err().contains("空"));
     }
 
     #[test]

@@ -56,7 +56,7 @@ pub fn render_bundle(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
         let diff = crate::diff::parse(&text).map_err(|e| anyhow::anyhow!("{e}"))?;
         let source = match &revision.source {
             crate::model::Source::Git(g) => g.spec.clone(),
-            crate::model::Source::Files { .. } => "directory".to_string(),
+            crate::model::Source::Files { .. } => "ディレクトリ".to_string(),
         };
         let label = format!(
             "#{} {source} ({})",
@@ -66,7 +66,7 @@ pub fn render_bundle(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
         parsed.push((label, diff, revision, loaded.manifest(revision)));
     }
     if parsed.is_empty() {
-        anyhow::bail!("the bundle has no captured diff");
+        anyhow::bail!("バンドルに記録された差分がありません");
     }
     let views: Vec<RevisionView> = parsed
         .iter()
@@ -107,9 +107,9 @@ pub fn render(
     let theme = &theme_set.themes["InspiredGitHub"];
 
     let mut body = String::new();
-    body.push_str(r#"<header class="diffnote-summary"><h1>diffnote review</h1>"#);
+    body.push_str(r#"<header class="diffnote-summary"><h1>diffnote レビュー</h1>"#);
     body.push_str(&format!(
-        "<p>{} thread(s), {} resolved</p></header>\n",
+        "<p>スレッド {} 件(解決済み {} 件)</p></header>\n",
         threads.len(),
         threads.iter().filter(|t| t.resolved).count()
     ));
@@ -340,8 +340,8 @@ fn render_file(
         r#"<section class="diffnote-file" id="file-{id}"><details{open_attr}><summary><h2>{name}{binary}{rename}</h2></summary>"#,
         id = html_id(key),
         name = escape_html(key),
-        binary = if is_binary { " (binary)" } else { "" },
-        rename = if is_rename { " (renamed)" } else { "" },
+        binary = if is_binary { " (バイナリ)" } else { "" },
+        rename = if is_rename { " (名前変更)" } else { "" },
     ));
 
     for t in file_threads {

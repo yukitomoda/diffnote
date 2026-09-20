@@ -58,7 +58,7 @@ pub struct UnifiedDiff {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ParseError {
-    #[error("line {line}: {message}")]
+    #[error("{line} 行目: {message}")]
     Malformed { line: usize, message: String },
 }
 
@@ -183,7 +183,7 @@ pub fn parse(text: &str) -> Result<UnifiedDiff, ParseError> {
         if let Some(rest) = raw_line.strip_prefix("+++ ") {
             let file = current_file
                 .as_mut()
-                .ok_or_else(|| err(line_no, "'+++' line outside of a file header"))?;
+                .ok_or_else(|| err(line_no, "ファイルヘッダの外に '+++' 行があります"))?;
             file.new_path = parse_path(rest);
             continue;
         }
@@ -191,7 +191,7 @@ pub fn parse(text: &str) -> Result<UnifiedDiff, ParseError> {
         if raw_line.starts_with("@@ ") || raw_line == "@@" {
             finish_hunk(&mut current_file, &mut current_hunk);
             if current_file.is_none() {
-                return Err(err(line_no, "hunk header outside of a file"));
+                return Err(err(line_no, "ファイルの外にハンクヘッダがあります"));
             }
             let (old_start, old_lines, new_start, new_lines, section_heading) =
                 parse_hunk_header(raw_line, line_no)?;
@@ -212,7 +212,7 @@ pub fn parse(text: &str) -> Result<UnifiedDiff, ParseError> {
             let _ = marker; // "\ No newline at end of file"
             let hunk = current_hunk
                 .as_mut()
-                .ok_or_else(|| err(line_no, "'\\' marker outside of a hunk"))?;
+                .ok_or_else(|| err(line_no, "ハンクの外に '\\' マーカーがあります"))?;
             if let Some(last) = hunk.lines.last_mut() {
                 last.no_newline_at_eof = true;
             }
@@ -236,7 +236,7 @@ pub fn parse(text: &str) -> Result<UnifiedDiff, ParseError> {
         let content = chars.as_str();
         let hunk = current_hunk
             .as_mut()
-            .ok_or_else(|| err(line_no, "diff content outside of a hunk"))?;
+            .ok_or_else(|| err(line_no, "ハンクの外に差分の内容があります"))?;
         let line = match prefix_char {
             ' ' => {
                 let line = DiffLine {
@@ -275,7 +275,7 @@ pub fn parse(text: &str) -> Result<UnifiedDiff, ParseError> {
             other => {
                 return Err(err(
                     line_no,
-                    format!("unrecognized diff line prefix {other:?}"),
+                    format!("差分の行頭が認識できません: {other:?}"),
                 ));
             }
         };
@@ -324,10 +324,10 @@ pub(crate) fn parse_hunk_header(
 ) -> Result<(u32, u32, u32, u32, Option<String>), ParseError> {
     let rest = line
         .strip_prefix("@@ ")
-        .ok_or_else(|| err(line_no, "malformed hunk header"))?;
+        .ok_or_else(|| err(line_no, "ハンクヘッダが不正です"))?;
     let (ranges, heading) = rest
         .split_once(" @@")
-        .ok_or_else(|| err(line_no, "malformed hunk header: missing closing '@@'"))?;
+        .ok_or_else(|| err(line_no, "ハンクヘッダが不正です(閉じの '@@' がありません)"))?;
     let heading = {
         let h = heading.trim_start();
         if h.is_empty() {
@@ -340,10 +340,10 @@ pub(crate) fn parse_hunk_header(
     let mut parts = ranges.split_whitespace();
     let old_range = parts
         .next()
-        .ok_or_else(|| err(line_no, "malformed hunk header: missing old range"))?;
+        .ok_or_else(|| err(line_no, "ハンクヘッダが不正です(旧側の範囲がありません)"))?;
     let new_range = parts
         .next()
-        .ok_or_else(|| err(line_no, "malformed hunk header: missing new range"))?;
+        .ok_or_else(|| err(line_no, "ハンクヘッダが不正です(新側の範囲がありません)"))?;
 
     let (old_start, old_lines) = parse_range(old_range, '-', line_no)?;
     let (new_start, new_lines) = parse_range(new_range, '+', line_no)?;
@@ -353,19 +353,19 @@ pub(crate) fn parse_hunk_header(
 fn parse_range(s: &str, prefix: char, line_no: usize) -> Result<(u32, u32), ParseError> {
     let s = s
         .strip_prefix(prefix)
-        .ok_or_else(|| err(line_no, format!("malformed hunk range {s:?}")))?;
+        .ok_or_else(|| err(line_no, format!("ハンクの範囲が不正です: {s:?}")))?;
     if let Some((start, len)) = s.split_once(',') {
         let start = start
             .parse()
-            .map_err(|_| err(line_no, format!("malformed hunk range start {start:?}")))?;
+            .map_err(|_| err(line_no, format!("ハンクの範囲の開始が不正です: {start:?}")))?;
         let len = len
             .parse()
-            .map_err(|_| err(line_no, format!("malformed hunk range length {len:?}")))?;
+            .map_err(|_| err(line_no, format!("ハンクの範囲の長さが不正です: {len:?}")))?;
         Ok((start, len))
     } else {
         let start = s
             .parse()
-            .map_err(|_| err(line_no, format!("malformed hunk range {s:?}")))?;
+            .map_err(|_| err(line_no, format!("ハンクの範囲が不正です: {s:?}")))?;
         Ok((start, 1))
     }
 }

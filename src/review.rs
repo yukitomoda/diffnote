@@ -116,7 +116,7 @@ pub fn parse_jsonl(text: &str, source_label: &str) -> Result<Vec<Event>> {
             continue;
         }
         let event: Event = serde_json::from_str(line)
-            .with_context(|| format!("{source_label}:{}: malformed event", i + 1))?;
+            .with_context(|| format!("{source_label}:{}: イベントの形式が不正です", i + 1))?;
         events.push(event);
     }
     Ok(events)
@@ -124,7 +124,7 @@ pub fn parse_jsonl(text: &str, source_label: &str) -> Result<Vec<Event>> {
 
 pub fn load(path: &Path) -> Result<Vec<Event>> {
     let text = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to open {}", path.display()))?;
+        .with_context(|| format!("{} を開けませんでした", path.display()))?;
     parse_jsonl(&text, &path.display().to_string())
 }
 

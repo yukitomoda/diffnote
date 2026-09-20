@@ -26,12 +26,9 @@ pub enum Side {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum SnapshotMode {
-    /// A copy of every file the diff touches (both sides), plus every file a
-    /// comment refers to.
+    /// 差分が触れた全ファイルの両側と、コメントが参照する全ファイルを保存する
     Changed,
-    /// Everything `Changed` keeps, plus the entire head tree (respecting
-    /// .gitignore), for reviews of folders with no other history to fall
-    /// back on.
+    /// `changed` の内容に加えて、head 全体のツリー(.gitignore は尊重)を保存する
     Full,
 }
 

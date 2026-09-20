@@ -134,7 +134,7 @@ fn a_directory_review_over_several_sessions() {
     let review_arg = review.to_str().unwrap();
 
     let out = env.ok(&dir, &[], &["init", "-f", review_arg, "."]);
-    assert!(out.contains("Snapshotted 2 file(s)"), "{out}");
+    assert!(out.contains("2 個のファイルを"), "{out}");
     assert_eq!(count_blobs(&review), 2);
 
     // Session 1: a.txt changes.
@@ -144,7 +144,7 @@ fn a_directory_review_over_several_sessions() {
         &[("+TWO", "why uppercase?"), ("GLOBAL", "overall remark")],
         &["edit", "-f", review_arg, "."],
     );
-    assert!(out.contains("Wrote 2 comment(s)"), "{out}");
+    assert!(out.contains("コメント 2 件"), "{out}");
 
     let loaded = bundle::load(&review).unwrap();
     let revisions: Vec<_> = loaded.revisions().collect();
@@ -175,7 +175,7 @@ fn a_directory_review_over_several_sessions() {
         &[("+y", "new line")],
         &["edit", "-f", review_arg, "."],
     );
-    assert!(out.contains("Wrote 1 comment(s)"), "{out}");
+    assert!(out.contains("コメント 1 件"), "{out}");
     let loaded = bundle::load(&review).unwrap();
     let revisions: Vec<_> = loaded.revisions().collect();
     assert_eq!(revisions.len(), 3);
@@ -216,7 +216,7 @@ fn an_unchanged_directory_reopens_the_last_diff_and_records_nothing_new() {
     // Nothing changed since: the diff of the last revision comes back, so a
     // reply-like comment can still be added, and nothing else is recorded.
     let out = env.ok(&dir, &[("+two", "second")], &["edit", "-f", review_arg, "."]);
-    assert!(out.contains("Wrote 1 comment(s)"), "{out}");
+    assert!(out.contains("コメント 1 件"), "{out}");
     let loaded = bundle::load(&review).unwrap();
     assert_eq!(loaded.revisions().count(), 2);
     assert_eq!(count_blobs(&review), blobs_before);
@@ -327,7 +327,7 @@ fn an_edit_that_adds_nothing_leaves_no_bundle_behind() {
         &[],
         &["edit", "-f", review.to_str().unwrap(), "c1..c2"],
     );
-    assert!(out.contains("No comments added"), "{out}");
+    assert!(out.contains("コメントは追加されませんでした"), "{out}");
     assert!(!review.exists());
 }
 
@@ -384,7 +384,7 @@ fn threads_on_a_file_a_later_diff_leaves_alone_are_shown_and_can_be_added_to() {
         &[(" line 6", "and what about this line?")],
         &["edit", "-f", review_arg, "c2..c3"],
     );
-    assert!(out.contains("Wrote 1 comment(s)"), "{out}");
+    assert!(out.contains("コメント 1 件"), "{out}");
 
     let loaded = bundle::load(&review).unwrap();
     assert_eq!(comment_bodies(&loaded), ["why edit this?", "and what about this line?"]);
@@ -599,7 +599,7 @@ fn show_puts_lines_of_an_untouched_file_in_the_buffer_and_comments_on_them_are_r
         &[(" line 10", "what does this mean?")],
         &["edit", "-f", review_arg, "--show", "docs.md:9-11", "c1..c2"],
     );
-    assert!(out.contains("Wrote 1 comment(s)"), "{out}");
+    assert!(out.contains("コメント 1 件"), "{out}");
 
     let loaded = bundle::load(&review).unwrap();
     let (file, start, len, digest) = span_of(&loaded, 0);
@@ -627,13 +627,13 @@ fn show_gives_three_lines_of_context_around_the_range_and_no_more() {
             &[(hidden, "nowhere to put this")],
             &["edit", "-f", review_arg, "--show", "docs.md:9-11", "c1..c2"],
         );
-        assert!(out.contains("No comments added"), "{hidden}: {out}");
+        assert!(out.contains("コメントは追加されませんでした"), "{hidden}: {out}");
         let out = env.ok(
             &repo,
             &[(shown, "this is in the buffer")],
             &["edit", "-f", review_arg, "--show", "docs.md:9-11", "c1..c2"],
         );
-        assert!(out.contains("Wrote 1 comment(s)"), "{shown}: {out}");
+        assert!(out.contains("コメント 1 件"), "{shown}: {out}");
     }
 }
 
@@ -688,13 +688,13 @@ fn show_of_something_that_cannot_be_shown_fails_before_anything_is_written() {
     let review = env.path("review.diffnote");
     let review_arg = review.to_str().unwrap();
     for (spec, message) in [
-        ("nope.md", "no such file"),
-        ("docs.md:25", "past the end"),
-        ("docs.md:0", "from 1"),
-        ("docs.md:9-3", "backwards"),
-        ("../elsewhere", "inside the reviewed tree"),
-        ("logo.bin", "not a text file"),
-        ("", "no file name"),
+        ("nope.md", "そのファイルはありません"),
+        ("docs.md:25", "末尾を過ぎています"),
+        ("docs.md:0", "1 から"),
+        ("docs.md:9-3", "終わりが始まりより前"),
+        ("../elsewhere", "ツリー内のパスではありません"),
+        ("logo.bin", "テキストファイルではありません"),
+        ("", "ファイル名がありません"),
     ] {
         let out = env.run(
             &repo,
@@ -724,7 +724,7 @@ fn show_of_a_file_the_diff_deletes_says_so() {
     );
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("deletes it"), "{err}");
+    assert!(err.contains("削除されている"), "{err}");
 }
 
 #[test]

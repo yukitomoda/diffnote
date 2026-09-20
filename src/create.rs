@@ -50,7 +50,7 @@ pub fn build_anchor(
                     f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file)
                 })
                 .ok_or_else(|| {
-                    anyhow::anyhow!("internal error: file '{file}' not found in the parsed diff")
+                    anyhow::anyhow!("内部エラー: ファイル '{file}' が解析済みの差分にありません")
                 })?;
             let range = |which: Side, path: Option<&String>, span: &LineSpan| {
                 path.map(|path| LineRange {
