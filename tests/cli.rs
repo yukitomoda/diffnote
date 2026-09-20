@@ -749,3 +749,40 @@ fn show_works_for_a_directory_review_too() {
     assert_eq!((file.as_str(), start), ("notes.md", 6));
     assert_eq!(digest, diffnote::digest::digest(&notes));
 }
+
+#[test]
+fn a_thread_survives_a_second_review_from_the_same_base_with_a_longer_range() {
+    let env = Env::new();
+    let repo = env.path("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("calc.txt"), "add\nsub\n").unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "c1"]);
+    git(&repo, &["tag", "c1"]);
+    std::fs::write(repo.join("calc.txt"), "add\nsub\nmul\ndiv\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c2"]);
+    git(&repo, &["tag", "c2"]);
+    std::fs::write(repo.join("calc.txt"), "header\nadd\nsub\nmul\ndiv\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c3"]);
+    git(&repo, &["tag", "c3"]);
+
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    // c1..c2 adds mul and div; comment on mul.
+    env.ok(&repo, &[("+mul", "why mul?")], &["edit", "-f", review_arg, "c1..c2"]);
+    // The review is extended to c1..c3 from the same base: a comment on the
+    // new header makes this a recorded revision too.
+    env.ok(&repo, &[("+header", "why a header?")], &["edit", "-f", review_arg, "c1..c3"]);
+
+    let html_path = env.path("out.html");
+    env.ok(&repo, &[], &["export", "-f", review_arg, "-o", html_path.to_str().unwrap()]);
+    let html = std::fs::read_to_string(&html_path).unwrap();
+    let second_view = &html[html.find(r#"id="rev-1""#).unwrap()..];
+    let (before, _) = second_view.split_once("why mul?").expect("the mul thread is in the view");
+    let summary = &before[before.rfind("<summary>").unwrap()..];
+    // Placed at its line, not as a line that was deleted or is not there.
+    assert!(summary.contains("(L3)"), "{summary}");
+    assert!(!summary.contains("削除された行"), "{summary}");
+    assert!(!summary.contains("まだない行") && !summary.contains("この版にない行"), "{summary}");
+}

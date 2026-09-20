@@ -643,6 +643,32 @@ mod tests {
     }
 
     #[test]
+    fn a_range_added_in_one_version_is_followed_into_a_sibling_that_kept_it() {
+        // Reviewed v1..v2, then v1..v3: both recorded from v1. The lines v2
+        // added are still there in v3 (which came after v2), so they must not
+        // be lost on a detour through v1.
+        let (v1, v2, v3) = (
+            "def add():\n    pass\n",
+            "def add():\n    pass\n\ndef mul():\n    pass\n",
+            "\"\"\"doc\"\"\"\n\ndef add():\n    pass\n\ndef mul():\n    pass\n",
+        );
+        let mut blobs = blobs_of(&[v1, v2, v3], false);
+        blobs.link(&digest(v1), &digest(v2));
+        blobs.link(&digest(v1), &digest(v3));
+        let mul = range_in(v2, 4, 2); // `def mul():` and its body
+        assert_eq!(
+            locate(&mul, &digest(v3), &blobs),
+            Some(Located { start: 6, len: 2 })
+        );
+        // The other way round too: v3's lines in v2.
+        let doc = range_in(v3, 6, 2);
+        assert_eq!(
+            locate(&doc, &digest(v2), &blobs),
+            Some(Located { start: 4, len: 2 })
+        );
+    }
+
+    #[test]
     fn locating_follows_the_recorded_steps_and_each_can_change_the_length() {
         let texts = [
             "a\nb\nc\nd\n",

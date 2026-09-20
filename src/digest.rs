@@ -24,8 +24,7 @@ type VersionPair = (String, String);
 #[derive(Default)]
 pub struct Blobs<'a> {
     data: HashMap<String, &'a [u8]>,
-    links: HashMap<String, Vec<String>>,
-    /// The same steps, in the direction a revision took them (old -> new).
+    /// The steps revisions took (old -> new).
     forward: HashMap<String, Vec<String>>,
     // What has been worked out already, so a review with hundreds of threads
     // doesn't redo it for each: whether a version is valid UTF-8, the path of
@@ -61,14 +60,6 @@ impl<'a> Blobs<'a> {
             .entry(old.to_string())
             .or_default()
             .push(new.to_string());
-        self.links
-            .entry(old.to_string())
-            .or_default()
-            .push(new.to_string());
-        self.links
-            .entry(new.to_string())
-            .or_default()
-            .push(old.to_string());
     }
 
     /// Whether recorded revisions took the version `older` on to `newer`
@@ -106,10 +97,11 @@ impl<'a> Blobs<'a> {
         text
     }
 
-    /// The digests along the shortest path of linked versions from `from` to
-    /// `to`, both ends included, going only through versions whose text is
-    /// held. With no such path but both ends held, just those two (a direct
-    /// comparison). `None` if either end isn't held.
+    /// The digests along the shortest run of recorded steps between `from`
+    /// and `to` (all in one direction), both ends included, going only
+    /// through versions whose text is held. With no such run but both ends
+    /// held, just those two (a direct comparison). `None` if either end isn't
+    /// held.
     pub fn path(&self, from: &str, to: &str) -> Option<Rc<Vec<String>>> {
         let key = (from.to_string(), to.to_string());
         if let Some(known) = self.paths.borrow().get(&key) {
@@ -123,6 +115,27 @@ impl<'a> Blobs<'a> {
     fn find_path(&self, from: &str, to: &str) -> Option<Vec<String>> {
         self.text(from)?;
         self.text(to)?;
+        // Only along steps some revision really took, all one way: forward if
+        // `from` came first, backward if `to` did. Going back to a common
+        // base and forward again is not history (what one side added would
+        // look deleted on the way back), so two versions that only share a
+        // base are compared directly.
+        if let Some(path) = self.forward_path(from, to) {
+            return Some(path);
+        }
+        if let Some(mut path) = self.forward_path(to, from) {
+            path.reverse();
+            return Some(path);
+        }
+        Some(vec![from.to_string(), to.to_string()])
+    }
+
+    /// The shortest run of recorded steps from `from` to `to`, through
+    /// versions whose text is held.
+    fn forward_path(&self, from: &str, to: &str) -> Option<Vec<String>> {
+        if from == to {
+            return Some(vec![from.to_string()]);
+        }
         let mut previous: HashMap<&str, &str> = HashMap::new();
         let mut queue = std::collections::VecDeque::from([from]);
         let mut seen: std::collections::HashSet<&str> = [from].into();
@@ -137,14 +150,14 @@ impl<'a> Blobs<'a> {
                 path.reverse();
                 return Some(path);
             }
-            for next in self.links.get(at).into_iter().flatten() {
+            for next in self.forward.get(at).into_iter().flatten() {
                 if self.text(next).is_some() && seen.insert(next) {
                     previous.insert(next, at);
                     queue.push_back(next);
                 }
             }
         }
-        Some(vec![from.to_string(), to.to_string()])
+        None
     }
 
     /// The texts along [`Blobs::path`].
@@ -199,5 +212,52 @@ mod tests {
         b.link("b", "a");
         assert!(b.precedes("a", "b"));
         assert!(!b.precedes("a", "c"));
+    }
+
+    fn held<'a>(links: &[(&str, &str)], names: &[&'a str]) -> Blobs<'a> {
+        let mut b = Blobs::default();
+        for n in names {
+            b.add_known(n.to_string(), n.as_bytes());
+        }
+        for (a, c) in links {
+            b.link(a, c);
+        }
+        b
+    }
+
+    fn path(b: &Blobs, from: &str, to: &str) -> Vec<String> {
+        b.path(from, to).unwrap().to_vec()
+    }
+
+    #[test]
+    fn a_path_follows_recorded_steps_forward_and_backward() {
+        let b = held(&[("v1", "v2"), ("v2", "v3")], &["v1", "v2", "v3"]);
+        assert_eq!(path(&b, "v1", "v3"), ["v1", "v2", "v3"]);
+        assert_eq!(path(&b, "v3", "v1"), ["v3", "v2", "v1"], "backward, one way");
+        assert_eq!(path(&b, "v2", "v2"), ["v2"]);
+    }
+
+    #[test]
+    fn versions_that_only_share_a_base_are_compared_directly() {
+        // v1 -> v2 and v1 -> v3: neither came from the other. Going v2 -> v1
+        // -> v3 would make what v2 added look deleted on the way back.
+        let b = held(&[("v1", "v2"), ("v1", "v3")], &["v1", "v2", "v3"]);
+        assert_eq!(path(&b, "v2", "v3"), ["v2", "v3"]);
+        assert_eq!(path(&b, "v3", "v2"), ["v3", "v2"]);
+        // ...and a version that did come from the other still goes by steps.
+        assert_eq!(path(&b, "v1", "v3"), ["v1", "v3"]);
+    }
+
+    #[test]
+    fn a_step_through_a_version_that_is_not_held_is_skipped() {
+        let b = held(&[("v1", "v2"), ("v2", "v3")], &["v1", "v3"]);
+        assert_eq!(path(&b, "v1", "v3"), ["v1", "v3"], "v2's text is gone");
+    }
+
+    #[test]
+    fn a_path_needs_both_ends_held() {
+        let b = held(&[("v1", "v2")], &["v1"]);
+        assert!(b.path("v1", "v2").is_none());
+        assert!(b.path("v9", "v1").is_none());
     }
 }
