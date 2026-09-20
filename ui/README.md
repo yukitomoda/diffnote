@@ -10,7 +10,8 @@ not built or bundled.
   hide-resolved box, and, on the served page, replying, resolving, choosing
   lines and commenting, other files).
 
-Check the syntax with `node --check ui/app.js` (CI does).
+Check the syntax with `node --check ui/app.js` (CI does). The page is tested in a
+real browser by `tests/browser` (see its README).
 
 Plan: the page is being moved to a client-side app (Preact + htm, no build
 step) fed with data from Rust, so that layouts (unified/split) and future UI

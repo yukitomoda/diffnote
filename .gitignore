@@ -1,3 +1,4 @@
 /target
 /.diffnote
 /.diffnote.draft
+__pycache__/
