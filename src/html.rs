@@ -357,11 +357,8 @@ pub fn anchor_view(
     loaded: &crate::bundle::Loaded,
     index: usize,
     file: Option<&str>,
-) -> Option<(
-    crate::model::Revision,
-    UnifiedDiff,
-    Vec<crate::model::FileDigest>,
-)> {
+    git: Option<&dyn CommitFiles>,
+) -> Option<AnchorView> {
     let shown = shown_revisions(loaded).ok()?;
     let views = revision_views(&shown);
     let view = views.get(index)?;
@@ -370,13 +367,23 @@ pub fn anchor_view(
     let mut diff = placed.diff;
     let mut files = view.files.to_vec();
     files.extend(placed.synthetic_files);
+    let mut store = None;
     if let Some(path) = file
         && !diff.files.iter().any(|f| file_key(f) == path)
-        && let Some(entry) = loaded
-            .manifest(shown[index].revision)
-            .into_iter()
-            .find(|e| e.path == path && loaded.blob(&e.digest).is_some())
+        && let Ok(content) = file_content(loaded, index, path, git)
+        && std::str::from_utf8(&content.bytes).is_ok()
     {
+        let digest = crate::digest::digest(&content.bytes);
+        // From the commit: the comment is what stores it.
+        if !content.stored {
+            store = Some((
+                crate::model::TreeFile {
+                    path: path.to_string(),
+                    digest: digest.clone(),
+                },
+                content.bytes,
+            ));
+        }
         diff.files.push(FileDiff {
             old_path: Some(path.to_string()),
             new_path: Some(path.to_string()),
@@ -385,11 +392,49 @@ pub fn anchor_view(
         files.push(crate::model::FileDigest {
             old_path: Some(path.to_string()),
             new_path: Some(path.to_string()),
-            old: Some(entry.digest.clone()),
-            new: Some(entry.digest),
+            old: Some(digest.clone()),
+            new: Some(digest),
         });
     }
-    Some((shown[index].revision.clone(), diff, files))
+    Some(AnchorView {
+        revision: shown[index].revision.clone(),
+        diff,
+        files,
+        store,
+    })
+}
+
+/// What [`anchor_view`] gives: what a thread is anchored against.
+pub struct AnchorView {
+    pub revision: crate::model::Revision,
+    pub diff: UnifiedDiff,
+    pub files: Vec<crate::model::FileDigest>,
+    /// A file of the commit that the bundle doesn't store yet and that the
+    /// thread is about: to be stored (its entry for the revision and its
+    /// content) together with the thread.
+    pub store: Option<(crate::model::TreeFile, Vec<u8>)>,
+}
+
+/// Files of a git commit, for a page served next to the repository the review
+/// was made from: the ones the bundle doesn't store can still be looked at
+/// (and are stored when a comment is made on them).
+pub trait CommitFiles {
+    /// Every file of the commit's tree, or `None` if the repository doesn't
+    /// have the commit.
+    fn tree(&self, commit: &str) -> Option<std::sync::Arc<Vec<crate::git::TreeEntry>>>;
+    /// The content of one of those files.
+    fn read(&self, entry: &crate::git::TreeEntry) -> Result<Vec<u8>, String>;
+}
+
+/// Files bigger than this are not opened (or stored by a comment).
+const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+
+/// The commit a revision's head is, for a review made from git.
+fn head_commit(revision: &crate::model::Revision) -> Option<&str> {
+    match &revision.source {
+        crate::model::Source::Git(g) => Some(g.head.as_str()),
+        crate::model::Source::Files { .. } => None,
+    }
 }
 
 // ---- other files: the stored tree, opened to look at ------------------------
@@ -399,23 +444,38 @@ const OPEN_CHUNK: usize = 500;
 /// Entries listed at most, in one directory or one search.
 const TREE_LIMIT: usize = 500;
 
-/// The files the revision stores that the view doesn't already have (as part
-/// of the diff, or for a thread), by path.
+/// The files the revision has that the view doesn't already show (as part of
+/// the diff, or for a thread): those it stores and, next to the repository,
+/// the rest of its head commit. By path.
 fn other_files(
     loaded: &crate::bundle::Loaded,
     revision: usize,
-) -> Option<Vec<crate::model::TreeFile>> {
+    git: Option<&dyn CommitFiles>,
+) -> Option<Vec<String>> {
     let shown = shown_revisions(loaded).ok()?;
     let views = revision_views(&shown);
     let view = views.get(revision)?;
     let threads = build_threads(&loaded.events);
     let placed = place(&threads, view, &loaded.blobs(), true);
-    let mut files: Vec<crate::model::TreeFile> = loaded
-        .manifest(shown[revision].revision)
-        .into_iter()
+    let rev = shown[revision].revision;
+    let manifest = loaded.manifest(rev);
+    let mut files: Vec<String> = manifest
+        .iter()
         .filter(|f| !placed.file_order.contains(&f.path) && loaded.blob(&f.digest).is_some())
+        .map(|f| f.path.clone())
         .collect();
-    files.sort_by(|a, b| a.path.cmp(&b.path));
+    if let Some(tree) = head_commit(rev).and_then(|c| git?.tree(c)) {
+        files.extend(
+            tree.iter()
+                .map(|e| &e.path)
+                .filter(|p| {
+                    !placed.file_order.contains(p) && !manifest.iter().any(|f| &f.path == *p)
+                })
+                .cloned(),
+        );
+    }
+    files.sort();
+    files.dedup();
     Some(files)
 }
 
@@ -435,25 +495,36 @@ pub fn tree_listing(
     revision: usize,
     dir: &str,
     query: &str,
+    git: Option<&dyn CommitFiles>,
 ) -> Option<String> {
-    let files = other_files(loaded, revision)?;
+    let files = other_files(loaded, revision, git)?;
+    // A review made from git, with its repository out of reach.
+    let note = {
+        let shown = shown_revisions(loaded).ok()?;
+        let rev = shown.get(revision)?.revision;
+        match head_commit(rev) {
+            Some(c) if git.and_then(|g| g.tree(c)).is_none() => {
+                r#"<p class="diffnote-tree__empty">このバンドルの git リポジトリが見つからないため、保存済みのファイルだけを表示しています</p>"#
+            }
+            _ => "",
+        }
+    };
     if files.is_empty() {
-        return Some(
-            r#"<p class="diffnote-tree__empty">ほかに保存されているファイルはありません</p>"#
-                .to_string(),
-        );
+        return Some(format!(
+            r#"<p class="diffnote-tree__empty">ほかに開けるファイルはありません</p>{note}"#
+        ));
     }
     let mut items = Vec::new();
     let more;
     let query = query.trim().to_lowercase();
     if !query.is_empty() {
-        let matching: Vec<&crate::model::TreeFile> = files
+        let matching: Vec<&String> = files
             .iter()
-            .filter(|f| f.path.to_lowercase().contains(&query))
+            .filter(|f| f.to_lowercase().contains(&query))
             .collect();
         more = matching.len().saturating_sub(TREE_LIMIT);
         for f in matching.into_iter().take(TREE_LIMIT) {
-            items.push(tree_file_item(&f.path, &f.path));
+            items.push(tree_file_item(f, f));
         }
         if items.is_empty() {
             return Some(r#"<p class="diffnote-tree__empty">見つかりません</p>"#.to_string());
@@ -467,12 +538,12 @@ pub fn tree_listing(
         let mut dirs: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
         let mut here: Vec<(&str, &str)> = Vec::new();
         for f in &files {
-            let Some(rest) = f.path.strip_prefix(prefix.as_str()) else {
+            let Some(rest) = f.strip_prefix(prefix.as_str()) else {
                 continue;
             };
             match rest.split_once('/') {
                 Some((name, _)) => *dirs.entry(name).or_default() += 1,
-                None => here.push((rest, f.path.as_str())),
+                None => here.push((rest, f.as_str())),
             }
         }
         let mut entries: Vec<String> = dirs
@@ -493,6 +564,9 @@ pub fn tree_listing(
         items = entries.into_iter().take(TREE_LIMIT).collect();
     }
     let mut out = format!(r#"<ul class="diffnote-tree__list">{}</ul>"#, items.concat());
+    if dir.is_empty() && query.is_empty() {
+        out.push_str(note);
+    }
     if more > 0 {
         out.push_str(&format!(
             r#"<p class="diffnote-tree__empty">ほか {more} 件(検索で絞り込んでください)</p>"#
@@ -501,26 +575,64 @@ pub fn tree_listing(
     Some(out)
 }
 
-/// The text of a file the revision stores, or why it can't be shown.
-fn stored_text(
+/// A file of a revision to look at or comment on: what the bundle stores of
+/// it, or else (next to the repository) what its head commit has.
+struct FileContent {
+    bytes: Vec<u8>,
+    /// Whether the bundle already stores it (a comment on it need store nothing).
+    stored: bool,
+}
+
+fn file_content(
     loaded: &crate::bundle::Loaded,
     revision: usize,
     path: &str,
-) -> Result<String, String> {
+    git: Option<&dyn CommitFiles>,
+) -> Result<FileContent, String> {
     let shown = shown_revisions(loaded).map_err(|e| e.to_string())?;
     let rev = shown
         .get(revision)
         .ok_or("そのリビジョンはありません")?
         .revision;
-    let entry = loaded
-        .manifest(rev)
-        .into_iter()
-        .find(|f| f.path == path)
-        .ok_or("そのファイルはこのレビューに保存されていません")?;
-    let bytes = loaded
-        .blob(&entry.digest)
-        .ok_or("そのファイルの内容が保存されていません")?;
-    String::from_utf8(bytes.to_vec())
+    if let Some(entry) = loaded.manifest(rev).into_iter().find(|f| f.path == path)
+        && let Some(bytes) = loaded.blob(&entry.digest)
+    {
+        return Ok(FileContent {
+            bytes: bytes.to_vec(),
+            stored: true,
+        });
+    }
+    // Not stored: from the commit, if the repository is there and has it.
+    let git = git.ok_or("そのファイルはこのレビューに保存されていません")?;
+    let commit = head_commit(rev).ok_or("そのファイルはこのレビューに保存されていません")?;
+    let tree = git
+        .tree(commit)
+        .ok_or("このバンドルの git リポジトリが見つからないため、このファイルは開けません")?;
+    let entry = tree
+        .iter()
+        .find(|e| e.path == path)
+        .ok_or("そのファイルはこのコミットにありません")?;
+    if entry.size > MAX_FILE_BYTES {
+        return Err(format!(
+            "大きすぎるため開けません({:.1} MB。上限は {} MB)",
+            entry.size as f64 / (1024.0 * 1024.0),
+            MAX_FILE_BYTES / (1024 * 1024)
+        ));
+    }
+    Ok(FileContent {
+        bytes: git.read(entry)?,
+        stored: false,
+    })
+}
+
+/// The text of a file of the revision, or why it can't be shown.
+fn stored_text(
+    loaded: &crate::bundle::Loaded,
+    revision: usize,
+    path: &str,
+    git: Option<&dyn CommitFiles>,
+) -> Result<String, String> {
+    String::from_utf8(file_content(loaded, revision, path, git)?.bytes)
         .map_err(|_| "テキストファイルではないため、表示できません".to_string())
 }
 
@@ -575,8 +687,9 @@ pub fn open_file(
     loaded: &crate::bundle::Loaded,
     revision: usize,
     path: &str,
+    git: Option<&dyn CommitFiles>,
 ) -> Result<OpenedFile, String> {
-    let text = stored_text(loaded, revision, path)?;
+    let text = stored_text(loaded, revision, path, git)?;
     let total = text.lines().count();
     let (hunk, next) = context_chunk(&text, 1);
     let file_diff = FileDiff {
@@ -636,8 +749,9 @@ pub fn file_chunk(
     revision: usize,
     path: &str,
     from: usize,
+    git: Option<&dyn CommitFiles>,
 ) -> Result<(String, Option<usize>), String> {
-    let text = stored_text(loaded, revision, path)?;
+    let text = stored_text(loaded, revision, path, git)?;
     let (hunk, next) = context_chunk(&text, from);
     let marks = Marks {
         interactive: true,

@@ -122,6 +122,9 @@ enum Cmd {
         /// 返信などの作者名。省略時は git の user.name、なければ user.email、なければ環境のユーザー名。
         #[arg(long, value_name = "NAME")]
         author: Option<String>,
+        /// git のレビューを作ったリポジトリ。バンドルに保存されていないファイルを、コミットから開くために使う。省略時は、起動したディレクトリ。
+        #[arg(long, value_name = "DIR")]
+        repo: Option<PathBuf>,
     },
     /// レビューバンドルに保存されたスレッドと返信を表示する。
     Show {
@@ -179,7 +182,8 @@ fn main() -> Result<()> {
             port,
             no_open,
             author,
-        } => cmd_serve(review, port, no_open, author),
+            repo,
+        } => cmd_serve(review, port, no_open, author, repo),
         Cmd::Export {
             review,
             output,
@@ -201,7 +205,13 @@ fn main() -> Result<()> {
     }
 }
 
-fn cmd_serve(review: PathBuf, port: u16, no_open: bool, author: Option<String>) -> Result<()> {
+fn cmd_serve(
+    review: PathBuf,
+    port: u16,
+    no_open: bool,
+    author: Option<String>,
+    repo: Option<PathBuf>,
+) -> Result<()> {
     if !review.exists() {
         anyhow::bail!(
             "{} がありません。先に `diffnote edit` か `diffnote init` でレビューを作ってください",
@@ -212,8 +222,12 @@ fn cmd_serve(review: PathBuf, port: u16, no_open: bool, author: Option<String>) 
         review,
         port,
         author,
+        repo,
     };
-    diffnote::serve::run(&options, |url| {
+    diffnote::serve::run(&options, |url, notices| {
+        for notice in notices {
+            println!("注意: {notice}");
+        }
         println!("ブラウザで開きます: {url}");
         println!(
             "終了するには、この画面で Ctrl+C を押すか、ブラウザの「終了」ボタンを押してください"

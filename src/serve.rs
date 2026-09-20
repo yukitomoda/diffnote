@@ -16,6 +16,7 @@
 //! which the first visit turns into a cookie.
 
 use crate::annotation::{AnchorScope, LineSpan};
+use crate::git::Repo;
 use crate::model::Event;
 use crate::{anchor, author, bundle, create, html, review};
 use anyhow::{Context, Result};
@@ -35,6 +36,10 @@ pub struct Options {
     pub port: u16,
     /// `--author`, if given (see `author::resolve`).
     pub author: Option<String>,
+    /// The git repository a review made from git was taken from (default:
+    /// the directory the server is started in), to open files the bundle
+    /// doesn't store.
+    pub repo: Option<PathBuf>,
 }
 
 /// A request, reduced to what the server looks at.
@@ -99,6 +104,39 @@ pub struct Server {
     author: String,
     token: String,
     port: u16,
+    git: GitFiles,
+}
+
+/// The commits' files, read from the repository (a tree is read once).
+struct GitFiles {
+    repo: Repo,
+    trees: std::sync::Mutex<
+        std::collections::HashMap<String, Option<std::sync::Arc<Vec<crate::git::TreeEntry>>>>,
+    >,
+}
+
+impl html::CommitFiles for GitFiles {
+    fn tree(&self, commit: &str) -> Option<std::sync::Arc<Vec<crate::git::TreeEntry>>> {
+        let mut trees = self.trees.lock().ok()?;
+        trees
+            .entry(commit.to_string())
+            .or_insert_with(|| {
+                if self.repo.has_commit(commit) {
+                    self.repo.ls_tree(commit).ok().map(std::sync::Arc::new)
+                } else {
+                    None
+                }
+            })
+            .clone()
+    }
+
+    fn read(&self, entry: &crate::git::TreeEntry) -> Result<Vec<u8>, String> {
+        self.repo
+            .read_blobs(&[entry.oid.as_str()])
+            .map_err(|e| format!("git から読めませんでした: {e}"))?
+            .pop()
+            .ok_or_else(|| "git から読めませんでした".to_string())
+    }
 }
 
 impl Server {
@@ -111,7 +149,49 @@ impl Server {
             author: author::resolve(options.author.as_deref()),
             token,
             port,
+            git: GitFiles {
+                repo: options.repo.clone().map_or_else(Repo::current, Repo::at),
+                trees: Default::default(),
+            },
         }
+    }
+
+    fn git(&self) -> Option<&dyn html::CommitFiles> {
+        Some(&self.git)
+    }
+
+    /// Things the person starting the server should know: a review made from
+    /// git whose repository can't be found from here (only the files the
+    /// bundle stores can then be opened).
+    pub fn notices(&self) -> Vec<String> {
+        let Ok(loaded) = bundle::load(&self.review) else {
+            return Vec::new();
+        };
+        let heads: Vec<String> = loaded
+            .revisions()
+            .filter_map(|r| match &r.source {
+                crate::model::Source::Git(g) => Some(g.head.clone()),
+                crate::model::Source::Files { .. } => None,
+            })
+            .collect();
+        if heads.is_empty() {
+            return Vec::new();
+        }
+        if !self.git.repo.exists() {
+            return vec![
+                "git リポジトリの中で起動していないため、バンドルに保存されていないファイルは開けません(`--repo` でリポジトリの場所を指定できます)".to_string(),
+            ];
+        }
+        let missing = heads
+            .iter()
+            .filter(|h| !self.git.repo.has_commit(h))
+            .count();
+        if missing > 0 {
+            return vec![format!(
+                "このレビューのコミットが、このリポジトリに {missing} 件ありません。保存されていないファイルは開けません(`--repo` で、レビューを作ったリポジトリを指定してください)"
+            )];
+        }
+        Vec::new()
     }
 
     pub fn token(&self) -> &str {
@@ -222,11 +302,16 @@ impl Server {
         };
         let refused = |message: String| Reply::error(400, &message);
         match action {
-            "tree" => match html::tree_listing(&loaded, revision, &param("dir"), &param("q")) {
-                Some(list) => Reply::json(200, &serde_json::json!({ "ok": true, "html": list })),
-                None => Reply::error(404, "そのリビジョンはありません"),
-            },
-            "open" => match html::open_file(&loaded, revision, &param("path")) {
+            "tree" => {
+                match html::tree_listing(&loaded, revision, &param("dir"), &param("q"), self.git())
+                {
+                    Some(list) => {
+                        Reply::json(200, &serde_json::json!({ "ok": true, "html": list }))
+                    }
+                    None => Reply::error(404, "そのリビジョンはありません"),
+                }
+            }
+            "open" => match html::open_file(&loaded, revision, &param("path"), self.git()) {
                 Ok(opened) => Reply::json(
                     200,
                     &serde_json::json!({
@@ -239,7 +324,7 @@ impl Server {
             },
             "more" => {
                 let from = param("from").parse::<usize>().unwrap_or(1);
-                match html::file_chunk(&loaded, revision, &param("path"), from) {
+                match html::file_chunk(&loaded, revision, &param("path"), from, self.git()) {
                     Ok((rows, next)) => Reply::json(
                         200,
                         &serde_json::json!({ "ok": true, "html": rows, "next": next }),
@@ -314,27 +399,39 @@ impl Server {
         };
 
         let loaded = bundle::load(&self.review).map_err(internal)?;
-        let (rev, diff, files) = html::anchor_view(&loaded, revision, file)
+        let view = html::anchor_view(&loaded, revision, file, self.git())
             .ok_or_else(|| Failure(404, "そのリビジョンはありません".into()))?;
+        let (rev, diff, files) = (&view.revision, &view.diff, &view.files);
         // Lines and files are those of the page's diff (of the revision, and
         // the files it doesn't touch that threads have brought in).
         if let AnchorScope::Span { file, .. } | AnchorScope::File { file } = &scope
-            && anchor::find_file(&diff, file).is_none()
+            && anchor::find_file(diff, file).is_none()
         {
             return Err(bad("そのファイルはこのリビジョンの差分にありません"));
         }
-        let anchor =
-            create::build_anchor(&scope, &diff, &files, &rev.source.revisions(&rev.digest))
-                .map_err(internal)?;
+        let anchor = create::build_anchor(&scope, diff, files, &rev.source.revisions(&rev.digest))
+            .map_err(internal)?;
         let id = Ulid::new();
-        self.append(Event::Comment {
+        let mut events = Vec::new();
+        let mut blobs = Vec::new();
+        // A file of the commit that the bundle doesn't have yet: kept with the
+        // thread (its entry for this revision, and its content).
+        if let Some((entry, bytes)) = view.store {
+            events.push(Event::Pin {
+                revision: rev.id,
+                files: vec![entry],
+            });
+            blobs.push(bytes);
+        }
+        events.push(Event::Comment {
             id,
             parent: None,
             author: self.author.clone(),
             created_at: OffsetDateTime::now_utc(),
             anchor: Some(anchor),
             body: text.to_string(),
-        })?;
+        });
+        self.append_all(events, blobs)?;
 
         let loaded = bundle::load(&self.review).map_err(internal)?;
         let threads = review::build_threads(&loaded.events);
@@ -445,14 +542,15 @@ impl Server {
     }
 
     fn append(&self, event: Event) -> Result<(), Failure> {
+        self.append_all(vec![event], Vec::new())
+    }
+
+    fn append_all(&self, added: Vec<Event>, blobs: Vec<Vec<u8>>) -> Result<(), Failure> {
         let loaded = bundle::load(&self.review).map_err(internal)?;
         let mut events = loaded.events.clone();
-        events.push(event);
-        let nothing_else = bundle::Additions {
-            diff: None,
-            blobs: Vec::new(),
-        };
-        bundle::save(&self.review, &loaded, &events, &nothing_else).map_err(internal)
+        events.extend(added);
+        let more = bundle::Additions { diff: None, blobs };
+        bundle::save(&self.review, &loaded, &events, &more).map_err(internal)
     }
 
     fn reply(&self, thread: &review::Thread, body: &[u8]) -> Result<(), Failure> {
@@ -577,7 +675,12 @@ fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
 
 /// Starts the server and serves until told to stop (the page's "終了" button,
 /// or Ctrl+C in the terminal). `on_ready` gets the address to open.
-pub fn run(options: &Options, on_ready: impl FnOnce(&str)) -> Result<()> {
+pub fn run(options: &Options, on_ready: impl FnOnce(&str, &[String])) -> Result<()> {
+    if let Some(dir) = &options.repo
+        && !Repo::at(dir).exists()
+    {
+        anyhow::bail!("{} は git リポジトリではありません", dir.display());
+    }
     let http = tiny_http::Server::http(("127.0.0.1", options.port))
         .map_err(|e| anyhow::anyhow!("{e}"))
         .with_context(|| format!("ポート {} で待ち受けを始められませんでした", options.port))?;
@@ -587,7 +690,7 @@ pub fn run(options: &Options, on_ready: impl FnOnce(&str)) -> Result<()> {
         .map(|a| a.port())
         .context("待ち受けているポートを調べられませんでした")?;
     let server = Server::new(options, port);
-    on_ready(&server.url());
+    on_ready(&server.url(), &server.notices());
     for mut request in http.incoming_requests() {
         let mut body = Vec::new();
         {
@@ -659,6 +762,11 @@ mod tests {
     /// A review of one revision with one thread (on line 2), and a server
     /// for it that writes as `tester`.
     fn fixture() -> Fixture {
+        fixture_with(Source::Files { base: None }, None)
+    }
+
+    /// The fixture for a review with this `source`, its server next to `repo`.
+    fn fixture_with(source: Source, repo: Option<PathBuf>) -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("r.diffnote");
         let tree = |t: &str| -> crate::files::Tree {
@@ -684,7 +792,7 @@ mod tests {
                 id: Ulid::new(),
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 digest: key.clone(),
-                source: Source::Files { base: None },
+                source,
                 snapshot_mode: SnapshotMode::Full,
                 files,
                 tree: Vec::new(),
@@ -712,6 +820,7 @@ mod tests {
                 review: path.clone(),
                 port: 0,
                 author: Some("tester".into()),
+                repo,
             },
             4242,
         );
@@ -1658,7 +1767,7 @@ mod tests {
     #[test]
     fn a_review_that_stores_nothing_else_says_so() {
         let f = fixture();
-        assert!(listing(&f, "").contains("保存されているファイルはありません"));
+        assert!(listing(&f, "").contains("ほかに開けるファイルはありません"));
     }
 
     #[test]
@@ -1841,6 +1950,330 @@ mod tests {
         assert_eq!(query_param("a=1", "q"), None);
     }
 
+    // ---- files of a git review that the bundle doesn't store ------------------
+
+    fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(["-c", "user.email=t@example.com", "-c", "user.name=T"])
+            .args(args)
+            .output()
+            .expect("git is installed");
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    }
+
+    struct GitReview {
+        f: Fixture,
+        repo: tempfile::TempDir,
+        head: String,
+    }
+
+    /// A repository with two commits (`f.txt` changes in the second; other
+    /// files are untouched) and a review of that change that stores only
+    /// `f.txt`, opened with its server next to the repository.
+    fn git_review() -> GitReview {
+        let repo = tempfile::tempdir().unwrap();
+        let p = repo.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        std::fs::create_dir_all(p.join("src/lib")).unwrap();
+        std::fs::create_dir_all(p.join("docs")).unwrap();
+        std::fs::write(p.join("f.txt"), BASE).unwrap();
+        std::fs::write(p.join("src/a.rs"), "fn a() {}\nfn b() {}\n").unwrap();
+        std::fs::write(p.join("src/lib/b.rs"), "pub fn c() {}\n").unwrap();
+        std::fs::write(p.join("docs/readme.md"), "# read me\n").unwrap();
+        std::fs::write(p.join("bin.dat"), [0xffu8, 0xfe, 0x00, 0x9f]).unwrap();
+        std::fs::write(p.join("huge.txt"), "x\n".repeat(1_500_000)).unwrap();
+        git(p, &["add", "-A"]);
+        git(p, &["commit", "-q", "-m", "c1"]);
+        let base = git(p, &["rev-parse", "HEAD"]);
+        std::fs::write(p.join("f.txt"), HEAD).unwrap();
+        git(p, &["commit", "-q", "-am", "c2"]);
+        let head = git(p, &["rev-parse", "HEAD"]);
+        let source = Source::Git(crate::model::GitSource {
+            base,
+            head: head.clone(),
+            spec: "c1..c2".into(),
+        });
+        let f = fixture_with(source, Some(p.to_path_buf()));
+        GitReview { f, repo, head }
+    }
+
+    #[test]
+    fn a_git_review_lists_the_rest_of_its_head_commit_next_to_the_repository() {
+        let g = git_review();
+        let root = listing(&g.f, "");
+        assert!(
+            root.contains(r#"data-diffnote-dir="src""#)
+                && root.contains(r#"data-diffnote-dir="docs""#),
+            "{root}"
+        );
+        assert!(root.contains(r#"data-diffnote-open="bin.dat""#), "{root}");
+        assert!(
+            !root.contains("f.txt"),
+            "the diff's own file is on the page: {root}"
+        );
+        assert!(listing(&g.f, "?dir=src").contains(r#"data-diffnote-open="src/a.rs""#));
+        assert!(listing(&g.f, "?q=READ").contains("docs/readme.md"));
+        assert!(!root.contains("リポジトリが見つからない"), "{root}");
+    }
+
+    #[test]
+    fn a_stored_file_and_the_same_file_in_the_commit_are_listed_once() {
+        let g = git_review();
+        // Store docs/readme.md in the bundle too (as a comment on it would).
+        let content = b"# read me\n";
+        let loaded = bundle::load(&g.f.path).unwrap();
+        let revision = loaded.revisions().next().unwrap().id;
+        let mut events = loaded.events.clone();
+        events.push(Event::Pin {
+            revision,
+            files: vec![crate::model::TreeFile {
+                path: "docs/readme.md".into(),
+                digest: digest(content),
+            }],
+        });
+        let more = Additions {
+            diff: None,
+            blobs: vec![content.to_vec()],
+        };
+        bundle::save(&g.f.path, &loaded, &events, &more).unwrap();
+        let found = listing(&g.f, "?q=readme");
+        assert!(found.contains("docs/readme.md"), "{found}");
+        assert_eq!(
+            found
+                .matches(r#"data-diffnote-open="docs/readme.md""#)
+                .count(),
+            1,
+            "{found}"
+        );
+    }
+
+    #[test]
+    fn opening_a_file_of_the_commit_reads_the_committed_content_and_records_nothing() {
+        let g = git_review();
+        let before = g.f.events().len();
+        // An uncommitted edit is not what the review is about.
+        std::fs::write(g.repo.path().join("src/a.rs"), "fn edited() {}\n").unwrap();
+        let reply = get(&g.f, "/api/files/0/open?path=src/a.rs");
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        let html = json(&reply)["html"].as_str().unwrap().to_string();
+        assert!(
+            html.contains(">a</span>") && html.contains(">b</span>"),
+            "the committed lines: {html}"
+        );
+        assert!(!html.contains("edited"), "{html}");
+        assert_eq!(g.f.events().len(), before, "looking records nothing");
+        // The next lines of a file come from the commit too.
+        let more = get(&g.f, "/api/files/0/more?path=src/a.rs&from=2");
+        assert_eq!(more.status, 200, "{}", text(&more));
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_opened_from_the_commit_says_why() {
+        let g = git_review();
+        let refused = |path: &str| {
+            let reply = get(&g.f, &format!("/api/files/0/open?path={path}"));
+            assert_eq!(reply.status, 400, "{path}: {}", text(&reply));
+            text(&reply)
+        };
+        assert!(refused("bin.dat").contains("テキストファイルではない"));
+        let huge = refused("huge.txt");
+        assert!(huge.contains("大きすぎる") && huge.contains("MB"), "{huge}");
+        assert!(refused("nope.txt").contains("このコミットにありません"));
+        // Only what the commit has: nothing else is read.
+        assert!(refused("../etc/passwd").contains("このコミットにありません"));
+        assert!(
+            refused("src").contains("このコミットにありません"),
+            "a directory is not a file"
+        );
+    }
+
+    #[test]
+    fn a_comment_on_a_file_of_the_commit_stores_that_file_with_it() {
+        let g = git_review();
+        let content = std::fs::read(g.repo.path().join("src/a.rs")).unwrap();
+        let before = g.f.events().len();
+        let reply = new_thread(
+            &g.f,
+            r#"{"revision":0,"file":"src/a.rs","base":{"start":2,"len":1},"head":{"start":2,"len":1},"body":"about b"}"#,
+        );
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        // A Pin (the file for this revision), then the thread.
+        let events = g.f.events();
+        assert_eq!(events.len(), before + 2);
+        let revision = events
+            .iter()
+            .find_map(|e| match e {
+                Event::Revision(r) => Some(r.id),
+                _ => None,
+            })
+            .unwrap();
+        assert!(
+            matches!(&events[before], Event::Pin { revision: r, files } if *r == revision && files.len() == 1 && files[0].path == "src/a.rs")
+        );
+        assert!(matches!(
+            &events[before + 1],
+            Event::Comment { parent: None, .. }
+        ));
+        // The content is in the bundle, by its digest, and the thread points at it.
+        let loaded = bundle::load(&g.f.path).unwrap();
+        assert_eq!(loaded.blob(&digest(&content)), Some(content.as_slice()));
+        let Anchor::Span { head, .. } = last_anchor(&g.f) else {
+            panic!("a span");
+        };
+        assert_eq!(head.unwrap().digest, digest(&content));
+        assert_eq!(json(&reply)["patch"]["kind"], "lines");
+        // From now on the page has the file itself (it has a thread).
+        assert!(!listing(&g.f, "?dir=src").contains(r#"data-diffnote-open="src/a.rs""#));
+        // And it stays readable from the bundle alone, with no repository.
+        let alone = Server::new(
+            &Options {
+                review: g.f.path.clone(),
+                port: 0,
+                author: None,
+                repo: Some(g.f.path.parent().unwrap().to_path_buf()),
+            },
+            4242,
+        );
+        let page = alone.handle(&Request {
+            method: "GET",
+            target: "/",
+            headers: vec![
+                ("host".into(), "127.0.0.1:4242".into()),
+                ("cookie".into(), format!("{COOKIE}={}", alone.token())),
+            ],
+            body: b"",
+        });
+        let page = text(&page);
+        assert!(
+            page.contains("about b") && page.contains(r#"data-diffnote-file="src/a.rs""#),
+            "{page}"
+        );
+    }
+
+    #[test]
+    fn a_file_thread_on_a_file_of_the_commit_stores_it_too() {
+        let g = git_review();
+        let reply = new_thread(
+            &g.f,
+            r#"{"scope":"file","revision":0,"file":"docs/readme.md","body":"about it"}"#,
+        );
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        let loaded = bundle::load(&g.f.path).unwrap();
+        assert!(loaded.blob(&digest(b"# read me\n")).is_some());
+        let Anchor::File { head, .. } = last_anchor(&g.f) else {
+            panic!("a file anchor");
+        };
+        assert_eq!(head.unwrap().digest, digest(b"# read me\n"));
+        // A file that isn't in the commit is still refused, and stores nothing.
+        let before = g.f.events().len();
+        assert_eq!(
+            new_thread(
+                &g.f,
+                r#"{"scope":"file","revision":0,"file":"nope.txt","body":"x"}"#
+            )
+            .status,
+            400
+        );
+        assert_eq!(g.f.events().len(), before);
+        // So is a binary file (a comment needs lines to point at).
+        assert_eq!(
+            new_thread(
+                &g.f,
+                r#"{"scope":"file","revision":0,"file":"bin.dat","body":"x"}"#
+            )
+            .status,
+            400
+        );
+    }
+
+    #[test]
+    fn without_the_repository_only_stored_files_open_and_the_page_says_so() {
+        // The server was started somewhere that is not a repository.
+        let elsewhere = tempfile::tempdir().unwrap();
+        let g = git_review();
+        let f = fixture_with(
+            Source::Git(crate::model::GitSource {
+                base: "0".repeat(40),
+                head: g.head.clone(),
+                spec: "c1..c2".into(),
+            }),
+            Some(elsewhere.path().to_path_buf()),
+        );
+        let notices = f.server.notices();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(
+            notices[0].contains("git リポジトリの中で起動していない"),
+            "{notices:?}"
+        );
+        let root = listing(&f, "");
+        assert!(root.contains("リポジトリが見つからない"), "{root}");
+        assert!(
+            !root.contains("src"),
+            "nothing of the commit is listed: {root}"
+        );
+        let refused = get(&f, "/api/files/0/open?path=src/a.rs");
+        assert_eq!(refused.status, 400);
+        assert!(
+            text(&refused).contains("リポジトリが見つからない"),
+            "{}",
+            text(&refused)
+        );
+    }
+
+    #[test]
+    fn a_repository_without_the_reviews_commit_is_noticed() {
+        let g = git_review();
+        // Another repository, which doesn't have the review's commits.
+        let other = tempfile::tempdir().unwrap();
+        git(other.path(), &["init", "-q", "-b", "main"]);
+        std::fs::write(other.path().join("x.txt"), "x\n").unwrap();
+        git(other.path(), &["add", "-A"]);
+        git(other.path(), &["commit", "-q", "-m", "x"]);
+        let f = fixture_with(
+            Source::Git(crate::model::GitSource {
+                base: g.head.clone(),
+                head: g.head.clone(),
+                spec: "c1..c2".into(),
+            }),
+            Some(other.path().to_path_buf()),
+        );
+        let notices = f.server.notices();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(
+            notices[0].contains("コミットが") && notices[0].contains("ありません"),
+            "{notices:?}"
+        );
+        assert!(listing(&f, "").contains("リポジトリが見つからない"));
+        // A review made from git and its repository: nothing to say.
+        assert!(g.f.server.notices().is_empty());
+    }
+
+    #[test]
+    fn a_review_of_a_directory_has_no_repository_business() {
+        let f = fixture();
+        assert!(f.server.notices().is_empty());
+        assert!(!listing(&f, "").contains("リポジトリ"));
+    }
+
+    #[test]
+    fn a_given_repository_that_is_not_one_stops_the_server_before_it_starts() {
+        let f = fixture();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let options = Options {
+            review: f.path.clone(),
+            port: 0,
+            author: None,
+            repo: Some(elsewhere.path().to_path_buf()),
+        };
+        let err = run(&options, |_, _| panic!("must not start")).unwrap_err();
+        assert!(
+            err.to_string().contains("git リポジトリではありません"),
+            "{err}"
+        );
+    }
+
     // ---- over a real socket ----------------------------------------------
 
     /// One HTTP/1.1 request to 127.0.0.1:`port`; the status, the headers
@@ -1876,10 +2309,11 @@ mod tests {
             review: f.path.clone(),
             port: 0,
             author: Some("tester".into()),
+            repo: None,
         };
         let (sender, receiver) = std::sync::mpsc::channel();
         let thread = std::thread::spawn(move || {
-            run(&options, |url| sender.send(url.to_string()).unwrap()).unwrap();
+            run(&options, |url, _| sender.send(url.to_string()).unwrap()).unwrap();
         });
         let url = receiver
             .recv_timeout(std::time::Duration::from_secs(10))

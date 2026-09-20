@@ -184,6 +184,23 @@ impl Repo {
         run_text(cmd)
     }
 
+    /// Whether `dir` is inside a git repository.
+    pub fn exists(&self) -> bool {
+        let mut cmd = self.git();
+        cmd.args(["rev-parse", "--git-dir"]);
+        run(cmd).is_ok()
+    }
+
+    /// Whether the repository has the commit `sha`.
+    pub fn has_commit(&self, sha: &str) -> bool {
+        if !is_object_id(sha) {
+            return false;
+        }
+        let mut cmd = self.git();
+        cmd.args(["cat-file", "-e", &format!("{sha}^{{commit}}")]);
+        run(cmd).is_ok()
+    }
+
     /// Every blob in `rev`'s tree, with paths relative to the repository root.
     pub fn ls_tree(&self, rev: &str) -> Result<Vec<TreeEntry>> {
         let mut cmd = self.git();
