@@ -902,3 +902,84 @@ fn exported_dir(env: &Env, dir: &Path, review: &Path) -> String {
     env.ok(dir, &[("+two", "changed")], &["edit", "-f", review.to_str().unwrap()]);
     exported(env, dir, review)
 }
+
+/// The author of every comment event, in order.
+fn authors(review: &Path) -> Vec<String> {
+    bundle::load(review)
+        .unwrap()
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Comment { author, .. } => Some(author.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_author_is_git_user_name_first() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    git(&repo, &["config", "user.name", "山田 太郎"]);
+    git(&repo, &["config", "user.email", "taro@example.com"]);
+    let review = env.path("review.diffnote");
+    env.ok(&repo, &[("+B", "why?")], &["edit", "-f", review.to_str().unwrap(), "c1..c2"]);
+    assert_eq!(authors(&review), ["山田 太郎"]);
+}
+
+#[test]
+fn without_a_git_name_the_email_is_the_author() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    // A blank name in the repo's own config hides any global one.
+    git(&repo, &["config", "user.name", ""]);
+    git(&repo, &["config", "user.email", "taro@example.com"]);
+    let review = env.path("review.diffnote");
+    env.ok(&repo, &[("+B", "why?")], &["edit", "-f", review.to_str().unwrap(), "c1..c2"]);
+    assert_eq!(authors(&review), ["taro@example.com"]);
+}
+
+#[test]
+fn author_overrides_git_and_applies_to_every_event_of_the_session() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    git(&repo, &["config", "user.name", "山田 太郎"]);
+    let review = env.path("review.diffnote");
+    let arg = review.to_str().unwrap();
+    env.ok(&repo, &[("+B", "why?")], &["edit", "-f", arg, "--author", "レビュアーA", "c1..c2"]);
+    env.ok(&repo, &[(" a", "and here")], &["edit", "-f", arg, "c1..c2"]);
+    // The override is per session, not remembered.
+    assert_eq!(authors(&review), ["レビュアーA", "山田 太郎"]);
+    let html = exported(&env, &repo, &review);
+    assert!(html.contains("レビュアーA") && html.contains("山田 太郎"));
+}
+
+#[test]
+fn a_blank_author_is_ignored() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    git(&repo, &["config", "user.name", "山田 太郎"]);
+    let review = env.path("review.diffnote");
+    env.ok(&repo, &[("+B", "why?")], &["edit", "-f", review.to_str().unwrap(), "--author", "  ", "c1..c2"]);
+    assert_eq!(authors(&review), ["山田 太郎"]);
+}
+
+#[test]
+fn init_takes_an_author_for_its_title() {
+    let env = Env::new();
+    let dir = env.path("proj");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    let review = env.path("d.diffnote");
+    env.ok(
+        &dir,
+        &[],
+        &["init", "-f", review.to_str().unwrap(), "--title", "T", "--author", "作成者"],
+    );
+    let loaded = bundle::load(&review).unwrap();
+    let author = loaded.events.iter().find_map(|e| match e {
+        Event::Title { author, .. } => Some(author.as_str()),
+        _ => None,
+    });
+    assert_eq!(author, Some("作成者"));
+}

@@ -51,6 +51,9 @@ enum Cmd {
         /// レビューのタイトル。エクスポートの見出しに使われる(省略できる)。
         #[arg(long, value_name = "TITLE")]
         title: Option<String>,
+        /// コメントなどの作者名。省略時は git の user.name、なければ user.email、なければ環境のユーザー名。
+        #[arg(long, value_name = "NAME")]
+        author: Option<String>,
     },
     /// レビュー対象を $EDITOR で開いてコメントを書き、レビューバンドルに追記する(git のレビューでは、バンドルがなければ作成する)。
     Edit {
@@ -69,6 +72,9 @@ enum Cmd {
         /// レビューのタイトルを設定する。エクスポートの見出しに使われる。すでにあるタイトルを変えるときにも使い、空文字列(`--title ""`)で取り消す。
         #[arg(long, value_name = "TITLE")]
         title: Option<String>,
+        /// コメントなどの作者名。省略時は git の user.name、なければ user.email、なければ環境のユーザー名。
+        #[arg(long, value_name = "NAME")]
+        author: Option<String>,
     },
     /// レビューバンドルに保存されたスレッドと返信を表示する。
     Show {
@@ -96,14 +102,20 @@ fn main() -> Result<()> {
         Cli::from_arg_matches(&command().get_matches())?
     };
     match cli.command {
-        Cmd::Init { review, dir, title } => cmd_init(review, dir, title),
+        Cmd::Init {
+            review,
+            dir,
+            title,
+            author,
+        } => cmd_init(review, dir, title, author),
         Cmd::Edit {
             review,
             targets,
             snapshot,
             show,
             title,
-        } => cmd_edit(review, targets, snapshot, show, title),
+            author,
+        } => cmd_edit(review, targets, snapshot, show, title, author),
         Cmd::Show { review } => cmd_show(review),
         Cmd::Export {
             review,
@@ -252,7 +264,12 @@ fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Resu
     })
 }
 
-fn cmd_init(review_path: PathBuf, dir: PathBuf, title: Option<String>) -> Result<()> {
+fn cmd_init(
+    review_path: PathBuf,
+    dir: PathBuf,
+    title: Option<String>,
+    author: Option<String>,
+) -> Result<()> {
     if review_path.exists() {
         anyhow::bail!("{} はすでに存在します", review_path.display());
     }
@@ -267,7 +284,7 @@ fn cmd_init(review_path: PathBuf, dir: PathBuf, title: Option<String>) -> Result
         context_lines: 3,
     }];
     if let Some(title) = title.as_deref() {
-        events.extend(review::title_change(&events, title, &resolve_author()));
+        events.extend(review::title_change(&events, title, &diffnote::author::resolve(author.as_deref())));
     }
     events.push(Event::Revision(diffnote::model::Revision {
             id: Ulid::new(),
@@ -302,6 +319,7 @@ fn cmd_edit(
     snapshot_override: Option<bundle::SnapshotMode>,
     show_specs: Vec<String>,
     title: Option<String>,
+    author: Option<String>,
 ) -> Result<()> {
     let shows: Vec<diffnote::show::Show> = show_specs
         .iter()
@@ -348,7 +366,7 @@ fn cmd_edit(
         head_some,
         head_all,
     } = input;
-    let author = resolve_author();
+    let author = diffnote::author::resolve(author.as_deref());
     let title_event = title
         .as_deref()
         .and_then(|t| review::title_change(&loaded.events, t, &author));
@@ -867,20 +885,6 @@ fn confirm_snapshot_size(
     } else {
         mode
     }
-}
-
-fn resolve_author() -> String {
-    if let Ok(output) = Command::new("git").args(["config", "user.email"]).output()
-        && output.status.success()
-    {
-        let email = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !email.is_empty() {
-            return email;
-        }
-    }
-    std::env::var("USER")
-        .or_else(|_| std::env::var("USERNAME"))
-        .unwrap_or_else(|_| "unknown".to_string())
 }
 
 fn default_editor() -> String {
