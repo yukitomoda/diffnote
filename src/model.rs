@@ -173,7 +173,7 @@ pub struct Revision {
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     /// Digest (`sha256:...`) identifying this revision, and the key of its
-    /// `diffs/`/`sources/` entries in the bundle: the diff text's digest for
+    /// `diffs/` entry in the bundle: the diff text's digest for
     /// a git revision, the whole tree's digest for a directory revision.
     pub digest: String,
     pub source: Source,
