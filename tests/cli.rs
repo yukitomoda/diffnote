@@ -549,3 +549,203 @@ fn a_directory_review_keeps_the_full_tree_and_refuses_to_be_told_otherwise() {
     );
     assert_eq!(manifest_paths(&review, 1), ["a.txt", "b.txt"]);
 }
+
+/// A repo whose `docs.md` (20 lines: `line 1`..`line 20`) is never touched,
+/// with a binary `logo.bin`, and `calc.txt` (30 lines) changing at line 30.
+fn repo_with_docs(env: &Env) -> PathBuf {
+    let repo = env.path("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    let docs: String = (1..=20).map(|n| format!("line {n}\n")).collect();
+    let calc: String = (1..=30).map(|n| format!("c{n}\n")).collect();
+    std::fs::write(repo.join("docs.md"), &docs).unwrap();
+    std::fs::write(repo.join("calc.txt"), &calc).unwrap();
+    std::fs::write(repo.join("logo.bin"), [0u8, 159, 146, 150, 255, 0]).unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "c1"]);
+    git(&repo, &["tag", "c1"]);
+    std::fs::write(repo.join("calc.txt"), calc.replace("c30\n", "C30\n")).unwrap();
+    git(&repo, &["commit", "-q", "-am", "c2"]);
+    git(&repo, &["tag", "c2"]);
+    repo
+}
+
+fn span_of(loaded: &bundle::Loaded, nth: usize) -> (String, u32, u32, String) {
+    let anchors: Vec<_> = loaded
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Comment {
+                anchor: Some(diffnote::model::Anchor::Span { head: Some(h), .. }),
+                ..
+            } => Some(h),
+            _ => None,
+        })
+        .collect();
+    let h = anchors[nth];
+    (h.file.clone(), h.start, h.len, h.digest.clone())
+}
+
+#[test]
+fn show_puts_lines_of_an_untouched_file_in_the_buffer_and_comments_on_them_are_recorded() {
+    let env = Env::new();
+    let repo = repo_with_docs(&env);
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    let docs: String = (1..=20).map(|n| format!("line {n}\n")).collect();
+
+    let out = env.ok(
+        &repo,
+        &[(" line 10", "what does this mean?")],
+        &["edit", "-f", review_arg, "--show", "docs.md:9-11", "c1..c2"],
+    );
+    assert!(out.contains("Wrote 1 comment(s)"), "{out}");
+
+    let loaded = bundle::load(&review).unwrap();
+    let (file, start, len, digest) = span_of(&loaded, 0);
+    assert_eq!((file.as_str(), start, len), ("docs.md", 10, 1));
+    assert_eq!(digest, diffnote::digest::digest(&docs));
+    // The file's version is kept, though the diff never touches it.
+    assert_eq!(manifest_paths(&review, 0), ["calc.txt", "docs.md"]);
+    assert!(loaded.blob(&digest).is_some());
+}
+
+#[test]
+fn show_gives_three_lines_of_context_around_the_range_and_no_more() {
+    let env = Env::new();
+    let repo = repo_with_docs(&env);
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    // `line 6` is 3 lines before line 9, so it is in the buffer; `line 5` is
+    // not. The same at the other end (line 14 yes, 15 no).
+    for (shown, hidden) in [(" line 6", " line 5"), (" line 14", " line 15")] {
+        let _ = std::fs::remove_file(&review);
+        // A comment on a line that must be there succeeds; on one that must
+        // not be there, the editor's insertion finds nothing and adds nothing.
+        let out = env.ok(
+            &repo,
+            &[(hidden, "nowhere to put this")],
+            &["edit", "-f", review_arg, "--show", "docs.md:9-11", "c1..c2"],
+        );
+        assert!(out.contains("No comments added"), "{hidden}: {out}");
+        let out = env.ok(
+            &repo,
+            &[(shown, "this is in the buffer")],
+            &["edit", "-f", review_arg, "--show", "docs.md:9-11", "c1..c2"],
+        );
+        assert!(out.contains("Wrote 1 comment(s)"), "{shown}: {out}");
+    }
+}
+
+#[test]
+fn show_of_a_whole_file_and_of_lines_in_a_file_the_diff_touches() {
+    let env = Env::new();
+    let repo = repo_with_docs(&env);
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    env.ok(
+        &repo,
+        &[
+            (" line 20", "last line of the docs"),
+            (" c2", "far above the change in calc.txt"),
+        ],
+        &["edit", "-f", review_arg, "--show", "docs.md", "--show", "calc.txt:1-4", "c1..c2"],
+    );
+    let loaded = bundle::load(&review).unwrap();
+    // Comments are recorded in buffer order: the diff's own file first.
+    let second = span_of(&loaded, 0);
+    let first = span_of(&loaded, 1);
+    assert_eq!((first.0.as_str(), first.1), ("docs.md", 20));
+    // calc.txt has changed: its comment is in the *new* version (c2's).
+    let calc_new: String = (1..=29).map(|n| format!("c{n}\n")).collect::<String>() + "C30\n";
+    assert_eq!((second.0.as_str(), second.1), ("calc.txt", 2));
+    assert_eq!(second.3, diffnote::digest::digest(&calc_new));
+}
+
+#[test]
+fn show_combines_with_existing_threads_and_asks_nothing_of_them() {
+    let env = Env::new();
+    let repo = repo_with_docs(&env);
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    env.ok(
+        &repo,
+        &[(" line 3", "first, via show")],
+        &["edit", "-f", review_arg, "--show", "docs.md:2-4", "c1..c2"],
+    );
+    // Later: no --show at all, and the thread on docs.md is still in the
+    // buffer (the earlier comment makes the file referenced), so a reply works.
+    let out = env.run(&repo, &[], &["edit", "-f", review_arg, "c1..c2"]);
+    assert!(out.status.success());
+    let loaded = bundle::load(&review).unwrap();
+    assert_eq!(comment_bodies(&loaded), ["first, via show"]);
+}
+
+#[test]
+fn show_of_something_that_cannot_be_shown_fails_before_anything_is_written() {
+    let env = Env::new();
+    let repo = repo_with_docs(&env);
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    for (spec, message) in [
+        ("nope.md", "no such file"),
+        ("docs.md:25", "past the end"),
+        ("docs.md:0", "from 1"),
+        ("docs.md:9-3", "backwards"),
+        ("../elsewhere", "inside the reviewed tree"),
+        ("logo.bin", "not a text file"),
+        ("", "no file name"),
+    ] {
+        let out = env.run(
+            &repo,
+            &[(" line 3", "never written")],
+            &["edit", "-f", review_arg, "--show", spec, "c1..c2"],
+        );
+        assert!(!out.status.success(), "{spec:?} should fail");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("--show"), "{spec:?}: {err}");
+        assert!(err.contains(message), "{spec:?}: {err}");
+        assert!(!review.exists(), "{spec:?} left a bundle behind");
+    }
+}
+
+#[test]
+fn show_of_a_file_the_diff_deletes_says_so() {
+    let env = Env::new();
+    let repo = repo_with_docs(&env);
+    git(&repo, &["rm", "-q", "docs.md"]);
+    git(&repo, &["commit", "-q", "-m", "c3"]);
+    git(&repo, &["tag", "c3"]);
+    let review = env.path("review.diffnote");
+    let out = env.run(
+        &repo,
+        &[],
+        &["edit", "-f", review.to_str().unwrap(), "--show", "docs.md", "c2..c3"],
+    );
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("deletes it"), "{err}");
+}
+
+#[test]
+fn show_works_for_a_directory_review_too() {
+    let env = Env::new();
+    let dir = env.path("project");
+    std::fs::create_dir(&dir).unwrap();
+    let notes: String = (1..=12).map(|n| format!("note {n}\n")).collect();
+    std::fs::write(dir.join("notes.md"), &notes).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    env.ok(&dir, &[], &["init", "-f", review_arg, "."]);
+    std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+    env.ok(
+        &dir,
+        &[(" note 6", "about note 6")],
+        &["edit", "-f", review_arg, "--show", "notes.md:5-7", "."],
+    );
+    let loaded = bundle::load(&review).unwrap();
+    let (file, start, _, digest) = span_of(&loaded, 0);
+    assert_eq!((file.as_str(), start), ("notes.md", 6));
+    assert_eq!(digest, diffnote::digest::digest(&notes));
+}

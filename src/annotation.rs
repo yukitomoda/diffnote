@@ -734,6 +734,7 @@ pub fn render_for_edit(
     view: &anchor::ViewVersions,
     blobs: &crate::digest::Blobs,
     threads: &[Thread],
+    extra: &[expand::Want],
 ) -> (String, Vec<crate::model::FileDigest>) {
     let placements: Vec<Placement> = threads
         .iter()
@@ -742,7 +743,11 @@ pub fn render_for_edit(
 
     // The buffer is the diff plus context around whatever threads are about
     // that the diff doesn't show, and files it doesn't touch at all.
-    let wants: Vec<expand::Want> = placements.iter().filter_map(expand::want_of).collect();
+    let wants: Vec<expand::Want> = placements
+        .iter()
+        .filter_map(expand::want_of)
+        .chain(extra.iter().cloned())
+        .collect();
     let (expanded, synthetic) = expand::expand(diff, &wants, view, blobs);
     let (shown, text, synthetic) = match expand::to_text(diff_text, diff, &expanded) {
         Some(text) => (expanded, text, synthetic),
@@ -1465,6 +1470,7 @@ diff --git a/f.rs b/f.rs
             },
             &blobs,
             threads,
+            &[],
         )
     }
 
@@ -1677,6 +1683,7 @@ diff --git a/f.rs b/f.rs
             },
             &blobs,
             std::slice::from_ref(&thread),
+            &[],
         );
         // The real diff is untouched and comes first; the README follows.
         assert!(rendered.starts_with(&format!("{BASE}diff --git a/README.md b/README.md\n")), "{rendered}");
@@ -1714,6 +1721,115 @@ diff --git a/f.rs b/f.rs
         };
         assert_eq!((h.start, h.len), (6, 1));
         assert_eq!(h.digest, crate::digest::digest(readme));
+    }
+
+    /// Runs `render_for_edit` with no threads and just these requests.
+    fn render_showing(extra: &[expand::Want], readme: Option<&str>) -> (String, Vec<crate::model::FileDigest>) {
+        let diff = diff::parse(BASE).unwrap();
+        let fx = fixture();
+        let mut blobs = crate::digest::Blobs::default();
+        for t in fx.texts.iter().map(String::as_str).chain(readme) {
+            blobs.add(t.as_bytes());
+        }
+        let tree: Vec<crate::model::TreeFile> = readme
+            .map(|t| crate::model::TreeFile {
+                path: "README.md".to_string(),
+                digest: crate::digest::digest(t),
+            })
+            .into_iter()
+            .collect();
+        render_for_edit(
+            BASE,
+            &diff,
+            &anchor::ViewVersions {
+                files: &fx.files,
+                tree: &tree,
+            },
+            &blobs,
+            &[],
+            extra,
+        )
+    }
+
+    fn want(file: &str, start: u32, end: u32) -> expand::Want {
+        expand::Want {
+            file: file.to_string(),
+            lines: Some((Side::New, start, end)),
+            row: None,
+        }
+    }
+
+    #[test]
+    fn requested_lines_of_the_diffs_own_file_get_context_blocks() {
+        let (text, synthetic) = render_showing(&[want("src/lib.rs", 2, 3)], None);
+        assert!(text.contains("@@ -1,6 +1,6 @@") || text.contains("@@ -1,5 +1,5 @@"), "{text}");
+        assert!(text.contains(" // filler 2\n") && text.contains(" // filler 3\n"));
+        assert!(synthetic.is_empty(), "no new file: it is the diff's own");
+        // It reads back, and the real hunk is still there.
+        let parsed = parse(&text).unwrap();
+        assert_eq!(parsed.diff.files.len(), 1);
+        assert_eq!(parsed.diff.files[0].hunks.len(), 2);
+    }
+
+    #[test]
+    fn requested_lines_the_diff_already_shows_change_nothing() {
+        // Lines 10..=17 are the hunk itself.
+        let (text, synthetic) = render_showing(&[want("src/lib.rs", 11, 14)], None);
+        assert_eq!(text, BASE);
+        assert!(synthetic.is_empty());
+    }
+
+    #[test]
+    fn a_requested_file_the_diff_does_not_touch_is_appended_and_readable() {
+        let readme = "# t\nline 2\nline 3\n";
+        let (text, synthetic) = render_showing(&[want("README.md", 1, 3)], Some(readme));
+        assert!(text.starts_with(BASE));
+        assert!(text.contains("diff --git a/README.md b/README.md\n"));
+        assert_eq!(synthetic.len(), 1);
+        assert_eq!(synthetic[0].new, Some(crate::digest::digest(readme)));
+        let parsed = parse(&text).unwrap();
+        assert_eq!(parsed.diff.files.len(), 2);
+        assert_eq!(parsed.diff.files[1].hunks[0].lines.len(), 3);
+    }
+
+    #[test]
+    fn requests_and_threads_are_shown_together_without_repeating_lines() {
+        let root_id = Ulid::new();
+        let thread = thread_with(
+            root_id,
+            Anchor::Span {
+                base: Some(range(2, 1, &old_text())),
+                head: Some(range(2, 1, &new_text())),
+            },
+            "on line 2",
+        );
+        let diff = diff::parse(BASE).unwrap();
+        let fx = fixture();
+        let mut blobs = crate::digest::Blobs::default();
+        for t in &fx.texts {
+            blobs.add(t.as_bytes());
+        }
+        let (text, _) = render_for_edit(
+            BASE,
+            &diff,
+            &anchor::ViewVersions {
+                files: &fx.files,
+                tree: &[],
+            },
+            &blobs,
+            std::slice::from_ref(&thread),
+            &[want("src/lib.rs", 3, 4)],
+        );
+        let parsed = parse(&text).unwrap();
+        let lines: Vec<u32> = parsed.diff.files[0]
+            .hunks
+            .iter()
+            .flat_map(|h| h.lines.iter().filter_map(|l| l.new_line))
+            .collect();
+        let mut sorted = lines.clone();
+        sorted.dedup();
+        assert_eq!(lines, sorted, "no line twice");
+        assert!(text.contains(&format!(">#@{root_id}")));
     }
 
     #[test]
@@ -1828,6 +1944,7 @@ diff --git a/t.txt b/t.txt
             },
             &Default::default(),
             &threads,
+            &[],
         );
         let lines: Vec<&str> = rendered.lines().collect();
         let at = lines

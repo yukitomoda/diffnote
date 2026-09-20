@@ -52,6 +52,13 @@ enum Cmd {
         /// keep the full tree, so `--snapshot changed` is an error there.
         #[arg(long, value_enum)]
         snapshot: Option<diffnote::bundle::SnapshotMode>,
+        /// Put a file (`PATH`) or some of its lines (`PATH:START-END`, or
+        /// `PATH:LINE`) in the buffer as context, so comments can be written
+        /// on them though the diff doesn't touch them. From the head of the
+        /// review; repeat for more. Three lines around what the diff already
+        /// shows are not added twice.
+        #[arg(long = "show", value_name = "PATH[:START[-END]]")]
+        show: Vec<String>,
     },
     /// Print the threads/replies stored in a review bundle.
     Show {
@@ -82,7 +89,8 @@ fn main() -> Result<()> {
             review,
             targets,
             snapshot,
-        } => cmd_edit(review, targets, snapshot),
+            show,
+        } => cmd_edit(review, targets, snapshot, show),
         Cmd::Show { review } => cmd_show(review),
         Cmd::Export {
             review,
@@ -278,7 +286,14 @@ fn cmd_edit(
     review_path: PathBuf,
     targets: Vec<String>,
     snapshot_override: Option<bundle::SnapshotMode>,
+    show_specs: Vec<String>,
 ) -> Result<()> {
+    let shows: Vec<diffnote::show::Show> = show_specs
+        .iter()
+        .map(|spec| {
+            diffnote::show::parse(spec).map_err(|e| anyhow::anyhow!("--show {spec}: {e}"))
+        })
+        .collect::<Result<_>>()?;
     let loaded = bundle::load(&review_path)?;
     let input = match loaded.source() {
         Some(diffnote::model::Source::Files { .. }) => {
@@ -342,6 +357,9 @@ fn cmd_edit(
     let untouched_existing: Vec<String> =
         diffnote::record::referenced_files(existing_events.iter())
             .into_iter()
+            .chain(shows.iter().map(|s| s.path.clone()))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
             .filter(|p| !touched_now.contains(p.as_str()))
             .collect();
     let head_of_untouched = if untouched_existing.is_empty() {
@@ -362,18 +380,22 @@ fn cmd_edit(
         blobs.add(bytes);
     }
     bundle::link_revision_files(&mut blobs, &files);
-    let (temp_text, synthetic_files) = if existing_threads.is_empty() {
+    let versions = diffnote::anchor::ViewVersions {
+        files: &files,
+        tree: &tree_now,
+    };
+    let show_wants = diffnote::show::wants(&shows, &versions, &blobs)
+        .map_err(|e| anyhow::anyhow!("--show {e}"))?;
+    let (temp_text, synthetic_files) = if existing_threads.is_empty() && show_wants.is_empty() {
         (diff_text.clone(), Vec::new())
     } else {
         annotation::render_for_edit(
             &diff_text,
             &parsed_diff,
-            &diffnote::anchor::ViewVersions {
-                files: &files,
-                tree: &tree_now,
-            },
+            &versions,
             &blobs,
             &existing_threads,
+            &show_wants,
         )
     };
 
