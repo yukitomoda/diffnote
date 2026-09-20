@@ -10,12 +10,16 @@
 //!   existing/persisted comment or reply (read-only, produced by `render`
 //!   below); sets "nearest preceding thread" to that existing thread by id,
 //!   so a following `>>`/`>>!<dir>` targets it same as a same-session `>`
-//!   thread would. Always carries the *thread root's* id, even for a
-//!   rendered reply, since threading is flat.
-//! - `>#[<ulid>` / `>#]<ulid>` decorative markers around an existing
-//!   comment's lines (before its first row, and just before its `>#@`
-//!   header, after its last), drawn only when it covers more than its own
-//!   row, so the range can be seen; ignored on parse like any `>#` text.
+//!   thread would. The id is the *thread root's*, and is written once per
+//!   thread: on its first header (or on the `>#]<ulid>` line before it, for a
+//!   thread that covers several rows). Later headers of the thread are
+//!   `>#@ <author> <timestamp>`, with nothing after the `@`: they continue
+//!   the thread named before them.
+//! - `>#[<ulid>` / `>#]<ulid>` markers around an existing comment's lines
+//!   (before its first row, and after its last, just before its `>#@`
+//!   headers), drawn only when it covers more than its own row, so the range
+//!   can be seen. `>#[` is ignored on parse like any `>#` text; `>#]<ulid>`
+//!   names the thread the headers after it belong to.
 //! - `>#<text>` decorative body line for a rendered comment/reply above —
 //!   purely for human reading, ignored on parse (never affects `last_thread`
 //!   beyond what the `>#@` header already set).
@@ -189,6 +193,9 @@ enum Sigil<'a> {
     RangeOpen(&'a str),
     RangeClose(&'a str),
     RenderedHeader(&'a str),
+    /// `>#]<ulid>`: closes an existing thread's range, and names the thread
+    /// the `>#@` headers after it (which then carry no id) belong to.
+    RenderedClose(Ulid),
     RenderedBody(&'a str),
 }
 
@@ -203,6 +210,14 @@ fn classify_comment(rest_after_gt: &str) -> Sigil<'_> {
         return Sigil::RangeClose(id);
     }
     if let Some(rest) = rest_after_gt.strip_prefix('#') {
+        // A rendered body line that would look like a marker is drawn with a
+        // leading space (see `body_line`), so these are never body text; a
+        // `]` not followed by a thread id is plain text all the same.
+        if let Some(id) = rest.strip_prefix(']')
+            && let Ok(ulid) = Ulid::from_string(id.trim_end())
+        {
+            return Sigil::RenderedClose(ulid);
+        }
         return match rest.strip_prefix('@') {
             Some(header) => Sigil::RenderedHeader(header),
             None => Sigil::RenderedBody(rest),
@@ -330,6 +345,8 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
     let mut open_ranges: HashMap<String, RangeStart> = HashMap::new();
     let mut next_thread_id: usize = 0;
     let mut last_thread: Option<ThreadRef> = None;
+    // The existing thread the rendered block being read belongs to.
+    let mut last_rendered: Option<Ulid> = None;
     let mut items: Vec<Item> = Vec::new();
     let mut pending: Option<PendingBlock> = None;
     let mut last_line_no: usize = 0;
@@ -409,13 +426,35 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                         &mut next_thread_id,
                         &mut last_thread,
                     )?;
-                    let id_token = header.split_whitespace().next().unwrap_or("");
-                    let ulid = Ulid::from_string(id_token).map_err(|_| {
-                        err(
-                            line_no,
-                            format!("'>#@' ヘッダのスレッド ID が不正です: {id_token:?}"),
-                        )
-                    })?;
+                    // `>#@ author time` (no id right after the `@`) continues
+                    // the thread of the `>#@<id>` or `>#]<id>` before it.
+                    let ulid = if header.is_empty() || header.starts_with(char::is_whitespace) {
+                        last_rendered.ok_or_else(|| {
+                            err(
+                                line_no,
+                                "ID のない '>#@' ヘッダの前に、対象のスレッドがありません",
+                            )
+                        })?
+                    } else {
+                        let id_token = header.split_whitespace().next().unwrap_or("");
+                        Ulid::from_string(id_token).map_err(|_| {
+                            err(
+                                line_no,
+                                format!("'>#@' ヘッダのスレッド ID が不正です: {id_token:?}"),
+                            )
+                        })?
+                    };
+                    last_rendered = Some(ulid);
+                    last_thread = Some(ThreadRef::Existing(ulid));
+                }
+                Sigil::RenderedClose(ulid) => {
+                    flush_pending(
+                        &mut pending,
+                        &mut items,
+                        &mut next_thread_id,
+                        &mut last_thread,
+                    )?;
+                    last_rendered = Some(ulid);
                     last_thread = Some(ThreadRef::Existing(ulid));
                 }
                 Sigil::RenderedBody(_) => {
@@ -836,12 +875,12 @@ pub fn render_for_edit(
         );
         for ts in outdated.values() {
             for t in ts {
-                render_thread_block(&mut out, t, None);
+                render_thread_block(&mut out, t, None, true);
             }
         }
     }
     for t in &global {
-        render_thread_block(&mut out, t, None);
+        render_thread_block(&mut out, t, None, true);
     }
 
     let mut current_file: Option<String> = None;
@@ -881,7 +920,7 @@ pub fn render_for_edit(
                 && let Some(ts) = by_file.get(f)
             {
                 for t in ts {
-                    render_thread_block(&mut out, t, None);
+                    render_thread_block(&mut out, t, None, true);
                 }
             }
             continue;
@@ -899,7 +938,7 @@ pub fn render_for_edit(
                 && let Some(ts) = by_file.get(f)
             {
                 for t in ts {
-                    render_thread_block(&mut out, t, None);
+                    render_thread_block(&mut out, t, None, true);
                 }
             }
             continue;
@@ -999,12 +1038,27 @@ fn emit_line_threads(
             if marks.drawn.contains(&t.root_id) {
                 out.push_str(&format!(">#]{}\n", t.root_id));
             }
-            render_thread_block(out, t, absent.as_ref().map(|(w, k)| (w.as_slice(), *k)));
+            // Its id is on the `>#]` line if there is one, else in its header.
+            let id_in_header = !marks.drawn.contains(&t.root_id);
+            render_thread_block(
+                out,
+                t,
+                absent.as_ref().map(|(w, k)| (w.as_slice(), *k)),
+                id_in_header,
+            );
         }
     }
 }
 
-fn render_thread_block(out: &mut String, t: &Thread, absent: Option<(&[String], Absence)>) {
+/// A thread and its replies as read-only `>#@` blocks. Only the first header
+/// can carry the thread's id (and only if `id_in_header`): the rest, and all
+/// of them after a `>#]<id>` line, follow the thread named before them.
+fn render_thread_block(
+    out: &mut String,
+    t: &Thread,
+    absent: Option<(&[String], Absence)>,
+    id_in_header: bool,
+) {
     let mut tags = String::new();
     if t.resolved {
         tags.push_str(" [解決済み]");
@@ -1022,15 +1076,16 @@ fn render_thread_block(out: &mut String, t: &Thread, absent: Option<(&[String], 
         .iter()
         .map(|l| format!("| {l}"))
         .collect();
-    render_rendered_entry(out, t.root_id, &t.author, t.created_at, &t.body, &tags, &quoted);
+    let id = id_in_header.then_some(t.root_id);
+    render_rendered_entry(out, id, &t.author, t.created_at, &t.body, &tags, &quoted);
     for r in &t.replies {
-        render_rendered_entry(out, t.root_id, &r.author, r.created_at, &r.body, "", &[]);
+        render_rendered_entry(out, None, &r.author, r.created_at, &r.body, "", &[]);
     }
 }
 
 fn render_rendered_entry(
     out: &mut String,
-    thread_id: Ulid,
+    thread_id: Option<Ulid>,
     author: &str,
     created_at: OffsetDateTime,
     body: &str,
@@ -1038,7 +1093,8 @@ fn render_rendered_entry(
     quoted: &[String],
 ) {
     let ts = created_at.format(&Rfc3339).unwrap_or_default();
-    out.push_str(&format!(">#@{thread_id} {author} {ts}{tags}\n"));
+    let id = thread_id.map(|id| id.to_string()).unwrap_or_default();
+    out.push_str(&format!(">#@{id} {author} {ts}{tags}\n"));
     for line in quoted {
         out.push_str(">#");
         out.push_str(line);
@@ -1046,6 +1102,11 @@ fn render_rendered_entry(
     }
     for line in body.lines() {
         out.push_str(">#");
+        // A line that starts like a header or a closing marker is drawn one
+        // space in, so reading the buffer back can't take it for one.
+        if line.starts_with(['@', ']']) {
+            out.push(' ');
+        }
         out.push_str(line);
         out.push('\n');
     }
@@ -1619,7 +1680,7 @@ diff --git a/f.rs b/f.rs
 
         // A hunk comment is a span over the hunk's lines, drawn after the
         // last of them like any range comment.
-        let hunk_pos = rendered.find(&format!(">#@{hunk_id}")).unwrap();
+        let hunk_pos = rendered.find(&format!(">#]{hunk_id}")).unwrap();
         let last_line = rendered.rfind("\n }\n").unwrap();
         assert!(last_line < hunk_pos, "a span comment must render after its lines");
 
@@ -1648,7 +1709,7 @@ diff --git a/f.rs b/f.rs
             &[],
             &[thread_with(id, on_new_lines(14, 2), "about baz")],
         );
-        let (marker, card) = (format!(">#[{id}\n"), format!(">#]{id}\n>#@{id}"));
+        let (marker, card) = (format!(">#[{id}\n"), format!(">#]{id}\n>#@ "));
         let (m, c) = (rendered.find(&marker).unwrap(), rendered.find(&card).unwrap());
         let first = rendered.find("+    fn baz").unwrap();
         let last = rendered.find("        self.value * 2").unwrap();
@@ -1743,7 +1804,7 @@ diff --git a/f.rs b/f.rs
             &[],
         );
         assert!(
-            rendered.contains(&format!(">#[{block}\n-long\n+short\n>#]{block}\n>#@{block}")),
+            rendered.contains(&format!(">#[{block}\n-long\n+short\n>#]{block}\n>#@ ")),
             "{rendered}"
         );
         assert!(!rendered.contains(&format!(">#[{context}")), "{rendered}");
@@ -1762,13 +1823,15 @@ diff --git a/f.rs b/f.rs
             });
         }
         let rendered = render(&fixture(), &[], &[thread]);
-        // Three `>#@` headers (root and two replies), but the range is one.
-        assert_eq!(rendered.matches(&format!(">#@{id}")).count(), 3, "{rendered}");
+        // Three `>#@` headers (root and two replies), none with an id: the
+        // one `>#]` line names the thread.
+        assert_eq!(rendered.matches(">#@ ").count(), 3, "{rendered}");
+        assert_eq!(rendered.matches(&format!(">#@{id}")).count(), 0, "{rendered}");
         assert_eq!(rendered.matches(&format!(">#[{id}\n")).count(), 1, "{rendered}");
         assert_eq!(rendered.matches(&format!(">#]{id}\n")).count(), 1, "{rendered}");
         // The closing marker sits right before the first header, not between.
         let close = rendered.find(&format!(">#]{id}\n")).unwrap();
-        let first_header = rendered.find(&format!(">#@{id}")).unwrap();
+        let first_header = rendered.find(">#@ ").unwrap();
         assert_eq!(first_header, close + format!(">#]{id}\n").len(), "{rendered}");
         assert!(parse(&rendered).unwrap().items.is_empty());
     }
@@ -2101,6 +2164,102 @@ diff --git a/f.rs b/f.rs
         };
         assert_eq!(*target, ThreadRef::Existing(root_id));
         assert_eq!(body.as_deref(), Some("承知しました"));
+    }
+
+    fn with_replies(mut thread: Thread, n: usize) -> Thread {
+        for i in 0..n {
+            thread.replies.push(crate::review::Reply {
+                author: "other@example.com".to_string(),
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                body: format!("reply {i}"),
+            });
+        }
+        thread
+    }
+
+    fn reply_target(parsed: &Parsed) -> ThreadRef {
+        let Some(Item::Reply { target, .. }) = parsed.items.last() else {
+            panic!("expected a reply: {:?}", parsed.items);
+        };
+        *target
+    }
+
+    #[test]
+    fn a_reply_after_a_ranged_thread_with_id_less_headers_goes_to_that_thread() {
+        let id = Ulid::new();
+        let thread = with_replies(thread_with(id, on_new_lines(14, 2), "root"), 2);
+        let rendered = render(&fixture(), &[], &[thread]);
+        assert!(!rendered.contains(&format!(">#@{id}")), "no id in the headers");
+        let parsed = parse(&format!("{rendered}>> mine\n")).unwrap();
+        assert_eq!(reply_target(&parsed), ThreadRef::Existing(id));
+    }
+
+    #[test]
+    fn a_single_row_thread_names_itself_in_its_first_header_only() {
+        let id = Ulid::new();
+        let thread = with_replies(thread_with(id, on_baz_line(), "root"), 2);
+        let rendered = render(&fixture(), &[], &[thread]);
+        assert_eq!(rendered.matches(&format!(">#@{id} ")).count(), 1, "{rendered}");
+        assert_eq!(rendered.matches(">#@ ").count(), 2, "{rendered}");
+        assert!(!rendered.contains(">#]"), "no range, no markers");
+        let parsed = parse(&format!("{rendered}>> mine\n")).unwrap();
+        assert_eq!(reply_target(&parsed), ThreadRef::Existing(id));
+    }
+
+    #[test]
+    fn threads_on_one_row_each_take_their_own_replies() {
+        let (a, b) = (Ulid::new(), Ulid::new());
+        let rendered = render(
+            &fixture(),
+            &[],
+            &[
+                with_replies(thread_with(a, on_baz_line(), "first"), 1),
+                with_replies(thread_with(b, on_baz_line(), "second"), 1),
+            ],
+        );
+        // A reply written after the first thread's block would follow its
+        // last `>#@`; splice it in there and it must go to `a`, not `b`.
+        let at = rendered.find(&format!(">#@{b}")).unwrap();
+        let spliced = format!("{}>> to the first\n\n{}", &rendered[..at], &rendered[at..]);
+        let parsed = parse(&spliced).unwrap();
+        assert_eq!(reply_target(&parsed), ThreadRef::Existing(a));
+        let parsed = parse(&format!("{rendered}>> to the last\n")).unwrap();
+        assert_eq!(reply_target(&parsed), ThreadRef::Existing(b));
+    }
+
+    #[test]
+    fn a_header_without_an_id_needs_a_thread_before_it() {
+        let text = format!("{BASE}>#@ someone@example.com 2026-01-01T00:00:00Z\n>#hello\n");
+        let err = parse(&text).unwrap_err().to_string();
+        assert!(err.contains("ID のない"), "{err}");
+    }
+
+    #[test]
+    fn a_header_id_is_still_read_when_the_line_has_one() {
+        // The old form, every header with the thread's id (an unsent draft).
+        let id = Ulid::new();
+        let text = format!("{BASE}>#@{id} someone@example.com 2026-01-01T00:00:00Z\n>#hi\n>> ok\n");
+        assert_eq!(reply_target(&parse(&text).unwrap()), ThreadRef::Existing(id));
+    }
+
+    #[test]
+    fn a_body_line_that_looks_like_a_header_or_a_marker_survives_a_round_trip() {
+        let id = Ulid::new();
+        let body = "@alice is this right?\n]not a marker\n]01M2Z2AY720BFBEAHBMA04D4Z3\n[ok]";
+        let thread = thread_with(id, on_baz_line(), body);
+        let rendered = render(&fixture(), &[], &[thread]);
+        // Drawn one space in, so none of it is read as structure.
+        assert!(rendered.contains(">#@alice") == false);
+        assert!(rendered.contains("># @alice is this right?"), "{rendered}");
+        let parsed = parse(&format!("{rendered}>> reply\n")).unwrap();
+        assert_eq!(parsed.items.len(), 1);
+        assert_eq!(reply_target(&parsed), ThreadRef::Existing(id));
+    }
+
+    #[test]
+    fn a_closing_marker_that_is_not_a_thread_id_is_plain_text() {
+        let text = format!("{BASE}>#]not an id\n");
+        assert!(parse(&text).unwrap().items.is_empty());
     }
 
     #[test]
