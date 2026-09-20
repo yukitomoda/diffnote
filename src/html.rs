@@ -2038,7 +2038,8 @@ const SCRIPT: &str = r#"
   });
 
   // --- Hiding resolved threads -------------------------------------------
-  // The box in the top bar (kept between visits, where the browser allows).
+  // The box in the top bar: on unless the choice was turned off (kept between
+  // visits, where the browser allows).
   // Cards and list entries are hidden by the style; a line's mark is too
   // when every thread on it is resolved, which is worked out here (and again
   // whenever the page changes).
@@ -2064,7 +2065,8 @@ const SCRIPT: &str = r#"
     }
   }
   if (hideBox) {
-    try { hideBox.checked = localStorage.getItem('diffnote-hide-resolved') === '1'; } catch (e) { /* not kept */ }
+    hideBox.checked = true;
+    try { hideBox.checked = localStorage.getItem('diffnote-hide-resolved') !== '0'; } catch (e) { /* not kept: the default */ }
     hideBox.addEventListener('change', function () {
       try { localStorage.setItem('diffnote-hide-resolved', hideBox.checked ? '1' : '0'); } catch (e) { /* not kept */ }
       syncResolved();
