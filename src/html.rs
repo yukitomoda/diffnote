@@ -20,7 +20,7 @@
 use crate::anchor::{self, Placement};
 use crate::expand;
 use crate::diff::{FileDiff, Hunk, LineKind, UnifiedDiff};
-use crate::model::{Anchor, Event, Side};
+use crate::model::{Event, Side};
 use crate::review::{Thread, build_threads};
 use pulldown_cmark::{Parser as MdParser, html::push_html as md_push_html};
 use std::collections::HashMap;
@@ -774,7 +774,7 @@ mod tests {
     use crate::bundle::{self, Additions};
     use crate::digest::digest;
     use crate::files::{Tree, diff_trees};
-    use crate::model::{FileRef, GitSource, LineRange, Revision, SnapshotMode, Source};
+    use crate::model::{Anchor, FileRef, GitSource, LineRange, Revision, SnapshotMode, Source};
     use time::OffsetDateTime;
 
     const R1_BASE: &str = "a\nb\nc\nd\n";
