@@ -157,6 +157,9 @@ impl Server {
         match (request.method, path) {
             ("GET", "/") => self.page(),
             ("GET", p) if p.starts_with("/api/views/") => self.view(&p["/api/views/".len()..]),
+            ("GET", p) if p.starts_with("/api/files/") => {
+                self.files(&p["/api/files/".len()..], query)
+            }
             ("POST", _) => {
                 // A page from another site can't set this header without
                 // asking the server first (which it doesn't allow).
@@ -200,6 +203,51 @@ impl Server {
         {
             Some(inner) => Reply::json(200, &serde_json::json!({ "ok": true, "html": inner })),
             None => Reply::error(404, "そのリビジョンはありません"),
+        }
+    }
+
+    /// The stored files of a revision, to look at: `{rev}/tree` lists them,
+    /// `{rev}/open` draws one, `{rev}/more` draws its next lines.
+    fn files(&self, what: &str, query: &str) -> Reply {
+        let loaded = match bundle::load(&self.review) {
+            Ok(l) => l,
+            Err(e) => return Reply::error(500, &format!("処理に失敗しました: {e}")),
+        };
+        let param = |key: &str| query_param(query, key).unwrap_or_default();
+        let Some((revision, action)) = what
+            .split_once('/')
+            .and_then(|(r, a)| Some((r.parse::<usize>().ok()?, a)))
+        else {
+            return Reply::error(404, "見つかりません");
+        };
+        let refused = |message: String| Reply::error(400, &message);
+        match action {
+            "tree" => match html::tree_listing(&loaded, revision, &param("dir"), &param("q")) {
+                Some(list) => Reply::json(200, &serde_json::json!({ "ok": true, "html": list })),
+                None => Reply::error(404, "そのリビジョンはありません"),
+            },
+            "open" => match html::open_file(&loaded, revision, &param("path")) {
+                Ok(opened) => Reply::json(
+                    200,
+                    &serde_json::json!({
+                        "ok": true,
+                        "html": opened.html,
+                        "list_item": opened.list_item,
+                    }),
+                ),
+                Err(message) => refused(message),
+            },
+            "more" => {
+                let from = param("from").parse::<usize>().unwrap_or(1);
+                match html::file_chunk(&loaded, revision, &param("path"), from) {
+                    Ok((rows, next)) => Reply::json(
+                        200,
+                        &serde_json::json!({ "ok": true, "html": rows, "next": next }),
+                    ),
+                    Err(message) => refused(message),
+                }
+            }
+            _ => Reply::error(404, "見つかりません"),
         }
     }
 
@@ -266,7 +314,7 @@ impl Server {
         };
 
         let loaded = bundle::load(&self.review).map_err(internal)?;
-        let (rev, diff, files) = html::anchor_view(&loaded, revision)
+        let (rev, diff, files) = html::anchor_view(&loaded, revision, file)
             .ok_or_else(|| Failure(404, "そのリビジョンはありません".into()))?;
         // Lines and files are those of the page's diff (of the revision, and
         // the files it doesn't touch that threads have brought in).
@@ -485,6 +533,38 @@ struct Failure(u16, String);
 
 fn internal(e: anyhow::Error) -> Failure {
     Failure(500, format!("処理に失敗しました: {e}"))
+}
+
+/// The value of `key` in a query string, with `%XX` and `+` decoded.
+fn query_param(query: &str, key: &str) -> Option<String> {
+    let raw = query
+        .split('&')
+        .filter_map(|p| p.split_once('='))
+        .find(|(k, _)| *k == key)
+        .map(|(_, v)| v)?;
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => out.push(b' '),
+            b'%' if bytes.get(i + 1..i + 3).is_some() => {
+                match std::str::from_utf8(&bytes[i + 1..i + 3])
+                    .ok()
+                    .and_then(|h| u8::from_str_radix(h, 16).ok())
+                {
+                    Some(b) => {
+                        out.push(b);
+                        i += 2;
+                    }
+                    None => out.push(b'%'),
+                }
+            }
+            b => out.push(b),
+        }
+        i += 1;
+    }
+    Some(String::from_utf8_lossy(&out).into_owned())
 }
 
 fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -1473,6 +1553,292 @@ mod tests {
             .status,
             400
         );
+    }
+
+    // ---- other stored files: looked at, and commented on ----------------------
+
+    fn big_text(lines: usize) -> String {
+        (1..=lines).map(|n| format!("line {n}\n")).collect()
+    }
+
+    /// The fixture plus a stored project tree the diff doesn't touch.
+    fn fixture_with_a_tree() -> Fixture {
+        use crate::model::TreeFile;
+        let f = fixture();
+        let files: Vec<(&str, Vec<u8>)> = vec![
+            ("src/a.rs", b"fn a() {}\nfn b() {}\n".to_vec()),
+            ("src/lib/b.rs", b"pub fn c() {}\n".to_vec()),
+            ("docs/readme.md", b"# read me\n".to_vec()),
+            (
+                "docs/\u{8a2d}\u{8a08} \u{30e1}\u{30e2}.md",
+                "memo\n".as_bytes().to_vec(),
+            ),
+            ("big.txt", big_text(1200).into_bytes()),
+            ("bin.dat", vec![0xff, 0xfe, 0x00, 0x9f]),
+        ];
+        let loaded = bundle::load(&f.path).unwrap();
+        let revision = loaded.revisions().next().unwrap().id;
+        let mut events = loaded.events.clone();
+        events.push(Event::Pin {
+            revision,
+            files: files
+                .iter()
+                .map(|(p, b)| TreeFile {
+                    path: p.to_string(),
+                    digest: digest(b),
+                })
+                .collect(),
+        });
+        let more = Additions {
+            diff: None,
+            blobs: files.into_iter().map(|(_, b)| b).collect(),
+        };
+        bundle::save(&f.path, &loaded, &events, &more).unwrap();
+        f
+    }
+
+    fn get(f: &Fixture, target: &str) -> Reply {
+        f.request("GET", target, &[], "")
+    }
+
+    fn listing(f: &Fixture, query: &str) -> String {
+        let reply = get(f, &format!("/api/files/0/tree{query}"));
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        json(&reply)["html"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn the_tree_lists_stored_files_the_view_does_not_have_folding_directories() {
+        let f = fixture_with_a_tree();
+        let root = listing(&f, "");
+        // Directories fold (with how many files are in them), files are buttons.
+        assert!(
+            root.contains(r#"data-diffnote-dir="src""#)
+                && root.contains(r#"data-diffnote-dir="docs""#),
+            "{root}"
+        );
+        assert!(
+            root.contains(r#"<span class="diffnote-tree__count">2</span>"#),
+            "src has two: {root}"
+        );
+        assert!(root.contains(r#"data-diffnote-open="big.txt""#), "{root}");
+        // The diff's own file is already on the page: not offered again.
+        assert!(!root.contains("f.txt"), "{root}");
+        // Nothing of a directory's contents until it is opened.
+        assert!(!root.contains("a.rs"), "{root}");
+        let src = listing(&f, "?dir=src");
+        assert!(
+            src.contains(r#"data-diffnote-dir="src/lib""#)
+                && src.contains(r#"data-diffnote-open="src/a.rs""#),
+            "{src}"
+        );
+        assert!(!src.contains("b.rs"), "{src}");
+        // Directories come before files.
+        assert!(
+            src.find("src/lib").unwrap() < src.find("src/a.rs").unwrap(),
+            "{src}"
+        );
+    }
+
+    #[test]
+    fn a_search_lists_matching_paths_flat_ignoring_case() {
+        let f = fixture_with_a_tree();
+        let found = listing(&f, "?q=README");
+        assert!(
+            found.contains(r#"data-diffnote-open="docs/readme.md""#),
+            "{found}"
+        );
+        assert!(!found.contains("big.txt"), "{found}");
+        assert!(listing(&f, "?q=nothing-like-this").contains("見つかりません"));
+        // Japanese paths come through the query as %XX.
+        let jp = listing(&f, "?q=%E8%A8%AD%E8%A8%88");
+        assert!(jp.contains("docs/設計 メモ.md"), "{jp}");
+    }
+
+    #[test]
+    fn a_review_that_stores_nothing_else_says_so() {
+        let f = fixture();
+        assert!(listing(&f, "").contains("保存されているファイルはありません"));
+    }
+
+    #[test]
+    fn opening_a_file_draws_it_as_unchanged_lines_and_records_nothing() {
+        let f = fixture_with_a_tree();
+        let before = f.events().len();
+        let reply = get(&f, "/api/files/0/open?path=src/a.rs");
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        let answer = json(&reply);
+        let html = answer["html"].as_str().unwrap();
+        // A file section like the others, open, named, marked as only looked at.
+        assert!(
+            html.contains(r#"data-diffnote-opened id="r0-file-src-a-rs""#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"data-diffnote-file="src/a.rs""#) && html.contains("<details open>"),
+            "{html}"
+        );
+        assert!(
+            html.contains("data-diffnote-close") && html.contains(r#"data-diffnote-add="file""#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<table class="diffnote-diff" data-diffnote-file="src/a.rs">"#),
+            "{html}"
+        );
+        // Rows are lines to choose: both numbers, counters.
+        assert!(html.contains(r#"data-diffnote-old="2" data-diffnote-new="2" data-diffnote-old-next="2" data-diffnote-new-next="2""#), "{html}");
+        // (Colored, so the words are in spans.)
+        assert!(html.contains(">b</span>"), "{html}");
+        assert!(
+            !html.contains("data-diffnote-more"),
+            "a short file is whole"
+        );
+        assert!(
+            answer["list_item"]
+                .as_str()
+                .unwrap()
+                .contains(r##"href="#r0-file-src-a-rs""##)
+        );
+        // Looking at it changes nothing on disk.
+        assert_eq!(f.events().len(), before);
+    }
+
+    #[test]
+    fn a_long_file_is_opened_in_chunks() {
+        let f = fixture_with_a_tree();
+        let first = json(&get(&f, "/api/files/0/open?path=big.txt"));
+        let html = first["html"].as_str().unwrap();
+        assert!(
+            html.contains("line 500<") || html.contains("line 500"),
+            "{html}"
+        );
+        assert!(!html.contains("line 501"), "only the first 500 lines");
+        assert!(
+            html.contains(r#"data-diffnote-more data-path="big.txt" data-from="501""#),
+            "{html}"
+        );
+        assert!(html.contains("全 1200 行"), "{html}");
+        let second = json(&get(&f, "/api/files/0/more?path=big.txt&from=501"));
+        assert_eq!(second["next"].as_u64(), Some(1001));
+        let rows = second["html"].as_str().unwrap();
+        assert!(
+            rows.contains("line 501") && rows.contains("line 1000") && !rows.contains("line 1001"),
+            "chunk"
+        );
+        assert!(
+            rows.contains(r#"<tr class="diffnote-hunk-header">"#),
+            "each chunk starts its own hunk"
+        );
+        assert!(rows.contains(r#"data-diffnote-new="501" data-diffnote-old-next="501" data-diffnote-new-next="501""#), "{rows}");
+        let last = json(&get(&f, "/api/files/0/more?path=big.txt&from=1001"));
+        assert!(last["next"].is_null());
+        assert!(last["html"].as_str().unwrap().contains("line 1200"));
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_shown_is_refused_with_a_reason() {
+        let f = fixture_with_a_tree();
+        let binary = get(&f, "/api/files/0/open?path=bin.dat");
+        assert_eq!(binary.status, 400);
+        assert!(text(&binary).contains("テキストファイルではない"));
+        assert_eq!(get(&f, "/api/files/0/open?path=nope.txt").status, 400);
+        assert_eq!(get(&f, "/api/files/0/open").status, 400);
+        // A path outside what the review stores is not read from anywhere.
+        assert_eq!(
+            get(&f, "/api/files/0/open?path=../../etc/passwd").status,
+            400
+        );
+        assert_eq!(
+            get(&f, "/api/files/0/more?path=nope.txt&from=1").status,
+            400
+        );
+        assert_eq!(get(&f, "/api/files/9/tree").status, 404);
+        assert_eq!(get(&f, "/api/files/x/tree").status, 404);
+        assert_eq!(get(&f, "/api/files/0/unknown").status, 404);
+    }
+
+    #[test]
+    fn the_other_files_need_the_token_too() {
+        let f = fixture_with_a_tree();
+        let bare = f.server.handle(&Request {
+            method: "GET",
+            target: "/api/files/0/open?path=src/a.rs",
+            headers: vec![("host".into(), "127.0.0.1:4242".into())],
+            body: b"",
+        });
+        assert_eq!(bare.status, 403);
+    }
+
+    #[test]
+    fn a_comment_on_an_opened_file_is_kept_with_the_files_stored_version() {
+        let f = fixture_with_a_tree();
+        let stored = b"fn a() {}\nfn b() {}\n";
+        // On line 2 (a row of the opened file).
+        let reply = new_thread(
+            &f,
+            r#"{"revision":0,"file":"src/a.rs","base":{"start":2,"len":1},"head":{"start":2,"len":1},"body":"about b"}"#,
+        );
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        let Anchor::Span { base, head } = last_anchor(&f) else {
+            panic!("a span");
+        };
+        for side in [base, head] {
+            let side = side.unwrap();
+            assert_eq!(
+                (side.file.as_str(), side.start, side.len),
+                ("src/a.rs", 2, 1)
+            );
+            assert_eq!(side.digest, digest(stored));
+        }
+        let answer = json(&reply);
+        assert_eq!(answer["patch"]["kind"], "lines");
+        assert_eq!(answer["patch"]["after"]["file"], "src/a.rs");
+        // ...and a file thread on it.
+        let reply = new_thread(
+            &f,
+            r#"{"scope":"file","revision":0,"file":"src/a.rs","body":"whole file"}"#,
+        );
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        assert_eq!(json(&reply)["patch"]["kind"], "card");
+        // Once it has threads the page has it itself, so it is not offered as "other".
+        assert!(!listing(&f, "?dir=src").contains(r#"data-diffnote-open="src/a.rs""#));
+        // A file the review doesn't store is still refused.
+        assert_eq!(
+            new_thread(
+                &f,
+                r#"{"scope":"file","revision":0,"file":"nope.rs","body":"x"}"#
+            )
+            .status,
+            400
+        );
+    }
+
+    #[test]
+    fn the_page_has_a_folded_quiet_place_for_other_files_and_the_export_does_not() {
+        let f = fixture_with_a_tree();
+        let page = text(&f.request("GET", "/", &[], ""));
+        assert!(page.contains(r#"<details class="diffnote-side diffnote-side--quiet" data-diffnote-tree><summary>その他のファイル</summary>"#), "{page}");
+        assert!(!page.contains("data-diffnote-tree open"), "folded at first");
+        assert!(
+            !page.contains(r#"data-diffnote-open="#) || page.contains("data-diffnote-open]"),
+            "the list is read only when opened"
+        );
+        let export = html::render_bundle(&bundle::load(&f.path).unwrap()).unwrap();
+        assert!(!export.contains("その他のファイル"));
+    }
+
+    #[test]
+    fn percent_decoding_reads_plain_and_encoded_text() {
+        assert_eq!(
+            query_param("path=a%20b&x=1", "path").as_deref(),
+            Some("a b")
+        );
+        assert_eq!(query_param("q=a+b", "q").as_deref(), Some("a b"));
+        assert_eq!(query_param("q=%E8%A8%AD", "q").as_deref(), Some("設"));
+        assert_eq!(query_param("q=100%", "q").as_deref(), Some("100%"));
+        assert_eq!(query_param("q=%zz", "q").as_deref(), Some("%zz"));
+        assert_eq!(query_param("a=1", "q"), None);
     }
 
     // ---- over a real socket ----------------------------------------------

@@ -30,6 +30,13 @@ use syntect::html::{IncludeBackground, styled_line_to_highlighted_html};
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 use ulid::Ulid;
 
+/// The syntax and color definitions, built once: each syntax compiles its
+/// patterns the first time it highlights something, which costs far more than
+/// drawing the lines, so a page (and a server) must not start over each time.
+static SYNTAXES: std::sync::LazyLock<SyntaxSet> =
+    std::sync::LazyLock::new(SyntaxSet::load_defaults_newlines);
+static THEMES: std::sync::LazyLock<ThemeSet> = std::sync::LazyLock::new(ThemeSet::load_defaults);
+
 /// Per-view drawing state shared by the render functions.
 #[derive(Default)]
 struct Marks {
@@ -327,11 +334,10 @@ pub fn render_view_inner(loaded: &crate::bundle::Loaded, revision: usize) -> Opt
     let views = revision_views(&shown);
     let view = views.get(revision)?;
     let threads = build_threads(&loaded.events);
-    let syntax_set = SyntaxSet::load_defaults_newlines();
-    let theme_set = ThemeSet::load_defaults();
-    let theme = &theme_set.themes["InspiredGitHub"];
+    let syntax_set = &*SYNTAXES;
+    let theme = &THEMES.themes["InspiredGitHub"];
     let inner = prefix_ids(
-        &render_view(&threads, view, &loaded.blobs(), &syntax_set, theme, true),
+        &render_view(&threads, view, &loaded.blobs(), syntax_set, theme, true),
         revision,
     );
     Some(format!(
@@ -343,9 +349,14 @@ pub fn render_view_inner(loaded: &crate::bundle::Loaded, revision: usize) -> Opt
 /// What a thread written in view `index` is anchored against: the revision,
 /// the diff as the page shows it (with the context that files the diff
 /// doesn't touch appear in) and the digests of the files in it.
+///
+/// `file` is the file the thread is about: if the diff doesn't have it but the
+/// revision stores it (the page can show any stored file), it is anchored to
+/// its stored version, on both sides.
 pub fn anchor_view(
     loaded: &crate::bundle::Loaded,
     index: usize,
+    file: Option<&str>,
 ) -> Option<(
     crate::model::Revision,
     UnifiedDiff,
@@ -356,9 +367,295 @@ pub fn anchor_view(
     let view = views.get(index)?;
     let threads = build_threads(&loaded.events);
     let placed = place(&threads, view, &loaded.blobs(), true);
+    let mut diff = placed.diff;
     let mut files = view.files.to_vec();
     files.extend(placed.synthetic_files);
-    Some((shown[index].revision.clone(), placed.diff, files))
+    if let Some(path) = file
+        && !diff.files.iter().any(|f| file_key(f) == path)
+        && let Some(entry) = loaded
+            .manifest(shown[index].revision)
+            .into_iter()
+            .find(|e| e.path == path && loaded.blob(&e.digest).is_some())
+    {
+        diff.files.push(FileDiff {
+            old_path: Some(path.to_string()),
+            new_path: Some(path.to_string()),
+            ..FileDiff::default()
+        });
+        files.push(crate::model::FileDigest {
+            old_path: Some(path.to_string()),
+            new_path: Some(path.to_string()),
+            old: Some(entry.digest.clone()),
+            new: Some(entry.digest),
+        });
+    }
+    Some((shown[index].revision.clone(), diff, files))
+}
+
+// ---- other files: the stored tree, opened to look at ------------------------
+
+/// Lines drawn at a time when a stored file is opened.
+const OPEN_CHUNK: usize = 500;
+/// Entries listed at most, in one directory or one search.
+const TREE_LIMIT: usize = 500;
+
+/// The files the revision stores that the view doesn't already have (as part
+/// of the diff, or for a thread), by path.
+fn other_files(
+    loaded: &crate::bundle::Loaded,
+    revision: usize,
+) -> Option<Vec<crate::model::TreeFile>> {
+    let shown = shown_revisions(loaded).ok()?;
+    let views = revision_views(&shown);
+    let view = views.get(revision)?;
+    let threads = build_threads(&loaded.events);
+    let placed = place(&threads, view, &loaded.blobs(), true);
+    let mut files: Vec<crate::model::TreeFile> = loaded
+        .manifest(shown[revision].revision)
+        .into_iter()
+        .filter(|f| !placed.file_order.contains(&f.path) && loaded.blob(&f.digest).is_some())
+        .collect();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Some(files)
+}
+
+fn tree_file_item(path: &str, label: &str) -> String {
+    format!(
+        r#"<li><button type="button" class="diffnote-tree__file" data-diffnote-open="{p}" title="{p}">{l}</button></li>"#,
+        p = escape_html(path),
+        l = escape_html(label),
+    )
+}
+
+/// The list of stored files for the "other files" section of the page: the
+/// entries of directory `dir` (sub-directories fold and are listed when
+/// opened), or, with a `query`, the files whose path contains it.
+pub fn tree_listing(
+    loaded: &crate::bundle::Loaded,
+    revision: usize,
+    dir: &str,
+    query: &str,
+) -> Option<String> {
+    let files = other_files(loaded, revision)?;
+    if files.is_empty() {
+        return Some(
+            r#"<p class="diffnote-tree__empty">ほかに保存されているファイルはありません</p>"#
+                .to_string(),
+        );
+    }
+    let mut items = Vec::new();
+    let more;
+    let query = query.trim().to_lowercase();
+    if !query.is_empty() {
+        let matching: Vec<&crate::model::TreeFile> = files
+            .iter()
+            .filter(|f| f.path.to_lowercase().contains(&query))
+            .collect();
+        more = matching.len().saturating_sub(TREE_LIMIT);
+        for f in matching.into_iter().take(TREE_LIMIT) {
+            items.push(tree_file_item(&f.path, &f.path));
+        }
+        if items.is_empty() {
+            return Some(r#"<p class="diffnote-tree__empty">見つかりません</p>"#.to_string());
+        }
+    } else {
+        let prefix = if dir.is_empty() {
+            String::new()
+        } else {
+            format!("{dir}/")
+        };
+        let mut dirs: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+        let mut here: Vec<(&str, &str)> = Vec::new();
+        for f in &files {
+            let Some(rest) = f.path.strip_prefix(prefix.as_str()) else {
+                continue;
+            };
+            match rest.split_once('/') {
+                Some((name, _)) => *dirs.entry(name).or_default() += 1,
+                None => here.push((rest, f.path.as_str())),
+            }
+        }
+        let mut entries: Vec<String> = dirs
+            .into_iter()
+            .map(|(name, count)| {
+                format!(
+                    r#"<li><details class="diffnote-tree__dir" data-diffnote-dir="{p}"><summary>{n}/ <span class="diffnote-tree__count">{count}</span></summary><div data-diffnote-children></div></details></li>"#,
+                    p = escape_html(&format!("{prefix}{name}")),
+                    n = escape_html(name),
+                )
+            })
+            .collect();
+        entries.extend(
+            here.into_iter()
+                .map(|(name, path)| tree_file_item(path, name)),
+        );
+        more = entries.len().saturating_sub(TREE_LIMIT);
+        items = entries.into_iter().take(TREE_LIMIT).collect();
+    }
+    let mut out = format!(r#"<ul class="diffnote-tree__list">{}</ul>"#, items.concat());
+    if more > 0 {
+        out.push_str(&format!(
+            r#"<p class="diffnote-tree__empty">ほか {more} 件(検索で絞り込んでください)</p>"#
+        ));
+    }
+    Some(out)
+}
+
+/// The text of a file the revision stores, or why it can't be shown.
+fn stored_text(
+    loaded: &crate::bundle::Loaded,
+    revision: usize,
+    path: &str,
+) -> Result<String, String> {
+    let shown = shown_revisions(loaded).map_err(|e| e.to_string())?;
+    let rev = shown
+        .get(revision)
+        .ok_or("そのリビジョンはありません")?
+        .revision;
+    let entry = loaded
+        .manifest(rev)
+        .into_iter()
+        .find(|f| f.path == path)
+        .ok_or("そのファイルはこのレビューに保存されていません")?;
+    let bytes = loaded
+        .blob(&entry.digest)
+        .ok_or("そのファイルの内容が保存されていません")?;
+    String::from_utf8(bytes.to_vec())
+        .map_err(|_| "テキストファイルではないため、表示できません".to_string())
+}
+
+/// `OPEN_CHUNK` lines of `text` from line `from` (1-based) as a hunk of
+/// unchanged lines, and where the next chunk starts (`None` at the end).
+fn context_chunk(text: &str, from: usize) -> (Hunk, Option<usize>) {
+    let from = from.max(1);
+    let lines: Vec<crate::diff::DiffLine> = text
+        .lines()
+        .enumerate()
+        .skip(from - 1)
+        .take(OPEN_CHUNK)
+        .map(|(i, l)| crate::diff::DiffLine {
+            kind: LineKind::Context,
+            content: l.to_string(),
+            old_line: Some(i as u32 + 1),
+            new_line: Some(i as u32 + 1),
+            no_newline_at_eof: false,
+        })
+        .collect();
+    let next = (from - 1 + lines.len() < text.lines().count()).then_some(from + OPEN_CHUNK);
+    let count = lines.len() as u32;
+    (
+        Hunk {
+            old_start: from as u32,
+            old_lines: count,
+            new_start: from as u32,
+            new_lines: count,
+            section_heading: None,
+            lines,
+        },
+        next,
+    )
+}
+
+fn more_row(path: &str, next: usize, total: usize) -> String {
+    format!(
+        r#"<tr class="diffnote-more-row"><td colspan="3"><button type="button" class="diffnote-button" data-diffnote-more data-path="{p}" data-from="{next}">続きを表示({next}〜 / 全 {total} 行)</button></td></tr>"#,
+        p = escape_html(path),
+    )
+}
+
+/// A stored file opened in view `revision`: its section of the page (as a
+/// file of unchanged lines, the first chunk of it) and its entry for the file
+/// list. Nothing is recorded: it is only looked at, until a comment is made.
+pub struct OpenedFile {
+    pub html: String,
+    pub list_item: String,
+}
+
+pub fn open_file(
+    loaded: &crate::bundle::Loaded,
+    revision: usize,
+    path: &str,
+) -> Result<OpenedFile, String> {
+    let text = stored_text(loaded, revision, path)?;
+    let total = text.lines().count();
+    let (hunk, next) = context_chunk(&text, 1);
+    let file_diff = FileDiff {
+        old_path: Some(path.to_string()),
+        new_path: Some(path.to_string()),
+        hunks: vec![hunk],
+        ..FileDiff::default()
+    };
+    let marks = Marks {
+        interactive: true,
+        ..Marks::default()
+    };
+    let syntax_set = &*SYNTAXES;
+    let theme = &THEMES.themes["InspiredGitHub"];
+    let mut html = render_file(
+        Some(&file_diff),
+        path,
+        &[],
+        &HashMap::new(),
+        &HashMap::new(),
+        &marks,
+        &[],
+        syntax_set,
+        theme,
+    );
+    // Open, marked as only looked at, with a way to close it again.
+    html = html
+        .replacen("<details>", "<details open>", 1)
+        .replacen(r#" id="file-"#, r#" data-diffnote-opened id="file-"#, 1)
+        .replacen(
+            "</summary>",
+            r#"<button type="button" class="diffnote-mini" data-diffnote-close title="この表示を閉じる(記録には残りません)">閉じる</button></summary>"#,
+            1,
+        );
+    if let Some(next) = next {
+        html = html.replacen(
+            "</table>",
+            &format!("{}</table>", more_row(path, next, total)),
+            1,
+        );
+    }
+    let item = format!(
+        r##"<li><a href="#file-{}">{}</a></li>"##,
+        html_id(path),
+        escape_html(path)
+    );
+    Ok(OpenedFile {
+        html: prefix_ids(&html, revision),
+        list_item: prefix_ids(&item, revision),
+    })
+}
+
+/// The next chunk of an opened file, from line `from`, as table rows, and
+/// where the chunk after it starts.
+pub fn file_chunk(
+    loaded: &crate::bundle::Loaded,
+    revision: usize,
+    path: &str,
+    from: usize,
+) -> Result<(String, Option<usize>), String> {
+    let text = stored_text(loaded, revision, path)?;
+    let (hunk, next) = context_chunk(&text, from);
+    let marks = Marks {
+        interactive: true,
+        ..Marks::default()
+    };
+    let syntax_set = &*SYNTAXES;
+    let theme = &THEMES.themes["InspiredGitHub"];
+    let rows = render_hunk(
+        path,
+        &hunk,
+        guess_syntax(path, syntax_set),
+        syntax_set,
+        theme,
+        &HashMap::new(),
+        &HashMap::new(),
+        &marks,
+    );
+    Ok((rows, next))
 }
 
 /// How many revision views the page has.
@@ -405,9 +702,8 @@ pub fn render_with(
     interactive: bool,
 ) -> String {
     let threads = build_threads(events);
-    let syntax_set = SyntaxSet::load_defaults_newlines();
-    let theme_set = ThemeSet::load_defaults();
-    let theme = &theme_set.themes["InspiredGitHub"];
+    let syntax_set = &*SYNTAXES;
+    let theme = &THEMES.themes["InspiredGitHub"];
 
     let title = crate::review::title(events);
     let heading = escape_html(title.unwrap_or(DEFAULT_TITLE));
@@ -443,7 +739,7 @@ pub fn render_with(
             ""
         };
         let inner = prefix_ids(
-            &render_view(&threads, view, blobs, &syntax_set, theme, interactive),
+            &render_view(&threads, view, blobs, syntax_set, theme, interactive),
             i,
         );
         body.push_str(&format!(
@@ -666,6 +962,11 @@ fn render_view(
     }
     body.push_str("</ul></nav></details>");
     body.push_str(&render_thread_list(threads, &file_order, &marks));
+    if marks.interactive {
+        // Any other stored file can be opened to look at (and comment on);
+        // folded, and quiet, as it is not the usual way to review.
+        body.push_str(r#"<details class="diffnote-side diffnote-side--quiet" data-diffnote-tree><summary>その他のファイル</summary><div class="diffnote-tree"><input type="search" class="diffnote-tree__search" placeholder="ファイルを検索" aria-label="ファイルを検索"><div data-diffnote-tree-list></div></div></details>"#);
+    }
     body.push_str("</aside>\n");
 
     if marks.interactive {
@@ -1326,6 +1627,17 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-threadlist__where { font-family: var(--diffnote-font-mono); font-size: 12px; font-weight: 600; word-break: break-all; }
 .diffnote-threadlist__state { margin-left: 6px; font-size: 11px; color: var(--diffnote-color-muted); border: 1px solid var(--diffnote-color-border); border-radius: 1em; padding: 0 6px; white-space: nowrap; }
 .diffnote-threadlist__preview { display: block; margin-left: 16px; color: var(--diffnote-color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diffnote-side--quiet > summary { font-weight: 400; opacity: 0.8; }
+.diffnote-tree { padding: 2px 8px 8px; }
+.diffnote-tree__search { width: 100%; font: inherit; font-size: 12px; padding: 3px 6px; border: 1px solid var(--diffnote-color-border); border-radius: 6px; background: var(--diffnote-color-bg); }
+.diffnote-tree__list { list-style: none; margin: 4px 0; padding: 0; }
+[data-diffnote-children] .diffnote-tree__list { padding-left: 12px; }
+.diffnote-tree__dir > summary { cursor: pointer; font-family: var(--diffnote-font-mono); font-size: 12px; padding: 2px 0; }
+.diffnote-tree__file { display: block; width: 100%; text-align: left; font-family: var(--diffnote-font-mono); font-size: 12px; padding: 2px 4px; color: var(--diffnote-color-fg); background: none; border: 0; border-radius: 4px; cursor: pointer; word-break: break-all; }
+.diffnote-tree__file:hover { background: var(--diffnote-color-gutter); }
+.diffnote-tree__count { color: var(--diffnote-color-muted); font-size: 11px; }
+.diffnote-tree__empty { margin: 4px 0; color: var(--diffnote-color-muted); font-size: 12px; }
+.diffnote-more-row > td { padding: 6px 12px !important; background: var(--diffnote-color-gutter); text-align: center; }
 .diffnote-add { padding: 8px 12px 0; }
 .diffnote-compose-wrap { padding: 8px 12px; }
 .diffnote-global-comments .diffnote-add { padding: 0; }
@@ -2039,6 +2351,103 @@ const SCRIPT: &str = r#"
       e.stopPropagation();
       openScopeComposer(button);
     }, true);
+
+    // --- Other stored files: opened to look at, and to comment on ---------------
+    // Nothing is recorded by opening one; a comment on it is what keeps it.
+    var sectionOf = function (el) { return el.closest('.diffnote-revision'); };
+    var revisionOf = function (el) { return sectionOf(el).getAttribute('data-diffnote-revision'); };
+    var getJSON = function (url) {
+      return fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.json(); }, function () {
+        return { ok: false, error: 'サーバーに接続できませんでした' };
+      });
+    };
+    var loadTree = function (holder, revision, dir, query) {
+      holder.textContent = '読み込み中…';
+      return getJSON('/api/files/' + revision + '/tree?dir=' + encodeURIComponent(dir) + '&q=' + encodeURIComponent(query || '')).then(function (res) {
+        if (!res.ok) { holder.textContent = res.error || '読み込めませんでした'; return; }
+        holder.innerHTML = res.html;
+      });
+    };
+    // Folded lists are read when first opened (a directory of thousands of
+    // files costs nothing until then).
+    document.addEventListener('toggle', function (e) {
+      var d = e.target;
+      if (!d.open || !d.matches) return;
+      if (d.matches('[data-diffnote-tree]')) {
+        var list = d.querySelector('[data-diffnote-tree-list]');
+        if (!list.hasChildNodes()) loadTree(list, revisionOf(d), '', '');
+      } else if (d.matches('[data-diffnote-dir]')) {
+        var kids = d.querySelector('[data-diffnote-children]');
+        if (!kids.hasChildNodes()) loadTree(kids, revisionOf(d), d.getAttribute('data-diffnote-dir'), '');
+      }
+    }, true);
+    var searchTimer = null;
+    document.addEventListener('input', function (e) {
+      var box = e.target;
+      if (!box.matches || !box.matches('.diffnote-tree__search')) return;
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(function () {
+        loadTree(box.parentElement.querySelector('[data-diffnote-tree-list]'), revisionOf(box), '', box.value);
+      }, 250);
+    });
+    var openFile = function (button) {
+      var section = sectionOf(button);
+      var path = button.getAttribute('data-diffnote-open');
+      var existing = slice.call(section.querySelectorAll('section.diffnote-file')).filter(function (s) {
+        return s.getAttribute('data-diffnote-file') === path;
+      })[0];
+      if (existing) { existing.querySelector('details').open = true; existing.scrollIntoView({ block: 'start' }); return; }
+      getJSON('/api/files/' + revisionOf(button) + '/open?path=' + encodeURIComponent(path)).then(function (res) {
+        if (!res.ok) { showError(button.closest('.diffnote-tree'), res.error || '開けませんでした'); return; }
+        var tpl = document.createElement('template');
+        tpl.innerHTML = res.html.trim();
+        var fresh = tpl.content.firstElementChild;
+        var files = section.querySelectorAll('section.diffnote-file');
+        files[files.length - 1].after(fresh);
+        var ul = section.querySelector('.diffnote-filelist ul');
+        if (ul) {
+          var li = document.createElement('template');
+          li.innerHTML = res.list_item.trim();
+          ul.appendChild(li.content.firstElementChild);
+        }
+        fresh.scrollIntoView({ block: 'start' });
+      });
+    };
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest ? e.target : null;
+      if (!t) return;
+      var open = t.closest('[data-diffnote-open]');
+      if (open) { openFile(open); return; }
+      var close = t.closest('[data-diffnote-close]');
+      if (close) {
+        e.preventDefault();
+        var sec = close.closest('section.diffnote-file');
+        slice.call(sectionOf(sec).querySelectorAll('.diffnote-filelist a')).forEach(function (a) {
+          if (a.getAttribute('href') === '#' + sec.id) a.parentElement.remove();
+        });
+        if (sec.contains(composer) || sec.querySelector('.diffnote-compose-wrap')) closeComposer();
+        sec.remove();
+        return;
+      }
+      var more = t.closest('[data-diffnote-more]');
+      if (more) {
+        var row = more.closest('tr');
+        more.disabled = true;
+        getJSON('/api/files/' + revisionOf(more) + '/more?path=' + encodeURIComponent(more.getAttribute('data-path')) + '&from=' + more.getAttribute('data-from')).then(function (res) {
+          if (!res.ok) { more.disabled = false; return; }
+          var tpl = document.createElement('template');
+          tpl.innerHTML = '<table><tbody>' + res.html + '</tbody></table>';
+          slice.call(tpl.content.querySelectorAll('tr')).forEach(function (tr) { row.parentNode.insertBefore(tr, row); });
+          if (res.next) {
+            more.setAttribute('data-from', res.next);
+            more.textContent = '続きを表示(' + res.next + ' 行目から)';
+            more.disabled = false;
+          } else {
+            row.remove();
+          }
+        });
+      }
+    });
   }
 
   // --- The file list follows what is on screen ---------------------------
