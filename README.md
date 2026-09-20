@@ -4,6 +4,8 @@ git の差分やディレクトリに、ローカルでコメントを書き、�
 
 ## インストール
 
+必要な Rust は 1.88 以上です(`Cargo.toml` の `rust-version`)。
+
 ```sh
 cargo install --path .
 ```
@@ -96,4 +98,4 @@ diffnote edit --show src/main.rs:40-60      # 行の範囲(`:40` なら 1 行)
 cargo test
 ```
 
-統合テスト(`tests/cli.rs`)は、Linux と Windows のどちらでも動きます。エディタの代わりに、テストの実行ファイル自身を `$EDITOR` として再起動するので、シェルなどは要りません(git は要ります)。別の場所で作った実行ファイルを試すときは、環境変数 `DIFFNOTE_BIN` にそのパスを指定します。
+統合テスト(`tests/cli.rs`)は、Linux と Windows のどちらでも動きます。エディタの代わりに、テストの実行ファイル自身を `$EDITOR` として再起動するので、シェルなどは要りません(git は要ります)。別の場所で作った実行ファイルを試すときは、環境変数 `DIFFNOTE_BIN` にそのパスを指定します。GitHub では、`.github/workflows/ci.yml` が、プッシュとプルリクエストごとに、Linux と Windows(最新の Rust)と、最低版の Rust 1.88(Linux)でテストし、最新の Rust では clippy の警告もエラーとして扱います。

@@ -42,7 +42,7 @@ fn fake_editor_entry() {
     if std::env::var_os("DN_FAKE_EDITOR").is_none() {
         return;
     }
-    let buffer = PathBuf::from(std::env::args().last().expect("the buffer path"));
+    let buffer = PathBuf::from(std::env::args().next_back().expect("the buffer path"));
     let script = std::env::var_os("DN_SCRIPT").expect("DN_SCRIPT");
     let script = std::fs::read_to_string(script).unwrap();
     let mut lines: Vec<String> = std::fs::read_to_string(&buffer)
