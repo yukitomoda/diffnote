@@ -242,7 +242,12 @@ fn a_directory_review_over_several_sessions() {
         2
     );
     for body in ["why uppercase?", "overall remark", "new line"] {
-        assert_eq!(html.matches(body).count(), 2, "{body} once per view");
+        // The thread card itself (the list only has a short preview).
+        assert_eq!(
+            html.matches(&format!("<p>{body}</p>")).count(),
+            2,
+            "{body} once per view"
+        );
     }
 }
 
@@ -923,7 +928,7 @@ fn a_thread_survives_a_second_review_from_the_same_base_with_a_longer_range() {
     let summary = &before[before.rfind("<summary>").unwrap()..];
     // Placed at its line in this view (the header pushed it from 3 to 4), not
     // as a line that was deleted or is not there.
-    assert!(summary.contains("(L4)"), "{summary}");
+    assert!(summary.contains(">calc.txt:4</span>"), "{summary}");
     assert!(!summary.contains("削除された行"), "{summary}");
     assert!(
         !summary.contains("まだない行") && !summary.contains("この版にない行"),

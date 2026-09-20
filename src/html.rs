@@ -43,6 +43,12 @@ struct Marks {
     /// The lines (first, last) a thread sits on in this view, for its label:
     /// where it is here, not where it was written.
     lines: HashMap<Ulid, (u32, u32)>,
+    /// The file a thread is about (a review-wide thread has none), for its
+    /// location and the thread list.
+    files: HashMap<Ulid, String>,
+    /// Where in its file a thread starts (the first line, or where the lines
+    /// were), to order the thread list.
+    starts: HashMap<Ulid, u32>,
 }
 
 /// Renders a whole bundle: one view per recorded revision that has a diff
@@ -138,7 +144,8 @@ pub fn render(events: &[Event], views: &[RevisionView], blobs: &crate::digest::B
         let inner = inner
             .replace(r#"id="file-"#, &format!(r#"id="r{i}-file-"#))
             .replace(r##"href="#file-"##, &format!(r##"href="#r{i}-file-"##))
-            .replace(r#"id="thread-"#, &format!(r#"id="r{i}-thread-"#));
+            .replace(r#"id="thread-"#, &format!(r#"id="r{i}-thread-"#))
+            .replace(r##"href="#thread-"##, &format!(r##"href="#r{i}-thread-"##));
         body.push_str(&format!(
             r#"<section class="diffnote-revision{current}" id="rev-{i}" data-diffnote-revision="{i}"><h2 class="diffnote-revision__title">{}</h2>{inner}</section>"#,
             escape_html(&view.label)
@@ -189,7 +196,10 @@ fn render_view(
         };
         match placement {
             Placement::Global => global.push(thread),
-            Placement::File(file) => by_file.entry(file).or_default().push(thread),
+            Placement::File(file) => {
+                marks.files.insert(thread.root_id, file.clone());
+                by_file.entry(file).or_default().push(thread)
+            }
             Placement::Line {
                 file,
                 side,
@@ -200,6 +210,8 @@ fn render_view(
                 let color = marks.color_of.len() % PALETTE.len();
                 marks.color_of.insert(thread.root_id, color);
                 marks.lines.insert(thread.root_id, (line_start, line_end));
+                marks.files.insert(thread.root_id, file.clone());
+                marks.starts.insert(thread.root_id, line_start);
                 for line in line_start..=line_end {
                     highlighted
                         .entry((file.clone(), side, line))
@@ -230,12 +242,15 @@ fn render_view(
             } => {
                 marks.absent.insert(thread.root_id, kind);
                 marks.was.insert(thread.root_id, was);
+                marks.files.insert(thread.root_id, file.clone());
+                marks.starts.insert(thread.root_id, before);
                 by_line
                     .entry((file, Side::New, before.saturating_sub(1).max(1)))
                     .or_default()
                     .push(thread);
             }
             Placement::Unplaced { file } => {
+                marks.files.insert(thread.root_id, file.clone());
                 marks
                     .was
                     .insert(thread.root_id, anchor::original_text(&thread.anchor, blobs));
@@ -263,7 +278,7 @@ fn render_view(
     }
 
     let mut body = String::new();
-    body.push_str(r#"<nav class="diffnote-filelist"><ul>"#);
+    body.push_str(r#"<aside class="diffnote-sidebar"><details class="diffnote-side" open><summary>ファイル</summary><nav class="diffnote-filelist"><ul>"#);
     for key in &file_order {
         let count = by_file.get(key).map_or(0, Vec::len)
             + diff_file_comment_count(key, &by_line)
@@ -279,7 +294,9 @@ fn render_view(
             },
         ));
     }
-    body.push_str("</ul></nav>\n");
+    body.push_str("</ul></nav></details>");
+    body.push_str(&render_thread_list(threads, &file_order, &marks));
+    body.push_str("</aside>\n");
 
     if !global.is_empty() {
         body.push_str(r#"<section class="diffnote-global-comments">"#);
@@ -345,9 +362,10 @@ fn render_file(
     let is_rename = file_diff.is_some_and(|f| f.is_rename);
 
     out.push_str(&format!(
-        r#"<section class="diffnote-file" id="file-{id}"><details{open_attr}><summary><h2>{name}{binary}{rename}</h2></summary>"#,
+        r#"<section class="diffnote-file" id="file-{id}"><details{open_attr}><summary><h2>{name}{binary}{rename}</h2>{copy}</summary>"#,
         id = html_id(key),
         name = escape_html(key),
+        copy = copy_button(key, "パスをコピー"),
         binary = if is_binary { " (バイナリ)" } else { "" },
         rename = if is_rename { " (名前変更)" } else { "" },
     ));
@@ -513,15 +531,98 @@ fn thread_row(t: &Thread, marks: &Marks) -> String {
     )
 }
 
-/// A short, explicit "which line(s) is this about" label, alongside the
-/// `diffnote-line--commented` highlight -- not relying on color alone to
-/// show a range comment's extent.
-fn range_label(lines: Option<&(u32, u32)>) -> String {
-    match lines {
-        Some(&(a, b)) if a == b => format!("(L{a})"),
-        Some(&(a, b)) => format!("(L{a}\u{2013}L{b})"),
-        None => String::new(),
+/// Where a thread is: `path`, `path:LINE` or `path:FIRST-LAST`, as it is in
+/// this view (the form `edit --show` reads). Shown on the thread and copied by
+/// its button, so the extent of a range is not left to color alone. `None` for
+/// a review-wide thread.
+fn location(marks: &Marks, id: Ulid) -> Option<String> {
+    let file = marks.files.get(&id)?;
+    Some(match marks.lines.get(&id) {
+        Some(&(a, b)) if a == b => format!("{file}:{a}"),
+        Some(&(a, b)) => format!("{file}:{a}-{b}"),
+        None => file.clone(),
+    })
+}
+
+/// A small button that copies `text` (see the script).
+fn copy_button(text: &str, title: &str) -> String {
+    format!(
+        r#"<button type="button" class="diffnote-copy" data-diffnote-copy="{}" title="{}">コピー</button>"#,
+        escape_html(text),
+        escape_html(title),
+    )
+}
+
+/// The first line of a comment, plain and short, to tell threads apart in the
+/// list.
+fn preview(body: &str) -> String {
+    let line = body
+        .lines()
+        .map(|l| l.trim().trim_start_matches(['#', '>', '-', '*', ' ']))
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let mut out: String = line.chars().take(48).collect();
+    if line.chars().count() > 48 {
+        out.push('…');
     }
+    out
+}
+
+/// Every thread in reading order -- review-wide ones, then by file and line --
+/// each a link to its card.
+fn render_thread_list(threads: &[Thread], file_order: &[String], marks: &Marks) -> String {
+    if threads.is_empty() {
+        return String::new();
+    }
+    let mut items: Vec<(Option<usize>, u32, &Thread)> = threads
+        .iter()
+        .map(|t| {
+            let file = marks
+                .files
+                .get(&t.root_id)
+                .and_then(|f| file_order.iter().position(|o| o == f));
+            (file, marks.starts.get(&t.root_id).copied().unwrap_or(0), t)
+        })
+        .collect();
+    items.sort_by_key(|(file, start, t)| (*file, *start, t.created_at));
+    let mut out = format!(
+        r#"<details class="diffnote-side" open><summary>スレッド <span class="diffnote-badge" title="未解決 / 全部">{} / {}</span></summary><nav class="diffnote-threadlist"><ol>"#,
+        threads.iter().filter(|t| !t.resolved).count(),
+        threads.len(),
+    );
+    for (_, _, t) in items {
+        let full = location(marks, t.root_id);
+        let short = match (marks.files.get(&t.root_id), marks.lines.get(&t.root_id)) {
+            (None, _) => "全体".to_string(),
+            (Some(file), lines) => {
+                let name = file.rsplit('/').next().unwrap_or(file);
+                match lines {
+                    Some(&(a, b)) if a == b => format!("{name}:{a}"),
+                    Some(&(a, b)) => format!("{name}:{a}-{b}"),
+                    None => name.to_string(),
+                }
+            }
+        };
+        let color = marks
+            .color_of
+            .get(&t.root_id)
+            .map_or("#8b949e", |c| PALETTE[*c]);
+        out.push_str(&format!(
+            r##"<li class="{state}"><a href="#thread-{id}" data-diffnote-jump="{id}" title="{title}"><span class="diffnote-thread__swatch" style="background:{color}"></span><span class="diffnote-threadlist__where">{short}</span>{resolved}<span class="diffnote-threadlist__preview">{preview}</span></a></li>"##,
+            state = if t.resolved { "is-resolved" } else { "" },
+            id = t.root_id,
+            title = escape_html(full.as_deref().unwrap_or("差分全体")),
+            short = escape_html(&short),
+            resolved = if t.resolved {
+                r#"<span class="diffnote-threadlist__state">解決済み</span>"#
+            } else {
+                ""
+            },
+            preview = escape_html(&preview(&t.body)),
+        ));
+    }
+    out.push_str("</ol></nav></details>");
+    out
 }
 
 fn render_thread_html(t: &Thread, marks: &Marks) -> String {
@@ -543,20 +644,28 @@ fn render_thread_html(t: &Thread, marks: &Marks) -> String {
         color = marks.color_of.get(&t.root_id).map_or("#57606a", |c| PALETTE[*c]),
         open = if t.resolved { "" } else { " open" },
     ));
+    let location = location(marks, t.root_id);
     out.push_str(&format!(
-        "<summary>{swatch}{} {}{}</summary>",
-        if t.resolved {
+        "<summary>{swatch}{status}{place}{absence}{copy}</summary>",
+        status = if t.resolved {
             "解決済み"
         } else {
             "未解決"
         },
-        range_label(marks.lines.get(&t.root_id)),
-        match marks.absent.get(&t.root_id) {
+        place = location.as_deref().map_or(String::new(), |l| format!(
+            r#" <span class="diffnote-thread__where">{}</span>"#,
+            escape_html(l)
+        )),
+        absence = match marks.absent.get(&t.root_id) {
             Some(anchor::Absence::Deleted) => " (削除された行)",
             Some(anchor::Absence::NotYet) => " (この版にはまだない行)",
             Some(anchor::Absence::Unknown) => " (この版にない行)",
             None => "",
         },
+        copy = location.as_deref().map_or(String::new(), |l| copy_button(
+            l,
+            "ファイルパスと行をコピー"
+        )),
     ));
     if marks.absent.contains_key(&t.root_id) {
         out.push_str(&render_snippet(
@@ -746,7 +855,20 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-revision > * { grid-column: 2; min-width: 0; }
 .diffnote-revision__title { display: none; }
 .diffnote-js .diffnote-revision:not(.is-current) { display: none; }
-.diffnote-filelist { grid-column: 1; grid-row: 1 / span 200; position: sticky; top: calc(var(--diffnote-topbar-h) + 12px); max-height: calc(100vh - var(--diffnote-topbar-h) - 24px); overflow: auto; margin-top: 12px; border-right: 1px solid var(--diffnote-color-border); padding-right: 8px; font-size: 12.5px; }
+.diffnote-sidebar { grid-column: 1; grid-row: 1 / span 200; position: sticky; top: calc(var(--diffnote-topbar-h) + 12px); max-height: calc(100vh - var(--diffnote-topbar-h) - 24px); overflow: auto; margin-top: 12px; border-right: 1px solid var(--diffnote-color-border); padding-right: 8px; font-size: 12.5px; }
+.diffnote-side > summary { cursor: pointer; font-weight: 600; font-size: 12px; color: var(--diffnote-color-muted); padding: 4px 8px; user-select: none; }
+.diffnote-side + .diffnote-side { margin-top: 8px; }
+.diffnote-threadlist ol { list-style: none; margin: 0; padding: 0; }
+.diffnote-threadlist a { display: block; padding: 4px 8px; color: var(--diffnote-color-fg); text-decoration: none; border-radius: 6px; line-height: 1.35; }
+.diffnote-threadlist a:hover { background: var(--diffnote-color-gutter); }
+.diffnote-threadlist .is-resolved a { color: var(--diffnote-color-muted); }
+.diffnote-threadlist__where { font-family: var(--diffnote-font-mono); font-size: 12px; font-weight: 600; word-break: break-all; }
+.diffnote-threadlist__state { margin-left: 6px; font-size: 11px; color: var(--diffnote-color-muted); border: 1px solid var(--diffnote-color-border); border-radius: 1em; padding: 0 6px; white-space: nowrap; }
+.diffnote-threadlist__preview { display: block; margin-left: 16px; color: var(--diffnote-color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diffnote-copy { margin-left: 8px; padding: 0 7px; font: inherit; font-size: 11px; font-weight: 400; line-height: 18px; color: var(--diffnote-color-muted); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 4px; cursor: pointer; vertical-align: baseline; }
+.diffnote-copy:hover { color: var(--diffnote-color-fg); border-color: var(--diffnote-color-muted); }
+.diffnote-copy.is-done { color: #1a7f37; border-color: #1a7f37; }
+.diffnote-thread__where { font-family: var(--diffnote-font-mono); font-size: 12px; font-weight: 400; color: var(--diffnote-color-muted); }
 .diffnote-filelist ul { list-style: none; margin: 0; padding: 0; }
 .diffnote-filelist li { display: flex; align-items: center; justify-content: space-between; gap: 6px; border-radius: 6px; }
 .diffnote-filelist a { flex: 1; min-width: 0; padding: 3px 8px; color: var(--diffnote-color-fg); text-decoration: none; font-family: var(--diffnote-font-mono); word-break: break-all; border-radius: 6px; }
@@ -811,7 +933,7 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 @media (max-width: 900px) {
   .diffnote-topbar { height: auto; flex-wrap: wrap; gap: 4px 12px; padding: 6px 12px; }
   .diffnote-revision { display: block; padding: 0 8px 32px; }
-  .diffnote-filelist { position: static; max-height: 40vh; margin: 8px 0; border-right: 0; }
+  .diffnote-sidebar { position: static; max-height: 40vh; margin: 8px 0; border-right: 0; }
   .diffnote-file > details > summary { top: 0; position: static; }
   .diffnote-thread-row > td { padding-left: 12px !important; }
 }
@@ -908,7 +1030,59 @@ const SCRIPT: &str = r#"
     var id = pick(scopeOf(el), el);
     if (id) activate(scopeOf(el), id);
   });
+  // A thread in the list: open its card, bring it to the middle of the
+  // screen and keep its range shown.
+  function jump(link) {
+    var card = document.getElementById(link.getAttribute('href').slice(1));
+    if (!card) return;
+    for (var n = card; n; n = n.parentElement) {
+      if (n.tagName === 'DETAILS') n.open = true;
+    }
+    card.scrollIntoView({ block: 'center' });
+    pinned = card.getAttribute('data-diffnote-thread-id');
+    activate(scopeOf(card), pinned);
+  }
+
+  // Copy buttons (file paths, thread locations). Handled before anything else
+  // sees the click, since they sit inside <summary> elements.
+  function copyText(text, button) {
+    function done() {
+      var before = button.textContent;
+      button.textContent = 'コピーしました';
+      button.classList.add('is-done');
+      setTimeout(function () {
+        button.textContent = before;
+        button.classList.remove('is-done');
+      }, 1400);
+    }
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); done(); } catch (err) { /* nothing to do */ }
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fallback);
+    } else {
+      fallback();
+    }
+  }
   document.addEventListener('click', function (e) {
+    var button = e.target.closest ? e.target.closest('[data-diffnote-copy]') : null;
+    if (!button) return;
+    e.preventDefault();
+    e.stopPropagation();
+    copyText(button.getAttribute('data-diffnote-copy'), button);
+  }, true);
+
+  document.addEventListener('click', function (e) {
+    var link = e.target.closest ? e.target.closest('a[data-diffnote-jump]') : null;
+    if (link) { e.preventDefault(); jump(link); return; }
     var el = target(e.target);
     if (!el) { pinned = null; clear(); return; }
     var scope = scopeOf(el);
@@ -1289,12 +1463,12 @@ mod tests {
     }
 
     #[test]
-    fn a_threads_line_label_is_where_it_is_in_this_view() {
+    fn a_threads_location_is_where_it_is_in_this_view() {
         let s = scenario();
         // `B` is line 2 in revision 1 and line 3 in revision 2 (`top` came
         // first), whichever revision the thread was written on.
-        assert!(summary_of(view(&s.html, 0), s.t1).contains("(L2)"));
-        assert!(summary_of(view(&s.html, 1), s.t1).contains("(L3)"));
+        assert!(summary_of(view(&s.html, 0), s.t1).contains(">f.txt:2</span>"));
+        assert!(summary_of(view(&s.html, 1), s.t1).contains(">f.txt:3</span>"));
     }
 
     #[test]
@@ -1422,6 +1596,161 @@ mod tests {
         );
     }
 
+    /// The thread list of a view: its `<li>` items, in order.
+    fn thread_list(view: &str) -> Vec<&str> {
+        let from = view.find(r#"<nav class="diffnote-threadlist">"#).unwrap();
+        let list = &view[from..];
+        let list = &list[..list.find("</nav>").unwrap()];
+        list.split("<li").skip(1).collect()
+    }
+
+    #[test]
+    fn every_file_has_a_button_that_copies_its_path() {
+        let s = scenario();
+        for i in 0..2 {
+            let v = view(&s.html, i);
+            let head = &v[v.find(r#"<section class="diffnote-file""#).unwrap()..];
+            let head = &head[..head.find("</summary>").unwrap()];
+            assert!(head.contains("<h2>f.txt</h2>"), "{head}");
+            assert!(head.contains(r#"data-diffnote-copy="f.txt""#), "{head}");
+        }
+    }
+
+    #[test]
+    fn a_thread_shows_and_copies_its_location() {
+        let s = scenario();
+        // The line thread: its place in each view, in the form `edit --show` reads.
+        let card = summary_of(view(&s.html, 1), s.t1);
+        assert!(
+            card.contains(r#"<span class="diffnote-thread__where">f.txt:3</span>"#),
+            "{card}"
+        );
+        assert!(card.contains(r#"data-diffnote-copy="f.txt:3""#), "{card}");
+        // A file-level thread has just the path; a review-wide one no location.
+        let file = summary_of(view(&s.html, 1), s.t3);
+        assert!(file.contains(r#"data-diffnote-copy="f.txt""#), "{file}");
+        let global = summary_of(view(&s.html, 1), s.global);
+        assert!(!global.contains("data-diffnote-copy"), "{global}");
+    }
+
+    #[test]
+    fn location_covers_a_range_a_line_a_file_and_the_whole_review() {
+        let mut marks = Marks::default();
+        let (range, line, file, global) = (Ulid::new(), Ulid::new(), Ulid::new(), Ulid::new());
+        for id in [range, line, file] {
+            marks.files.insert(id, "src/a.rs".to_string());
+        }
+        marks.lines.insert(range, (10, 13));
+        marks.lines.insert(line, (7, 7));
+        assert_eq!(location(&marks, range).as_deref(), Some("src/a.rs:10-13"));
+        assert_eq!(location(&marks, line).as_deref(), Some("src/a.rs:7"));
+        assert_eq!(location(&marks, file).as_deref(), Some("src/a.rs"));
+        assert_eq!(location(&marks, global), None);
+    }
+
+    #[test]
+    fn a_copy_buttons_text_is_escaped() {
+        let button = copy_button(r#"a"b<c>&.rs:1"#, r#"t"itle"#);
+        assert!(
+            button.contains(r#"data-diffnote-copy="a&quot;b&lt;c&gt;&amp;.rs:1""#),
+            "{button}"
+        );
+        assert!(button.contains(r#"title="t&quot;itle""#), "{button}");
+    }
+
+    #[test]
+    fn the_thread_list_has_every_thread_review_wide_ones_first_then_by_line() {
+        let s = scenario();
+        for i in 0..2 {
+            let v = view(&s.html, i);
+            let items = thread_list(v);
+            assert_eq!(items.len(), 5, "view {i}: {items:?}");
+            for id in [s.t1, s.t2, s.t3, s.t4, s.global] {
+                // Each links to its own view's card, which exists.
+                let href = format!(r##"href="#r{i}-thread-{id}""##);
+                assert_eq!(
+                    items.iter().filter(|it| it.contains(&href)).count(),
+                    1,
+                    "{href}"
+                );
+                assert!(v.contains(&format!(r#"id="r{i}-thread-{id}""#)), "{href}");
+            }
+            assert!(
+                items[0].contains(&s.global.to_string()),
+                "review-wide first: {items:?}"
+            );
+        }
+        // In revision 2 `B` (line 3) comes before `D` (line 5).
+        let items = thread_list(view(&s.html, 1));
+        let at = |id: Ulid| {
+            items
+                .iter()
+                .position(|it| it.contains(&id.to_string()))
+                .unwrap()
+        };
+        assert!(at(s.t1) < at(s.t2), "{items:?}");
+    }
+
+    #[test]
+    fn a_thread_in_the_list_shows_its_place_and_the_start_of_what_it_says() {
+        let s = scenario();
+        let items = thread_list(view(&s.html, 1));
+        let item = items
+            .iter()
+            .find(|it| it.contains(&s.t1.to_string()))
+            .unwrap();
+        assert!(
+            item.contains(r#"<span class="diffnote-threadlist__where">f.txt:3</span>"#),
+            "{item}"
+        );
+        assert!(
+            item.contains(r#"<span class="diffnote-threadlist__preview">about B</span>"#),
+            "{item}"
+        );
+        assert!(item.contains(r#"title="f.txt:3""#), "{item}");
+        // The file thread was resolved.
+        let file = items
+            .iter()
+            .find(|it| it.contains(&s.t3.to_string()))
+            .unwrap();
+        assert!(
+            file.contains("is-resolved") && file.contains("解決済み"),
+            "{file}"
+        );
+        let global = &items[0];
+        assert!(global.contains(">全体</span>"), "{global}");
+    }
+
+    #[test]
+    fn the_list_heading_counts_open_and_all_threads() {
+        let s = scenario();
+        assert!(
+            s.html.contains(r#"title="未解決 / 全部">4 / 5</span>"#),
+            "{}",
+            &s.html[..200]
+        );
+    }
+
+    #[test]
+    fn a_preview_is_the_first_line_plain_and_short() {
+        assert_eq!(preview("hello\nworld"), "hello");
+        assert_eq!(preview("\n\n  ## Title here\nbody"), "Title here");
+        assert_eq!(preview("> quoted"), "quoted");
+        assert_eq!(preview("- item"), "item");
+        assert_eq!(preview(""), "");
+        let long = "あ".repeat(60);
+        assert_eq!(preview(&long), format!("{}…", "あ".repeat(48)));
+        assert_eq!(preview(&"あ".repeat(48)), "あ".repeat(48));
+    }
+
+    #[test]
+    fn a_review_with_no_threads_has_no_thread_list() {
+        let (_dir, loaded) = bundle_of(&[(R1_BASE, R1_HEAD, files_source(None))], Vec::new());
+        let html = render_bundle(&loaded).unwrap();
+        assert!(!html.contains(r#"<nav class="diffnote-threadlist">"#));
+        assert!(html.contains(r#"<nav class="diffnote-filelist">"#));
+    }
+
     #[test]
     fn the_page_scales_to_a_phones_width() {
         let s = scenario();
@@ -1509,7 +1838,7 @@ mod tests {
         let s = scenario();
         for i in 0..2 {
             let v = view(&s.html, i);
-            assert_eq!(v.matches("overall").count(), 1, "view {i}");
+            assert_eq!(v.matches("<p>overall</p>").count(), 1, "view {i}");
             assert!(v.contains("diffnote-global-comments"));
         }
     }
@@ -1735,6 +2064,7 @@ mod tests {
         );
         let html = render_bundle(&loaded).unwrap();
         assert!(html.contains(UNPLACED));
-        assert_eq!(html.matches("lost text").count(), 1);
+        // Once as the thread (the list only shows a short preview of it).
+        assert_eq!(html.matches("<p>lost text</p>").count(), 1);
     }
 }
