@@ -434,7 +434,12 @@ fn cmd_edit(
         .context("一時ファイルにコメント用のバッファを書き込めませんでした")?;
 
     let editor = default_editor();
-    let status = Command::new(&editor)
+    let words = diffnote::editor::command_words(&editor);
+    let (program, args) = words
+        .split_first()
+        .context("$EDITOR が空です。エディタのコマンドを設定してください")?;
+    let status = Command::new(program)
+        .args(args)
         .arg(&temp_path)
         .status()
         .with_context(|| format!("エディタ '{editor}' を起動できませんでした($EDITOR を設定してください)"))?;
@@ -845,7 +850,8 @@ fn resolve_author() -> String {
 }
 
 fn default_editor() -> String {
-    std::env::var("EDITOR").unwrap_or_else(|_| {
+    // An empty $EDITOR is as good as none.
+    std::env::var("EDITOR").ok().filter(|e| !e.trim().is_empty()).unwrap_or_else(|| {
         if cfg!(windows) {
             "notepad".to_string()
         } else {

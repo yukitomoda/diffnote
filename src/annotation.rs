@@ -2295,7 +2295,7 @@ diff --git a/f.rs b/f.rs
         let thread = thread_with(id, on_baz_line(), body);
         let rendered = render(&fixture(), &[], &[thread]);
         // Drawn one space in, so none of it is read as structure.
-        assert!(rendered.contains(">#@alice") == false);
+        assert!(!rendered.contains(">#@alice"));
         assert!(rendered.contains("># @alice is this right?"), "{rendered}");
         let parsed = parse(&format!("{rendered}>> reply\n")).unwrap();
         assert_eq!(parsed.items.len(), 1);

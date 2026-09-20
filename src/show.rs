@@ -20,9 +20,23 @@ pub struct Show {
     pub lines: Option<(u32, u32)>,
 }
 
+/// `s` with every `\` turned into `/` (a backslash is a separator on
+/// Windows only, where this is used).
+fn with_slashes(s: &str) -> String {
+    s.replace('\\', "/")
+}
+
 /// Reads `PATH`, `PATH:N` or `PATH:N-M`. A `:` that isn't followed by a line
 /// range belongs to the path.
 pub fn parse(spec: &str) -> Result<Show, String> {
+    // Windows paths (as a shell completes them) use `\`; the review's use `/`.
+    let converted;
+    let spec = if cfg!(windows) {
+        converted = with_slashes(spec);
+        converted.as_str()
+    } else {
+        spec
+    };
     let (path, range) = match spec.rsplit_once(':') {
         Some((p, r)) if !r.is_empty() && r.chars().all(|c| c.is_ascii_digit() || c == '-') => {
             (p, Some(r))
@@ -147,6 +161,13 @@ mod tests {
         assert_eq!(parse("weird:"), Ok(show("weird:", None)));
         // ...while a real range after such a name still counts.
         assert_eq!(parse("a:b.md:4"), Ok(show("a:b.md", Some((4, 4)))));
+    }
+
+    #[test]
+    fn windows_separators_become_slashes() {
+        assert_eq!(with_slashes(r"src\auth\login.ts:3-4"), "src/auth/login.ts:3-4");
+        assert_eq!(with_slashes(r".\a.txt"), "./a.txt");
+        assert_eq!(with_slashes("already/fine"), "already/fine");
     }
 
     #[test]

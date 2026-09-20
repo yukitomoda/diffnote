@@ -3,6 +3,7 @@ pub mod annotation;
 pub mod bundle;
 pub mod create;
 pub mod diff;
+pub mod editor;
 pub mod expand;
 pub mod digest;
 pub mod files;
