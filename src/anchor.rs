@@ -8,10 +8,9 @@
 //! edited, and which were removed. [`locate`] follows a range that way;
 //! [`resolve_placement`] uses it to place a thread in a view.
 
-use crate::diff::{FileDiff, LineKind, UnifiedDiff};
+use crate::diff::{FileDiff, UnifiedDiff};
 use crate::digest::Blobs;
 use crate::model::{Anchor, FileDigest, LineRange, Side, TreeFile};
-use std::collections::HashSet;
 
 /// The digest of `file` on `side` in the revision described by `files`, if
 /// the file is one that revision's diff touches and has that side. `file`
@@ -171,6 +170,17 @@ impl ViewVersions<'_> {
     }
 }
 
+/// Why a view's head has none of the lines a thread is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Absence {
+    /// The lines existed in an earlier version and were removed since.
+    Deleted,
+    /// The lines only appear in a later version: the view is from before them.
+    NotYet,
+    /// The recorded revisions don't say which came first.
+    Unknown,
+}
+
 /// Where a thread is drawn in a view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Placement {
@@ -189,40 +199,24 @@ pub enum Placement {
         /// (e.g. a replaced block), so both get highlighted.
         old_range: Option<(u32, u32)>,
     },
-    /// The lines were removed before this view's head: the thread sits at
-    /// the point where they were, before head line `before`, and `was` is
-    /// what they said.
+    /// The view's head has none of the lines the thread is about: the thread
+    /// sits at the point where they are (or were), before head line
+    /// `before`, and `was` is what they say.
     Point {
         file: String,
         before: u32,
         was: Vec<String>,
+        /// Why the head doesn't have them.
+        kind: Absence,
     },
     /// The versions needed to place it aren't in the bundle.
     Unplaced { file: String },
-    /// Placed, but not on any line the view's diff shows.
-    OutsideDiff { file: String },
 }
 
 pub fn find_file<'a>(diff: &'a UnifiedDiff, file: &str) -> Option<&'a FileDiff> {
     diff.files
         .iter()
         .find(|f| f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file))
-}
-
-/// The lines of `file` the diff shows on `side`.
-fn visible_lines(file: &FileDiff, side: Side) -> HashSet<u32> {
-    let mut out = HashSet::new();
-    for hunk in &file.hunks {
-        for line in &hunk.lines {
-            let n = match (side, line.kind) {
-                (Side::New, LineKind::Removed) | (Side::Old, LineKind::Added) => None,
-                (Side::New, _) => line.new_line,
-                (Side::Old, _) => line.old_line,
-            };
-            out.extend(n);
-        }
-    }
-    out
 }
 
 /// The text of the range's lines, from the version it is a range of.
@@ -293,15 +287,13 @@ pub fn resolve_placement(
             let head_first = non_empty(&[head.as_ref(), base.as_ref()]);
             let base_first = non_empty(&[base.as_ref(), head.as_ref()]);
 
-            let mut found_any = false;
-            let mut into = |ranges: &[LineRange], digest: Option<&str>| -> (Option<Located>, Option<Located>) {
+            let into = |ranges: &[LineRange], digest: Option<&str>| -> (Option<Located>, Option<Located>) {
                 let mut lines = None;
                 let mut point = None;
                 for r in ranges {
                     let Some(l) = digest.and_then(|d| locate(r, d, blobs)) else {
                         continue;
                     };
-                    found_any = true;
                     if l.len > 0 {
                         lines = Some(l);
                         break;
@@ -313,19 +305,18 @@ pub fn resolve_placement(
             let (new_lines, new_point) = into(&head_first, head_digest);
             let (old_lines, _) = into(&base_first, base_digest);
 
-            let shown = |side: Side| file_diff.map(|f| visible_lines(f, side));
-            let (shown_new, shown_old) = (shown(Side::New), shown(Side::Old));
-            let all_shown = |set: &Option<HashSet<u32>>, l: Located| {
-                set.as_ref()
-                    .is_some_and(|s| (l.start..l.start + l.len).all(|n| s.contains(&n)))
+            // Lines the diff doesn't show are still lines: they get drawn with
+            // context around them (see `expand`), not dropped.
+            let head_file = |fallback: String| {
+                file_diff.and_then(|f| f.new_path.clone()).unwrap_or(fallback)
             };
-
-            let old_range = old_lines
-                .filter(|l| all_shown(&shown_old, *l))
-                .map(|l| (l.start, l.start + l.len - 1));
-            if let Some(l) = new_lines.filter(|l| all_shown(&shown_new, *l)) {
+            let base_file = |fallback: String| {
+                file_diff.and_then(|f| f.old_path.clone()).unwrap_or(fallback)
+            };
+            let old_range = old_lines.map(|l| (l.start, l.start + l.len - 1));
+            if let Some(l) = new_lines {
                 return Placement::Line {
-                    file: file_diff.and_then(|f| f.new_path.clone()).unwrap_or(label),
+                    file: head_file(label),
                     side: Side::New,
                     line_start: l.start,
                     line_end: l.start + l.len - 1,
@@ -334,33 +325,28 @@ pub fn resolve_placement(
             }
             if let Some((start, end)) = old_range {
                 return Placement::Line {
-                    file: file_diff.and_then(|f| f.old_path.clone()).unwrap_or(label),
+                    file: base_file(label),
                     side: Side::Old,
                     line_start: start,
                     line_end: end,
                     old_range: None,
                 };
             }
-            if new_lines.is_none()
-                && let Some(p) = new_point
-            {
-                // Drawn after the head line before the point (the first
-                // line, for a point at the very top).
-                let anchor_line = p.start.saturating_sub(1).max(1);
-                if shown_new.as_ref().is_some_and(|s| s.contains(&anchor_line)) {
-                    let file = file_diff.and_then(|f| f.new_path.clone()).unwrap_or(label);
-                    return Placement::Point {
-                        file,
-                        before: p.start,
-                        was: original_text(anchor, blobs),
-                    };
-                }
+            if let Some(p) = new_point {
+                let origin = head_first.first().map(|r| r.digest.as_str());
+                let kind = match (origin, head_digest) {
+                    (Some(o), Some(h)) if blobs.precedes(o, h) => Absence::Deleted,
+                    (Some(o), Some(h)) if blobs.precedes(h, o) => Absence::NotYet,
+                    _ => Absence::Unknown,
+                };
+                return Placement::Point {
+                    file: head_file(label),
+                    before: p.start,
+                    was: original_text(anchor, blobs),
+                    kind,
+                };
             }
-            if found_any {
-                Placement::OutsideDiff { file: label }
-            } else {
-                Placement::Unplaced { file: label }
-            }
+            Placement::Unplaced { file: label }
         }
     }
 }
@@ -835,17 +821,56 @@ mod tests {
                 file: "f.txt".into(),
                 before: 2,
                 was: vec!["b".to_string()],
+                kind: Absence::Deleted,
             }
         );
     }
 
     #[test]
-    fn a_thread_on_lines_the_diff_does_not_show_is_still_placed_but_marked_outside() {
+    fn the_same_point_is_not_yet_in_an_earlier_view_and_unknown_when_unrelated() {
+        let (c1, c2) = ("a\nc\n", "a\nb\nc\n");
+        // A comment on `b`, which c2 added; the view's head is c1 (a file the
+        // view's diff doesn't touch, known from the revision's tree).
+        let anchor = span(None, Some(range_in(c2, 2, 1)));
+        let tree = [TreeFile {
+            path: "f.txt".into(),
+            digest: digest(c1),
+        }];
+        let placed = |linked: bool| {
+            let mut blobs = Blobs::default();
+            blobs.add(c1.as_bytes());
+            blobs.add(c2.as_bytes());
+            if linked {
+                blobs.link(&digest(c1), &digest(c2));
+            }
+            resolve_placement(
+                &anchor,
+                &UnifiedDiff::default(),
+                &ViewVersions {
+                    files: &[],
+                    tree: &tree,
+                },
+                &blobs,
+            )
+        };
+        let Placement::Point { kind, was, before, .. } = placed(true) else {
+            panic!("expected a point")
+        };
+        assert_eq!((kind, was, before), (Absence::NotYet, vec!["b".to_string()], 2));
+        // With no recorded step between the versions, all that is known is
+        // that the lines aren't in this one.
+        assert!(matches!(placed(false), Placement::Point { kind: Absence::Unknown, .. }));
+    }
+
+    #[test]
+    fn a_thread_on_lines_the_diff_does_not_show_is_placed_all_the_same() {
+        // Line 3 is nowhere near the only change (line 30): the diff says
+        // nothing about it, and that is no reason not to place it.
         let old: String = (1..=30).map(|n| format!("l{n}\n")).collect();
         let new = old.replace("l30\n", "L30\n");
         let v = view(&old, &new, &[]);
         let a = span(Some(range_in(&old, 3, 1)), Some(range_in(&new, 3, 1)));
-        assert_eq!(place(&v, &a), Placement::OutsideDiff { file: "f.txt".into() });
+        assert_eq!(place(&v, &a), line(Side::New, 3, 3, Some((3, 3))));
     }
 
     #[test]
@@ -912,11 +937,16 @@ mod tests {
             files: &v.files,
             tree: &tree,
         };
-        // Found (same digest), but the diff doesn't show README.md yet.
+        // Found by its recorded digest, though the diff never mentions it.
         assert_eq!(
             resolve_placement(&a, &v.diff, &versions, &blobs),
-            Placement::OutsideDiff {
-                file: "README.md".into()
+            Placement::Line {
+                file: "README.md".into(),
+                side: Side::New,
+                line_start: 2,
+                line_end: 2,
+                // Unchanged, so the same lines on the base side too.
+                old_range: Some((2, 2)),
             }
         );
         // Without the tree entry the version at this revision is unknown.
@@ -926,24 +956,10 @@ mod tests {
         };
         assert_eq!(
             resolve_placement(&a, &v.diff, &none, &blobs),
-            Placement::OutsideDiff {
+            Placement::Unplaced {
                 file: "README.md".into()
             }
-            .clone()
-            .into_unplaced()
         );
-    }
-
-    trait IntoUnplaced {
-        fn into_unplaced(self) -> Placement;
-    }
-    impl IntoUnplaced for Placement {
-        fn into_unplaced(self) -> Placement {
-            match self {
-                Placement::OutsideDiff { file } => Placement::Unplaced { file },
-                other => other,
-            }
-        }
     }
 
     // ---- small helpers -----------------------------------------------------

@@ -344,3 +344,81 @@ fn a_bad_range_fails_without_touching_the_bundle() {
     assert!(!out.status.success());
     assert!(!review.exists());
 }
+
+#[test]
+fn threads_on_a_file_a_later_diff_leaves_alone_are_shown_and_can_be_added_to() {
+    use diffnote::model::Anchor;
+    let env = Env::new();
+    let repo = env.path("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    let readme_v1 = "# calc\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\n";
+    std::fs::write(repo.join("README.md"), readme_v1).unwrap();
+    std::fs::write(repo.join("calc.txt"), "a\nb\n").unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "c1"]);
+    git(&repo, &["tag", "c1"]);
+    let readme_v2 = "# calc\nline 2\nline 3 (edited)\nline 4\nline 5\nline 6\nline 7\n";
+    std::fs::write(repo.join("README.md"), readme_v2).unwrap();
+    std::fs::write(repo.join("calc.txt"), "a\nB\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c2"]);
+    git(&repo, &["tag", "c2"]);
+    std::fs::write(repo.join("calc.txt"), "a\nB\nc\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c3"]);
+    git(&repo, &["tag", "c3"]);
+
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+
+    // Session 1: a thread on the README (which c1..c2 changes).
+    env.ok(
+        &repo,
+        &[("+line 3 (edited)", "why edit this?")],
+        &["edit", "-f", review_arg, "--snapshot", "changed", "c1..c2"],
+    );
+
+    // Session 2 (c2..c3) leaves README.md alone. Its thread is still shown,
+    // in a block of context, and a new comment can be written right there.
+    let out = env.ok(
+        &repo,
+        &[(" line 6", "and what about this line?")],
+        &["edit", "-f", review_arg, "c2..c3"],
+    );
+    assert!(out.contains("Wrote 1 comment(s)"), "{out}");
+
+    let loaded = bundle::load(&review).unwrap();
+    assert_eq!(comment_bodies(&loaded), ["why edit this?", "and what about this line?"]);
+    let anchors: Vec<&Anchor> = loaded
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Comment {
+                anchor: Some(a), ..
+            } => Some(a),
+            _ => None,
+        })
+        .collect();
+    let Anchor::Span { head: Some(h), .. } = anchors[1] else {
+        panic!("{:?}", anchors[1]);
+    };
+    // A place in the README's version at c2/c3, recorded by digest.
+    assert_eq!((h.file.as_str(), h.start, h.len), ("README.md", 6, 1));
+    assert_eq!(h.digest, diffnote::digest::digest(readme_v2));
+    // The bundle keeps that version for the second revision even though the
+    // diff doesn't touch it.
+    let second = loaded.revisions().nth(1).unwrap();
+    assert!(loaded.manifest(second).iter().any(|f| f.path == "README.md"));
+    assert!(loaded.blob(&h.digest).is_some());
+
+    // The export shows both README threads in the second revision's view,
+    // each with its context, and nothing is unplaced.
+    let html_path = env.path("out.html");
+    env.ok(&repo, &[], &["export", "-f", review_arg, "-o", html_path.to_str().unwrap()]);
+    let html = std::fs::read_to_string(&html_path).unwrap();
+    assert!(!html.contains(r#"<section class="diffnote-outdated">"#));
+    let second_view = &html[html.find(r#"id="rev-1""#).unwrap()..];
+    assert!(second_view.contains(r#"id="r1-file-README-md""#));
+    for body in ["why edit this?", "and what about this line?"] {
+        assert!(second_view.contains(body), "{body}");
+    }
+}

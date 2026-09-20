@@ -356,8 +356,8 @@ fn cmd_edit(
         blobs.add(bytes);
     }
     bundle::link_revision_files(&mut blobs, &files);
-    let temp_text = if existing_threads.is_empty() {
-        diff_text.clone()
+    let (temp_text, synthetic_files) = if existing_threads.is_empty() {
+        (diff_text.clone(), Vec::new())
     } else {
         annotation::render_for_edit(
             &diff_text,
@@ -370,6 +370,14 @@ fn cmd_edit(
             &existing_threads,
         )
     };
+
+    // Comments written in a file the diff doesn't touch (shown for the
+    // threads on it) are anchored to that file's version at the head.
+    let anchor_files: Vec<diffnote::model::FileDigest> = files
+        .iter()
+        .cloned()
+        .chain(synthetic_files)
+        .collect();
 
     let temp_dir = tempfile::tempdir().context("failed to create a temp directory")?;
     let temp_path = temp_dir.path().join("review.diff");
@@ -469,7 +477,7 @@ fn cmd_edit(
                     let target_id = Ulid::from_string(id_str).map_err(|_| {
                         anyhow::anyhow!("'>!reanchor {id_str}': not a valid thread id")
                     })?;
-                    let new_anchor = diffnote::create::build_anchor(scope, &parsed.diff, &files, &revisions)?;
+                    let new_anchor = diffnote::create::build_anchor(scope, &parsed.diff, &anchor_files, &revisions)?;
                     new_events.push(Event::Reanchor {
                         parent: target_id,
                         author: author.clone(),
@@ -481,7 +489,7 @@ fn cmd_edit(
 
                 let id = Ulid::new();
                 thread_ids.push(id);
-                let comment_anchor = diffnote::create::build_anchor(scope, &parsed.diff, &files, &revisions)?;
+                let comment_anchor = diffnote::create::build_anchor(scope, &parsed.diff, &anchor_files, &revisions)?;
                 new_events.push(Event::Comment {
                     id,
                     parent: None,

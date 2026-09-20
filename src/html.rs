@@ -18,6 +18,7 @@
 //! thread is drawn for this one export.
 
 use crate::anchor::{self, Placement};
+use crate::expand;
 use crate::diff::{FileDiff, Hunk, LineKind, UnifiedDiff};
 use crate::model::{Anchor, Event, Side};
 use crate::review::{Thread, build_threads};
@@ -37,8 +38,8 @@ struct Marks {
     /// The lines a thread was written about, for threads shown as deleted
     /// (drawn at the point where the lines were) or unplaced.
     was: HashMap<Ulid, Vec<String>>,
-    /// Threads whose lines were removed.
-    deleted: std::collections::HashSet<Ulid>,
+    /// Threads whose lines this view's head doesn't have, and why.
+    absent: HashMap<Ulid, anchor::Absence>,
 }
 
 /// Renders a whole bundle: one view per recorded revision that has a diff
@@ -145,11 +146,19 @@ fn render_view(
     syntax_set: &SyntaxSet,
     theme: &Theme,
 ) -> String {
-    let diff = view.diff;
     let versions = anchor::ViewVersions {
         files: view.files,
         tree: view.tree,
     };
+    // Every thread is placed by where its lines are; the diff shown is the
+    // view's diff plus context around whatever it doesn't already show.
+    let placements: Vec<Placement> = threads
+        .iter()
+        .map(|t| anchor::resolve_placement(&t.anchor, view.diff, &versions, blobs))
+        .collect();
+    let wants: Vec<expand::Want> = placements.iter().filter_map(expand::want_of).collect();
+    let (expanded, _) = expand::expand(view.diff, &wants, &versions, blobs);
+    let diff = &expanded;
     let mut global: Vec<&Thread> = Vec::new();
     let mut by_file: HashMap<String, Vec<&Thread>> = HashMap::new();
     // Where a thread's card is drawn: keyed by the *last* line of its range.
@@ -163,8 +172,14 @@ fn render_view(
     let mut marks = Marks::default();
     let mut outdated: HashMap<String, Vec<&Thread>> = HashMap::new();
 
-    for thread in threads {
-        match anchor::resolve_placement(&thread.anchor, diff, &versions, blobs) {
+    for (thread, placement) in threads.iter().zip(placements) {
+        // A card is drawn after a row of the diff; without one (the text to
+        // build it from isn't held) the thread is listed as unplaced.
+        let placement = match expand::want_of(&placement) {
+            Some(w) if !expand::has_row(diff, &w) => Placement::Unplaced { file: w.file },
+            _ => placement,
+        };
+        match placement {
             Placement::Global => global.push(thread),
             Placement::File(file) => by_file.entry(file).or_default().push(thread),
             Placement::Line {
@@ -198,15 +213,20 @@ fn render_view(
                     .or_default()
                     .push(thread)
             }
-            Placement::Point { file, before, was } => {
-                marks.deleted.insert(thread.root_id);
+            Placement::Point {
+                file,
+                before,
+                was,
+                kind,
+            } => {
+                marks.absent.insert(thread.root_id, kind);
                 marks.was.insert(thread.root_id, was);
                 by_line
                     .entry((file, Side::New, before.saturating_sub(1).max(1)))
                     .or_default()
                     .push(thread);
             }
-            Placement::Unplaced { file } | Placement::OutsideDiff { file } => {
+            Placement::Unplaced { file } => {
                 marks
                     .was
                     .insert(thread.root_id, anchor::original_text(&thread.anchor, blobs));
@@ -525,13 +545,14 @@ fn render_thread_html(t: &Thread, marks: &Marks) -> String {
             "未解決"
         },
         range_label(&t.anchor),
-        if marks.deleted.contains(&t.root_id) {
-            " (削除された行)"
-        } else {
-            ""
+        match marks.absent.get(&t.root_id) {
+            Some(anchor::Absence::Deleted) => " (削除された行)",
+            Some(anchor::Absence::NotYet) => " (この版にはまだない行)",
+            Some(anchor::Absence::Unknown) => " (この版にない行)",
+            None => "",
         },
     ));
-    if marks.deleted.contains(&t.root_id) {
+    if marks.absent.contains_key(&t.root_id) {
         out.push_str(&render_snippet(marks.was.get(&t.root_id), "diffnote-deleted__snippet"));
     }
     out.push_str(&render_comment_article(&t.author, &t.body));
@@ -1047,7 +1068,7 @@ mod tests {
     }
 
     #[test]
-    fn a_thread_on_lines_that_are_gone_in_a_view_is_shown_where_they_were() {
+    fn a_thread_on_lines_an_earlier_view_does_not_have_yet_says_so() {
         let s = scenario();
         let (v0, v1) = (view(&s.html, 0), view(&s.html, 1));
         // `top` was added by revision 2; revision 1 doesn't have it, so in
@@ -1059,12 +1080,13 @@ mod tests {
             .find(&format!(r#"data-diffnote-thread-id="{}""#, s.t4))
             .unwrap();
         let card = &v0[at..v0[at..].find("</details>").unwrap() + at];
-        assert!(card.contains("削除された行"), "{card}");
+        assert!(card.contains("この版にはまだない行"), "{card}");
+        assert!(!card.contains("削除された行"), "not deleted: it isn't there yet");
         assert!(card.contains(r#"<pre class="diffnote-deleted__snippet">top"#), "{card}");
         // In revision 2, where the line exists, it is an ordinary thread on
         // line 1.
         assert_eq!(rows_of(v1, s.t4), vec![("".to_string(), "1".to_string())]);
-        assert!(!v1.contains("削除された行"));
+        assert!(!v1.contains("削除された行") && !v1.contains("まだない"));
     }
 
     #[test]
@@ -1160,5 +1182,173 @@ mod tests {
         );
         let html = render_bundle(&loaded).unwrap();
         assert_eq!(html.matches(r#"<section class="diffnote-revision"#).count(), 1);
+    }
+
+    /// A bundle of one revision over two files: `f.txt` changes, `README.md`
+    /// doesn't (and is in the revision's recorded tree).
+    fn bundle_with_readme(readme: &str, extra: Vec<Event>) -> (tempfile::TempDir, bundle::Loaded) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.diffnote");
+        let two = |f: &str| -> Tree {
+            [
+                ("f.txt".to_string(), f.as_bytes().to_vec()),
+                ("README.md".to_string(), readme.as_bytes().to_vec()),
+            ]
+            .into()
+        };
+        let (diff_text, files) = diff_trees(&two(R1_BASE), &two(R1_HEAD));
+        let mut events = vec![Event::Meta {
+            version: 1,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            description: None,
+            context_lines: 3,
+        }];
+        events.push(Event::Revision(Revision {
+            id: Ulid::new(),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            digest: digest("r"),
+            source: files_source(None),
+            snapshot_mode: SnapshotMode::Changed,
+            files,
+            tree: vec![
+                crate::model::TreeFile {
+                    path: "f.txt".into(),
+                    digest: digest(R1_HEAD),
+                },
+                crate::model::TreeFile {
+                    path: "README.md".into(),
+                    digest: digest(readme),
+                },
+            ],
+        }));
+        events.extend(extra);
+        let additions = Additions {
+            diff: Some((digest("r"), diff_text)),
+            blobs: vec![
+                R1_BASE.as_bytes().to_vec(),
+                R1_HEAD.as_bytes().to_vec(),
+                readme.as_bytes().to_vec(),
+            ],
+        };
+        bundle::save(&path, &bundle::load(&path).unwrap(), &events, &additions).unwrap();
+        (dir, bundle::load(&path).unwrap())
+    }
+
+    /// The unplaced section's opening tag (the class name alone is also in
+    /// the stylesheet).
+    const UNPLACED: &str = r#"<section class="diffnote-outdated">"#;
+
+    fn range_of(file: &str, text: &str, start: u32, len: u32) -> LineRange {
+        LineRange {
+            file: file.to_string(),
+            digest: digest(text),
+            start,
+            len,
+        }
+    }
+
+    #[test]
+    fn a_thread_on_a_file_the_diff_never_touches_is_shown_with_context() {
+        let readme = "# title\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\n";
+        let id = Ulid::new();
+        let (_dir, loaded) = bundle_with_readme(
+            readme,
+            vec![comment(
+                id,
+                Anchor::Span {
+                    base: None,
+                    head: Some(range_of("README.md", readme, 4, 1)),
+                },
+                "about line 4 of the readme",
+            )],
+        );
+        let html = render_bundle(&loaded).unwrap();
+        // Its own file section, not the unplaced list.
+        assert!(html.contains(r#"id="r0-file-README-md""#));
+        assert!(!html.contains(UNPLACED), "placed, not unplaced");
+        // Line 4 is highlighted, with three lines of context either side.
+        assert_eq!(rows_of(&html, id), vec![("4".to_string(), "4".to_string())]);
+        let section = &html[html.find(r#"id="r0-file-README-md""#).unwrap()..];
+        for n in 1..=7 {
+            assert!(section.contains(&format!(r#"diffnote-line__gutter-new">{n}<"#)), "line {n}");
+        }
+        assert!(!section.contains(r#"diffnote-line__gutter-new">8<"#), "no more than 3 lines around");
+        assert!(section.contains("about line 4 of the readme"));
+        // ...as a file that only has context: no added or removed lines in it.
+        let readme_part = &section[..section.find("</section>").unwrap()];
+        assert!(!readme_part.contains("diffnote-line--added"));
+        assert!(!readme_part.contains("diffnote-line--removed"));
+    }
+
+    #[test]
+    fn a_thread_on_lines_far_from_any_change_is_shown_with_context_in_its_own_file() {
+        let old: String = (1..=40).map(|n| format!("l{n}\n")).collect();
+        let new = old.replace("l40\n", "L40\n");
+        let id = Ulid::new();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.diffnote");
+        let (diff_text, files) = diff_trees(&tree(&old), &tree(&new));
+        let events = vec![
+            Event::Revision(Revision {
+                id: Ulid::new(),
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                digest: digest("r"),
+                source: files_source(None),
+                snapshot_mode: SnapshotMode::Full,
+                files,
+                tree: Vec::new(),
+            }),
+            comment(
+                id,
+                Anchor::Span {
+                    base: Some(range_of("f.txt", &old, 10, 2)),
+                    head: Some(range_of("f.txt", &new, 10, 2)),
+                },
+                "far from the change",
+            ),
+        ];
+        let additions = Additions {
+            diff: Some((digest("r"), diff_text)),
+            blobs: vec![old.into_bytes(), new.into_bytes()],
+        };
+        bundle::save(&path, &bundle::load(&path).unwrap(), &events, &additions).unwrap();
+        let html = render_bundle(&bundle::load(&path).unwrap()).unwrap();
+        assert!(!html.contains(UNPLACED));
+        // Lines 10 and 11 are the thread's; 7..=14 are shown around them.
+        let rows = rows_of(&html, id);
+        assert_eq!(
+            rows,
+            vec![
+                ("10".to_string(), "10".to_string()),
+                ("11".to_string(), "11".to_string())
+            ]
+        );
+        assert!(html.contains(r#"diffnote-line__gutter-new">7<"#));
+        assert!(html.contains(r#"diffnote-line__gutter-new">14<"#));
+        assert!(!html.contains(r#"diffnote-line__gutter-new">15<"#));
+        assert!(!html.contains(r#"diffnote-line__gutter-new">6<"#));
+        // The real hunk is still there, after it.
+        assert!(html.contains(r#"diffnote-line__gutter-new">40<"#));
+    }
+
+    #[test]
+    fn a_thread_whose_context_text_is_missing_is_unplaced_not_lost() {
+        let readme = "# title\nline 2\n";
+        let id = Ulid::new();
+        let (_dir, loaded) = bundle_with_readme(
+            readme,
+            vec![comment(
+                id,
+                Anchor::Span {
+                    base: None,
+                    // A version of README that isn't in the store.
+                    head: Some(range_of("README.md", "held nowhere\n", 1, 1)),
+                },
+                "lost text",
+            )],
+        );
+        let html = render_bundle(&loaded).unwrap();
+        assert!(html.contains(UNPLACED));
+        assert_eq!(html.matches("lost text").count(), 1);
     }
 }
