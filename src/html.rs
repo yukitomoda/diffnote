@@ -110,7 +110,7 @@ pub fn render(
     let theme = &theme_set.themes["InspiredGitHub"];
 
     let mut body = String::new();
-    body.push_str(r#"<header class="diffnote-summary"><h1>diffnote レビュー</h1>"#);
+    body.push_str(r#"<div class="diffnote-topbar"><header class="diffnote-summary"><h1>diffnote レビュー</h1>"#);
     body.push_str(&format!(
         "<p>スレッド {} 件(解決済み {} 件)</p></header>\n",
         threads.len(),
@@ -126,6 +126,7 @@ pub fn render(
         }
         body.push_str("</ul></nav>\n");
     }
+    body.push_str("</div>\n");
     for (i, view) in views.iter().enumerate() {
         let current = if i + 1 == views.len() { " is-current" } else { "" };
         let inner = render_view(&threads, view, blobs, &syntax_set, theme);
@@ -486,17 +487,17 @@ fn commented_row_markup(
         return (base_class.to_string(), String::new());
     }
     let class = format!("{base_class} diffnote-line--commented");
-    let mut shadows = Vec::new();
+    let mut bars = Vec::new();
     let mut ids = Vec::new();
     for (i, id) in covering.iter().enumerate() {
         let color = marks.color_of.get(id).map(|c| PALETTE[*c]).unwrap_or("#999");
         let offset = 3 + i as u32 * 4;
-        shadows.push(format!("inset {offset}px 0 0 0 {color}"));
+        bars.push(format!("inset {offset}px 0 0 0 {color}"));
         ids.push(id.to_string());
     }
     let attrs = format!(
-        r#" style="box-shadow: {shadows}" data-diffnote-threads="{ids}""#,
-        shadows = escape_html(&shadows.join(", ")),
+        r#" style="--diffnote-bars: {bars}" data-diffnote-threads="{ids}""#,
+        bars = escape_html(&bars.join(", ")),
         ids = ids.join(" "),
     );
     (class, attrs)
@@ -529,13 +530,14 @@ fn render_thread_html(t: &Thread, marks: &Marks) -> String {
         )
     });
     out.push_str(&format!(
-        r#"<details class="diffnote-thread{resolved_class}" id="thread-{id}" data-diffnote-thread-id="{id}"{open}>"#,
+        r#"<details class="diffnote-thread{resolved_class}" id="thread-{id}" data-diffnote-thread-id="{id}" data-diffnote-color="{color}"{open}>"#,
         resolved_class = if t.resolved {
             " diffnote-thread--resolved"
         } else {
             ""
         },
         id = t.root_id,
+        color = marks.color_of.get(&t.root_id).map_or("#57606a", |c| PALETTE[*c]),
         open = if t.resolved { "" } else { " open" },
     ));
     out.push_str(&format!(
@@ -673,64 +675,225 @@ fn wrap_document(body: &str) -> String {
 
 const STYLE: &str = r#"
 :root {
-  --diffnote-color-added-bg: #e6ffed;
-  --diffnote-color-removed-bg: #ffeef0;
+  --diffnote-color-fg: #1f2328;
+  --diffnote-color-muted: #59636e;
+  --diffnote-color-bg: #ffffff;
+  --diffnote-color-added-bg: #e6ffec;
+  --diffnote-color-added-gutter: #ccffd8;
+  --diffnote-color-removed-bg: #ffebe9;
+  --diffnote-color-removed-gutter: #ffd7d5;
   --diffnote-color-context-bg: #ffffff;
-  --diffnote-color-border: #d0d7de;
+  --diffnote-color-gutter: #f6f8fa;
+  --diffnote-color-border: #d1d9e0;
   --diffnote-color-thread-bg: #f6f8fa;
-  --diffnote-color-resolved-bg: #f0f0f0;
+  --diffnote-color-resolved-bg: #eef0f2;
+  --diffnote-color-hunk-bg: #ddf4ff;
+  --diffnote-color-hunk-fg: #0550ae;
+  --diffnote-color-accent: #0969da;
   --diffnote-color-commented-border: #f9a825;
-  --diffnote-font-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+  --diffnote-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", sans-serif;
+  --diffnote-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono CJK JP", monospace;
+  --diffnote-topbar-h: 44px;
 }
-body { font-family: system-ui, sans-serif; margin: 0; padding: 1rem; }
-.diffnote-review { max-width: 1000px; margin: 0 auto; }
-.diffnote-filelist ul { list-style: none; padding: 0; }
-.diffnote-revisions ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.diffnote-revisions a { border: 1px solid var(--diffnote-color-border); border-radius: 0.4em; padding: 0.15em 0.6em; text-decoration: none; }
-.diffnote-revisions a.is-current { background: var(--diffnote-color-thread-bg); font-weight: bold; }
-.diffnote-revision { margin-top: 1.5rem; }
+* { box-sizing: border-box; }
+body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); margin: 0; }
+.diffnote-review { max-width: none; margin: 0; }
+
+/* Top bar: title, counts and revision tabs, always in view. */
+.diffnote-topbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 1.5rem; height: var(--diffnote-topbar-h); padding: 0 16px; background: var(--diffnote-color-gutter); border-bottom: 1px solid var(--diffnote-color-border); }
+.diffnote-summary { display: flex; align-items: baseline; gap: 1rem; white-space: nowrap; }
+.diffnote-summary h1 { font-size: 15px; margin: 0; }
+.diffnote-summary p { margin: 0; color: var(--diffnote-color-muted); font-size: 13px; }
+.diffnote-revisions { min-width: 0; overflow-x: auto; }
+.diffnote-revisions ul { list-style: none; margin: 0; padding: 0; display: flex; gap: 4px; }
+.diffnote-revisions a { display: block; white-space: nowrap; color: var(--diffnote-color-fg); text-decoration: none; border: 1px solid transparent; border-radius: 6px; padding: 3px 10px; font-size: 13px; }
+.diffnote-revisions a:hover { background: var(--diffnote-color-border); }
+.diffnote-revisions a.is-current { background: var(--diffnote-color-bg); border-color: var(--diffnote-color-border); font-weight: 600; }
+
+/* A revision: file list on the left, the changes on the right. */
+.diffnote-revision { display: grid; grid-template-columns: 280px minmax(0, 1fr); column-gap: 16px; align-items: start; padding: 0 16px 48px; }
+.diffnote-revision > * { grid-column: 2; min-width: 0; }
+.diffnote-revision__title { display: none; }
 .diffnote-js .diffnote-revision:not(.is-current) { display: none; }
-.diffnote-badge { background: var(--diffnote-color-thread-bg); border: 1px solid var(--diffnote-color-border); border-radius: 1em; padding: 0 0.5em; font-size: 0.85em; }
-.diffnote-file { border: 1px solid var(--diffnote-color-border); border-radius: 6px; margin-bottom: 1rem; }
-.diffnote-file > details > summary { padding: 0.5em 1em; cursor: pointer; }
-.diffnote-file h2 { display: inline; font-size: 1em; font-family: var(--diffnote-font-mono); }
+.diffnote-filelist { grid-column: 1; grid-row: 1 / span 200; position: sticky; top: calc(var(--diffnote-topbar-h) + 12px); max-height: calc(100vh - var(--diffnote-topbar-h) - 24px); overflow: auto; margin-top: 12px; border-right: 1px solid var(--diffnote-color-border); padding-right: 8px; font-size: 12.5px; }
+.diffnote-filelist ul { list-style: none; margin: 0; padding: 0; }
+.diffnote-filelist li { display: flex; align-items: center; justify-content: space-between; gap: 6px; border-radius: 6px; }
+.diffnote-filelist a { flex: 1; min-width: 0; padding: 3px 8px; color: var(--diffnote-color-fg); text-decoration: none; font-family: var(--diffnote-font-mono); word-break: break-all; border-radius: 6px; }
+.diffnote-filelist a:hover { background: var(--diffnote-color-gutter); }
+.diffnote-filelist a.is-visible { background: var(--diffnote-color-hunk-bg); }
+.diffnote-badge { background: var(--diffnote-color-accent); color: #fff; border-radius: 1em; padding: 0 7px; font-size: 11px; line-height: 18px; }
+
+.diffnote-global-comments { margin-top: 12px; }
+
+/* Files: a sticky header bar per file, like a code review page. */
+.diffnote-file { border: 1px solid var(--diffnote-color-border); border-radius: 6px; margin-top: 12px; scroll-margin-top: calc(var(--diffnote-topbar-h) + 8px); }
+.diffnote-file > details > summary { position: sticky; top: var(--diffnote-topbar-h); z-index: 5; padding: 6px 12px; cursor: pointer; background: var(--diffnote-color-gutter); border-bottom: 1px solid var(--diffnote-color-border); border-radius: 6px 6px 0 0; }
+.diffnote-file h2 { display: inline; font-size: 13px; font-weight: 600; font-family: var(--diffnote-font-mono); }
+.diffnote-file__missing { margin: 0; padding: 8px 12px; color: #7a5900; background: #fffbea; }
 .diffnote-diff-scroll { overflow-x: auto; }
-.diffnote-diff { width: 100%; border-collapse: collapse; font-family: var(--diffnote-font-mono); font-size: 0.85em; }
-.diffnote-diff td { padding: 0 0.5em; white-space: pre; vertical-align: top; }
-.diffnote-line__gutter-old, .diffnote-line__gutter-new { color: #999; text-align: right; user-select: none; width: 3em; }
+.diffnote-diff { width: 100%; border-collapse: collapse; font-family: var(--diffnote-font-mono); font-size: 12.5px; line-height: 20px; }
+.diffnote-diff td { padding: 0; white-space: pre; vertical-align: top; --dn-l: 0 0 0 0 transparent; --dn-r: 0 0 0 0 transparent; --dn-t: 0 0 0 0 transparent; --dn-b: 0 0 0 0 transparent; box-shadow: var(--dn-l), var(--dn-r), var(--dn-t), var(--dn-b); }
+.diffnote-line__gutter-old, .diffnote-line__gutter-new { width: 1%; min-width: 3.4em; padding: 0 8px !important; text-align: right; color: var(--diffnote-color-muted); background: var(--diffnote-color-gutter); user-select: none; }
+.diffnote-line__content { width: 100%; padding: 0 12px 0 22px !important; position: relative; }
+.diffnote-line__content::before { position: absolute; left: 8px; color: var(--diffnote-color-muted); }
 .diffnote-line--added { background: var(--diffnote-color-added-bg); }
+.diffnote-line--added .diffnote-line__gutter-old, .diffnote-line--added .diffnote-line__gutter-new { background: var(--diffnote-color-added-gutter); }
+.diffnote-line--added .diffnote-line__content::before { content: "+"; }
 .diffnote-line--removed { background: var(--diffnote-color-removed-bg); }
-.diffnote-line--commented { box-shadow: inset 3px 0 0 0 var(--diffnote-color-commented-border); }
-.diffnote-line--commented .diffnote-line__gutter-old, .diffnote-line--commented .diffnote-line__gutter-new { color: var(--diffnote-color-commented-border); font-weight: bold; }
-.diffnote-hunk-header td { background: var(--diffnote-color-thread-bg); color: #666; }
-.diffnote-thread-row td { background: #fff; padding: 0.5em 1em; }
-.diffnote-thread { border: 1px solid var(--diffnote-color-border); border-radius: 6px; background: var(--diffnote-color-thread-bg); padding: 0.3em 0.6em; margin: 0.3em 0; }
-.diffnote-deleted__snippet { margin: 0; padding: 0.25rem 0.5rem; background: var(--diffnote-color-removed-bg); font-family: var(--diffnote-font-mono); white-space: pre-wrap; }
-.diffnote-thread--resolved { background: var(--diffnote-color-resolved-bg); opacity: 0.8; }
-.diffnote-thread summary { cursor: pointer; font-weight: bold; }
-.diffnote-comment { border-top: 1px solid var(--diffnote-color-border); padding: 0.3em 0; }
+.diffnote-line--removed .diffnote-line__gutter-old, .diffnote-line--removed .diffnote-line__gutter-new { background: var(--diffnote-color-removed-gutter); }
+.diffnote-line--removed .diffnote-line__content::before { content: "-"; }
+.diffnote-hunk-header td { background: var(--diffnote-color-hunk-bg); color: var(--diffnote-color-hunk-fg); padding: 2px 12px; }
+
+/* Lines a comment is about: colored bars at the left edge... */
+.diffnote-line--commented > td:first-child { --dn-l: var(--diffnote-bars); }
+.diffnote-line--commented .diffnote-line__gutter-old, .diffnote-line--commented .diffnote-line__gutter-new { color: var(--diffnote-color-fg); font-weight: 600; }
+/* ...and, while a comment is hovered, focused or pinned, its whole range: a
+   tint in the comment's color inside an outline that runs from the first line
+   to the last, and the comment itself outlined in the same color. */
+.diffnote-diff .diffnote-range > td { background-image: linear-gradient(color-mix(in srgb, var(--rc) 14%, transparent), color-mix(in srgb, var(--rc) 14%, transparent)); }
+.diffnote-range > td:first-child { --dn-l: inset 4px 0 0 0 var(--rc); }
+.diffnote-range > td:last-child { --dn-r: inset -3px 0 0 0 var(--rc); }
+.diffnote-range-first > td { --dn-t: inset 0 3px 0 0 var(--rc); }
+.diffnote-range-last > td { --dn-b: inset 0 -3px 0 0 var(--rc); }
+.diffnote-thread.diffnote-hover { outline: 2px solid var(--rc); outline-offset: 1px; }
+
+/* Comment cards sit under the last line of their range, lined up with the code. */
+.diffnote-thread-row > td { background: var(--diffnote-color-bg); padding: 4px 16px 4px 124px !important; white-space: normal; font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; }
+.diffnote-thread { border: 1px solid var(--diffnote-color-border); border-radius: 6px; background: var(--diffnote-color-thread-bg); padding: 4px 12px; margin: 3px 0; max-width: 960px; }
+.diffnote-thread--resolved { background: var(--diffnote-color-resolved-bg); color: var(--diffnote-color-muted); }
+.diffnote-thread summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.diffnote-thread__swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: baseline; }
+.diffnote-comment { border-top: 1px solid var(--diffnote-color-border); padding: 6px 0; }
 .diffnote-comment:first-of-type { border-top: none; }
-.diffnote-comment__author { font-weight: bold; margin: 0; font-size: 0.9em; }
-.diffnote-comment__body { font-size: 0.95em; }
-.diffnote-comment__body p:first-child { margin-top: 0; }
-.diffnote-outdated { padding: 0.5em 1em; background: #fffbea; }
-.diffnote-outdated__snippet { background: #fff; border: 1px dashed var(--diffnote-color-border); padding: 0.5em; font-family: var(--diffnote-font-mono); font-size: 0.85em; overflow-x: auto; }
-.diffnote-file__missing { padding: 0.5em 1em; color: #7a5900; background: #fffbea; }
-.diffnote-thread__swatch { display: inline-block; width: 0.8em; height: 0.8em; border-radius: 50%; margin-right: 0.4em; vertical-align: middle; }
-.diffnote-line.diffnote-hover { outline: 2px solid #333; outline-offset: -2px; }
-.diffnote-thread.diffnote-hover, .diffnote-thread-row .diffnote-hover { outline: 2px solid #333; }
+.diffnote-comment__author { font-weight: 600; margin: 0; font-size: 12.5px; color: var(--diffnote-color-muted); }
+.diffnote-comment__body { font-size: 14px; }
+.diffnote-comment__body p { margin: 2px 0; }
+.diffnote-comment__body pre { overflow-x: auto; background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; padding: 8px 12px; font-family: var(--diffnote-font-mono); font-size: 12.5px; }
+.diffnote-comment__body code { font-family: var(--diffnote-font-mono); font-size: 12.5px; }
+.diffnote-deleted__snippet { margin: 6px 0; padding: 4px 8px; background: var(--diffnote-color-removed-bg); font-family: var(--diffnote-font-mono); font-size: 12.5px; white-space: pre-wrap; border-radius: 4px; }
+.diffnote-outdated { padding: 8px 12px; background: #fffbea; border-top: 1px solid var(--diffnote-color-border); }
+.diffnote-outdated h3 { margin: 0 0 4px; font-size: 13px; }
+.diffnote-outdated__snippet { background: #fff; border: 1px dashed var(--diffnote-color-border); padding: 6px 8px; font-family: var(--diffnote-font-mono); font-size: 12.5px; overflow-x: auto; }
+.diffnote-file > details > .diffnote-thread { margin: 8px 12px; }
+
+@media (max-width: 900px) {
+  .diffnote-topbar { height: auto; flex-wrap: wrap; gap: 4px 12px; padding: 6px 12px; }
+  .diffnote-revision { display: block; padding: 0 8px 32px; }
+  .diffnote-filelist { position: static; max-height: 40vh; margin: 8px 0; border-right: 0; }
+  .diffnote-file > details > summary { top: 0; position: static; }
+  .diffnote-thread-row > td { padding-left: 12px !important; }
+}
 "#;
 
 /// Purely local DOM interaction: no fetch, no network, no storage -- safe
-/// under a bare `file://` URL. Links a diff line's color band(s) to the
-/// matching thread card(s) so hovering either highlights both, which is the
-/// precise way to disambiguate overlapping range comments (their color
-/// bands can only go so far once there are more threads than palette slots).
+/// under a bare `file://` URL. Switches revisions, shows the range of the
+/// comment under the mouse (or pinned by a click) on its lines and outlines
+/// its card -- the precise way to tell overlapping ranges apart -- and marks
+/// which files are on screen in the file list.
 const SCRIPT: &str = r#"
 (function () {
-  var views = Array.prototype.slice.call(document.querySelectorAll('.diffnote-revision'));
-  var links = Array.prototype.slice.call(document.querySelectorAll('[data-diffnote-revision-link]'));
+  var slice = Array.prototype.slice;
+  var views = slice.call(document.querySelectorAll('.diffnote-revision'));
+  var links = slice.call(document.querySelectorAll('[data-diffnote-revision-link]'));
+
+  // --- Which comment's range is shown ------------------------------------
+  // One at a time: the one under the mouse or focus, or the pinned one
+  // (click a comment or one of its lines; click elsewhere or Esc to let go).
+  var THREAD = '[data-diffnote-thread-id]';
+  var LINE = 'tr[data-diffnote-threads]';
+  var active = null;
+  var pinned = null;
+
+  function scopeOf(el) { return el.closest('.diffnote-revision') || document; }
+  function cardOf(scope, id) { return scope.querySelector('[data-diffnote-thread-id="' + id + '"]'); }
+  function rowsOf(scope, id) { return slice.call(scope.querySelectorAll('tr[data-diffnote-threads~="' + id + '"]')); }
+
+  function clear() {
+    if (!active) return;
+    active.rows.forEach(function (r) {
+      r.classList.remove('diffnote-range', 'diffnote-range-first', 'diffnote-range-last');
+      r.style.removeProperty('--rc');
+    });
+    if (active.card) {
+      active.card.classList.remove('diffnote-hover');
+      active.card.style.removeProperty('--rc');
+    }
+    active = null;
+  }
+
+  function activate(scope, id) {
+    if (active && active.id === id && active.scope === scope) return;
+    clear();
+    var rows = rowsOf(scope, id);
+    var card = cardOf(scope, id);
+    var color = (card && card.getAttribute('data-diffnote-color')) || '#0969da';
+    rows.forEach(function (r, k) {
+      r.classList.add('diffnote-range');
+      r.style.setProperty('--rc', color);
+      if (k === 0) r.classList.add('diffnote-range-first');
+      if (k === rows.length - 1) r.classList.add('diffnote-range-last');
+    });
+    if (card) {
+      card.classList.add('diffnote-hover');
+      card.style.setProperty('--rc', color);
+    }
+    active = { id: id, scope: scope, rows: rows, card: card };
+  }
+
+  // A line can be in several ranges: take the smallest, the most specific.
+  function pick(scope, el) {
+    var own = el.getAttribute('data-diffnote-thread-id');
+    if (own) return own;
+    var ids = (el.getAttribute('data-diffnote-threads') || '').split(' ').filter(Boolean);
+    var best = null, size = Infinity;
+    ids.forEach(function (id) {
+      var n = rowsOf(scope, id).length;
+      if (n < size) { best = id; size = n; }
+    });
+    return best;
+  }
+
+  function target(node) {
+    return node && node.closest ? node.closest(THREAD + ', ' + LINE) : null;
+  }
+
+  document.addEventListener('mouseover', function (e) {
+    if (pinned) return;
+    var el = target(e.target);
+    if (!el) return;
+    var id = pick(scopeOf(el), el);
+    if (id) activate(scopeOf(el), id);
+  });
+  document.addEventListener('mouseout', function (e) {
+    if (pinned) return;
+    if (target(e.relatedTarget)) return;
+    clear();
+  });
+  document.addEventListener('focusin', function (e) {
+    if (pinned) return;
+    var el = target(e.target);
+    if (!el) return;
+    var id = pick(scopeOf(el), el);
+    if (id) activate(scopeOf(el), id);
+  });
+  document.addEventListener('click', function (e) {
+    var el = target(e.target);
+    if (!el) { pinned = null; clear(); return; }
+    var scope = scopeOf(el);
+    var id = pick(scope, el);
+    if (!id) return;
+    if (pinned === id) { pinned = null; return; }
+    pinned = id;
+    activate(scope, id);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { pinned = null; clear(); }
+  });
+
+  // --- Revisions ---------------------------------------------------------
   function show(i) {
+    pinned = null;
+    clear();
     views.forEach(function (v, k) { v.classList.toggle('is-current', k === i); });
     links.forEach(function (a, k) { a.classList.toggle('is-current', k === i); });
   }
@@ -744,27 +907,23 @@ const SCRIPT: &str = r#"
       a.addEventListener('click', function (e) { e.preventDefault(); show(k); });
     });
   }
-  function idsOf(el) {
-    var s = el.getAttribute('data-diffnote-threads') || el.getAttribute('data-diffnote-thread-id') || '';
-    return s.split(' ').filter(Boolean);
-  }
-  function setHover(el, on) {
-    idsOf(el).forEach(function (id) {
-      var selector = '[data-diffnote-threads~="' + id + '"], [data-diffnote-thread-id="' + id + '"]';
-      var scope = el.closest('.diffnote-revision') || document;
-      scope.querySelectorAll(selector).forEach(function (match) {
-        match.classList.toggle('diffnote-hover', on);
+
+  // --- The file list follows what is on screen ---------------------------
+  if ('IntersectionObserver' in window) {
+    views.forEach(function (v) {
+      var byId = {};
+      slice.call(v.querySelectorAll('.diffnote-filelist a')).forEach(function (a) {
+        byId[(a.getAttribute('href') || '').slice(1)] = a;
       });
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) {
+          var a = byId[en.target.id];
+          if (a) a.classList.toggle('is-visible', en.isIntersecting);
+        });
+      }, { rootMargin: '-48px 0px -55% 0px' });
+      slice.call(v.querySelectorAll('.diffnote-file')).forEach(function (f) { io.observe(f); });
     });
   }
-  document.addEventListener('mouseover', function (e) {
-    var el = e.target.closest('[data-diffnote-threads], [data-diffnote-thread-id]');
-    if (el) setHover(el, true);
-  });
-  document.addEventListener('mouseout', function (e) {
-    var el = e.target.closest('[data-diffnote-threads], [data-diffnote-thread-id]');
-    if (el) setHover(el, false);
-  });
 })();
 "#;
 
@@ -1084,6 +1243,37 @@ mod tests {
         // first), whichever revision the thread was written on.
         assert!(summary_of(view(&s.html, 0), s.t1).contains("(L2)"));
         assert!(summary_of(view(&s.html, 1), s.t1).contains("(L3)"));
+    }
+
+    #[test]
+    fn the_title_and_revision_tabs_share_one_bar() {
+        let s = scenario();
+        let bar = &s.html[s.html.find(r#"<div class="diffnote-topbar">"#).unwrap()..];
+        let bar = &bar[..bar.find("</div>").unwrap()];
+        assert!(bar.contains(r#"<header class="diffnote-summary">"#), "{bar}");
+        assert!(bar.contains(r#"<nav class="diffnote-revisions">"#), "{bar}");
+    }
+
+    #[test]
+    fn a_thread_card_carries_its_color_for_the_range_highlight() {
+        let s = scenario();
+        let card = format!(r##"data-diffnote-thread-id="{}" data-diffnote-color="#"##, s.t1);
+        assert!(view(&s.html, 0).contains(&card), "{card}");
+        // The lines it covers name the thread, so the script can find them.
+        let rows = view(&s.html, 0)
+            .matches(&format!(r#"data-diffnote-threads="{}"#, s.t1))
+            .count();
+        assert!(rows >= 1);
+    }
+
+    #[test]
+    fn line_bars_are_a_custom_property_not_a_box_shadow_on_the_row() {
+        // The gutters have their own background, so the bars are drawn by the
+        // first cell from `--diffnote-bars`; an inline box-shadow on the row
+        // would sit under it.
+        let s = scenario();
+        assert!(s.html.contains(r#"style="--diffnote-bars: inset 3px 0 0 0 #"#));
+        assert!(!s.html.contains(r#"style="box-shadow"#));
     }
 
     #[test]
