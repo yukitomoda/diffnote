@@ -236,6 +236,9 @@ impl Server {
 
         match (request.method, path) {
             ("GET", "/") => self.page(),
+            ("GET", "/next") => self.client_page(),
+            ("GET", "/api/model") => self.model(),
+            ("GET", "/api/version") => self.version(),
             ("GET", p) if p.starts_with("/api/views/") => self.view(&p["/api/views/".len()..]),
             ("GET", p) if p.starts_with("/api/files/") => {
                 self.files(&p["/api/files/".len()..], query)
@@ -266,6 +269,38 @@ impl Server {
                         .replace('>', "&gt;")
                 ),
             ),
+        }
+    }
+
+    /// The client-side app's page (to replace `/` once it can do everything).
+    fn client_page(&self) -> Reply {
+        match bundle::load(&self.review).and_then(|l| html::render_served_page(&l)) {
+            Ok(page) => Reply::html(200, page),
+            Err(e) => Reply::error(500, &format!("レビューを表示できません: {e}")),
+        }
+    }
+
+    /// The whole model, for a page that finds the review has changed under it.
+    fn model(&self) -> Reply {
+        let loaded = match bundle::load(&self.review) {
+            Ok(l) => l,
+            Err(e) => return Reply::error(500, &format!("処理に失敗しました: {e}")),
+        };
+        match html::view_model_for(&loaded, true) {
+            Ok(model) => Reply::json(200, &serde_json::json!({ "ok": true, "model": model })),
+            Err(e) => Reply::error(500, &format!("処理に失敗しました: {e}")),
+        }
+    }
+
+    /// How long the review's log is: a page compares it with its own to see
+    /// whether the review has changed.
+    fn version(&self) -> Reply {
+        match bundle::load(&self.review) {
+            Ok(l) => Reply::json(
+                200,
+                &serde_json::json!({ "ok": true, "events": l.events.len() }),
+            ),
+            Err(e) => Reply::error(500, &format!("処理に失敗しました: {e}")),
         }
     }
 
@@ -521,8 +556,10 @@ impl Server {
             .into_iter()
             .find(|t| t.root_id == id)
             .ok_or_else(|| Failure(404, "そのスレッドはありません".into()))?;
+        let before = loaded.events.len();
         action(&thread)?;
         let loaded = bundle::load(&self.review).map_err(internal)?;
+        let appended = loaded.events.len() - before;
         let fragments = html::thread_fragments(&loaded, id)
             .ok_or_else(|| Failure(500, "表示を作れませんでした".into()))?;
         Ok(Reply::json(
@@ -530,6 +567,9 @@ impl Server {
             &serde_json::json!({
                 "ok": true,
                 "thread": id.to_string(),
+                "thread_data": html::thread_json(&loaded, id),
+                "appended": appended,
+                "events": loaded.events.len(),
                 "open": fragments.open,
                 "all": fragments.all,
                 "views": fragments.views.iter().map(|v| serde_json::json!({
@@ -1115,6 +1155,44 @@ mod tests {
             .unwrap();
         let path = format!("/api/threads/{reply_id}/replies");
         assert_eq!(f.post(&path, r#"{"body":"two"}"#).status, 404);
+    }
+
+    #[test]
+    fn the_client_page_and_its_model_and_version_come_from_the_server() {
+        let f = fixture();
+        let get = |t: &str| f.request("GET", t, &[], "");
+        let page = get("/next");
+        assert_eq!(page.status, 200);
+        assert!(text(&page).contains("D.api = "));
+        let model = json(&get("/api/model"));
+        assert_eq!(model["model"]["interactive"], true);
+        let events = model["model"]["events"].as_u64().unwrap();
+        assert_eq!(json(&get("/api/version"))["events"].as_u64(), Some(events));
+        f.post(
+            &format!("/api/threads/{}/replies", f.thread),
+            r#"{"body":"more"}"#,
+        );
+        assert_eq!(
+            json(&get("/api/version"))["events"].as_u64(),
+            Some(events + 1)
+        );
+    }
+
+    #[test]
+    fn a_change_says_what_it_added_and_the_thread_as_it_now_is() {
+        let f = fixture();
+        let before = json(&f.request("GET", "/api/version", &[], ""))["events"]
+            .as_u64()
+            .unwrap();
+        let resolve = format!("/api/threads/{}/resolve", f.thread);
+        let answer = json(&f.post(&resolve, "{}"));
+        assert_eq!(answer["appended"], 1);
+        assert_eq!(answer["events"].as_u64(), Some(before + 1));
+        assert_eq!(answer["thread_data"]["resolved"], true);
+        // Already resolved: nothing is added, and the page can tell.
+        let again = json(&f.post(&resolve, "{}"));
+        assert_eq!(again["appended"], 0);
+        assert_eq!(again["events"].as_u64(), Some(before + 1));
     }
 
     #[test]

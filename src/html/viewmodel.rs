@@ -21,6 +21,11 @@ pub const VERSION: u32 = 1;
 #[derive(Serialize)]
 pub struct ViewModel {
     pub version: u32,
+    /// How many events the review's log had when this was made: what a page
+    /// compares to see whether the review has changed under it.
+    pub events: usize,
+    /// Whether the page can change the review (the served one).
+    pub interactive: bool,
     pub title: Option<String>,
     /// Every thread, whatever the revision (where it is is per revision).
     pub threads: Vec<ThreadData>,
@@ -123,8 +128,16 @@ pub enum PlacementData {
     },
 }
 
-/// The model of a whole review.
+/// The model of a whole review, for a page that only shows it.
 pub fn view_model(loaded: &crate::bundle::Loaded) -> anyhow::Result<ViewModel> {
+    view_model_for(loaded, false)
+}
+
+/// The model of a whole review; `interactive` says the page may change it.
+pub fn view_model_for(
+    loaded: &crate::bundle::Loaded,
+    interactive: bool,
+) -> anyhow::Result<ViewModel> {
     let shown = shown_revisions(loaded)?;
     let views = revision_views(&shown);
     let threads = build_threads(&loaded.events);
@@ -137,6 +150,8 @@ pub fn view_model(loaded: &crate::bundle::Loaded) -> anyhow::Result<ViewModel> {
         .collect();
     Ok(ViewModel {
         version: VERSION,
+        events: loaded.events.len(),
+        interactive,
         title: crate::review::title(&loaded.events).map(str::to_string),
         threads: threads.iter().map(thread_data).collect(),
         revisions,
@@ -146,8 +161,25 @@ pub fn view_model(loaded: &crate::bundle::Loaded) -> anyhow::Result<ViewModel> {
 /// The model as JSON that is safe to put inside a `<script>` element: no `<`
 /// (so no `</script>` or `<!--`), which a JSON string can spell `<`.
 pub fn view_model_json(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
-    let json = serde_json::to_string(&view_model(loaded)?)?;
+    model_json(&view_model(loaded)?)
+}
+
+/// The same for the served page, which may change the review.
+pub fn served_model_json(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
+    model_json(&view_model_for(loaded, true)?)
+}
+
+fn model_json(model: &ViewModel) -> anyhow::Result<String> {
+    let json = serde_json::to_string(model)?;
     Ok(json.replace('<', "\\u003c"))
+}
+
+/// One thread as the page has it (after a reply, or a resolve).
+pub fn thread_json(loaded: &crate::bundle::Loaded, id: Ulid) -> Option<ThreadData> {
+    build_threads(&loaded.events)
+        .iter()
+        .find(|t| t.root_id == id)
+        .map(thread_data)
 }
 
 fn thread_data(thread: &Thread) -> ThreadData {

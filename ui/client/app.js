@@ -13,7 +13,13 @@
   var useEffect = preactHooks.useEffect;
   var useLayoutEffect = preactHooks.useLayoutEffect;
   var useMemo = preactHooks.useMemo;
+  var useRef = preactHooks.useRef;
+  var useContext = preactHooks.useContext;
   var html = htm.bind(h);
+
+  // What the page can do to the review (`null` on an exported page): reply to
+  // a thread, resolve or reopen it. Set by the App, read by the cards.
+  var ActionsContext = preact.createContext(null);
 
   var DEFAULT_TITLE = 'diffnote レビュー';
 
@@ -50,10 +56,63 @@
     unknown: ' (この版にない行)',
   };
 
+  // The reply box and the resolve button of a card on the served page. A
+  // reply shows at once as a faded comment and is put right by the answer; if it
+  // fails the words stay in the box, with what went wrong.
+  function Actions(props) {
+    var t = props.thread;
+    var actions = props.actions;
+    var _t = useState('');
+    var text = _t[0];
+    var setText = _t[1];
+    var _p = useState(null);
+    var pending = _p[0];
+    var setPending = _p[1];
+    var _e = useState(null);
+    var error = _e[0];
+    var setError = _e[1];
+
+    function send() {
+      var body = text.trim();
+      if (!body || pending !== null) return;
+      setPending(body);
+      setError(null);
+      actions.reply(t.id, body).then(function (res) {
+        setPending(null);
+        if (res.ok) setText('');
+        else setError(res.error || '保存できませんでした');
+      });
+    }
+    function toggle() {
+      setError(null);
+      actions.setResolved(t.id, !t.resolved).then(function (res) {
+        if (!res.ok) setError(res.error || '保存できませんでした');
+      });
+    }
+    var action = t.resolved ? 'reopen' : 'resolve';
+    return html`${pending !== null && html`<article class="diffnote-comment is-pending">
+        <p class="diffnote-comment__author">保存中…</p>
+        <div class="diffnote-comment__body">${pending}</div>
+      </article>`}
+      <div class="diffnote-thread__actions">
+        <form class="diffnote-reply" data-diffnote-thread=${t.id} onSubmit=${function (e) { e.preventDefault(); send(); }}>
+          <textarea rows="2" placeholder="返信を書く(Ctrl+Enter で送信)" value=${text} disabled=${pending !== null}
+            onInput=${function (e) { setText(e.target.value); }}
+            onKeyDown=${function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }}></textarea>
+          <div class="diffnote-reply__buttons">
+            <button type="submit" class="diffnote-button diffnote-button--primary">返信</button>
+            <button type="button" class="diffnote-button" data-diffnote-action=${action} data-diffnote-thread=${t.id} onClick=${toggle}>${t.resolved ? '再開する' : '解決にする'}</button>
+          </div>
+          ${error && html`<p class="diffnote-error">${error}</p>`}
+        </form>
+      </div>`;
+  }
+
   // One thread as a card.
   function Card(props) {
     var t = props.thread;
     var p = props.placement;
+    var actions = useContext(ActionsContext);
     var loc = lib.location(p);
     var color = p && p.kind === 'line' ? lib.color(p.color) : null;
     var absent = p && p.kind === 'point' ? p : null;
@@ -75,6 +134,7 @@
           <div class="diffnote-comment__body" dangerouslySetInnerHTML=${{ __html: c.html }}></div>
         </article>`;
       })}
+      ${actions && html`<${Actions} thread=${t} actions=${actions} />`}
     </details>`;
   }
 
@@ -328,8 +388,86 @@
     return model.revisions.length - 1;
   }
 
+  // The model, and (on the served page) the changes that can be made to it.
+  // A change is shown at once and put right by the server's answer. The answer
+  // says how many events the review has and how many the change added: if the
+  // review had changed under the page (a `diffnote edit`, another tab), those
+  // don't add up and the whole model is fetched again -- as it is whenever the
+  // window is looked at again and the review has more events than the page's.
+  function useReview(initial) {
+    var _m = useState(initial);
+    var model = _m[0];
+    var setModel = _m[1];
+    var ref = useRef(model);
+    ref.current = model;
+
+    var reloadModel = preactHooks.useCallback(function () {
+      return D.api.get('/api/model').then(function (res) {
+        if (res.ok) setModel(res.model);
+        return res;
+      });
+    }, []);
+
+    var actions = useMemo(function () {
+      if (!initial.interactive) return null;
+      var replace = function (thread) {
+        return function (cur) {
+          return Object.assign({}, cur, {
+            threads: cur.threads.map(function (t) { return t.id === thread.id ? thread : t; }),
+          });
+        };
+      };
+      // What a change's answer does to the page.
+      var settle = function (res) {
+        if (res.events - res.appended !== ref.current.events) {
+          reloadModel();
+          return;
+        }
+        setModel(function (cur) {
+          return Object.assign({}, replace(res.thread_data)(cur), { events: res.events });
+        });
+      };
+      return {
+        reply: function (id, text) {
+          return D.api.post('/api/threads/' + id + '/replies', { body: text }).then(function (res) {
+            if (res.ok) settle(res);
+            return res;
+          });
+        },
+        setResolved: function (id, resolved) {
+          var before = ref.current.threads.filter(function (t) { return t.id === id; })[0];
+          setModel(replace(Object.assign({}, before, { resolved: resolved })));
+          return D.api.post('/api/threads/' + id + '/' + (resolved ? 'resolve' : 'reopen')).then(function (res) {
+            if (res.ok) settle(res);
+            else setModel(replace(before));
+            return res;
+          });
+        },
+      };
+    }, [initial.interactive]);
+
+    useEffect(function () {
+      if (!initial.interactive) return undefined;
+      var check = function () {
+        if (document.hidden) return;
+        D.api.get('/api/version').then(function (res) {
+          if (res.ok && res.events !== ref.current.events) reloadModel();
+        });
+      };
+      window.addEventListener('focus', check);
+      document.addEventListener('visibilitychange', check);
+      return function () {
+        window.removeEventListener('focus', check);
+        document.removeEventListener('visibilitychange', check);
+      };
+    }, [initial.interactive]);
+
+    return { model: model, actions: actions };
+  }
+
   function App(props) {
-    var model = props.model;
+    var review = useReview(props.model);
+    var model = review.model;
     var _c = useState(revisionFromHash(model));
     var current = _c[0];
     var setCurrent = _c[1];
@@ -369,18 +507,23 @@
               onClick=${function () { keep('diffnote-layout', o[0]); setChosen(o[0]); }}>${o[1]}</button>`;
           })}
         </div>`}
-        ${counts.resolved > 0 && html`<label class="diffnote-toggle">
+        ${(counts.resolved > 0 || model.interactive) && html`<label class="diffnote-toggle">
           <input type="checkbox" data-diffnote-hide-resolved checked=${hide}
             onChange=${function (e) { keep('diffnote-hide-resolved', e.target.checked ? '1' : '0'); setHide(e.target.checked); }} />
           解決済みを隠す<span class="diffnote-toggle__count" data-diffnote-resolved-count>${'(' + counts.resolved + ')'}</span>
         </label>`}
+        ${model.interactive && html`<button type="button" class="diffnote-button diffnote-topbar__quit" data-diffnote-shutdown title="サーバーを止めます"
+          onClick=${function () { D.api.post('/api/shutdown').then(function () { document.body.innerHTML = '<p style="padding:24px;font:14px sans-serif">終了しました。このタブは閉じてかまいません。</p>'; }); }}>終了</button>`}
       </div>
-      <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} />
+      <${ActionsContext.Provider} value=${review.actions}>
+        <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} />
+      <//>
     </article>`;
   }
 
   D.start = function () {
     var model = JSON.parse(document.getElementById('diffnote-data').textContent);
+    if (model.interactive) document.body.setAttribute('data-diffnote-api', '1');
     D.interact.install();
     render(html`<${App} model=${model} />`, document.getElementById('app'));
   };

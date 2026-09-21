@@ -125,23 +125,45 @@ pub fn render_bundle(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
 /// The scripts of the client-side page, in the order they are put in it: the
 /// libraries (plain-script builds, so the page works from a file), then the
 /// page's own. Each adds to `window.Diffnote`.
-const CLIENT_SCRIPTS: [&str; 6] = [
+const CLIENT_LIBS: [&str; 5] = [
     include_str!("../ui/vendor/preact.min.js"),
     include_str!("../ui/vendor/hooks.umd.js"),
     include_str!("../ui/vendor/htm.js"),
     include_str!("../ui/client/lib.js"),
     include_str!("../ui/client/interact.js"),
-    include_str!("../ui/client/app.js"),
 ];
+const CLIENT_APP: &str = include_str!("../ui/client/app.js");
+/// Only the served page talks to the server (an exported page makes no
+/// requests), so only it has this.
+const CLIENT_API: &str = include_str!("../ui/client/api.js");
 
 /// The page `diffnote export` writes: one self-contained HTML file, drawn in
 /// the browser by a client-side app from the data of [`view_model`] embedded in
 /// it. It needs JavaScript, and nothing else: no requests, no modules, so it
 /// opens from a file.
 pub fn render_export(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
-    let data = view_model_json(loaded)?;
+    client_page(loaded, false)
+}
+
+/// The same app for `diffnote serve`: it can change the review, through the
+/// server that serves it.
+pub fn render_served_page(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
+    client_page(loaded, true)
+}
+
+fn client_page(loaded: &crate::bundle::Loaded, interactive: bool) -> anyhow::Result<String> {
+    let data = if interactive {
+        served_model_json(loaded)?
+    } else {
+        view_model_json(loaded)?
+    };
     let title = crate::review::title(&loaded.events).unwrap_or(DEFAULT_TITLE);
-    let scripts: String = CLIENT_SCRIPTS
+    let mut scripts: Vec<&str> = CLIENT_LIBS.to_vec();
+    if interactive {
+        scripts.push(CLIENT_API);
+    }
+    scripts.push(CLIENT_APP);
+    let scripts: String = scripts
         .iter()
         .map(|s| format!("<script>\n{s}\n</script>\n"))
         .collect();
@@ -1761,7 +1783,9 @@ const STYLE: &str = include_str!("../ui/style.css");
 const SCRIPT: &str = include_str!("../ui/app.js");
 
 pub(crate) mod viewmodel;
-pub use viewmodel::{ViewModel, view_model, view_model_json};
+pub use viewmodel::{
+    ViewModel, served_model_json, thread_json, view_model, view_model_for, view_model_json,
+};
 
 #[cfg(test)]
 mod tests {
@@ -2697,7 +2721,7 @@ mod tests {
         assert!(page.contains(r#"<div id="app"></div>"#));
         // Nothing that would need a request, a module or a worker (which a
         // page opened from a file can't have).
-        for s in CLIENT_SCRIPTS {
+        for s in CLIENT_LIBS.iter().chain(&[CLIENT_APP]) {
             assert!(
                 !s.contains("</script"),
                 "a script that would end its element"
@@ -2709,6 +2733,12 @@ mod tests {
             assert!(!s.contains("serviceWorker"), "service workers");
         }
         assert!(!page.contains(r#"type="module""#));
+        // Only the served page has what talks to the server.
+        assert!(
+            !page.contains("D.api = "),
+            "an exported page makes no requests"
+        );
+        assert!(render_served_page(&loaded).unwrap().contains("D.api = "));
         assert!(!page.contains("src="), "no external file");
         assert!(!page.contains("<link"), "no external style");
     }
