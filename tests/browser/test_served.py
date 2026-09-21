@@ -690,6 +690,16 @@ class Images(ServedCase):
         b.open(pathlib.Path(path).as_uri(), ready="!!document.querySelector('.diffnote-comment__body img.diffnote-image')")
         self.assertTrue(b.wait("document.querySelector('.diffnote-comment__body img.diffnote-image').naturalWidth === 1"))
 
+    def test_the_button_is_above_the_box_it_is_for(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        above = lambda box: b.js("(() => { const t = document.querySelector(%s).getBoundingClientRect(); const a = document.querySelector(%s).closest('form').querySelector('[data-diffnote-attach]').closest('label').getBoundingClientRect(); return a.bottom <= t.top + 1; })()" % (json.dumps(box), json.dumps(box)))
+        self.assertTrue(above(f"#{card} .diffnote-reply textarea"), "reply")
+        b.click(f"{CUR} [data-diffnote-add=global]")
+        self.assertTrue(b.wait_exists(".diffnote-compose textarea[placeholder^='コメントを書く']"))
+        self.assertTrue(above(".diffnote-compose textarea[placeholder^='コメントを書く']"), "new comment")
+
     def test_an_svg_is_taken_only_if_nothing_in_it_runs(self):
         self.serve()
         b = self.b

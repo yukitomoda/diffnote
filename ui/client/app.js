@@ -113,13 +113,13 @@
       </article>`}
       <div class="diffnote-thread__actions">
         <form class="diffnote-reply" data-diffnote-thread=${t.id} onSubmit=${function (e) { e.preventDefault(); send(); }}>
+          <div class="diffnote-attach-bar">${attach.picker(function () { return field.current; })}</div>
           <textarea ref=${field} rows="2" placeholder="返信を書く(Ctrl+Enter で送信)" value=${text} disabled=${pending !== null}
             ...${attach.handlers}
             onInput=${function (e) { setText(e.target.value); }}
             onKeyDown=${function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }}></textarea>
           ${attach.note}
           <div class="diffnote-reply__buttons">
-            ${attach.picker(function () { return field.current; })}
             <button type="submit" class="diffnote-button diffnote-button--primary">返信</button>
             <button type="button" class="diffnote-button" data-diffnote-action=${action} data-diffnote-thread=${t.id} onClick=${toggle}>${t.resolved ? '再開する' : '解決にする'}</button>
           </div>
@@ -280,6 +280,7 @@
       </span>`}</p>
       ${editing
         ? html`<form class="diffnote-compose" data-diffnote-edit-form onSubmit=${function (e) { e.preventDefault(); save(); }}>
+            <div class="diffnote-attach-bar">${attach.picker(function () { return field.current; })}</div>
             <textarea ref=${field} rows="3" value=${text} ...${attach.handlers} onInput=${function (e) { setText(e.target.value); }}
               onKeyDown=${function (e) {
                 if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
@@ -287,7 +288,6 @@
               }}></textarea>
             ${attach.note}
             <div class="diffnote-reply__buttons">
-              ${attach.picker(function () { return field.current; })}
               <button type="submit" class="diffnote-button diffnote-button--primary" disabled=${busy}>保存</button>
               <button type="button" class="diffnote-button" onClick=${function () { setEditing(false); }}>キャンセル</button>
             </div>
@@ -335,13 +335,12 @@
     return html`<div>
       <form class="diffnote-compose" data-diffnote-scope=${props.scope} style=${c.pending ? 'display:none' : undefined}
         onSubmit=${function (e) { e.preventDefault(); send(); }}>
-        <div class="diffnote-compose__head"><div class="diffnote-compose__where">${props.where}</div>${props.copy && html`<button type="button" class="diffnote-copy" data-diffnote-copy=${props.copy} title="この範囲へのリンク(リビジョンつき)をコピー">コピー</button>`}</div>
+        <div class="diffnote-compose__head"><div class="diffnote-compose__where">${props.where}</div>${props.copy && html`<button type="button" class="diffnote-copy" data-diffnote-copy=${props.copy} title="この範囲へのリンク(リビジョンつき)をコピー">コピー</button>`}<span class="diffnote-attach-bar">${attach.picker(function () { return box.current; })}</span></div>
         <textarea ref=${box} rows="3" placeholder="コメントを書く(Ctrl+Enter で送信)" value=${c.draft} ...${attach.handlers}
           onInput=${function (e) { c.setDraft(e.target.value); }}
           onKeyDown=${function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }}></textarea>
         ${attach.note}
         <div class="diffnote-reply__buttons">
-          ${attach.picker(function () { return box.current; })}
           <button type="submit" class="diffnote-button diffnote-button--primary">コメントする</button>
           <button type="button" class="diffnote-button" data-diffnote-cancel onClick=${c.close}>キャンセル</button>
         </div>
