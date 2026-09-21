@@ -915,6 +915,14 @@
         setTitle: function (title) {
           return D.api.post('/api/title', { title: title }).then(whole);
         },
+        // What was added to the target since the server started becomes a new
+        // revision (the answer says what was done; the page keeps its place).
+        refresh: function () {
+          return D.api.post('/api/refresh').then(function (res) {
+            if (res.ok) setModel(res.model);
+            return res;
+          });
+        },
         setAuthor: function (name) {
           return D.api.post('/api/author', { author: name }).then(function (res) {
             if (res.ok) setModel(function (cur) { return Object.assign({}, cur, { author: res.author }); });
@@ -1135,6 +1143,16 @@
     var hide = _h[0];
     var setHide = _h[1];
     var counts = lib.counts(model.threads);
+    // What pressing 「最新を取り込む」 did, said next to it.
+    var _n = useState(null);
+    var note = _n[0];
+    var setNote = _n[1];
+    var pull = function () {
+      setNote({ text: '取り込んでいます…', busy: true });
+      review.actions.refresh().then(function (res) {
+        setNote({ text: res.ok ? res.message : (res.error || '取り込めませんでした'), failed: !res.ok });
+      });
+    };
     // Side by side, if chosen and there is room for two columns. What was chosen
     // before is kept; without a choice the page starts side by side if the
     // window is wide (only when it opens: resizing the window doesn't change it).
@@ -1184,6 +1202,11 @@
         </label>`}
         ${review.actions && model.author != null && html`<span class="diffnote-author">作者: <${InlineEdit} name="author" value=${model.author} max="100" label="作者名を変える(この起動の間だけ)" placeholder="作者名"
           onSave=${review.actions.setAuthor}><strong data-diffnote-author>${model.author}</strong><//></span>`}
+        ${review.actions && model.refreshable && html`<span class="diffnote-pull">
+          <button type="button" class="diffnote-button" data-diffnote-pull disabled=${!!(note && note.busy)} onClick=${pull}
+            title="起動したあとに増えたコミットなど、対象の新しい変更を、新しいリビジョンとして取り込みます">最新を取り込む</button>
+          ${note && html`<span class=${'diffnote-pull__note' + (note.failed ? ' is-failed' : '')} data-diffnote-pull-note role="status">${note.text}</span>`}
+        </span>`}
         ${model.interactive && html`<a class="diffnote-button" data-diffnote-export href="/export" title="今の内容を、誰でも開ける HTML として保存します">エクスポート</a>`}
         ${model.interactive && html`<button type="button" class="diffnote-button diffnote-topbar__quit" data-diffnote-shutdown title="サーバーを止めます"
           onClick=${function () { D.api.post('/api/shutdown').then(function (res) { stopped(res.summary); }); }}>終了</button>`}

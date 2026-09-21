@@ -639,6 +639,36 @@ class ServeAddsTheLatestDiff(ServedCase):
         ready = "!!document.querySelector('.diffnote-file')"
         self.b.open(server.url, ready=ready)
 
+    def test_the_pull_button_takes_in_a_commit_made_after_the_server_started(self):
+        repo = make_gaps_review(self.root, name="pulled")[1]
+        review = os.path.join(self.fresh("review"), "pulled.diffnote")
+        assert harness.diffnote("init", "-f", review, "c1", cwd=repo).returncode == 0
+        self.open_page(Served(review, cwd=repo))
+        b = self.b
+        self.assertEqual(b.js("document.querySelectorAll('[data-diffnote-revision-link]').length"), 0, "one revision: no list")
+        harness.write(repo, "long.txt", "".join(f"new {n}\n" for n in range(1, 101)))
+        harness.git(repo, "commit", "-q", "-am", "c3")
+        before = entries(review)
+        b.click("[data-diffnote-pull]")
+        self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-revision-link]').length === 2"))
+        self.assertIn("差分を記録しました", b.js("document.querySelector('[data-diffnote-pull-note]').textContent"))
+        self.assertGreater(entries(review), before)
+        self.assertEqual(b.js("document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink"), "0",
+                         "the page keeps showing what it showed")
+        b.click("[data-diffnote-pull]")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-pull-note]').textContent.includes('新しい変更はありません')"))
+        self.assertEqual(b.js("document.querySelectorAll('[data-diffnote-revision-link]').length"), 2)
+
+    def test_a_named_commit_has_nothing_to_pull(self):
+        repo = make_gaps_review(self.root, name="named2")[1]
+        review = os.path.join(self.fresh("review"), "named2.diffnote")
+        assert harness.diffnote("init", "-f", review, "c1", cwd=repo).returncode == 0
+        self.open_page(Served(review, cwd=repo, extra=["c2"]))
+        harness.write(repo, "long.txt", "x\n")
+        harness.git(repo, "commit", "-q", "-am", "c3")
+        self.b.click("[data-diffnote-pull]")
+        self.assertTrue(self.b.wait("document.querySelector('[data-diffnote-pull-note]').textContent.includes('新しい変更はありません')"))
+
     def test_a_base_and_a_target_make_the_bundle_if_there_is_none(self):
         review = os.path.join(self.fresh("review"), "named.diffnote")
         server = Served(review, cwd=self.repo, extra=["--base", "c1", "c2"])

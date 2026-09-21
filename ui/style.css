@@ -96,6 +96,9 @@ body.is-selecting { user-select: none; }
 .diffnote-hide-resolved .diffnote-line--resolved-only .diffnote-line__gutter-old, .diffnote-hide-resolved .diffnote-line--resolved-only .diffnote-line__gutter-new { color: var(--diffnote-color-muted); font-weight: 400; }
 .diffnote-topbar__quit { margin-left: auto; }
 .diffnote-button { font: inherit; font-size: 12.5px; padding: 3px 12px; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; cursor: pointer; }
+.diffnote-pull { display: inline-flex; align-items: center; gap: 8px; }
+.diffnote-pull__note { font-size: 12.5px; color: var(--diffnote-color-muted, inherit); }
+.diffnote-pull__note.is-failed { color: #cf222e; }
 .diffnote-button:hover { background: var(--diffnote-color-gutter); }
 a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1.5; }
 .diffnote-button:disabled { opacity: 0.6; cursor: default; }

@@ -287,7 +287,7 @@ fn add_revision(
     base: Option<&str>,
     target: Option<&str>,
     files: bool,
-) -> Result<()> {
+) -> Result<Option<String>> {
     let mut loaded = bundle::load(review_path)?;
     let explicit = base.is_some() || target.is_some();
     let mut fresh = FreshBundle(None);
@@ -312,14 +312,14 @@ fn add_revision(
         let dir = match target {
             Some(dir) => dir,
             None if fresh.0.is_some() => ".",
-            None => return Ok(()),
+            None => return Ok(None),
         };
         files_input(&loaded, Path::new(dir), &exclude)?
     } else {
         match loaded.source() {
             Some(_) => {
                 if !explicit && !repo.exists() {
-                    return Ok(());
+                    return Ok(None);
                 }
             }
             None if !explicit => {
@@ -333,7 +333,7 @@ fn add_revision(
         git_input(repo.clone(), git_range(repo, &loaded, base, target)?)?
     };
     if input.diff_text.trim().is_empty() || loaded.revisions().any(|r| r.digest == input.digest) {
-        return Ok(());
+        return Ok(None);
     }
     let Input {
         diff_text,
@@ -383,8 +383,7 @@ fn add_revision(
     events.extend(new_events);
     bundle::save(review_path, &loaded, &events, &additions)?;
     fresh.keep();
-    println!("{said}");
-    Ok(())
+    Ok(Some(said))
 }
 
 /// The repository to work in: the one named by `--repo`, else the one the
@@ -435,7 +434,11 @@ fn cmd_serve(
     // failure to do what was asked stops; one to do what was not, only says so).
     let git = repo_of(repo.clone())?;
     match add_revision(&review, &git, base.as_deref(), target.as_deref(), files) {
-        Ok(()) => {}
+        Ok(said) => {
+            if let Some(said) = said {
+                println!("{said}");
+            }
+        }
         Err(e) if explicit => return Err(e),
         Err(e) => println!("注意: 最新の差分を記録できませんでした: {e}"),
     }
@@ -464,11 +467,18 @@ fn cmd_serve(
             "注意: レビューする差分がまだありません。基準のあとにコミットを重ねてから、もう一度 `diffnote serve` を起動してください(比較対象は `diffnote serve <コミット>` でも指定できます)"
         );
     }
+    // The page's button: what was added to the target since (the base is
+    // already the review's; a named commit doesn't move, `HEAD` does).
+    let refresher: diffnote::serve::Refresher = {
+        let (review, git, target) = (review.clone(), git.clone(), target.clone());
+        std::sync::Arc::new(move || add_revision(&review, &git, None, target.as_deref(), files))
+    };
     let options = diffnote::serve::Options {
         review,
         port,
         author,
         repo,
+        refresh: Some(refresher),
     };
     diffnote::serve::run(&options, |url, notices| {
         for notice in notices {

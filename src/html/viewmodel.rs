@@ -34,6 +34,10 @@ pub struct ViewModel {
     /// change it for the rest of the session).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
+    /// Whether the page may ask the server to take in what was added to the
+    /// target since it started (served page only).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub refreshable: bool,
     /// Whether the page can change the review (the served one).
     pub interactive: bool,
     pub title: Option<String>,
@@ -230,6 +234,7 @@ pub fn view_model_with(
         stamp: stamp(loaded),
         editable: Vec::new(),
         author: None,
+        refreshable: false,
         interactive,
         title: crate::review::title(&loaded.events).map(str::to_string),
         threads: {
@@ -257,10 +262,12 @@ pub fn served_model_json(
     loaded: &crate::bundle::Loaded,
     editable: Vec<String>,
     author: String,
+    refreshable: bool,
 ) -> anyhow::Result<String> {
     let mut model = view_model_for(loaded, true)?;
     model.editable = editable;
     model.author = Some(author);
+    model.refreshable = refreshable;
     model_json(&model)
 }
 

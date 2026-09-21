@@ -43,7 +43,13 @@ pub struct Options {
     /// the directory the server is started in), to open files the bundle
     /// doesn't store.
     pub repo: Option<PathBuf>,
+    /// Takes in what was added to the target since the server started (the
+    /// page's button): what it says was done, or `None` if there was nothing.
+    pub refresh: Option<Refresher>,
 }
+
+/// See [`Options::refresh`].
+pub type Refresher = std::sync::Arc<dyn Fn() -> anyhow::Result<Option<String>> + Send + Sync>;
 
 /// A request, reduced to what the server looks at.
 pub struct Request<'a> {
@@ -104,6 +110,7 @@ impl Reply {
 /// behavior and does no networking.
 pub struct Server {
     review: PathBuf,
+    refresh: Option<Refresher>,
     /// The name comments are written under: `--author` or the default, and
     /// what the page sets for the rest of the session.
     author: std::sync::Mutex<String>,
@@ -201,6 +208,7 @@ impl Server {
         let token = format!("{}{}", Ulid::new(), Ulid::new());
         Server {
             review: options.review.clone(),
+            refresh: options.refresh.clone(),
             author: std::sync::Mutex::new(author::resolve(options.author.as_deref())),
             token,
             port,
@@ -285,6 +293,7 @@ impl Server {
         let mut model = html::view_model_for(loaded, true).map_err(internal)?;
         model.editable = self.editable(loaded);
         model.author = Some(self.author());
+        model.refreshable = self.refresh.is_some();
         Ok(model)
     }
 
@@ -393,7 +402,7 @@ impl Server {
     fn page(&self) -> Reply {
         match bundle::load(&self.review).and_then(|l| {
             let editable = self.editable(&l);
-            html::render_served_page(&l, editable, self.author())
+            html::render_served_page(&l, editable, self.author(), self.refresh.is_some())
         }) {
             Ok(page) => Reply::html(200, page),
             Err(e) => Reply::html(
@@ -679,6 +688,7 @@ impl Server {
             }
             ["api", "author"] => self.set_author(request.body),
             ["api", "title"] => self.set_title(request.body),
+            ["api", "refresh"] => self.refresh(),
             ["api", "comments", id, "edit"] => self.edit_comment(id, request.body),
             ["api", "comments", id, "delete"] => self.delete_comment(id),
             _ => return Reply::error(404, "見つかりません"),
@@ -737,6 +747,22 @@ impl Server {
             200,
             &serde_json::json!({ "ok": true, "author": name }),
         ))
+    }
+
+    /// Takes in what was added to the target since the server started, as a
+    /// new revision (the page is told, and keeps showing what it showed).
+    fn refresh(&self) -> Result<Reply, Failure> {
+        let Some(refresh) = &self.refresh else {
+            return Err(Failure(400, "この起動では、取り込めません".into()));
+        };
+        let before = html::stamp(&bundle::load(&self.review).map_err(internal)?);
+        let said = refresh().map_err(|e| Failure(500, format!("取り込めませんでした: {e}")))?;
+        let added = said.is_some();
+        let message = said.unwrap_or_else(|| "新しい変更はありません".into());
+        self.model_answer(
+            &before,
+            serde_json::json!({ "message": message, "added": added }),
+        )
     }
 
     /// Sets the review's title (an empty one takes it away), as `edit --title`.
@@ -1170,6 +1196,7 @@ mod tests {
                 port: 0,
                 author: Some("tester".into()),
                 repo,
+                refresh: None,
             },
             4242,
         );
@@ -1547,6 +1574,7 @@ mod tests {
                 port: 0,
                 author: None,
                 repo: None,
+                refresh: None,
             },
             4242,
         );
@@ -1675,6 +1703,63 @@ mod tests {
     }
 
     #[test]
+    fn the_pull_asks_the_refresher_and_answers_with_what_it_did_and_the_model() {
+        let f = fixture();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = calls.clone();
+        let server = Server::new(
+            &Options {
+                review: f.path.clone(),
+                port: 0,
+                author: None,
+                repo: None,
+                refresh: Some(std::sync::Arc::new(move || {
+                    match counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+                        0 => Ok(Some("差分を記録しました".to_string())),
+                        1 => Ok(None),
+                        _ => anyhow::bail!("壊れました"),
+                    }
+                })),
+            },
+            4242,
+        );
+        let post = || {
+            server.handle(&Request {
+                method: "POST",
+                target: "/api/refresh",
+                headers: vec![
+                    ("host".into(), "127.0.0.1:4242".into()),
+                    (
+                        "cookie".into(),
+                        format!("{}={}", server.cookie_name(), server.token()),
+                    ),
+                    ("x-diffnote".into(), "1".into()),
+                ],
+                body: b"{}",
+            })
+        };
+        let done = json(&post());
+        assert_eq!(done["message"], "差分を記録しました");
+        assert_eq!(done["added"], true);
+        assert_eq!(done["model"]["refreshable"], true);
+        let none = json(&post());
+        assert_eq!(none["message"], "新しい変更はありません");
+        assert_eq!(none["added"], false);
+        let broken = post();
+        assert_eq!(broken.status, 500);
+        assert!(
+            json(&broken)["error"]
+                .as_str()
+                .unwrap()
+                .contains("壊れました")
+        );
+        // A server that was not given one has no button, and refuses.
+        assert_eq!(f.post("/api/refresh", "{}").status, 400);
+        let model = json(&f.request("GET", "/api/model", &[], ""));
+        assert!(model["model"].get("refreshable").is_none());
+    }
+
+    #[test]
     fn two_servers_on_one_machine_do_not_take_each_others_cookie() {
         let one = fixture();
         let other = Server::new(
@@ -1683,6 +1768,7 @@ mod tests {
                 port: 0,
                 author: None,
                 repo: None,
+                refresh: None,
             },
             4243,
         );
@@ -2694,6 +2780,7 @@ mod tests {
                 port: 0,
                 author: None,
                 repo: Some(g.f.path.parent().unwrap().to_path_buf()),
+                refresh: None,
             },
             4242,
         );
@@ -2830,6 +2917,7 @@ mod tests {
             port: 0,
             author: None,
             repo: Some(elsewhere.path().to_path_buf()),
+            refresh: None,
         };
         let err = run(&options, |_, _| panic!("must not start")).unwrap_err();
         assert!(
@@ -2874,6 +2962,7 @@ mod tests {
             port: 0,
             author: Some("tester".into()),
             repo: None,
+            refresh: None,
         };
         let (sender, receiver) = std::sync::mpsc::channel();
         let thread = std::thread::spawn(move || {
