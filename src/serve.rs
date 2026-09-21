@@ -112,6 +112,10 @@ impl Reply {
 /// behavior and does no networking.
 pub struct Server {
     review: PathBuf,
+    /// The review as it was when the server started, to go back to if the
+    /// session is to be thrown away (「保存せずに終了」).
+    original: Option<Vec<u8>>,
+    discarded: std::sync::atomic::AtomicBool,
     refresh: Option<Refresher>,
     /// The name comments are written under: `--author` or the default, and
     /// what the page sets for the rest of the session.
@@ -210,6 +214,8 @@ impl Server {
         let token = format!("{}{}", Ulid::new(), Ulid::new());
         Server {
             review: options.review.clone(),
+            original: std::fs::read(&options.review).ok(),
+            discarded: Default::default(),
             refresh: options.refresh.clone(),
             author: std::sync::Mutex::new(author::resolve(options.author.as_deref())),
             token,
@@ -246,6 +252,7 @@ impl Server {
             )
         });
         serde_json::json!({
+            "discarded": self.was_discarded(),
             "changes": stats.describe(),
             "path": self.review.display().to_string(),
             "threads": totals.map(|t| t.0),
@@ -253,9 +260,39 @@ impl Server {
         })
     }
 
+    fn was_discarded(&self) -> bool {
+        self.discarded.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Puts the review back as it was when the server started.
+    fn discard(&self) -> Result<(), Failure> {
+        let original = self
+            .original
+            .as_ref()
+            .ok_or_else(|| Failure(500, "起動したときの内容がありません".into()))?;
+        let dir = self
+            .review
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let mut temp = tempfile::NamedTempFile::new_in(dir).map_err(|e| internal(e.into()))?;
+        std::io::Write::write_all(&mut temp, original).map_err(|e| internal(e.into()))?;
+        temp.persist(&self.review)
+            .map_err(|e| internal(e.error.into()))?;
+        self.discarded
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
     /// What is said when the server stops.
     pub fn farewell(&self) -> String {
         let parts = self.farewell_parts();
+        if self.was_discarded() {
+            return format!(
+                "保存せずに終了しました(今回の変更は破棄しました)\n{} は、起動したときの内容のままです",
+                parts["path"].as_str().unwrap_or("")
+            );
+        }
         let kept = match (parts["threads"].as_u64(), parts["comments"].as_u64()) {
             (Some(t), Some(c)) => format!(
                 "{} に保存しました(スレッド {t} 件・コメント {c} 件)",
@@ -676,6 +713,13 @@ impl Server {
             return Reply::error(413, "送られた内容が大きすぎます");
         }
         if path == "/api/shutdown" {
+            let discard = serde_json::from_slice::<serde_json::Value>(request.body)
+                .ok()
+                .and_then(|v| v.get("discard").and_then(|d| d.as_bool()))
+                .unwrap_or(false);
+            if discard && let Err(Failure(status, message)) = self.discard() {
+                return Reply::error(status, &message);
+            }
             let mut reply = Reply::json(
                 200,
                 &serde_json::json!({ "ok": true, "farewell": self.farewell(), "summary": self.farewell_parts() }),
@@ -1784,6 +1828,52 @@ mod tests {
         assert_eq!(f.post("/api/refresh", "{}").status, 400);
         let model = json(&f.request("GET", "/api/model", &[], ""));
         assert!(model["model"].get("refreshable").is_none());
+    }
+
+    #[test]
+    fn shutting_down_with_discard_puts_the_review_back_as_it_was_at_the_start() {
+        let f = fixture();
+        let before = std::fs::read(&f.path).unwrap();
+        // The server that is started now is the one that keeps what it found.
+        let server = Server::new(
+            &Options {
+                review: f.path.clone(),
+                port: 0,
+                author: Some("tester".into()),
+                repo: None,
+                refresh: None,
+            },
+            4242,
+        );
+        let post = |target: &str, body: &[u8]| {
+            server.handle(&Request {
+                method: "POST",
+                target,
+                headers: vec![
+                    ("host".into(), "127.0.0.1:4242".into()),
+                    (
+                        "cookie".into(),
+                        format!("{}={}", server.cookie_name(), server.token()),
+                    ),
+                    ("x-diffnote".into(), "1".into()),
+                ],
+                body,
+            })
+        };
+        let reply = r#"{"body":"捨てる"}"#;
+        assert_eq!(
+            post(
+                &format!("/api/threads/{}/replies", f.thread),
+                reply.as_bytes()
+            )
+            .status,
+            200
+        );
+        assert_ne!(std::fs::read(&f.path).unwrap(), before, "it was written");
+        let told = json(&post("/api/shutdown", br#"{"discard":true}"#));
+        assert_eq!(told["summary"]["discarded"], true);
+        assert_eq!(std::fs::read(&f.path).unwrap(), before, "and is back");
+        assert!(server.farewell().contains("保存せずに終了"));
     }
 
     #[test]

@@ -303,6 +303,16 @@ class Served:
                 break
         assert self.url, "diffnote serve did not start"
 
+    def said_more(self):
+        """What the server has said since it started: waits for it to stop, then reads the rest."""
+        try:
+            self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        rest = self.proc.stdout.read() if self.proc.poll() is not None else ""
+        self.said.extend(l.strip() for l in rest.splitlines())
+        return self.said
+
     def stop(self):
         if self.proc.poll() is None:
             self.proc.terminate()

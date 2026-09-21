@@ -312,6 +312,33 @@ class Replies(ServedCase):
         self.assertTrue(b.wait("!!document.querySelector('.diffnote-inline .diffnote-error')"))
         b.escape()
 
+    def test_quitting_without_saving_puts_the_review_back_as_it_was_when_the_server_started(self):
+        self.serve()
+        b = self.b
+        before = show(self.review)
+        card = self.card("mul の型")
+        self.reply_to(card, "捨てる返信")
+        self.assertIn("捨てる返信", show(self.review))
+        self.assertFalse(b.exists("[data-diffnote-discard]"), "the way out is behind the arrow")
+        b.click("[data-diffnote-quit-more]")
+        self.assertTrue(b.wait_exists("[data-diffnote-discard]"))
+        b.click("[data-diffnote-discard]")
+        self.assertTrue(b.wait_exists("[data-diffnote-discard-confirm]"), "asked again")
+        self.assertIn("捨てる返信", show(self.review), "nothing is thrown away before it is confirmed")
+        b.click("[data-diffnote-discard-confirm]")
+        self.assertTrue(b.wait("!document.getElementById('app')"))
+        told = b.js("document.body.textContent")
+        self.assertIn("保存せずに終了しました", told)
+        self.assertIn("破棄しました", told)
+        self.assertEqual(show(self.review), before)
+        self.assertTrue(any("保存せずに終了" in l for l in self.wait_said()), "the terminal says so too")
+
+    def wait_said(self):
+        deadline = time.time() + 5
+        while time.time() < deadline and not any("保存せずに終了" in l for l in self.server.said_more()):
+            time.sleep(0.05)
+        return self.server.said_more()
+
     def test_the_shutdown_button_stops_the_server_and_says_roughly_what_was_saved(self):
         self.serve()
         b = self.b

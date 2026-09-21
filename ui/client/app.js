@@ -274,6 +274,51 @@
     </div>`;
   }
 
+  // 「終了」: the way to finish, big; and, behind the arrow, the way not to
+  // keep what was done in this session (asked again before it is done).
+  function QuitButton() {
+    var _o = useState(false);
+    var open = _o[0];
+    var setOpen = _o[1];
+    var _s = useState(false);
+    var sure = _s[0];
+    var setSure = _s[1];
+    var _e = useState(null);
+    var error = _e[0];
+    var setError = _e[1];
+    var box = useRef(null);
+    useEffect(function () {
+      if (!open) return undefined;
+      var away = function (e) { if (box.current && !box.current.contains(e.target)) { setOpen(false); setSure(false); } };
+      var key = function (e) { if (e.key === 'Escape') { setOpen(false); setSure(false); } };
+      document.addEventListener('mousedown', away);
+      document.addEventListener('keydown', key);
+      return function () {
+        document.removeEventListener('mousedown', away);
+        document.removeEventListener('keydown', key);
+      };
+    }, [open]);
+    var quit = function (discard) {
+      D.api.post('/api/shutdown', discard ? { discard: true } : undefined).then(function (res) {
+        if (res.ok) stopped(res.summary);
+        else setError(res.error || '終了できませんでした');
+      });
+    };
+    return html`<span class="diffnote-quit" ref=${box}>
+      <button type="button" class="diffnote-quit__main" data-diffnote-shutdown title="今の内容で保存して、サーバーを止めます"
+        onClick=${function () { quit(false); }}>終了</button><button type="button" class="diffnote-quit__more" data-diffnote-quit-more aria-label="ほかの終了のしかた" aria-expanded=${open}
+        onClick=${function () { setOpen(!open); setSure(false); }}>▾</button>
+      ${open && html`<div class="diffnote-quit__menu" data-diffnote-quit-menu>
+        ${!sure
+          ? html`<button type="button" class="diffnote-quit__item" data-diffnote-discard onClick=${function () { setSure(true); }}>保存せずに終了…</button>`
+          : html`<p>この起動で行った変更を破棄して、起動したときの内容に戻し、終了します。</p>
+            <button type="button" class="diffnote-quit__danger" data-diffnote-discard-confirm onClick=${function () { quit(true); }}>破棄して終了</button>
+            <button type="button" class="diffnote-quit__cancel" onClick=${function () { setSure(false); setOpen(false); }}>やめる</button>`}
+        ${error && html`<p class="diffnote-error">${error}</p>`}
+      </div>`}
+    </span>`;
+  }
+
   // What the tab shows once the server has stopped.
   function stopped(summary) {
     preact.render(null, document.getElementById('app'));
@@ -284,9 +329,17 @@
       return e;
     };
     var card = make('div', 'diffnote-farewell__card');
-    card.appendChild(make('div', 'diffnote-farewell__mark', '✓'));
-    card.appendChild(make('h1', 'diffnote-farewell__title', '終了しました'));
-    if (summary) {
+    var discarded = !!(summary && summary.discarded);
+    card.appendChild(make('div', 'diffnote-farewell__mark', discarded ? '↩' : '✓'));
+    card.appendChild(make('h1', 'diffnote-farewell__title', discarded ? '保存せずに終了しました' : '終了しました'));
+    if (discarded) {
+      var kept = make('dl', 'diffnote-farewell__list');
+      kept.appendChild(make('dt', '', '今回の変更'));
+      kept.appendChild(make('dd', '', '破棄しました'));
+      kept.appendChild(make('dt', '', '保存先'));
+      kept.appendChild(make('dd', '', summary.path + '(起動したときの内容のままです)'));
+      card.appendChild(kept);
+    } else if (summary) {
       var list = make('dl', 'diffnote-farewell__list');
       var row = function (label, value) {
         list.appendChild(make('dt', '', label));
@@ -1234,8 +1287,7 @@
           ${note && html`<span class=${'diffnote-pull__note' + (note.failed ? ' is-failed' : '')} data-diffnote-pull-note role="status">${note.text}</span>`}
         </span>`}
         ${model.interactive && html`<a class="diffnote-button" data-diffnote-export href="/export" title="今の内容を、誰でも開ける HTML として保存します">エクスポート</a>`}
-        ${model.interactive && html`<button type="button" class="diffnote-button diffnote-topbar__quit" data-diffnote-shutdown title="サーバーを止めます"
-          onClick=${function () { D.api.post('/api/shutdown').then(function (res) { stopped(res.summary); }); }}>終了</button>`}
+        ${model.interactive && html`<${QuitButton} />`}
       </div>
       <${ActionsContext.Provider} value=${review.actions}>
         <${ComposeContext.Provider} value=${compose}>
