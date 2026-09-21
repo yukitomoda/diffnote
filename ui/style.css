@@ -216,3 +216,19 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-comment__tools { margin-left: 8px; }
 .diffnote-comment__tools .diffnote-mini { margin-left: 4px; }
 .diffnote-comment > .diffnote-compose { margin-top: 4px; }
+
+/* Code colors, by the kind of what is written (see src/html/tokens.rs). */
+.tok-comment { color: #6e7781; font-style: italic; }
+.tok-string { color: #0a3069; }
+.tok-number, .tok-constant, .tok-operator { color: #0550ae; }
+.tok-keyword { color: #cf222e; }
+.tok-function { color: #8250df; }
+.tok-type { color: #953800; }
+.tok-variable { color: #953800; }
+.tok-tag { color: #116329; }
+.tok-attribute { color: #0550ae; }
+.tok-heading { color: #0550ae; font-weight: 600; }
+.tok-strong { font-weight: 600; }
+.tok-emphasis { font-style: italic; }
+.tok-raw { color: #0550ae; }
+.tok-link { color: #0969da; text-decoration: underline; }

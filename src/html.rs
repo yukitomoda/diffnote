@@ -24,9 +24,6 @@ use crate::model::Side;
 use crate::review::{Thread, build_threads};
 use pulldown_cmark::{Parser as MdParser, html::push_html as md_push_html};
 use std::collections::HashMap;
-use syntect::easy::HighlightLines;
-use syntect::highlighting::{Theme, ThemeSet};
-use syntect::html::{IncludeBackground, styled_line_to_highlighted_html};
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 use ulid::Ulid;
 
@@ -35,7 +32,6 @@ use ulid::Ulid;
 /// drawing the lines, so a page (and a server) must not start over each time.
 static SYNTAXES: std::sync::LazyLock<SyntaxSet> =
     std::sync::LazyLock::new(SyntaxSet::load_defaults_newlines);
-static THEMES: std::sync::LazyLock<ThemeSet> = std::sync::LazyLock::new(ThemeSet::load_defaults);
 
 /// Per-view drawing state shared by the render functions.
 #[derive(Default)]
@@ -710,22 +706,6 @@ fn markdown_to_html(body: &str) -> String {
     out
 }
 
-fn highlight_line(
-    highlighter: &mut HighlightLines,
-    content: &str,
-    syntax_set: &SyntaxSet,
-) -> String {
-    // syntect expects each line to keep its trailing newline for correct
-    // stateful parsing (e.g. line comments).
-    let mut line = content.to_string();
-    line.push('\n');
-    let Ok(ranges) = highlighter.highlight_line(&line, syntax_set) else {
-        return escape_html(content);
-    };
-    styled_line_to_highlighted_html(&ranges[..], IncludeBackground::No)
-        .unwrap_or_else(|_| escape_html(content))
-}
-
 fn guess_syntax<'a>(file: &str, syntax_set: &'a SyntaxSet) -> &'a SyntaxReference {
     std::path::Path::new(file)
         .extension()
@@ -753,7 +733,8 @@ const DEFAULT_TITLE: &str = "diffnote レビュー";
 
 const STYLE: &str = include_str!("../ui/style.css");
 
-pub(crate) mod viewmodel;
+pub(crate) mod tokens;
+mod viewmodel;
 pub use viewmodel::{
     OpenedData, ViewModel, chunk_data, opened_data, served_model_json, stamp, thread_json,
     tree_json, view_model, view_model_for, view_model_json,
@@ -957,7 +938,7 @@ mod tests {
     #[test]
     fn the_model_has_the_threads_their_comments_and_a_revision_per_view() {
         let (m, [t1, ..], _dir, _loaded) = model_of_scenario();
-        assert_eq!(m.version, 1);
+        assert_eq!(m.version, 2);
         assert_eq!(m.title, None);
         assert_eq!(m.revisions.len(), 2);
         assert_eq!(m.threads.len(), 5);
@@ -1014,7 +995,9 @@ mod tests {
                 ("c", Some(4), Some(4)),
             ]
         );
-        assert!(file.hunks[0].rows[1].h.contains('b') && file.hunks[0].rows[2].h.contains('B'));
+        let text =
+            |i: usize| -> String { file.hunks[0].rows[i].t.iter().map(|t| t.text()).collect() };
+        assert!(text(1).contains('b') && text(2).contains('B'));
         assert!(
             file.hunks[0].header.starts_with("@@ -1,4 +1,4 @@"),
             "{}",

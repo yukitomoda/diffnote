@@ -8,15 +8,17 @@
 //!
 //! Keys of a row are short, since a big diff has many of them: `k` kind
 //! (`c` unchanged, `a` added, `d` removed), `o`/`n` the line number on the old
-//! and new side (absent where the line isn't there), `h` the text, colored, as
-//! HTML.
+//! and new side (absent where the line isn't there), `t` the text as pieces
+//! (`"text"`, or `[kind, "text"]` for a piece of a kind: see `tokens`). The
+//! page draws the pieces; there is no HTML in the data but the comments'.
 
+use super::tokens::{Token, Tokenizer};
 use super::*;
 use serde::Serialize;
 use std::collections::BTreeMap;
 
 /// The version of this format, for the page to check.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 #[derive(Serialize)]
 pub struct ViewModel {
@@ -96,7 +98,8 @@ pub struct RowData {
     pub o: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub n: Option<u32>,
-    pub h: String,
+    /// The text, as pieces with their kinds (see `tokens`).
+    pub t: Vec<Token>,
 }
 
 /// Where a thread is in one revision.
@@ -282,7 +285,6 @@ fn revision_data(
     let placed = place(threads, view, blobs);
     let in_diff: std::collections::HashSet<String> = view.diff.files.iter().map(file_key).collect();
     let syntax_set = &*SYNTAXES;
-    let theme = &THEMES.themes["InspiredGitHub"];
 
     let files = placed
         .file_order
@@ -294,7 +296,7 @@ fn revision_data(
                 .map(|f| {
                     f.hunks
                         .iter()
-                        .map(|hunk| hunk_data(hunk, syntax, syntax_set, theme))
+                        .map(|hunk| hunk_data(hunk, syntax, syntax_set))
                         .collect()
                 })
                 .unwrap_or_default();
@@ -346,14 +348,9 @@ pub(super) fn file_status(file: Option<&FileDiff>, in_diff: bool) -> &'static st
     }
 }
 
-fn hunk_data(
-    hunk: &Hunk,
-    syntax: &SyntaxReference,
-    syntax_set: &SyntaxSet,
-    theme: &Theme,
-) -> HunkData {
-    // Each hunk is colored from its start, as the page always has.
-    let mut highlighter = HighlightLines::new(syntax, theme);
+fn hunk_data(hunk: &Hunk, syntax: &SyntaxReference, syntax_set: &SyntaxSet) -> HunkData {
+    // Each hunk is read from its start.
+    let mut tokenizer = Tokenizer::new(syntax, syntax_set);
     let rows = hunk
         .lines
         .iter()
@@ -365,7 +362,7 @@ fn hunk_data(
             },
             o: line.old_line,
             n: line.new_line,
-            h: highlight_line(&mut highlighter, &line.content, syntax_set),
+            t: tokenizer.line(&line.content),
         })
         .collect();
     HunkData {
@@ -471,9 +468,8 @@ pub struct OpenedData {
 fn context_hunk_data(path: &str, text: &str, from: usize) -> (HunkData, Option<usize>) {
     let (hunk, next) = context_chunk(text, from);
     let syntax_set = &*SYNTAXES;
-    let theme = &THEMES.themes["InspiredGitHub"];
     let syntax = guess_syntax(path, syntax_set);
-    (hunk_data(&hunk, syntax, syntax_set, theme), next)
+    (hunk_data(&hunk, syntax, syntax_set), next)
 }
 
 pub fn opened_data(

@@ -57,6 +57,14 @@ class StaticExport(BrowserCase):
         b.cdp.mouse("mouseMoved", 5, 5)
         self.assertEqual(b.js("document.querySelectorAll('.diffnote-range').length"), 0)
 
+    def test_code_is_colored_by_the_kind_of_each_piece(self):
+        b = self.b
+        kinds = b.js("Array.from(new Set(Array.from(document.querySelectorAll('.diffnote-diff .tok')).map(function(e){return e.className}))).sort()")
+        self.assertIn("tok tok-keyword", kinds)
+        plain = b.js("getComputedStyle(document.querySelector('.diffnote-diff code')).color")
+        keyword = b.js("getComputedStyle(document.querySelector('.diffnote-diff .tok-keyword')).color")
+        self.assertNotEqual(plain, keyword)
+
     def test_a_click_pins_the_range_and_escape_lets_go(self):
         b = self.b
         sel = self.card("mul の型")

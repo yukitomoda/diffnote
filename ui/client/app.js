@@ -229,6 +229,14 @@
     </div>`;
   }
 
+  // A line of code: its pieces of text, each with the kind of thing it is (a
+  // plain piece is just its text). The colors are the style's (`.tok-*`).
+  function tokens(pieces) {
+    return pieces.map(function (p, i) {
+      return typeof p === 'string' ? p : html`<span key=${i} class=${'tok tok-' + p[0]}>${p[1]}</span>`;
+    });
+  }
+
   // The rows of one file's diff, with the cards of the threads on them.
   function DiffTable(props) {
     var file = props.file;
@@ -282,7 +290,7 @@
         >
           <td class="diffnote-line__gutter-old" onMouseDown=${begin}>${row.o != null ? row.o : ''}</td>
           <td class="diffnote-line__gutter-new" onMouseDown=${begin}>${row.n != null ? row.n : ''}</td>
-          <td class="diffnote-line__content"><code dangerouslySetInnerHTML=${{ __html: row.h }}></code></td>
+          <td class="diffnote-line__content"><code>${tokens(row.t)}</code></td>
         </tr>`);
         if (sel && !compose.selecting && idx === hi_) {
           var c = lib.counters(flat, sel.anchor, sel.to);
@@ -374,10 +382,10 @@
           onMouseOver=${compose ? function () { compose.extend(function (side) { return side === 'old' ? idxOf(l) : idxOf(r); }); } : undefined}>
           <td class=${'diffnote-line__gutter-old diffnote-cell--' + kl + (shownL ? ' diffnote-gutter--commented' : '') + pl} style=${shownL ? bars(idsL) : undefined}
             data-diffnote-old=${l && l.o != null ? l.o : undefined} onMouseDown=${begin(l, 'old')}>${l && l.o != null ? l.o : ''}</td>
-          <td class=${'diffnote-line__content diffnote-cell--' + kl + pl}>${l && html`<code dangerouslySetInnerHTML=${{ __html: l.h }}></code>`}</td>
+          <td class=${'diffnote-line__content diffnote-cell--' + kl + pl}>${l && html`<code>${tokens(l.t)}</code>`}</td>
           <td class=${'diffnote-line__gutter-new diffnote-cell--' + kr + (shownR ? ' diffnote-gutter--commented' : '') + pr} style=${shownR ? bars(idsR) : undefined}
             data-diffnote-new=${r && r.n != null ? r.n : undefined} onMouseDown=${begin(r, 'new')}>${r && r.n != null ? r.n : ''}</td>
-          <td class=${'diffnote-line__content diffnote-cell--' + kr + pr}>${r && html`<code dangerouslySetInnerHTML=${{ __html: r.h }}></code>`}</td>
+          <td class=${'diffnote-line__content diffnote-cell--' + kr + pr}>${r && html`<code>${tokens(r.t)}</code>`}</td>
         </tr>`);
         // The box for the choice: under the pair that has its last row.
         var last = sel && !compose.selecting ? flat[hi_].row : null;

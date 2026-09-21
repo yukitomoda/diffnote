@@ -2001,7 +2001,11 @@ mod tests {
             ),
             (Some("c"), Some(2), Some(2))
         );
-        assert!(rows[1]["h"].as_str().unwrap().contains(">b</span>"));
+        // The text as pieces with kinds: `fn` a keyword, `b` a function.
+        assert_eq!(
+            rows[1]["t"],
+            serde_json::json!([["keyword", "fn"], " ", ["function", "b"], "() {}"])
+        );
         assert!(
             file["hunks"][0]["header"]
                 .as_str()
@@ -2241,7 +2245,7 @@ mod tests {
         assert_eq!(reply.status, 200, "{}", text(&reply));
         let opened = json(&reply)["file"].to_string();
         assert!(
-            opened.contains(">a</span>") && opened.contains(">b</span>"),
+            opened.contains(r#"["function","a"]"#) && opened.contains(r#"["function","b"]"#),
             "the committed lines: {opened}"
         );
         assert!(!opened.contains("edited"), "{opened}");
