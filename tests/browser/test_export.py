@@ -439,3 +439,37 @@ class ExpandLeftOutLines(BrowserCase):
         # The choice of layout starts the places over (they are shown again as markers).
         self.assertTrue(b.wait_exists(".diffnote-expand-row"))
         self.assertEqual(b.count("table.diffnote-diff--split .diffnote-expand-row td[colspan='4']"), 3)
+
+
+class BinaryFiles(BrowserCase):
+    """A binary file has no lines to show what was done to it, so its title says."""
+
+    def test_the_title_says_whether_a_binary_file_was_added_deleted_or_changed(self):
+        repo = os.path.join(self.root, "bins")
+        os.makedirs(repo)
+        git(repo, "init", "-q", "-b", "main")
+        for name in ("gone.bin", "same.bin"):
+            with open(os.path.join(repo, name), "wb") as f:
+                f.write(b"\xff\xfe\x00\x01")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "c1")
+        git(repo, "tag", "c1")
+        os.remove(os.path.join(repo, "gone.bin"))
+        with open(os.path.join(repo, "same.bin"), "wb") as f:
+            f.write(b"\xff\xfe\x00\x02")
+        with open(os.path.join(repo, "new.bin"), "wb") as f:
+            f.write(b"\xff\x00\x03")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "c2")
+        git(repo, "tag", "c2")
+        review = os.path.join(self.root, "bins.diffnote")
+        assert diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo,
+                        comments=[("GLOBAL", "binary")]).returncode == 0
+        html = os.path.join(self.root, "bins.html")
+        assert diffnote("export", "-f", review, html).returncode == 0
+        b = self.browser
+        b.open(pathlib.Path(html).as_uri(), ready="!!document.querySelector('.diffnote-file')")
+        titles = b.js("[...document.querySelectorAll('section.diffnote-file h2')].map(h => h.textContent).join('|')")
+        self.assertIn("gone.bin (バイナリ・削除)", titles)
+        self.assertIn("new.bin (バイナリ・追加)", titles)
+        self.assertIn("same.bin (バイナリ・変更)", titles)

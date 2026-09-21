@@ -28,6 +28,7 @@
   var OpenedContext = preact.createContext(null);
 
   var DEFAULT_TITLE = 'diffnote レビュー';
+  var BINARY_CHANGES = { added: '追加', deleted: '削除', renamed: '名前変更', modified: '変更' };
 
   // What is kept between visits, where the browser lets us.
   function kept(key, fallback) {
@@ -600,7 +601,7 @@
     return html`<section class="diffnote-file" id=${'r' + ctx.rev + '-file-' + htmlId(file.path)} data-diffnote-file=${file.path}>
       <details ref=${details} open=${startsOpen} onToggle=${function (e) { if (e.target.open && !opened) setOpened(true); }}>
         <summary>
-          <h2>${file.path}${file.status === 'binary' ? ' (バイナリ)' : ''}${file.status === 'renamed' ? ' (名前変更)' : ''}</h2>
+          <h2>${file.path}${file.status === 'binary' ? ' (バイナリ' + (BINARY_CHANGES[file.change] ? '・' + BINARY_CHANGES[file.change] : '') + ')' : ''}${file.status === 'renamed' ? ' (名前変更)' : ''}</h2>
           <button type="button" class="diffnote-copy" data-diffnote-copy=${file.path} title="パスをコピー">コピー</button>
           ${file.opened && files && html`<button type="button" class="diffnote-mini" data-diffnote-close title="この表示を閉じる(記録には残りません)"
             onClick=${function (e) {

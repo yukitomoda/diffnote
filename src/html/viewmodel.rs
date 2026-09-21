@@ -90,6 +90,10 @@ pub struct FileData {
     /// `modified`, `added`, `deleted`, `renamed`, `binary`, or `context` (not
     /// in the diff: shown for the threads that are on it).
     pub status: &'static str,
+    /// What was done to a `binary` file (there are no lines to tell it by):
+    /// `added`, `deleted`, `renamed` or `modified`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change: Option<&'static str>,
     pub hunks: Vec<HunkData>,
     /// The lines the diff leaves out: one place before the first hunk, one
     /// between each two, one after the last (`null` where nothing is left out).
@@ -390,6 +394,9 @@ fn revision_data(
                     .filter(|f| f.is_rename)
                     .and_then(|f| f.old_path.clone()),
                 status: file_status(file_diff, in_diff.contains(key)),
+                change: file_diff
+                    .filter(|f| f.is_binary && in_diff.contains(key))
+                    .map(binary_change),
                 hunks,
                 gaps,
             }
@@ -417,13 +424,9 @@ fn revision_data(
     }
 }
 
-pub(super) fn file_status(file: Option<&FileDiff>, in_diff: bool) -> &'static str {
-    let Some(f) = file.filter(|_| in_diff) else {
-        return "context";
-    };
-    if f.is_binary {
-        "binary"
-    } else if f.new_path.is_none() {
+/// What a change to a file did to it, whatever it is that is in it.
+fn binary_change(f: &FileDiff) -> &'static str {
+    if f.new_path.is_none() {
         "deleted"
     } else if f.old_path.is_none() {
         "added"
@@ -431,6 +434,17 @@ pub(super) fn file_status(file: Option<&FileDiff>, in_diff: bool) -> &'static st
         "renamed"
     } else {
         "modified"
+    }
+}
+
+pub(super) fn file_status(file: Option<&FileDiff>, in_diff: bool) -> &'static str {
+    let Some(f) = file.filter(|_| in_diff) else {
+        return "context";
+    };
+    if f.is_binary {
+        "binary"
+    } else {
+        binary_change(f)
     }
 }
 
@@ -811,5 +825,22 @@ mod tests {
         // Lines that are only added, or only removed, have nothing to compare.
         let h = hunk(vec![line(LineKind::Added, "new", None, Some(1))]);
         assert!(data(&h).rows[0].w.is_empty());
+    }
+
+    #[test]
+    fn a_binary_file_says_whether_it_was_added_deleted_renamed_or_changed() {
+        let diff = crate::diff::parse(
+            "diff --git a/new.bin b/new.bin\nBinary files /dev/null and b/new.bin differ\n\
+             diff --git a/gone.bin b/gone.bin\nBinary files a/gone.bin and /dev/null differ\n\
+             diff --git a/same.bin b/same.bin\nBinary files a/same.bin and b/same.bin differ\n",
+        )
+        .unwrap();
+        let changes: Vec<_> = diff.files.iter().map(binary_change).collect();
+        assert_eq!(changes, ["added", "deleted", "modified"]);
+        assert!(
+            diff.files
+                .iter()
+                .all(|f| file_status(Some(f), true) == "binary")
+        );
     }
 }
