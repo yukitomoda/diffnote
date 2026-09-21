@@ -280,13 +280,15 @@ fn main() -> Result<()> {
 ///   snapshot. With none, nothing is added (`.` may be anywhere).
 /// - No bundle yet: as for `edit`, `base` (or the target's parent) starts it.
 ///
-/// Nothing is written if the diff is empty or is already recorded.
+/// Nothing is written if the diff is empty or is already recorded (or if
+/// `apply` is off: then it only says whether there is something to add).
 fn add_revision(
     review_path: &Path,
     repo: &diffnote::git::Repo,
     base: Option<&str>,
     target: Option<&str>,
     files: bool,
+    apply: bool,
 ) -> Result<Option<String>> {
     let mut loaded = bundle::load(review_path)?;
     let explicit = base.is_some() || target.is_some();
@@ -334,6 +336,9 @@ fn add_revision(
     };
     if input.diff_text.trim().is_empty() || loaded.revisions().any(|r| r.digest == input.digest) {
         return Ok(None);
+    }
+    if !apply {
+        return Ok(Some(String::new()));
     }
     let Input {
         diff_text,
@@ -433,7 +438,14 @@ fn cmd_serve(
     // What was asked for is added to the review, so it can be reviewed here (a
     // failure to do what was asked stops; one to do what was not, only says so).
     let git = repo_of(repo.clone())?;
-    match add_revision(&review, &git, base.as_deref(), target.as_deref(), files) {
+    match add_revision(
+        &review,
+        &git,
+        base.as_deref(),
+        target.as_deref(),
+        files,
+        true,
+    ) {
         Ok(said) => {
             if let Some(said) = said {
                 println!("{said}");
@@ -471,7 +483,9 @@ fn cmd_serve(
     // already the review's; a named commit doesn't move, `HEAD` does).
     let refresher: diffnote::serve::Refresher = {
         let (review, git, target) = (review.clone(), git.clone(), target.clone());
-        std::sync::Arc::new(move || add_revision(&review, &git, None, target.as_deref(), files))
+        std::sync::Arc::new(move |apply| {
+            add_revision(&review, &git, None, target.as_deref(), files, apply)
+        })
     };
     let options = diffnote::serve::Options {
         review,

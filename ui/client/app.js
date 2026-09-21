@@ -859,6 +859,11 @@
     var setModel = _m[1];
     var ref = useRef(model);
     ref.current = model;
+    // Whether the target has something new to take in (asked when the page opens
+    // and whenever the window is looked at again).
+    var _p = useState(false);
+    var pending = _p[0];
+    var setPending = _p[1];
 
     var reloadModel = preactHooks.useCallback(function () {
       return D.api.get('/api/model').then(function (res) {
@@ -919,7 +924,10 @@
         // revision (the answer says what was done; the page keeps its place).
         refresh: function () {
           return D.api.post('/api/refresh').then(function (res) {
-            if (res.ok) setModel(res.model);
+            if (res.ok) {
+              setModel(res.model);
+              setPending(false);
+            }
             return res;
           });
         },
@@ -951,9 +959,12 @@
       var check = function () {
         if (document.hidden) return;
         D.api.get('/api/version').then(function (res) {
-          if (res.ok && res.stamp !== ref.current.stamp) reloadModel();
+          if (!res.ok) return;
+          setPending(!!res.pending);
+          if (res.stamp !== ref.current.stamp) reloadModel();
         });
       };
+      check();
       window.addEventListener('focus', check);
       document.addEventListener('visibilitychange', check);
       return function () {
@@ -967,7 +978,7 @@
       if (!actions) return null;
       return Object.assign({}, actions, { editable: new Set(model.editable || []) });
     }, [actions, model.editable]);
-    return { model: model, actions: full };
+    return { model: model, actions: full, pending: pending };
   }
 
   // Lines being chosen (pressing a line number, dragging, Shift+click), or a
@@ -1151,6 +1162,8 @@
       setNote({ text: '取り込んでいます…', busy: true });
       review.actions.refresh().then(function (res) {
         setNote({ text: res.ok ? res.message : (res.error || '取り込めませんでした'), failed: !res.ok });
+        // What was taken in is what to look at now.
+        if (res.ok && res.added) setCurrent(res.model.revisions.length - 1);
       });
     };
     // Side by side, if chosen and there is room for two columns. What was chosen
@@ -1203,8 +1216,9 @@
         ${review.actions && model.author != null && html`<span class="diffnote-author">作者: <${InlineEdit} name="author" value=${model.author} max="100" label="作者名を変える(この起動の間だけ)" placeholder="作者名"
           onSave=${review.actions.setAuthor}><strong data-diffnote-author>${model.author}</strong><//></span>`}
         ${review.actions && model.refreshable && html`<span class="diffnote-pull">
-          <button type="button" class="diffnote-button" data-diffnote-pull disabled=${!!(note && note.busy)} onClick=${pull}
-            title="起動したあとに増えたコミットなど、対象の新しい変更を、新しいリビジョンとして取り込みます">最新を取り込む</button>
+          ${review.pending && html`<span class="diffnote-pull__pending" data-diffnote-pending role="status">新しいコミットがあります</span>`}
+          <button type="button" class=${'diffnote-button' + (review.pending ? ' diffnote-button--primary' : '')} data-diffnote-pull disabled=${!!(note && note.busy)} onClick=${pull}
+            title="起動したあとに増えたコミットなど、対象の新しい変更を、新しいリビジョンとして取り込み、それを表示します">最新を取り込む</button>
           ${note && html`<span class=${'diffnote-pull__note' + (note.failed ? ' is-failed' : '')} data-diffnote-pull-note role="status">${note.text}</span>`}
         </span>`}
         ${model.interactive && html`<a class="diffnote-button" data-diffnote-export href="/export" title="今の内容を、誰でも開ける HTML として保存します">エクスポート</a>`}

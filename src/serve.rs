@@ -45,11 +45,13 @@ pub struct Options {
     pub repo: Option<PathBuf>,
     /// Takes in what was added to the target since the server started (the
     /// page's button): what it says was done, or `None` if there was nothing.
+    /// Told `false`, it only looks: `Some` if there is something to take in,
+    /// and nothing is written.
     pub refresh: Option<Refresher>,
 }
 
 /// See [`Options::refresh`].
-pub type Refresher = std::sync::Arc<dyn Fn() -> anyhow::Result<Option<String>> + Send + Sync>;
+pub type Refresher = std::sync::Arc<dyn Fn(bool) -> anyhow::Result<Option<String>> + Send + Sync>;
 
 /// A request, reduced to what the server looks at.
 pub struct Request<'a> {
@@ -481,7 +483,12 @@ impl Server {
         match bundle::load(&self.review) {
             Ok(l) => Reply::json(
                 200,
-                &serde_json::json!({ "ok": true, "stamp": html::stamp(&l) }),
+                &serde_json::json!({
+                    "ok": true,
+                    "stamp": html::stamp(&l),
+                    // Something new to take in (a failure to look says no).
+                    "pending": self.refresh.as_ref().is_some_and(|r| r(false).ok().flatten().is_some()),
+                }),
             ),
             Err(e) => Reply::error(500, &format!("処理に失敗しました: {e}")),
         }
@@ -756,7 +763,7 @@ impl Server {
             return Err(Failure(400, "この起動では、取り込めません".into()));
         };
         let before = html::stamp(&bundle::load(&self.review).map_err(internal)?);
-        let said = refresh().map_err(|e| Failure(500, format!("取り込めませんでした: {e}")))?;
+        let said = refresh(true).map_err(|e| Failure(500, format!("取り込めませんでした: {e}")))?;
         let added = said.is_some();
         let message = said.unwrap_or_else(|| "新しい変更はありません".into());
         self.model_answer(
@@ -1713,10 +1720,10 @@ mod tests {
                 port: 0,
                 author: None,
                 repo: None,
-                refresh: Some(std::sync::Arc::new(move || {
+                refresh: Some(std::sync::Arc::new(move |_| {
                     match counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
-                        0 => Ok(Some("差分を記録しました".to_string())),
-                        1 => Ok(None),
+                        0 | 2 => Ok(Some("差分を記録しました".to_string())),
+                        1 | 3 => Ok(None),
                         _ => anyhow::bail!("壊れました"),
                     }
                 })),
@@ -1738,6 +1745,24 @@ mod tests {
                 body: b"{}",
             })
         };
+        // Looking (the version check) doesn't take anything in: the first call
+        // says there is something, the second that there is not.
+        let version = || {
+            json(&server.handle(&Request {
+                method: "GET",
+                target: "/api/version",
+                headers: vec![
+                    ("host".into(), "127.0.0.1:4242".into()),
+                    (
+                        "cookie".into(),
+                        format!("{}={}", server.cookie_name(), server.token()),
+                    ),
+                ],
+                body: b"",
+            }))
+        };
+        assert_eq!(version()["pending"], true);
+        assert_eq!(version()["pending"], false);
         let done = json(&post());
         assert_eq!(done["message"], "差分を記録しました");
         assert_eq!(done["added"], true);
