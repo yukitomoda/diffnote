@@ -109,23 +109,21 @@ fn under(scope: &str, prefix: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
 }
 
-/// The kind of what the scopes (outermost first) say something is.
+/// The kind of what the scopes (outermost first) say something is: that of the
+/// innermost scope that has one (a key inside a string-like scalar is a key),
+/// except that whatever is inside a comment is part of it.
 fn kind_of(scopes: &[String]) -> Option<&'static str> {
-    let any = |prefix: &str| scopes.iter().any(|s| under(s, prefix));
-    // Whatever is inside a comment or a string is part of it (its quotes, an
-    // escape), whatever else it is.
-    if any("comment") {
+    if scopes.iter().any(|s| under(s, "comment")) {
         return Some("comment");
-    }
-    if any("string") {
-        return Some("string");
     }
     scopes.iter().rev().find_map(|s| kind_of_one(s))
 }
 
 fn kind_of_one(s: &str) -> Option<&'static str> {
     let is = |prefix: &str| under(s, prefix);
-    Some(if is("constant.numeric") {
+    Some(if is("string") {
+        "string"
+    } else if is("constant.numeric") {
         "number"
     } else if is("constant") {
         "constant"
@@ -246,6 +244,25 @@ mod tests {
             out[2]
                 .iter()
                 .any(|(k, t)| *k == Some("raw") && t.contains("code")),
+            "{:?}",
+            out[2]
+        );
+    }
+
+    #[test]
+    fn typescript_dockerfile_and_yaml_have_grammars_and_a_key_is_not_a_string() {
+        let out = lines("a.ts", "export const x: number = 1");
+        assert!(has(&out[0], "keyword", "export"), "{:?}", out[0]);
+        let out = lines("Dockerfile", "FROM node:20 AS base");
+        assert!(has(&out[0], "keyword", "FROM"), "{:?}", out[0]);
+        let out = lines("ci.yml", "name: 'x'\nwith:\n  push: true");
+        assert!(
+            has(&out[0], "tag", "name") && has(&out[0], "string", "'x'"),
+            "{:?}",
+            out[0]
+        );
+        assert!(
+            has(&out[2], "tag", "push") && has(&out[2], "constant", "true"),
             "{:?}",
             out[2]
         );

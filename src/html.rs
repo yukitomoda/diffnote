@@ -30,8 +30,11 @@ use ulid::Ulid;
 /// The syntax and color definitions, built once: each syntax compiles its
 /// patterns the first time it highlights something, which costs far more than
 /// drawing the lines, so a page (and a server) must not start over each time.
+///
+/// The set is the one `bat` uses (through `two-face`): syntect's own has no
+/// TypeScript, Dockerfile, TOML and many more.
 static SYNTAXES: std::sync::LazyLock<SyntaxSet> =
-    std::sync::LazyLock::new(SyntaxSet::load_defaults_newlines);
+    std::sync::LazyLock::new(two_face::syntax::extra_newlines);
 
 /// Per-view drawing state shared by the render functions.
 #[derive(Default)]
@@ -707,10 +710,16 @@ fn markdown_to_html(body: &str) -> String {
 }
 
 fn guess_syntax<'a>(file: &str, syntax_set: &'a SyntaxSet) -> &'a SyntaxReference {
-    std::path::Path::new(file)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .and_then(|ext| syntax_set.find_syntax_by_extension(ext))
+    let path = std::path::Path::new(file);
+    // By the whole name first (`Dockerfile`, `Makefile`), then by extension.
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| syntax_set.find_syntax_by_extension(name))
+        .or_else(|| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .and_then(|ext| syntax_set.find_syntax_by_extension(ext))
+        })
         .unwrap_or_else(|| syntax_set.find_syntax_plain_text())
 }
 
