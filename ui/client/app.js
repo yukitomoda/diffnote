@@ -32,6 +32,8 @@
   // Places in a comment's text that name lines of a file: `has(path)` and
   // `go(path, start, end)`.
   var LinksContext = preact.createContext(null);
+  // How the diff is shown, and the ways to change it (the view menu).
+  var ViewContext = preact.createContext(null);
 
   var DEFAULT_TITLE = 'diffnote レビュー';
   var BINARY_CHANGES = { added: '追加', deleted: '削除', renamed: '名前変更', modified: '変更' };
@@ -278,6 +280,59 @@
         <p class="diffnote-comment__author">保存中…</p>
         <div class="diffnote-comment__body">${c.draft}</div>
       </article>`}
+    </div>`;
+  }
+
+  // 「表示」: how the diff is shown, in a menu at the top right of the diff.
+  function ViewMenu() {
+    var v = useContext(ViewContext);
+    var _o = useState(false);
+    var open = _o[0];
+    var setOpen = _o[1];
+    var box = useRef(null);
+    useEffect(function () {
+      if (!open) return undefined;
+      var away = function (e) { if (box.current && !box.current.contains(e.target)) setOpen(false); };
+      var key = function (e) { if (e.key === 'Escape') setOpen(false); };
+      document.addEventListener('mousedown', away);
+      document.addEventListener('keydown', key);
+      return function () {
+        document.removeEventListener('mousedown', away);
+        document.removeEventListener('keydown', key);
+      };
+    }, [open]);
+    // (The panel is in the page while it is closed, only not shown.)
+    return html`<div class="diffnote-viewmenu" ref=${box}>
+      <button type="button" class="diffnote-button" data-diffnote-view-menu aria-haspopup="true" aria-expanded=${open}
+        onClick=${function () { setOpen(!open); }}>⚙ 表示 ▾</button>
+      <div class="diffnote-viewmenu__panel" hidden=${!open} data-diffnote-view-panel>
+        ${v.wide && html`<div class="diffnote-layout" role="group" aria-label="レイアウト">
+          <p class="diffnote-viewmenu__head">レイアウト</p>
+          ${[['unified', '統合'], ['split', '横並び']].map(function (o) {
+            return html`<button type="button" key=${o[0]} class=${'diffnote-viewmenu__item diffnote-layout__button' + (o[0] === v.layout ? ' is-current' : '')} data-diffnote-layout=${o[0]}
+              onClick=${function () { v.setLayout(o[0]); }}>${o[1]}</button>`;
+          })}
+          <hr />
+        </div>`}
+        <label class=${'diffnote-viewmenu__item' + (v.ignoreSpace ? ' is-current' : '')} title="行の中の空白だけが違う変更を、変更なしとして表示します">
+          <input type="checkbox" data-diffnote-ignore-space checked=${v.ignoreSpace} onChange=${function (e) { v.toggleSpace(e.target.checked); }} />空白の違いを無視
+        </label>
+        ${(v.resolved > 0 || v.interactive) && html`<label class=${'diffnote-viewmenu__item' + (v.hide ? ' is-current' : '')}>
+          <input type="checkbox" data-diffnote-hide-resolved checked=${v.hide} onChange=${function (e) { v.setHide(e.target.checked); }} />解決済みを隠す<span class="diffnote-toggle__count" data-diffnote-resolved-count>${'(' + v.resolved + ')'}</span>
+        </label>`}
+      </div>
+    </div>`;
+  }
+
+  // The name comments are written under, at the foot of the side, like the
+  // user who is signed in.
+  function UserChip(props) {
+    var name = props.name;
+    var initial = Array.from(name.trim())[0] || '?';
+    return html`<div class="diffnote-user" data-diffnote-user>
+      <span class="diffnote-user__avatar" aria-hidden="true">${initial.toUpperCase()}</span>
+      <${InlineEdit} name="author" value=${name} max="100" label="作者名を変える(この起動の間だけ)" placeholder="作者名"
+        onSave=${props.onSave}><strong data-diffnote-author>${name}</strong><//>
     </div>`;
   }
 
@@ -730,8 +785,10 @@
   function FileList(props) {
     var ctx = props.ctx;
     var viewed = useContext(ViewedContext);
+    // The files of the diff (not those opened to look at) are what is counted.
+    var files = ctx.model.revisions[ctx.rev].files;
     return html`<details class="diffnote-side" open>
-      <summary>ファイル</summary>
+      <summary>ファイル${viewed && files.length > 0 && html` <span class="diffnote-badge diffnote-badge--viewed" data-diffnote-viewed-count title="確認済みにしたファイル / ファイル数">✓ ${files.filter(viewed.is).length}/${files.length}</span>`}</summary>
       <nav class="diffnote-filelist"><ul>
         ${ctx.revision.files.map(function (f) {
           var done = !!(viewed && viewed.is(f));
@@ -926,13 +983,19 @@
     return html`<section class="diffnote-revision is-current" id=${'rev-' + rev} data-diffnote-revision=${rev}>
       <h2 class="diffnote-revision__title">${revision.label}</h2>
       <aside class="diffnote-sidebar">
-        <${FileList} ctx=${listOrder} />
-        ${model.threads.length > 0 && html`<${ThreadList} ctx=${listOrder} />`}
-        ${opened && html`<${Tree} rev=${rev} />`}
+        <div class="diffnote-sidebar__lists">
+          <${FileList} ctx=${listOrder} />
+          ${model.threads.length > 0 && html`<${ThreadList} ctx=${listOrder} />`}
+          ${opened && html`<${Tree} rev=${rev} />`}
+        </div>
+        ${props.author != null && props.onAuthor && html`<${UserChip} name=${props.author} onSave=${props.onAuthor} />`}
       </aside>
-      ${(globals.length > 0 || props.compose) && html`<section class="diffnote-global-comments" data-diffnote-global>
+      <div class="diffnote-viewbar">
         ${props.compose && html`<div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global"
           onClick=${function () { props.compose.openScope('global', rev); }}>レビュー全体にコメントする</button></div>`}
+        <${ViewMenu} />
+      </div>
+      ${(globals.length > 0 || props.compose) && html`<section class="diffnote-global-comments" data-diffnote-global>
         ${props.compose && props.compose.scope && props.compose.scope.kind === 'global' && props.compose.scope.rev === rev && html`<div class="diffnote-compose-wrap"><${Composer} scope="global" where="レビュー全体へのコメント" request=${{ scope: 'global', revision: rev }} /></div>`}
         ${globals.map(function (id) { return html`<${Card} key=${id} rev=${rev} thread=${byId[id]} placement=${revision.placements[id]} />`; })}
       </section>`}
@@ -1314,7 +1377,6 @@
         },
       };
     }, [model, viewed, current]);
-    var seenCount = here.filter(viewed.is).length;
     // Differences that are only in white space hidden: what the review says (and
     // a page that only shows it can change for itself).
     var _w = useState(!!model.ignore_whitespace);
@@ -1349,6 +1411,12 @@
     var setChosen = _l[1];
     var wide = useWide();
     var layout = chosen === 'split' && wide ? 'split' : 'unified';
+    var viewOptions = {
+      wide: wide, layout: layout, resolved: counts.resolved, interactive: !!model.interactive,
+      hide: hide, ignoreSpace: ignoreSpace, toggleSpace: toggleSpace,
+      setLayout: function (o) { keep('diffnote-layout', o); setChosen(o); },
+      setHide: function (on) { keep('diffnote-hide-resolved', on ? '1' : '0'); setHide(on); },
+    };
     // What was chosen or written belongs to the revision and layout it was in.
     var compose = useCompose(review.actions, current + ':' + layout);
 
@@ -1365,7 +1433,6 @@
             ? html`<${InlineEdit} name="title" value=${model.title || ''} max="200" label="タイトルを変える" placeholder="タイトル(空にすると、既定の見出しに戻ります)"
                 onSave=${review.actions.setTitle}>${model.title || DEFAULT_TITLE}<//>`
             : model.title || DEFAULT_TITLE}</h1>
-          ${here.length > 0 && html`<p class="diffnote-progress" data-diffnote-viewed-count title="確認済みにしたファイル / ファイル数">確認済み <strong>${seenCount}</strong> / ${here.length}</p>`}
           ${model.base && html`<p data-diffnote-base title="すべてのリビジョンは、これと比べた差分です">ベース: ${model.base.kind === 'git' ? html`<code>${model.base.id}</code>` : lib.formatTime(model.base.at)}</p>`}
         </header>
         ${model.revisions.length > 0 && html`<nav class="diffnote-revisions"><ul>
@@ -1374,23 +1441,7 @@
               onClick=${function (e) { e.preventDefault(); setCurrent(i); }}>${r.label}</a></li>`;
           })}
         </ul></nav>`}
-        ${wide && html`<div class="diffnote-layout" role="group" aria-label="差分の表示">
-          ${[['unified', '統合'], ['split', '横並び']].map(function (o) {
-            return html`<button type="button" key=${o[0]} data-diffnote-layout=${o[0]} class=${'diffnote-layout__button' + (o[0] === layout ? ' is-current' : '')}
-              onClick=${function () { keep('diffnote-layout', o[0]); setChosen(o[0]); }}>${o[1]}</button>`;
-          })}
-        </div>`}
-        <label class="diffnote-toggle" title="行の中の空白だけが違う変更を、変更なしとして表示します">
-          <input type="checkbox" data-diffnote-ignore-space checked=${ignoreSpace} onChange=${function (e) { toggleSpace(e.target.checked); }} />
-          空白の違いを無視
-        </label>
-        ${(counts.resolved > 0 || model.interactive) && html`<label class="diffnote-toggle">
-          <input type="checkbox" data-diffnote-hide-resolved checked=${hide}
-            onChange=${function (e) { keep('diffnote-hide-resolved', e.target.checked ? '1' : '0'); setHide(e.target.checked); }} />
-          解決済みを隠す<span class="diffnote-toggle__count" data-diffnote-resolved-count>${'(' + counts.resolved + ')'}</span>
-        </label>`}
-        ${review.actions && model.author != null && html`<span class="diffnote-author">作者: <${InlineEdit} name="author" value=${model.author} max="100" label="作者名を変える(この起動の間だけ)" placeholder="作者名"
-          onSave=${review.actions.setAuthor}><strong data-diffnote-author>${model.author}</strong><//></span>`}
+        <div class="diffnote-topbar__actions">
         ${review.actions && model.refreshable && html`<span class="diffnote-pull">
           ${review.pending && html`<span class="diffnote-pull__pending" data-diffnote-pending role="status">新しいコミットがあります</span>`}
           <button type="button" class=${'diffnote-button' + (review.pending ? ' diffnote-button--primary' : '')} data-diffnote-pull disabled=${!!(note && note.busy)} onClick=${pull}
@@ -1399,15 +1450,19 @@
         </span>`}
         ${model.interactive && html`<a class="diffnote-button" data-diffnote-export href="/export" title="今の内容を、誰でも開ける HTML として保存します">エクスポート</a>`}
         ${model.interactive && html`<${QuitButton} />`}
+        </div>
       </div>
+      <${ViewContext.Provider} value=${viewOptions}>
       <${ViewedContext.Provider} value=${viewed}>
       <${LinksContext.Provider} value=${links}>
       <${ActionsContext.Provider} value=${review.actions}>
         <${ComposeContext.Provider} value=${compose}>
           <${OpenedContext.Provider} value=${openedFiles}>
-            <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} ignoreSpace=${ignoreSpace} compose=${compose} />
+            <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} ignoreSpace=${ignoreSpace} compose=${compose}
+              author=${review.actions ? model.author : null} onAuthor=${review.actions && review.actions.setAuthor} />
           <//>
         <//>
+      <//>
       <//>
       <//>
       <//>

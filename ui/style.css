@@ -39,7 +39,8 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-revision > * { grid-column: 2; min-width: 0; }
 .diffnote-revision__title { display: none; }
 .diffnote-js .diffnote-revision:not(.is-current) { display: none; }
-.diffnote-sidebar { grid-column: 1; grid-row: 1 / span 200; position: sticky; top: calc(var(--diffnote-topbar-h) + 12px); max-height: calc(100vh - var(--diffnote-topbar-h) - 24px); overflow: auto; margin-top: 12px; border-right: 1px solid var(--diffnote-color-border); padding-right: 8px; font-size: 12.5px; }
+.diffnote-sidebar { grid-column: 1; grid-row: 1 / span 200; position: sticky; top: calc(var(--diffnote-topbar-h) + 12px); height: calc(100vh - var(--diffnote-topbar-h) - 24px); display: flex; flex-direction: column; margin-top: 12px; border-right: 1px solid var(--diffnote-color-border); padding-right: 8px; font-size: 12.5px; }
+.diffnote-sidebar__lists { flex: 1; min-height: 0; overflow: auto; }
 .diffnote-side > summary { cursor: pointer; font-weight: 600; font-size: 12px; color: var(--diffnote-color-muted); padding: 4px 8px; user-select: none; }
 .diffnote-side + .diffnote-side { margin-top: 8px; }
 .diffnote-threadlist ol { list-style: none; margin: 0; padding: 0; }
@@ -85,7 +86,6 @@ body.is-selecting { user-select: none; }
 .diffnote-compose textarea:focus { outline: 2px solid var(--diffnote-color-accent); outline-offset: -1px; }
 .diffnote-toggle { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 13px; color: var(--diffnote-color-muted); white-space: nowrap; cursor: pointer; user-select: none; }
 .diffnote-toggle__count { color: var(--diffnote-color-muted); }
-.diffnote-toggle + .diffnote-topbar__quit { margin-left: 0; }
 /* Resolved threads out of the way: their cards and list entries, and the
    marks on lines that only they are about. */
 .diffnote-hide-resolved .diffnote-thread--resolved { display: none; }
@@ -94,8 +94,8 @@ body.is-selecting { user-select: none; }
 .diffnote-hide-resolved .diffnote-threadlist .is-resolved { display: none; }
 .diffnote-hide-resolved .diffnote-line--resolved-only > td:first-child { --dn-l: 0 0 0 0 transparent; }
 .diffnote-hide-resolved .diffnote-line--resolved-only .diffnote-line__gutter-old, .diffnote-hide-resolved .diffnote-line--resolved-only .diffnote-line__gutter-new { color: var(--diffnote-color-muted); font-weight: 400; }
-.diffnote-topbar__quit { margin-left: auto; }
-.diffnote-quit { position: relative; display: inline-flex; margin-left: auto; }
+.diffnote-topbar__actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.diffnote-quit { position: relative; display: inline-flex; }
 .diffnote-quit button { font: inherit; cursor: pointer; color: #fff; background: var(--diffnote-color-accent); border: 1px solid var(--diffnote-color-accent); }
 .diffnote-quit button:hover { background: #0860ca; }
 .diffnote-quit__main { font-size: 15px; font-weight: 700; padding: 7px 26px; border-radius: 8px 0 0 8px; }
@@ -134,7 +134,6 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-lineref { font-family: var(--diffnote-font-mono); font-size: 12.5px; }
 tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 @keyframes diffnote-linked { 0%, 55% { background-color: #fff2a8; } 100% { background-color: transparent; } }
-.diffnote-progress strong { color: var(--diffnote-color-fg); }
 .diffnote-check { flex: none; width: 18px; height: 18px; padding: 0; margin-left: 2px; font-size: 12px; line-height: 16px; text-align: center; color: #fff; background: transparent; border: 1px solid transparent; border-radius: 50%; cursor: pointer; }
 .diffnote-filelist li:hover .diffnote-check, .diffnote-check:focus-visible { border-color: var(--diffnote-color-border); }
 .diffnote-filelist li.is-viewed .diffnote-check { background: #1a7f37; border-color: #1a7f37; }
@@ -206,18 +205,10 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 @media (max-width: 900px) {
   .diffnote-topbar { height: auto; flex-wrap: wrap; gap: 4px 12px; padding: 6px 12px; }
   .diffnote-revision { display: block; padding: 0 8px 32px; }
-  .diffnote-sidebar { position: static; max-height: 40vh; margin: 8px 0; border-right: 0; }
+  .diffnote-sidebar { position: static; height: auto; max-height: 60vh; margin: 8px 0; border-right: 0; }
   .diffnote-file > details > summary { top: 0; position: static; }
   .diffnote-thread-row > td { padding-left: 12px !important; }
 }
-
-/* The layout switch in the top bar. */
-.diffnote-layout { display: flex; margin-left: auto; border: 1px solid var(--diffnote-color-border); border-radius: 6px; overflow: hidden; background: var(--diffnote-color-bg); }
-.diffnote-layout + .diffnote-toggle { margin-left: 16px; }
-.diffnote-layout__button { font: inherit; font-size: 12.5px; padding: 2px 12px; color: var(--diffnote-color-muted); background: none; border: 0; cursor: pointer; }
-.diffnote-layout__button + .diffnote-layout__button { border-left: 1px solid var(--diffnote-color-border); }
-.diffnote-layout__button:hover { color: var(--diffnote-color-fg); background: var(--diffnote-color-gutter); }
-.diffnote-layout__button.is-current { color: var(--diffnote-color-fg); font-weight: 600; background: var(--diffnote-color-gutter); }
 
 /* Side by side: the old file on the left, the new on the right; long lines
    wrap, since the two columns share the width. */
@@ -297,10 +288,29 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 /* The box to write the new value in drops down from the top bar, so the bar keeps its shape. */
 .diffnote-inline--editing { position: absolute; top: calc(100% + 4px); z-index: 20; align-items: center; flex-wrap: wrap; gap: 8px; max-width: calc(100vw - 32px); padding: 10px 12px; background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 8px; box-shadow: 0 6px 20px rgba(31, 35, 40, 0.18); }
 .diffnote-inline--title { left: 16px; }
-.diffnote-inline--author { right: 16px; }
 .diffnote-inline__edit { font: inherit; font-size: 12px; line-height: 1; padding: 2px 4px; color: var(--diffnote-color-muted); background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; opacity: 0.6; }
 .diffnote-inline__edit:hover, .diffnote-inline__edit:focus { opacity: 1; border-color: var(--diffnote-color-border); background: var(--diffnote-color-bg); }
 .diffnote-inline input { font: inherit; font-size: 13px; min-width: 14em; padding: 2px 8px; border: 1px solid var(--diffnote-color-accent); border-radius: 6px; background: var(--diffnote-color-bg); color: var(--diffnote-color-fg); }
 .diffnote-summary h1 .diffnote-inline input { font-size: 14px; min-width: 22em; font-weight: 400; }
-.diffnote-author { margin-left: 8px; font-size: 13px; color: var(--diffnote-color-muted); white-space: nowrap; display: inline-flex; align-items: baseline; gap: 4px; }
-.diffnote-author strong { color: var(--diffnote-color-fg); font-weight: 600; }
+
+/* The view menu, at the top right of the diff. */
+.diffnote-viewbar { grid-column: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; }
+.diffnote-viewbar .diffnote-add { padding: 0; }
+.diffnote-viewmenu { position: relative; margin-left: auto; }
+.diffnote-viewmenu__panel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 14em; padding: 6px; background: var(--diffnote-color-bg); color: var(--diffnote-color-fg); border: 1px solid var(--diffnote-color-border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18); font-size: 13px; }
+.diffnote-viewmenu__panel[hidden] { display: none; }
+.diffnote-viewmenu__panel hr { margin: 4px 0; border: 0; border-top: 1px solid var(--diffnote-color-border); }
+.diffnote-viewmenu__head { margin: 2px 8px 4px; font-size: 11.5px; color: var(--diffnote-color-muted); }
+.diffnote-viewmenu__item { display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; padding: 5px 8px; font: inherit; font-size: 13px; color: inherit; background: none; border: 0; border-radius: 6px; text-align: left; cursor: pointer; white-space: nowrap; }
+.diffnote-viewmenu__item:hover { background: var(--diffnote-color-gutter); }
+.diffnote-viewmenu__item input { position: absolute; opacity: 0; pointer-events: none; }
+.diffnote-viewmenu__item::before { content: ""; display: inline-block; width: 1em; text-align: center; color: var(--diffnote-color-accent); font-weight: 700; }
+.diffnote-viewmenu__item.is-current::before { content: "✓"; }
+
+/* The name comments are written under, at the foot of the side. */
+.diffnote-user { position: relative; flex: none; display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 8px 8px 4px; border-top: 1px solid var(--diffnote-color-border); font-size: 13px; }
+.diffnote-user__avatar { flex: none; width: 26px; height: 26px; line-height: 26px; text-align: center; font-weight: 700; color: #fff; background: var(--diffnote-color-accent); border-radius: 50%; }
+.diffnote-user strong { font-weight: 600; word-break: break-all; }
+.diffnote-user .diffnote-inline--editing { top: auto; bottom: calc(100% + 6px); left: 8px; right: auto; max-width: 20em; }
+
+.diffnote-badge--viewed { background: transparent; color: #1a7f37; border: 1px solid #1a7f37; line-height: 16px; }

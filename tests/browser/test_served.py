@@ -339,6 +339,20 @@ class Replies(ServedCase):
             time.sleep(0.05)
         return self.server.said_more()
 
+    def test_the_author_is_at_the_foot_of_the_side_like_a_signed_in_user(self):
+        self.serve()
+        b = self.b
+        pos = b.js("(() => { const u = document.querySelector('[data-diffnote-user]').getBoundingClientRect(); const s = document.querySelector('.diffnote-sidebar').getBoundingClientRect(); return {gap: s.bottom - u.bottom, inside: u.left >= s.left && u.right <= s.right}; })()")
+        self.assertLess(pos["gap"], 12, "at the foot of the side")
+        self.assertTrue(pos["inside"])
+        self.assertEqual(b.text("[data-diffnote-user] [data-diffnote-author]"), "検証者")
+        self.assertEqual(b.text(".diffnote-user__avatar"), "検")
+        # Its box opens upwards, staying in the window.
+        b.click("[data-diffnote-inline=author]")
+        box = b.js("(() => { const r = document.querySelector('.diffnote-inline--author').getBoundingClientRect(); const u = document.querySelector('[data-diffnote-user]').getBoundingClientRect(); return {above: r.bottom <= u.top + 1, top: r.top}; })()")
+        self.assertTrue(box["above"] and box["top"] >= 0, box)
+        b.escape()
+
     def test_the_shutdown_button_stops_the_server_and_says_roughly_what_was_saved(self):
         self.serve()
         b = self.b

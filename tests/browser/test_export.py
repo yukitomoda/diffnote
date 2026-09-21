@@ -42,7 +42,7 @@ class StaticExport(BrowserCase):
     def test_a_file_marked_as_looked_at_is_hidden_with_its_threads_and_can_be_brought_back(self):
         b = self.b
         files = b.count(f"{CUR} section.diffnote-file")
-        self.assertEqual(b.js("document.querySelector('[data-diffnote-viewed-count]').textContent.replace(/\\s+/g, ' ').trim()"), f"確認済み 0 / {files}")
+        self.assertEqual(b.js("document.querySelector('[data-diffnote-viewed-count]').textContent.replace(/\\s+/g, ' ').trim()"), f"✓ 0/{files}")
         threads_before = b.count(".diffnote-threadlist li")
         section = f"{CUR} section.diffnote-file[data-diffnote-file='calc.py']"
         self.assertTrue(b.exists(section))
@@ -51,7 +51,7 @@ class StaticExport(BrowserCase):
         b.click(f"{section} [data-diffnote-viewed]")
         self.assertTrue(b.wait(f"!document.querySelector({json.dumps(section)})"), "the file and its threads are gone")
         self.assertEqual(b.count(f"{CUR} section.diffnote-file"), files - 1)
-        self.assertIn(f"1 / {files}", b.js("document.querySelector('[data-diffnote-viewed-count]').textContent"))
+        self.assertIn(f"1/{files}", b.js("document.querySelector('[data-diffnote-viewed-count]').textContent"))
         item = "[data-diffnote-check='calc.py']"
         self.assertEqual(b.js(f"document.querySelector({json.dumps(item)}).textContent"), "✓")
         self.assertTrue(b.exists("li.is-viewed [data-diffnote-open-count]"), "what is still open is said, small")
@@ -59,7 +59,7 @@ class StaticExport(BrowserCase):
         b.click(item)
         self.assertTrue(b.wait(f"!!document.querySelector({json.dumps(section)})"), "brought back")
         self.assertEqual(b.count(".diffnote-threadlist li"), threads_before)
-        self.assertIn(f"0 / {files}", b.js("document.querySelector('[data-diffnote-viewed-count]').textContent"))
+        self.assertIn(f"0/{files}", b.js("document.querySelector('[data-diffnote-viewed-count]').textContent"))
 
     def test_a_thread_picked_in_the_list_brings_back_the_file_it_is_on(self):
         b = self.b
@@ -78,6 +78,22 @@ class StaticExport(BrowserCase):
         self.assertTrue(b.wait("!document.querySelector('section.diffnote-file[data-diffnote-file=\"calc.py\"]')"))
         b.click("[data-diffnote-revision-link='0']")
         self.assertTrue(b.wait_exists("section.diffnote-file[data-diffnote-file='calc.py']"), "calc.py differs in #1")
+
+    def test_the_view_menu_is_at_the_top_right_of_the_diff_and_shut_until_opened(self):
+        b = self.b
+        panel = "[data-diffnote-view-panel]"
+        self.assertTrue(b.js(f"document.querySelector({json.dumps(panel)}).hidden"), "shut")
+        self.assertFalse(b.js("!!document.querySelector('.diffnote-topbar [data-diffnote-ignore-space], .diffnote-topbar [data-diffnote-hide-resolved]')"),
+                         "not in the top bar")
+        # At the right end of the diff's column, above the files.
+        pos = b.js("(() => { const m = document.querySelector('[data-diffnote-view-menu]').getBoundingClientRect(); const f = document.querySelector('section.diffnote-file').getBoundingClientRect(); const s = document.querySelector('.diffnote-sidebar').getBoundingClientRect(); return {right: f.right - m.right, above: m.bottom <= f.top, beside: m.left > s.right}; })()")
+        self.assertLess(pos["right"], 20)
+        self.assertTrue(pos["above"] and pos["beside"], pos)
+        b.click("[data-diffnote-view-menu]")
+        self.assertFalse(b.js(f"document.querySelector({json.dumps(panel)}).hidden"))
+        self.assertEqual(b.js("document.querySelector('[data-diffnote-layout=unified]').classList.contains('is-current')"), True)
+        b.escape()
+        self.assertTrue(b.wait(f"document.querySelector({json.dumps(panel)}).hidden"), "Escape shuts it")
 
     def test_the_latest_revision_is_shown_and_the_tabs_switch(self):
         b = self.b
@@ -318,7 +334,8 @@ class SideBySide(BrowserCase):
         b.reload()
         # The new side, from the line before the change to the last added one.
         copied = self.copy_after_dragging("new", 8, 12)
-        self.assertIn("  if (!account) {\n    return res.status(401).end()\n  }\n  const ok = await compare(pass, ", copied)
+        # (Where in a line the press falls depends on how wide the column is.)
+        self.assertIn("  if (!account) {\n    return res.status(401).end()\n  }\n  const ok = await compare(pass,", copied)
         # The "@@" row (and cards) in between are not selected either.
         self.assertEqual(b.js("getComputedStyle(document.querySelector('.diffnote-diff--split .diffnote-hunk-header td')).userSelect"), "none")
         self.assertNotIn("account.pass === pass", copied, "the old side is not taken along")
