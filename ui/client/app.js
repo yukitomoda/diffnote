@@ -311,7 +311,7 @@
       ${open && html`<div class="diffnote-quit__menu" data-diffnote-quit-menu>
         ${!sure
           ? html`<button type="button" class="diffnote-quit__item" data-diffnote-discard onClick=${function () { setSure(true); }}>保存せずに終了…</button>`
-          : html`<p>この起動で行った変更を破棄して、起動したときの内容に戻し、終了します。</p>
+          : html`<p>この起動で行ったことを、すべて取り消して終了します(取り込んだ差分やタイトルも含みます)。バンドルは起動する前の状態に戻り、この起動で作ったバンドルなら、削除されます。</p>
             <button type="button" class="diffnote-quit__danger" data-diffnote-discard-confirm onClick=${function () { quit(true); }}>破棄して終了</button>
             <button type="button" class="diffnote-quit__cancel" onClick=${function () { setSure(false); setOpen(false); }}>やめる</button>`}
         ${error && html`<p class="diffnote-error">${error}</p>`}
@@ -337,7 +337,7 @@
       kept.appendChild(make('dt', '', '今回の変更'));
       kept.appendChild(make('dd', '', '破棄しました'));
       kept.appendChild(make('dt', '', '保存先'));
-      kept.appendChild(make('dd', '', summary.path + '(起動したときの内容のままです)'));
+      kept.appendChild(make('dd', '', summary.path + (summary.removed ? '(この起動で作ったので、削除しました)' : '(起動する前の内容のままです)')));
       card.appendChild(kept);
     } else if (summary) {
       var list = make('dl', 'diffnote-farewell__list');

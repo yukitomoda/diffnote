@@ -447,6 +447,8 @@ fn cmd_serve(
     // What was asked for is added to the review, so it can be reviewed here (a
     // failure to do what was asked stops; one to do what was not, only says so).
     let git = repo_of(repo.clone())?;
+    // As the review was before any of this: what「保存せずに終了」goes back to.
+    let before = std::fs::read(&review).ok();
     match add_revision(
         &review,
         &git,
@@ -502,6 +504,7 @@ fn cmd_serve(
         author,
         repo,
         refresh: Some(refresher),
+        before: Some(before),
     };
     diffnote::serve::run(&options, |url, notices| {
         for notice in notices {

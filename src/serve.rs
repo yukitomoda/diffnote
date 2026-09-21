@@ -48,6 +48,10 @@ pub struct Options {
     /// Told `false`, it only looks: `Some` if there is something to take in,
     /// and nothing is written.
     pub refresh: Option<Refresher>,
+    /// The bundle as it was before `serve` did anything to it (the difference
+    /// it added, the title): `Some(None)` if there was none. Where it is
+    /// `None`, the bundle as the server finds it is taken.
+    pub before: Option<Option<Vec<u8>>>,
 }
 
 /// See [`Options::refresh`].
@@ -112,8 +116,8 @@ impl Reply {
 /// behavior and does no networking.
 pub struct Server {
     review: PathBuf,
-    /// The review as it was when the server started, to go back to if the
-    /// session is to be thrown away (「保存せずに終了」).
+    /// The review as it was before `serve` did anything (`None`: there was
+    /// none), to go back to if the session is to be thrown away (「保存せずに終了」).
     original: Option<Vec<u8>>,
     discarded: std::sync::atomic::AtomicBool,
     refresh: Option<Refresher>,
@@ -214,7 +218,10 @@ impl Server {
         let token = format!("{}{}", Ulid::new(), Ulid::new());
         Server {
             review: options.review.clone(),
-            original: std::fs::read(&options.review).ok(),
+            original: options
+                .before
+                .clone()
+                .unwrap_or_else(|| std::fs::read(&options.review).ok()),
             discarded: Default::default(),
             refresh: options.refresh.clone(),
             author: std::sync::Mutex::new(author::resolve(options.author.as_deref())),
@@ -253,6 +260,7 @@ impl Server {
         });
         serde_json::json!({
             "discarded": self.was_discarded(),
+            "removed": self.was_discarded() && self.original.is_none(),
             "changes": stats.describe(),
             "path": self.review.display().to_string(),
             "threads": totals.map(|t| t.0),
@@ -264,12 +272,15 @@ impl Server {
         self.discarded.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// Puts the review back as it was when the server started.
+    /// Puts the review back as it was before `serve` did anything: as it was, or
+    /// not there at all if `serve` made it.
     fn discard(&self) -> Result<(), Failure> {
-        let original = self
-            .original
-            .as_ref()
-            .ok_or_else(|| Failure(500, "起動したときの内容がありません".into()))?;
+        let Some(original) = &self.original else {
+            std::fs::remove_file(&self.review).map_err(|e| internal(e.into()))?;
+            self.discarded
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            return Ok(());
+        };
         let dir = self
             .review
             .parent()
@@ -288,10 +299,12 @@ impl Server {
     pub fn farewell(&self) -> String {
         let parts = self.farewell_parts();
         if self.was_discarded() {
-            return format!(
-                "保存せずに終了しました(今回の変更は破棄しました)\n{} は、起動したときの内容のままです",
-                parts["path"].as_str().unwrap_or("")
-            );
+            let path = parts["path"].as_str().unwrap_or("");
+            return if self.original.is_none() {
+                format!("保存せずに終了しました\n{path} は、この起動で作ったので、削除しました")
+            } else {
+                format!("保存せずに終了しました\n{path} は、起動する前の内容のままです")
+            };
         }
         let kept = match (parts["threads"].as_u64(), parts["comments"].as_u64()) {
             (Some(t), Some(c)) => format!(
@@ -1250,6 +1263,7 @@ mod tests {
                 author: Some("tester".into()),
                 repo,
                 refresh: None,
+                before: None,
             },
             4242,
         );
@@ -1628,6 +1642,7 @@ mod tests {
                 author: None,
                 repo: None,
                 refresh: None,
+                before: None,
             },
             4242,
         );
@@ -1773,6 +1788,7 @@ mod tests {
                         _ => anyhow::bail!("壊れました"),
                     }
                 })),
+                before: None,
             },
             4242,
         );
@@ -1842,6 +1858,7 @@ mod tests {
                 author: Some("tester".into()),
                 repo: None,
                 refresh: None,
+                before: None,
             },
             4242,
         );
@@ -1886,6 +1903,7 @@ mod tests {
                 author: None,
                 repo: None,
                 refresh: None,
+                before: None,
             },
             4243,
         );
@@ -2898,6 +2916,7 @@ mod tests {
                 author: None,
                 repo: Some(g.f.path.parent().unwrap().to_path_buf()),
                 refresh: None,
+                before: None,
             },
             4242,
         );
@@ -3035,6 +3054,7 @@ mod tests {
             author: None,
             repo: Some(elsewhere.path().to_path_buf()),
             refresh: None,
+            before: None,
         };
         let err = run(&options, |_, _| panic!("must not start")).unwrap_err();
         assert!(
@@ -3080,6 +3100,7 @@ mod tests {
             author: Some("tester".into()),
             repo: None,
             refresh: None,
+            before: None,
         };
         let (sender, receiver) = std::sync::mpsc::channel();
         let thread = std::thread::spawn(move || {

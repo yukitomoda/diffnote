@@ -760,6 +760,34 @@ class ServeAddsTheLatestDiff(ServedCase):
         self.b.click("[data-diffnote-pull]")
         self.assertTrue(self.b.wait("document.querySelector('[data-diffnote-pull-note]').textContent.includes('新しい変更はありません')"))
 
+    def discard_all(self):
+        b = self.b
+        b.click("[data-diffnote-quit-more]")
+        self.assertTrue(b.wait_exists("[data-diffnote-discard]"))
+        b.click("[data-diffnote-discard]")
+        self.assertTrue(b.wait_exists("[data-diffnote-discard-confirm]"))
+        b.click("[data-diffnote-discard-confirm]")
+        self.assertTrue(b.wait("!document.getElementById('app')"))
+
+    def test_quitting_without_saving_also_takes_back_the_difference_serve_added(self):
+        review = os.path.join(self.fresh("review"), "back.diffnote")
+        assert harness.diffnote("init", "-f", review, "c1", cwd=self.repo).returncode == 0
+        with open(review, "rb") as f:
+            before = f.read()
+        self.open_page(Served(review, cwd=self.repo, extra=["--title", "付けたタイトル"]))
+        self.assertGreater(entries(review), 2, "the difference and the title were added")
+        self.discard_all()
+        with open(review, "rb") as f:
+            self.assertEqual(f.read(), before, "as if serve had not run")
+
+    def test_quitting_without_saving_removes_a_bundle_that_serve_made(self):
+        review = os.path.join(self.fresh("review"), "made.diffnote")
+        self.open_page(Served(review, cwd=self.repo, extra=["--base", "c1", "c2"]))
+        self.assertTrue(os.path.exists(review))
+        self.discard_all()
+        self.assertIn("削除しました", self.b.js("document.body.textContent"))
+        self.assertFalse(os.path.exists(review))
+
     def test_a_base_and_a_target_make_the_bundle_if_there_is_none(self):
         review = os.path.join(self.fresh("review"), "named.diffnote")
         server = Served(review, cwd=self.repo, extra=["--base", "c1", "c2"])
