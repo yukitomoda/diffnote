@@ -88,6 +88,7 @@
     var setError = _e[1];
     var attach = useAttach(text, setText);
     var field = useRef(null);
+    useAutoGrow(field, text);
     // A quotation asked for (from a comment of this thread) goes in the box.
     useEffect(function () {
       var on = function (e) {
@@ -148,6 +149,27 @@
 
   // A value that can be changed on the spot: its display (the children) and a
   // button to edit it, which turns into a box to write the new value in.
+  // A box that grows and shrinks with what is written in it (wrapped lines
+  // too), up to what the style allows; below what `rows` gives it, it doesn't go.
+  function growTo(el) {
+    if (!el || !el.offsetParent) return;
+    el.style.height = 'auto';
+    var css = window.getComputedStyle(el);
+    var px = function (v) { return parseFloat(v) || 0; };
+    var height = css.boxSizing === 'border-box'
+      ? el.scrollHeight + px(css.borderTopWidth) + px(css.borderBottomWidth)
+      : el.scrollHeight - px(css.paddingTop) - px(css.paddingBottom);
+    el.style.height = height + 'px';
+  }
+  function useAutoGrow(ref, value, live) {
+    useLayoutEffect(function () { growTo(ref.current); }, [value, live]);
+    useEffect(function () {
+      var on = function () { growTo(ref.current); };
+      window.addEventListener('resize', on);
+      return function () { window.removeEventListener('resize', on); };
+    }, []);
+  }
+
   // Pictures for a box that a comment is written in: pasted (a screenshot),
   // dropped, or chosen. Each goes to the server, and what stands for it in the
   // text is put where the cursor was. Only on the served page.
@@ -294,6 +316,7 @@
     var setAsk = _a[1];
     var attach = useAttach(text, setText);
     var field = useRef(null);
+    useAutoGrow(field, text, editing);
     // Text chosen in this comment's body, with where to offer to quote it.
     var body = useRef(null);
     var _q = useState(null);
@@ -476,6 +499,7 @@
     useEffect(function () { box.current.focus(); }, []);
     var send = function () { c.send(props.request); };
     var attach = useAttach(c.draft, c.setDraft);
+    useAutoGrow(box, c.draft, c.pending);
     return html`<div>
       <form class="diffnote-compose" data-diffnote-scope=${props.scope} style=${c.pending ? 'display:none' : undefined}
         onSubmit=${function (e) { e.preventDefault(); send(); }}>

@@ -1063,6 +1063,51 @@ class Quoting(ServedCase):
         self.assertNotEqual(style["color"], style["body"], "quieter than the text under it")
 
 
+class BoxesGrowWithWhatIsWritten(ServedCase):
+    def height(self, selector):
+        return self.b.js("document.querySelector(%s).offsetHeight" % json.dumps(selector))
+
+    def test_a_box_grows_and_shrinks_with_the_lines_and_stops_at_half_the_window(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        start = self.height(box)
+        self.write(box, "\n".join(f"行 {n}" for n in range(1, 9)))
+        grown = self.height(box)
+        self.assertGreater(grown, start + 80, "eight lines are shown, not two and a scroll bar")
+        self.assertFalse(b.js("(e => e.scrollHeight > e.clientHeight + 1)(document.querySelector(%s))" % json.dumps(box)), "all of it is in view")
+        # Fewer lines: smaller again, to what it started as.
+        self.write(box, "一行だけ")
+        self.assertLessEqual(self.height(box), start + 2)
+        # A wrapped line counts as lines too.
+        self.write(box, "長い行 " * 300)
+        self.assertGreater(self.height(box), start + 40)
+        # Very many: it stops at half the window, and scrolls.
+        self.write(box, "\n".join(f"行 {n}" for n in range(1, 200)))
+        limit = b.js("innerHeight * 0.5")
+        self.assertLessEqual(self.height(box), limit + 2)
+        self.assertTrue(b.js("(e => e.scrollHeight > e.clientHeight + 1)(document.querySelector(%s))" % json.dumps(box)))
+
+    def test_the_box_for_a_new_comment_and_for_editing_grow_too(self):
+        self.serve()
+        b = self.b
+        b.click(f"{CUR} [data-diffnote-add=global]")
+        box = ".diffnote-compose textarea[placeholder^='コメントを書く']"
+        self.assertTrue(b.wait_exists(box))
+        start = self.height(box)
+        self.write(box, "\n".join(["あ"] * 7))
+        self.assertGreater(self.height(box), start + 60)
+        b.js("document.querySelector('.diffnote-compose').requestSubmit()")
+        self.assertTrue(b.wait("!document.querySelector('.diffnote-compose-wrap')"))
+        # Editing what was written (seven lines): opens as tall as they are.
+        b.click("[data-diffnote-global] [data-diffnote-mine] [data-diffnote-edit]")
+        edit = "[data-diffnote-edit-form] textarea"
+        self.assertTrue(b.wait_exists(edit))
+        self.assertGreater(self.height(edit), start + 60)
+        self.assertFalse(b.js("(e => e.scrollHeight > e.clientHeight + 1)(document.querySelector(%s))" % json.dumps(edit)))
+
+
 class ThreadsOnFilesAndTheReview(ServedCase):
     def test_a_review_wide_thread_is_added_to_its_place(self):
         self.serve()

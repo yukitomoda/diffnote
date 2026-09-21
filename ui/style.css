@@ -84,7 +84,7 @@ body.is-selecting { user-select: none; }
 .diffnote-composer-row > td { background: var(--diffnote-color-bg); padding: 6px 16px 6px 124px !important; white-space: normal; font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; }
 .diffnote-compose { max-width: 960px; border: 1px solid var(--diffnote-color-accent); border-radius: 6px; padding: 8px 12px; background: var(--diffnote-color-thread-bg); }
 .diffnote-compose__where { margin-bottom: 4px; font-family: var(--diffnote-font-mono); font-size: 12px; color: var(--diffnote-color-muted); }
-.diffnote-compose textarea { display: block; width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; resize: vertical; border: 1px solid var(--diffnote-color-border); border-radius: 6px; background: var(--diffnote-color-bg); }
+.diffnote-compose textarea { display: block; width: 100%; max-height: 50vh; overflow-y: auto; font: inherit; font-size: 14px; padding: 6px 8px; resize: vertical; border: 1px solid var(--diffnote-color-border); border-radius: 6px; background: var(--diffnote-color-bg); }
 .diffnote-compose textarea:focus { outline: 2px solid var(--diffnote-color-accent); outline-offset: -1px; }
 .diffnote-toggle { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 13px; color: var(--diffnote-color-muted); white-space: nowrap; cursor: pointer; user-select: none; }
 .diffnote-toggle__count { color: var(--diffnote-color-muted); }
@@ -119,7 +119,7 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-button--primary { color: #fff; background: var(--diffnote-color-accent); border-color: var(--diffnote-color-accent); }
 .diffnote-button--primary:hover { background: #0860ca; }
 .diffnote-thread__actions { margin-top: 6px; }
-.diffnote-reply textarea { display: block; width: 100%; font: inherit; font-size: 14px; padding: 6px 8px; resize: vertical; border: 1px solid var(--diffnote-color-border); border-radius: 6px; background: var(--diffnote-color-bg); }
+.diffnote-reply textarea { display: block; width: 100%; max-height: 50vh; overflow-y: auto; font: inherit; font-size: 14px; padding: 6px 8px; resize: vertical; border: 1px solid var(--diffnote-color-border); border-radius: 6px; background: var(--diffnote-color-bg); }
 .diffnote-reply textarea:focus { outline: 2px solid var(--diffnote-color-accent); outline-offset: -1px; }
 .diffnote-reply__buttons { display: flex; gap: 6px; margin-top: 6px; }
 .diffnote-comment.is-pending { opacity: 0.55; }
