@@ -316,6 +316,10 @@ fn add_revision(
             None if fresh.0.is_some() => ".",
             None => return Ok(None),
         };
+        // Reading the directory is too much to do each time it is only looked at.
+        if !apply {
+            return Ok(None);
+        }
         files_input(&loaded, Path::new(dir), &exclude)?
     } else {
         match loaded.source() {
@@ -332,13 +336,18 @@ fn add_revision(
             }
             None => {}
         }
-        git_input(repo.clone(), git_range(repo, &loaded, base, target)?)?
+        let range = git_range(repo, &loaded, base, target)?;
+        if !apply {
+            // Only the commit ids (not the diff): is this one not yet recorded?
+            let recorded = loaded.revisions().any(
+                |r| matches!(&r.source, diffnote::model::Source::Git(g) if g.head == range.head),
+            );
+            return Ok((!recorded).then(String::new));
+        }
+        git_input(repo.clone(), range)?
     };
     if input.diff_text.trim().is_empty() || loaded.revisions().any(|r| r.digest == input.digest) {
         return Ok(None);
-    }
-    if !apply {
-        return Ok(Some(String::new()));
     }
     let Input {
         diff_text,
