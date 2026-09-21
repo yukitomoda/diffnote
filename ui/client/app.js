@@ -487,9 +487,10 @@
     </div>`;
   }
 
-  // The review's settings, as they are kept in the bundle: changed here and
-  // saved together (nothing is kept until 保存).
-  function SettingsDialog(props) {
+  // The review's settings, as they are kept in the bundle: a screen of its own
+  // (the review is hidden, not taken down, while it is shown). Changed here and
+  // saved together: nothing is kept until 保存.
+  function SettingsPage(props) {
     var model = props.model;
     var settings = model.settings || {};
     var bundle = model.bundle;
@@ -508,13 +509,20 @@
     var _e = useState('');
     var error = _e[0];
     var setError = _e[1];
+    var _s = useState(false);
+    var saved = _s[0];
+    var setSaved = _s[1];
     var first = useRef(null);
-    useEffect(function () { if (first.current) { first.current.focus(); first.current.select(); } }, []);
+    useEffect(function () { if (first.current) first.current.focus(); }, []);
     useEffect(function () {
       var key = function (e) { if (e.key === 'Escape') props.onClose(); };
       document.addEventListener('keydown', key);
       return function () { document.removeEventListener('keydown', key); };
     }, []);
+    // What is here is not what is kept.
+    var dirty = title.trim() !== (settings.title || '').trim() || ignore !== !!settings.ignore_whitespace
+      || lib.mbToBytes(limit) !== settings.attachment_limit;
+    var touched = function (set) { return function (v) { set(v); setSaved(false); setError(''); }; };
     var submit = function (e) {
       e.preventDefault();
       if (busy) return;
@@ -525,31 +533,31 @@
       setError('');
       props.save({ title: title, ignore_whitespace: ignore, attachment_limit: bytes }).then(function (res) {
         setBusy(false);
-        if (res.ok) props.onClose();
+        if (res.ok) setSaved(true);
         else setError(res.error || '保存できませんでした');
       });
     };
     var row = function (label, value) { return html`<div><dt>${label}</dt><dd>${value}</dd></div>`; };
-    return html`<div class="diffnote-modal" data-diffnote-settings-dialog>
-      <div class="diffnote-modal__backdrop" onMouseDown=${function () { props.onClose(); }}></div>
-      <form class="diffnote-modal__box" role="dialog" aria-modal="true" aria-labelledby="diffnote-settings-title" noValidate onSubmit=${submit}>
-        <h2 id="diffnote-settings-title">レビューの設定</h2>
-        <p class="diffnote-modal__note">ここでの設定は、バンドルに保存され、このレビューを開く人みんなに、同じに働きます(作者の名前は、左下で、この起動の間だけ変えられます)。</p>
+    return html`<main class="diffnote-settings" data-diffnote-settings-page>
+      <form class="diffnote-settings__form" noValidate onSubmit=${submit}>
+        <p><button type="button" class="diffnote-button" data-diffnote-settings-back onClick=${props.onClose}>← レビューに戻る</button></p>
+        <h2>レビューの設定</h2>
+        <p class="diffnote-settings__note">ここでの設定は、バンドルに保存され、このレビューを開く人みんなに、同じに働きます(作者の名前は、レビューの画面の左下で、この起動の間だけ変えられます)。</p>
         <label class="diffnote-field">
           <span>タイトル</span>
           <input ref=${first} type="text" maxlength="200" data-diffnote-setting-title value=${title} placeholder="空にすると、既定の見出しに戻ります"
-            onInput=${function (e) { setTitle(e.target.value); }} />
+            onInput=${function (e) { touched(setTitle)(e.target.value); }} />
         </label>
         <label class="diffnote-field diffnote-field--check">
-          <input type="checkbox" data-diffnote-setting-ignore checked=${ignore} onChange=${function (e) { setIgnore(e.target.checked); }} />
+          <input type="checkbox" data-diffnote-setting-ignore checked=${ignore} onChange=${function (e) { touched(setIgnore)(e.target.checked); }} />
           <span>開いたとき、空白の違いを無視して表示する<small>(初期状態です。画面の「表示」メニューでの切り替えは、保存されません)</small></span>
         </label>
         <label class="diffnote-field">
           <span>添付できるファイルの大きさの上限(1 つあたり)</span>
-          <span class="diffnote-field__unit"><input type="number" min="0.001" max="100" step="any" data-diffnote-setting-limit value=${limit}
-            onInput=${function (e) { setLimit(e.target.value); }} /> MB</span>
+          <span class="diffnote-field__unit"><input type="number" step="any" data-diffnote-setting-limit value=${limit}
+            onInput=${function (e) { touched(setLimit)(e.target.value); }} /> MB</span>
         </label>
-        ${bundle && html`<dl class="diffnote-modal__info" data-diffnote-bundle-info>
+        ${bundle && html`<dl class="diffnote-settings__info" data-diffnote-bundle-info>
           <h3>このバンドルの内容(読み取りのみ)</h3>
           ${row('大きさ', lib.formatSize(bundle.size))}
           ${row('リビジョン', bundle.revisions + ' 件')}
@@ -558,11 +566,12 @@
         </dl>`}
         ${error && html`<p class="diffnote-error" role="alert">${error}</p>`}
         <div class="diffnote-reply__buttons">
-          <button type="submit" class="diffnote-button diffnote-button--primary" data-diffnote-settings-save disabled=${busy}>保存</button>
-          <button type="button" class="diffnote-button" data-diffnote-settings-cancel onClick=${props.onClose}>キャンセル</button>
+          <button type="submit" class="diffnote-button diffnote-button--primary" data-diffnote-settings-save disabled=${busy || !dirty}>保存</button>
+          ${saved && html`<span class="diffnote-settings__saved" data-diffnote-settings-saved role="status">保存しました</span>`}
+          ${dirty && !saved && html`<span class="diffnote-settings__dirty" data-diffnote-settings-dirty>保存していない変更があります(戻ると、失われます)</span>`}
         </div>
       </form>
-    </div>`;
+    </main>`;
   }
 
   // 「終了」: the way to finish, big; and, behind the arrow, the way not to
@@ -1729,7 +1738,7 @@
         <header class="diffnote-summary">
           <h1>${review.actions
             ? html`<button type="button" class="diffnote-title" data-diffnote-settings title="レビューの設定(タイトルなど)" aria-haspopup="dialog"
-                onClick=${function () { setSettingsOpen(true); }}>${model.title || DEFAULT_TITLE}<span class="diffnote-title__icon" aria-hidden="true">⚙</span></button>`
+                aria-pressed=${settingsOpen} onClick=${function () { setSettingsOpen(!settingsOpen); }}>${model.title || DEFAULT_TITLE}<span class="diffnote-title__icon" aria-hidden="true">⚙</span></button>`
             : model.title || DEFAULT_TITLE}</h1>
           ${model.base && html`<p data-diffnote-base class=${against != null ? 'is-changed' : ''} title=${against != null ? 'ベースの代わりに、このリビジョンと比べて表示しています(記録は変わりません)' : 'すべてのリビジョンは、これと比べた差分です'}>ベース: ${review.actions && current > 0
             ? html`<select class="diffnote-base__select" data-diffnote-base-select aria-label="比べる相手" value=${against == null ? '' : String(against)}
@@ -1745,7 +1754,7 @@
         }}><ul>
           ${model.revisions.map(function (r, i) {
             return html`<li key=${i}><a href=${'#rev-' + i} data-diffnote-revision-link=${i} class=${i === current ? 'is-current' : ''}
-              onClick=${function (e) { e.preventDefault(); setCurrent(i); }}>${r.label}</a></li>`;
+              onClick=${function (e) { e.preventDefault(); setSettingsOpen(false); setCurrent(i); }}>${r.label}</a></li>`;
           })}
         </ul></nav>`}
         <div class="diffnote-topbar__actions">
@@ -1759,7 +1768,8 @@
         ${model.interactive && html`<${QuitButton} />`}
         </div>
       </div>
-      ${settingsOpen && review.actions && html`<${SettingsDialog} model=${model} save=${review.actions.saveSettings} onClose=${function () { setSettingsOpen(false); }} />`}
+      ${settingsOpen && review.actions && html`<${SettingsPage} model=${model} save=${review.actions.saveSettings} onClose=${function () { setSettingsOpen(false); }} />`}
+      <div class="diffnote-review-body" hidden=${settingsOpen && !!review.actions}>
       <${ViewContext.Provider} value=${viewOptions}>
       <${ViewedContext.Provider} value=${viewed}>
       <${LinksContext.Provider} value=${links}>
@@ -1778,6 +1788,7 @@
       <//>
       <//>
       <//>
+      </div>
     </article>`;
   }
 

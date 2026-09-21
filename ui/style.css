@@ -355,12 +355,15 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
 .diffnote-title:hover, .diffnote-title:focus-visible { background: var(--diffnote-color-bg); border-color: var(--diffnote-color-border); }
 .diffnote-title__icon { font-size: 12px; font-weight: 400; color: var(--diffnote-color-muted); }
 
-/* The settings box. */
-.diffnote-modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center; padding: 8vh 16px 16px; overflow: auto; }
-.diffnote-modal__backdrop { position: fixed; inset: 0; background: rgba(31, 35, 40, 0.45); }
-.diffnote-modal__box { position: relative; width: min(34em, 100%); padding: 18px 22px; background: var(--diffnote-color-bg); color: var(--diffnote-color-fg); border: 1px solid var(--diffnote-color-border); border-radius: 10px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3); font-size: 13.5px; }
-.diffnote-modal__box h2 { margin: 0 0 6px; font-size: 16px; }
-.diffnote-modal__note { margin: 0 0 14px; font-size: 12.5px; color: var(--diffnote-color-muted); }
+/* The settings screen: in place of the review. */
+.diffnote-review-body[hidden] { display: none; }
+.diffnote-title[aria-pressed="true"] { background: var(--diffnote-color-bg); border-color: var(--diffnote-color-accent); }
+.diffnote-settings { padding: 24px 16px 48px; }
+.diffnote-settings__form { max-width: 40em; margin: 0 auto; font-size: 13.5px; }
+.diffnote-settings h2 { margin: 6px 0; font-size: 18px; }
+.diffnote-settings__note { margin: 0 0 16px; font-size: 12.5px; color: var(--diffnote-color-muted); }
+.diffnote-settings__saved { margin-left: 8px; color: #1a7f37; font-weight: 600; }
+.diffnote-settings__dirty { margin-left: 8px; font-size: 12.5px; color: #9a6700; }
 .diffnote-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
 .diffnote-field > span:first-child { font-weight: 600; }
 .diffnote-field input[type="text"], .diffnote-field input[type="number"] { font: inherit; padding: 4px 8px; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; box-sizing: border-box; }
@@ -370,8 +373,8 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
 .diffnote-field--check small { display: block; margin-top: 2px; color: var(--diffnote-color-muted); font-weight: 400; }
 .diffnote-field__unit { display: flex; align-items: center; gap: 6px; }
 .diffnote-field__unit input { width: 8em; }
-.diffnote-modal__info { margin: 14px 0; padding: 10px 12px; background: var(--diffnote-color-gutter); border-radius: 8px; }
-.diffnote-modal__info h3 { margin: 0 0 6px; font-size: 12.5px; color: var(--diffnote-color-muted); }
-.diffnote-modal__info div { display: flex; gap: 12px; }
-.diffnote-modal__info dt { width: 8em; color: var(--diffnote-color-muted); }
-.diffnote-modal__info dd { margin: 0; }
+.diffnote-settings__info { margin: 14px 0; padding: 10px 12px; background: var(--diffnote-color-gutter); border-radius: 8px; }
+.diffnote-settings__info h3 { margin: 0 0 6px; font-size: 12.5px; color: var(--diffnote-color-muted); }
+.diffnote-settings__info div { display: flex; gap: 12px; }
+.diffnote-settings__info dt { width: 8em; color: var(--diffnote-color-muted); }
+.diffnote-settings__info dd { margin: 0; }

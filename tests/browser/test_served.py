@@ -340,14 +340,27 @@ class Replies(ServedCase):
     def open_settings(self):
         b = self.b
         b.click("[data-diffnote-settings]")
-        self.assertTrue(b.wait_exists("[data-diffnote-settings-dialog]"))
+        self.assertTrue(b.wait_exists("[data-diffnote-settings-page]"))
 
-    def test_the_title_is_the_way_into_the_settings_and_they_are_kept_in_the_review(self):
+    def close_settings(self):
+        b = self.b
+        b.click("[data-diffnote-settings-back]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"))
+
+    def save_settings(self):
+        b = self.b
+        b.click("[data-diffnote-settings-save]")
+        self.assertTrue(b.wait_exists("[data-diffnote-settings-saved]"))
+
+    def test_the_title_is_the_way_into_the_settings_screen_and_they_are_kept_in_the_review(self):
         self.serve()
         b = self.b
         self.assertIn("diffnote レビュー", b.text("[data-diffnote-settings]"))
         self.assertFalse(b.exists("[data-diffnote-inline=title]"), "the old pencil is gone")
         self.open_settings()
+        # A screen of its own: the review is out of the way (and not taken down).
+        self.assertTrue(b.js("document.querySelector('.diffnote-review-body').hidden"))
+        self.assertEqual(b.js("document.querySelector('[data-diffnote-settings]').getAttribute('aria-pressed')"), "true")
         # What it says now, and what the bundle holds.
         self.assertEqual(b.value("[data-diffnote-setting-title]"), "")
         self.assertEqual(b.value("[data-diffnote-setting-limit]"), "5")
@@ -355,40 +368,59 @@ class Replies(ServedCase):
         info = b.text("[data-diffnote-bundle-info]")
         self.assertIn("リビジョン2 件", info)
         self.assertIn("画像0 件", info)
-        # Nothing is kept until it is saved.
+        # Nothing to save until something is changed; and nothing is kept if it is left.
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-settings-save]').disabled"))
         b.set_value("[data-diffnote-setting-title]", "新しいタイトル")
-        b.click("[data-diffnote-settings-cancel]")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-dialog]')"))
+        self.assertTrue(b.wait_exists("[data-diffnote-settings-dirty]"), "it says so")
+        self.close_settings()
+        self.assertFalse(b.js("document.querySelector('.diffnote-review-body').hidden"))
         self.assertNotIn("新しいタイトル", show(self.review))
         self.assertIn("diffnote レビュー", b.text("[data-diffnote-settings]"))
-        # Saved.
+        # Saved: the screen stays, and says so.
         self.open_settings()
         self.assertEqual(b.value("[data-diffnote-setting-title]"), "", "starts again from what is kept")
         b.set_value("[data-diffnote-setting-title]", "新しいタイトル")
         b.js("document.querySelector('[data-diffnote-setting-ignore]').click()")
         b.set_value("[data-diffnote-setting-limit]", "2")
-        b.click("[data-diffnote-settings-save]")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-dialog]')"))
+        self.save_settings()
         self.assertIn("新しいタイトル", b.text("[data-diffnote-settings]"))
         self.assertTrue(self.same_page())
         out = show(self.review)
         self.assertIn("[設定] タイトル=新しいタイトル", out)
         self.assertIn("[設定] 空白の違いを無視(初期表示)", out)
         self.assertIn(f"[設定] 添付ファイルの上限={2 * 1024 * 1024} バイト", out)
-        # The page itself is not changed by the default it was told to start from.
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-settings-save]').disabled"), "nothing more to save")
+        # Back at the review: what it was told to start from does not change the page it is on.
+        self.close_settings()
         self.assertFalse(b.js("document.querySelector('[data-diffnote-ignore-space]').checked"))
-        # The limit is the one the page checks a file against.
+        # Esc leaves the screen too, and the limit is what was saved.
         self.open_settings()
         self.assertEqual(b.value("[data-diffnote-setting-limit]"), "2")
+        time.sleep(0.2)  # (the screen listens for Escape once it has been drawn)
         b.escape()
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-dialog]')"), "Escape shuts it")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"), "Escape leaves it")
         # Emptied: the default heading comes back.
         self.open_settings()
         b.set_value("[data-diffnote-setting-title]", "")
-        b.click("[data-diffnote-settings-save]")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-dialog]')"))
+        self.save_settings()
         self.assertIn("diffnote レビュー", b.text("[data-diffnote-settings]"))
         self.assertNotIn("タイトル=", show(self.review))
+
+    def test_what_was_being_written_is_still_there_after_a_visit_to_the_settings(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        self.write(box, "書きかけの返信")
+        self.open_settings()
+        self.assertFalse(b.js("document.querySelector('[data-diffnote-settings-page]') === null"))
+        self.close_settings()
+        self.assertEqual(b.value(box), "書きかけの返信")
+        self.assertTrue(self.same_page(), "the review was not built again")
+        # A tab leaves the settings for the review too.
+        self.open_settings()
+        b.click("[data-diffnote-revision-link='0']")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"))
 
     def test_a_setting_that_is_not_a_number_or_out_of_range_is_told_and_nothing_is_kept(self):
         self.serve()
@@ -396,12 +428,12 @@ class Replies(ServedCase):
         self.open_settings()
         b.set_value("[data-diffnote-setting-limit]", "")
         b.click("[data-diffnote-settings-save]")
-        self.assertTrue(b.wait_exists("[data-diffnote-settings-dialog] .diffnote-error"))
-        self.assertIn("数字", b.text("[data-diffnote-settings-dialog] .diffnote-error"))
+        self.assertTrue(b.wait_exists("[data-diffnote-settings-page] .diffnote-error"))
+        self.assertIn("数字", b.text("[data-diffnote-settings-page] .diffnote-error"))
         b.set_value("[data-diffnote-setting-limit]", "500")
         b.click("[data-diffnote-settings-save]")
-        self.assertTrue(b.wait("document.querySelector('[data-diffnote-settings-dialog] .diffnote-error').textContent.includes('指定してください')"))
-        self.assertTrue(b.exists("[data-diffnote-settings-dialog]"), "stays open to be put right")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-settings-page] .diffnote-error').textContent.includes('指定してください')"))
+        self.assertTrue(b.exists("[data-diffnote-settings-page]"), "stays to be put right")
         self.assertNotIn("上限", show(self.review))
 
     def test_a_file_over_the_limit_that_was_set_is_refused_on_the_page(self):
@@ -409,8 +441,8 @@ class Replies(ServedCase):
         b = self.b
         self.open_settings()
         b.set_value("[data-diffnote-setting-limit]", "1")
-        b.click("[data-diffnote-settings-save]")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-dialog]')"))
+        self.save_settings()
+        self.close_settings()
         card = self.card("mul の型")
         box = f"#{card} .diffnote-reply textarea"
         b.js("""(function(sel){
