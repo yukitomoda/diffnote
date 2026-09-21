@@ -153,7 +153,7 @@ fn base_span_for(file: Option<&crate::diff::FileDiff>, head: LineSpan) -> LineSp
 fn is_emoji(text: &str) -> bool {
     !text.is_empty()
         && text.len() <= 32
-        && text.chars().any(|c| !c.is_ascii())
+        && !text.is_ascii()
         && text
             .chars()
             .all(|c| !c.is_control() && !c.is_whitespace() && !c.is_ascii_alphanumeric())
