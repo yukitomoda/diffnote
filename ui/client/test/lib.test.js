@@ -174,7 +174,7 @@ test('the lines chosen are counted on each side from the counters before the fir
   // The removed and the added line (the drag may go either way).
   assert.deepEqual(lib.counters(flat, 2, 1), { base: { start: 11, len: 1 }, head: { start: 11, len: 1 } });
   assert.equal(lib.chosenLocation('a.rs', lib.counters(flat, 0, 3)), 'a.rs:10-12');
-  assert.equal(lib.chosenLocation('a.rs', lib.counters(flat, 1, 1)), 'a.rs:11'.replace('11', '11'));
+  assert.equal(lib.chosenLocation('a.rs', lib.counters(flat, 1, 1)), 'a.rs:L11');
   assert.equal(lib.chosenLocation('a.rs', lib.counters(flat, 4, 4)), 'a.rs:41');
 });
 
@@ -313,23 +313,35 @@ test('what was shown is kept by line number, so it holds when the places change'
 
 test('a place in a text is a file of the review with its lines, and nothing else is', () => {
   const has = (p) => p === 'src/a.ts' || p === 'docs/記事.md';
-  assert.deepEqual(lib.lineRefs('see src/a.ts:10-13 here', has), [
-    'see ',
-    { text: 'src/a.ts:10-13', path: 'src/a.ts', start: 10, end: 13 },
-    ' here',
-  ]);
-  assert.deepEqual(lib.lineRefs('src/a.ts:7', has), [{ text: 'src/a.ts:7', path: 'src/a.ts', start: 7, end: 7 }]);
+  const ref = (text, path, start, end, side = 'new', rev = null) => ({ text, path, side, start, end, rev });
+  assert.deepEqual(lib.lineRefs('see src/a.ts:10-13 here', has, 2), ['see ', ref('src/a.ts:10-13', 'src/a.ts', 10, 13), ' here']);
+  assert.deepEqual(lib.lineRefs('src/a.ts:7', has, 2), [ref('src/a.ts:7', 'src/a.ts', 7, 7)]);
   // Something in front of the path (a quote, a bracket) stays outside.
-  assert.deepEqual(lib.lineRefs('「src/a.ts:3」を見て', has), [
-    '「',
-    { text: 'src/a.ts:3', path: 'src/a.ts', start: 3, end: 3 },
-    '」を見て',
-  ]);
-  assert.deepEqual(lib.lineRefs('docs/記事.md:2-3。', has), [{ text: 'docs/記事.md:2-3', path: 'docs/記事.md', start: 2, end: 3 }, '。']);
+  assert.deepEqual(lib.lineRefs('「src/a.ts:3」を見て', has, 1), ['「', ref('src/a.ts:3', 'src/a.ts', 3, 3), '」を見て']);
+  assert.deepEqual(lib.lineRefs('docs/記事.md:2-3。', has, 1), [ref('docs/記事.md:2-3', 'docs/記事.md', 2, 3), '。']);
   // Not files of the review, or not lines.
-  assert.deepEqual(lib.lineRefs('at 12:30 on http://x.y:8080/a and other.ts:4', has), ['at 12:30 on http://x.y:8080/a and other.ts:4']);
-  assert.deepEqual(lib.lineRefs('src/a.ts:0 src/a.ts:9-3', has), ['src/a.ts:0 src/a.ts:9-3']);
+  assert.deepEqual(lib.lineRefs('at 12:30 on http://x.y:8080/a and other.ts:4', has, 1), ['at 12:30 on http://x.y:8080/a and other.ts:4']);
+  assert.deepEqual(lib.lineRefs('src/a.ts:0 src/a.ts:9-3', has, 1), ['src/a.ts:0 src/a.ts:9-3']);
   // Two in a text.
-  assert.equal(lib.lineRefs('src/a.ts:1 and src/a.ts:2', has).filter((p) => typeof p !== 'string').length, 2);
-  assert.deepEqual(lib.lineRefs('', has), []);
+  assert.equal(lib.lineRefs('src/a.ts:1 and src/a.ts:2', has, 1).filter((p) => typeof p !== 'string').length, 2);
+  assert.deepEqual(lib.lineRefs('', has, 1), []);
+});
+
+test('L is the old side, R or nothing the new, and @ names the revision', () => {
+  const has = (p) => p === 'a.ts';
+  const ref = (text, start, end, side, rev) => ({ text, path: 'a.ts', side, start, end, rev });
+  assert.deepEqual(lib.lineRefs('a.ts:L10-12', has, 3), [ref('a.ts:L10-12', 10, 12, 'old', null)]);
+  assert.deepEqual(lib.lineRefs('a.ts:R5', has, 3), [ref('a.ts:R5', 5, 5, 'new', null)]);
+  assert.deepEqual(lib.lineRefs('a.ts:5@2', has, 3), [ref('a.ts:5@2', 5, 5, 'new', 2)]);
+  assert.deepEqual(lib.lineRefs('a.ts:L4-6@3.', has, 3), [ref('a.ts:L4-6@3', 4, 6, 'old', 3), '.']);
+  // A revision that isn't there makes it no place.
+  assert.deepEqual(lib.lineRefs('a.ts:5@4 a.ts:5@0', has, 3), ['a.ts:5@4 a.ts:5@0']);
+});
+
+test('the location of a thread on removed lines has L, and so has the choice of them', () => {
+  const p = { kind: 'line', file: 'a.ts', side: 'old', start: 10, end: 12, color: 0 };
+  assert.equal(lib.location(p), 'a.ts:L10-12');
+  assert.equal(lib.shortLocation(p), 'a.ts:L10-12');
+  assert.equal(lib.chosenLocation('a.ts', { base: { start: 4, len: 2 }, head: { start: 4, len: 0 } }), 'a.ts:L4-5');
+  assert.equal(lib.chosenLocation('a.ts', { base: { start: 4, len: 2 }, head: { start: 4, len: 3 } }), 'a.ts:4-6');
 });

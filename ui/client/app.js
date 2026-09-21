@@ -244,7 +244,7 @@
     >
       <summary>
         ${color && html`<span class="diffnote-thread__swatch" style=${'background:' + color}></span>`}${t.resolved ? '解決済み' : '未解決'}${loc && html` <span class="diffnote-thread__where">${loc}</span>`}${absent && ABSENCE[absent.absence]}${loc &&
-        html`<button type="button" class="diffnote-copy" data-diffnote-copy=${loc} title="ファイルパスと行をコピー">コピー</button>`}
+        html`<button type="button" class="diffnote-copy" data-diffnote-copy=${loc + '@' + (props.rev + 1)} title="ファイルパスと行(とリビジョン)のリンクをコピー">コピー</button>`}
       </summary>
       ${absent && absent.was.length > 0 && html`<pre class="diffnote-deleted__snippet">${absent.was.join('\n') + '\n'}</pre>`}
       ${t.comments.map(function (c, i) {
@@ -264,7 +264,7 @@
     return html`<div>
       <form class="diffnote-compose" data-diffnote-scope=${props.scope} style=${c.pending ? 'display:none' : undefined}
         onSubmit=${function (e) { e.preventDefault(); send(); }}>
-        <div class="diffnote-compose__where">${props.where}</div>
+        <div class="diffnote-compose__head"><div class="diffnote-compose__where">${props.where}</div>${props.copy && html`<button type="button" class="diffnote-copy" data-diffnote-copy=${props.copy} title="この範囲へのリンク(リビジョンつき)をコピー">コピー</button>`}</div>
         <textarea ref=${box} rows="3" placeholder="コメントを書く(Ctrl+Enter で送信)" value=${c.draft}
           onInput=${function (e) { c.setDraft(e.target.value); }}
           onKeyDown=${function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }}></textarea>
@@ -372,10 +372,12 @@
       if (typeof n === 'string') {
         if (!links) return n;
         // `src/a.ts:10-13` in the text goes to those lines.
-        return lib.lineRefs(n, links.has).map(function (piece, j) {
+        return lib.lineRefs(n, links.has, links.revisions).map(function (piece, j) {
           if (typeof piece === 'string') return piece;
-          return html`<a key=${j} href="#" class="diffnote-lineref" data-diffnote-lineref=${piece.path + ':' + piece.start + '-' + piece.end} title="この行へ移ります"
-            onClick=${function (e) { e.preventDefault(); links.go(piece.path, piece.start, piece.end); }}>${piece.text}</a>`;
+          var where = links.current === (piece.rev == null ? links.current : piece.rev - 1) ? 'この行へ移ります' : 'リビジョン #' + piece.rev + ' の行へ移ります';
+          if (piece.rev != null && piece.rev < links.revisions) where += '(最新のリビジョンではありません)';
+          return html`<a key=${j} href="#" class="diffnote-lineref" data-diffnote-lineref=${piece.path + ':' + (piece.side === 'old' ? 'L' : '') + piece.start + '-' + piece.end} title=${where}
+            onClick=${function (e) { e.preventDefault(); links.go(piece); }}>${piece.text}</a>`;
         });
       }
       var kids = markdown(n.c, n.t === 'a' ? null : links);
@@ -505,7 +507,7 @@
         if (sel && !compose.selecting && idx === hi_) {
           var c = lib.counters(flat, sel.anchor, sel.to);
           out.push(html`<tr class="diffnote-composer-row" key="compose"><td colspan="3">
-            <${Composer} scope="lines" where=${lib.chosenLocation(file.path, c)}
+            <${Composer} scope="lines" where=${lib.chosenLocation(file.path, c)} copy=${lib.chosenLocation(file.path, c) + '@' + (ctx.rev + 1)}
               request=${{ revision: ctx.rev, file: file.path, base: c.base, head: c.head }} />
           </td></tr>`);
         }
@@ -606,7 +608,7 @@
         if (last && (l === last || r === last)) {
           var c = lib.counters(flat, sel.anchor, sel.to, sel.side);
           out.push(html`<tr class="diffnote-composer-row" key="compose"><td colspan="4">
-            <${Composer} scope="lines" where=${lib.chosenLocation(file.path, c)}
+            <${Composer} scope="lines" where=${lib.chosenLocation(file.path, c)} copy=${lib.chosenLocation(file.path, c) + '@' + (ctx.rev + 1)}
               request=${{ revision: ctx.rev, file: file.path, base: c.base, head: c.head }} />
           </td></tr>`);
         }
@@ -1284,17 +1286,23 @@
     }, [seen]);
     var here = model.revisions[current] ? model.revisions[current].files : [];
     var links = useMemo(function () {
-      var paths = {};
-      here.forEach(function (f) { paths[f.path] = f; });
+      // A path is a place if some revision has the file.
+      var known = {};
+      model.revisions.forEach(function (r) { r.files.forEach(function (f) { known[f.path] = true; }); });
       return {
-        has: function (path) { return Object.prototype.hasOwnProperty.call(paths, path); },
-        go: function (path, start, end) {
+        current: current,
+        revisions: model.revisions.length,
+        has: function (path) { return Object.prototype.hasOwnProperty.call(known, path); },
+        go: function (ref) {
+          var index = ref.rev == null ? current : ref.rev - 1;
+          if (index !== current) setCurrent(index);
+          var file = model.revisions[index].files.filter(function (f) { return f.path === ref.path; })[0];
           // A file that was looked at is brought back to be shown.
-          if (viewed.is(paths[path])) viewed.toggle(paths[path]);
-          D.interact.showLines(current, path, start, end);
+          if (file && viewed.is(file)) viewed.toggle(file);
+          D.interact.showLines(index, ref.path, ref.side, ref.start, ref.end);
         },
       };
-    }, [here, viewed, current]);
+    }, [model, viewed, current]);
     var seenCount = here.filter(viewed.is).length;
     // What pressing 「最新を取り込む」 did, said next to it.
     var _n = useState(null);

@@ -254,17 +254,18 @@
       pinned = null;
       clear();
     },
-    // Show lines of a file (as the new side numbers them): open the file, scroll
+    // Show lines of a file (as the side, `old` or `new`, numbers them): open the file, scroll
     // to them and mark them for a moment. Lines the diff leaves out are not on
     // the page: the nearest that are shown stand for them.
-    showLines: function (rev, path, start, end) {
+    showLines: function (rev, path, side, start, end) {
+      var attr = side === 'old' ? 'data-diffnote-old' : 'data-diffnote-new';
       var tries = 0;
       var look = function () {
         var section = Array.prototype.filter.call(
           document.querySelectorAll('#rev-' + rev + ' section.diffnote-file'),
           function (e) { return e.getAttribute('data-diffnote-file') === path; }
         )[0];
-        var cells = section ? section.querySelectorAll('[data-diffnote-new]') : [];
+        var cells = section ? section.querySelectorAll('[' + attr + ']') : [];
         if (section && cells.length === 0) {
           // Not drawn until opened.
           for (var n = section.querySelector('details'); n && !n.open; ) {
@@ -283,7 +284,7 @@
         var before = null;
         var after = null;
         Array.prototype.forEach.call(cells, function (c) {
-          var v = +c.getAttribute('data-diffnote-new');
+          var v = +c.getAttribute(attr);
           if (v >= start && v <= end) inside.push(c);
           else if (v < start) before = c;
           else if (!after) after = c;

@@ -24,7 +24,7 @@
   lib.location = function (p) {
     if (!p || p.kind === 'global') return null;
     if (p.kind === 'line') {
-      return p.file + ':' + (p.end > p.start ? p.start + '-' + p.end : p.start);
+      return p.file + ':' + (p.side === 'old' ? 'L' : '') + (p.end > p.start ? p.start + '-' + p.end : p.start);
     }
     return p.file;
   };
@@ -33,7 +33,7 @@
   lib.shortLocation = function (p) {
     if (!p || p.kind === 'global') return '全体';
     var name = lib.baseName(p.file);
-    if (p.kind === 'line') return name + ':' + (p.end > p.start ? p.start + '-' + p.end : p.start);
+    if (p.kind === 'line') return name + ':' + (p.side === 'old' ? 'L' : '') + (p.end > p.start ? p.start + '-' + p.end : p.start);
     return name;
   };
 
@@ -361,20 +361,24 @@
   // `src/a.rs:10-13`: the lines of the choice, as the new side has them (the old
   // side, for lines that were only removed).
   lib.chosenLocation = function (path, counters) {
-    var part = counters.head.len > 0 ? counters.head : counters.base;
+    var old = counters.head.len === 0;
+    var part = old ? counters.base : counters.head;
     var end = part.start + part.len - 1;
-    return path + ':' + (end > part.start ? part.start + '-' + end : part.start);
+    return path + ':' + (old ? 'L' : '') + (end > part.start ? part.start + '-' + end : part.start);
   };
 
-  // The places in a text that say lines of a file of the review, as `a/b.ts:10`
-  // or `a/b.ts:10-20` (what a thread's location looks like): the text as pieces,
-  // a piece being a string, or `{ text, path, start, end }` for such a place.
-  // `has(path)` says whether a path is a file of the review (a `12:30` or a
-  // `http://…:8080` is not a place).
-  lib.lineRefs = function (text, has) {
+  // The places in a text that say lines of a file of the review: `a/b.ts:10`,
+  // `a/b.ts:10-20`, with `L` for the old side (a line that was removed) and `R`
+  // (or nothing) for the new, and `@2` after it for the revision (as the tabs
+  // number them): the text as pieces, a piece being a string, or
+  // `{ text, path, side, start, end, rev }` (`rev` is `null` if none is named)
+  // for such a place. `has(path)` says whether a path is a file of the review
+  // (a `12:30` or a `http://…:8080` is not a place), `revisions` how many
+  // revisions there are.
+  lib.lineRefs = function (text, has, revisions) {
     var pieces = [];
     var from = 0;
-    var re = /:(\d+)(?:-(\d+))?/g;
+    var re = /:([LR])?(\d+)(?:-(\d+))?(?:@(\d+))?/g;
     var m;
     while ((m = re.exec(text))) {
       // The path is what comes before, up to a space: the longest end of it that
@@ -388,11 +392,13 @@
         if (has(candidate)) { path = candidate; pathStart = i; break; }
       }
       if (path === null) continue;
-      var start = +m[1];
-      var end = m[2] != null ? +m[2] : start;
+      var start = +m[2];
+      var end = m[3] != null ? +m[3] : start;
       if (start < 1 || end < start) continue;
+      var rev = m[4] != null ? +m[4] : null;
+      if (rev !== null && (rev < 1 || rev > revisions)) continue;
       if (pathStart > from) pieces.push(text.slice(from, pathStart));
-      pieces.push({ text: text.slice(pathStart, m.index + m[0].length), path: path, start: start, end: end });
+      pieces.push({ text: text.slice(pathStart, m.index + m[0].length), path: path, side: m[1] === 'L' ? 'old' : 'new', start: start, end: end, rev: rev });
       from = m.index + m[0].length;
     }
     if (from < text.length) pieces.push(text.slice(from));

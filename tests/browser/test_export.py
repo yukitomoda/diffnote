@@ -128,7 +128,7 @@ class StaticExport(BrowserCase):
         where = b.js("document.querySelector('[data-test-card] .diffnote-thread__where').textContent")
         self.assertRegex(where, r"^calc\.py:\d+$")
         b.click("[data-test-card] summary .diffnote-copy")
-        self.assertEqual(b.js("window.__copied"), where)
+        self.assertEqual(b.js("window.__copied"), where + "@2", "with the revision it is in")
 
     def test_a_thread_in_the_list_leads_to_its_card_and_shows_its_range(self):
         b = self.b
@@ -543,8 +543,13 @@ class LineLinks(BrowserCase):
         git(repo, "tag", "c2")
         review = os.path.join(cls.root, "links.diffnote")
         assert diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo, comments=[
-            ("+FIVE", "ここは long.txt:40-41 と other.txt:1 と対で、time 12:30 や none.txt:4 は対象外です。"),
+            ("+FIVE", "ここは long.txt:40-41 と other.txt:1 と対で、time 12:30 や none.txt:4 は対象外です。削除は long.txt:L5@1 です。"),
         ]).returncode == 0
+        write(repo, "other.txt", "z\n")
+        git(repo, "commit", "-q", "-am", "c3")
+        git(repo, "tag", "c3")
+        out = diffnote("edit", "-f", review, "--base", "c1", "c3", cwd=repo, comments=[("GLOBAL", "二つ目")])
+        assert out.returncode == 0, out.stdout + out.stderr
         html = os.path.join(cls.root, "links.html")
         assert diffnote("export", "-f", review, html).returncode == 0
         cls.url = pathlib.Path(html).as_uri()
@@ -557,7 +562,7 @@ class LineLinks(BrowserCase):
 
     def test_only_the_places_that_are_files_of_the_review_are_links(self):
         b = self.b
-        self.assertEqual(b.js("[...document.querySelectorAll('[data-diffnote-lineref]')].map(a => a.textContent).join('|')"), "long.txt:40-41|other.txt:1")
+        self.assertEqual(b.js("[...document.querySelectorAll('[data-diffnote-lineref]')].map(a => a.textContent).join('|')"), "long.txt:40-41|other.txt:1|long.txt:L5@1")
 
     def test_pressing_one_goes_to_the_lines_and_marks_them(self):
         b = self.b
@@ -575,3 +580,19 @@ class LineLinks(BrowserCase):
         self.assertTrue(b.wait_exists(section), "the file is back")
         self.assertTrue(b.wait_exists("tr.diffnote-linked"))
         self.assertFalse(b.exists("[data-diffnote-check='other.txt'][aria-pressed='true']"))
+
+    def test_a_link_to_removed_lines_of_another_revision_switches_to_it_and_marks_them(self):
+        b = self.b
+        self.assertEqual(b.js("document.querySelector('.diffnote-revision.is-current').id"), "rev-1", "the latest is shown")
+        title = b.js("document.querySelector(\"[data-diffnote-lineref='long.txt:L5-5']\").title")
+        self.assertIn("#1", title)
+        self.assertIn("最新のリビジョンではありません", title)
+        b.click("[data-diffnote-lineref='long.txt:L5-5']")
+        self.assertTrue(b.wait("document.querySelector('.diffnote-revision.is-current').id === 'rev-0'"), "switched to #1")
+        self.assertTrue(b.wait_exists("tr.diffnote-linked"))
+        self.assertEqual(b.js("document.querySelector('tr.diffnote-linked').getAttribute('data-diffnote-old')"), "5")
+        self.assertIn("removed", b.js("document.querySelector('tr.diffnote-linked').className"), "it is the removed line")
+
+    def test_the_copy_buttons_of_a_thread_carry_the_revision(self):
+        b = self.b
+        self.assertEqual(b.js("document.querySelector(`${'%s'} .diffnote-thread .diffnote-copy`).getAttribute('data-diffnote-copy')" % CUR).endswith("@2"), True)

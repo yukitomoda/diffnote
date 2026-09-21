@@ -386,6 +386,19 @@ class NewThreadsOnLines(ServedCase):
         self.assertEqual(self.counts(), f"スレッド {before + 1} 件(解決済み 0 件)")
         self.assertTrue(any("login.ts:6" in l for l in show(self.review).splitlines() if "新規" in l))
 
+    def test_the_box_for_chosen_lines_has_a_button_that_copies_a_link_to_them(self):
+        self.serve(self.login)
+        b = self.b
+        b.drag(self.gutter("old", 8), self.gutter("new", 12))
+        self.assertEqual(b.js("document.querySelector('.diffnote-compose__head .diffnote-copy').getAttribute('data-diffnote-copy')"),
+                         "src/auth/login.ts:9-12@1")
+        b.escape()
+        # Removed lines only: the old side, with L.
+        b.click_at(self.gutter("old", 8))
+        self.assertEqual(b.text(".diffnote-compose__where"), "src/auth/login.ts:L8")
+        self.assertEqual(b.js("document.querySelector('.diffnote-compose__head .diffnote-copy').getAttribute('data-diffnote-copy')"),
+                         "src/auth/login.ts:L8@1")
+
     def test_dragging_over_removed_and_added_lines_chooses_them_all(self):
         self.serve(self.login)
         b = self.b
@@ -561,7 +574,7 @@ class SideBySideLines(ServedCase):
         b = self.b
         b.click_at(self.gutter("old", 8))
         self.assertTrue(b.wait_exists(".diffnote-composer-row"))
-        self.assertEqual(b.text(".diffnote-compose__where"), "src/auth/login.ts:8")
+        self.assertEqual(b.text(".diffnote-compose__where"), "src/auth/login.ts:L8")
         self.assertEqual(self.picked("old"), 2)
         self.assertEqual(self.picked("new"), 0)
         self.write(".diffnote-composer-row textarea", "消した行について")
