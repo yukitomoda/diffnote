@@ -671,10 +671,10 @@
     return html`<section class=${'diffnote-file' + (kind === 'added' || kind === 'deleted' ? ' diffnote-file--' + kind : '')} id=${'r' + ctx.rev + '-file-' + htmlId(file.path)} data-diffnote-file=${file.path}>
       <details ref=${details} open=${startsOpen} onToggle=${function (e) { if (e.target.open && !opened) setOpened(true); }}>
         <summary>
-          <h2>${file.path}${file.status === 'binary' ? ' (バイナリ' + (BINARY_CHANGES[file.change] ? '・' + BINARY_CHANGES[file.change] : '') + ')' : ''}${file.status === 'renamed' ? ' (名前変更)' : ''}</h2>
-          <button type="button" class="diffnote-copy" data-diffnote-copy=${file.path} title="パスをコピー">コピー</button>
           ${viewed && html`<button type="button" class="diffnote-mini diffnote-mini--check" data-diffnote-viewed=${file.path} title="確認済みにして、表示をたたみます(左の一覧から戻せます)"
             onClick=${function (e) { e.preventDefault(); e.stopPropagation(); viewed.toggle(file); }}>✓ 確認済み</button>`}
+          <h2>${file.path}${file.status === 'binary' ? ' (バイナリ' + (BINARY_CHANGES[file.change] ? '・' + BINARY_CHANGES[file.change] : '') + ')' : ''}${file.status === 'renamed' ? ' (名前変更)' : ''}</h2>
+          <button type="button" class="diffnote-copy" data-diffnote-copy=${file.path} title="パスをコピー">コピー</button>
           ${file.opened && files && html`<button type="button" class="diffnote-mini" data-diffnote-close title="この表示を閉じる(記録には残りません)"
             onClick=${function (e) {
               e.preventDefault();
@@ -733,7 +733,7 @@
               title=${done ? '確認済みを解除して、表示に戻します' : '確認済みにします'} onClick=${function () { viewed.toggle(f); }}>${done ? '✓' : ''}</button>`}
             <a href=${'#r' + ctx.rev + '-file-' + htmlId(f.path)}>${f.path}</a>
             ${done
-              ? open > 0 && html`<span class="diffnote-open" data-diffnote-open-count title=${'未解決のスレッドが ' + open + ' 件あります'}>💬${open}</span>`
+              ? open > 0 && html`<span class="diffnote-badge" data-diffnote-open-count title=${'未解決のスレッドが ' + open + ' 件あります'}>${open}</span>`
               : n > 0 && html` <span class="diffnote-badge">${n}</span>`}
           </li>`;
         })}

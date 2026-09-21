@@ -46,6 +46,8 @@ class StaticExport(BrowserCase):
         threads_before = b.count(".diffnote-threadlist li")
         section = f"{CUR} section.diffnote-file[data-diffnote-file='calc.py']"
         self.assertTrue(b.exists(section))
+        gap = b.js(f"(() => {{ const s = document.querySelector({json.dumps(section + ' summary')}).getBoundingClientRect(); const b = document.querySelector({json.dumps(section + ' [data-diffnote-viewed]')}).getBoundingClientRect(); return s.right - b.right; }})()")
+        self.assertLess(gap, 16, "the button is at the right end of the header")
         b.click(f"{section} [data-diffnote-viewed]")
         self.assertTrue(b.wait(f"!document.querySelector({json.dumps(section)})"), "the file and its threads are gone")
         self.assertEqual(b.count(f"{CUR} section.diffnote-file"), files - 1)

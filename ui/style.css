@@ -133,8 +133,7 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-filelist li:hover .diffnote-check, .diffnote-check:focus-visible { border-color: var(--diffnote-color-border); }
 .diffnote-filelist li.is-viewed .diffnote-check { background: #1a7f37; border-color: #1a7f37; }
 .diffnote-filelist li.is-viewed a { color: var(--diffnote-color-muted); }
-.diffnote-open { flex: none; font-size: 11px; color: var(--diffnote-color-muted); padding-right: 4px; }
-.diffnote-mini--check { margin-left: 4px; }
+.diffnote-mini--check { float: right; margin-left: 8px; }
 .diffnote-badge { background: var(--diffnote-color-accent); color: #fff; border-radius: 1em; padding: 0 7px; font-size: 11px; line-height: 18px; }
 
 .diffnote-global-comments { margin-top: 12px; }
