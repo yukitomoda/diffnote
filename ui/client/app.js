@@ -114,6 +114,50 @@
       </div>`;
   }
 
+  // A value that can be changed on the spot: its display (the children) and a
+  // button to edit it, which turns into a box to write the new value in.
+  function InlineEdit(props) {
+    var _e = useState(false);
+    var editing = _e[0];
+    var setEditing = _e[1];
+    var _t = useState('');
+    var text = _t[0];
+    var setText = _t[1];
+    var _b = useState(false);
+    var busy = _b[0];
+    var setBusy = _b[1];
+    var _r = useState('');
+    var error = _r[0];
+    var setError = _r[1];
+    var box = useRef(null);
+    useEffect(function () { if (editing && box.current) { box.current.focus(); box.current.select(); } }, [editing]);
+    var save = function (e) {
+      e.preventDefault();
+      if (busy) return;
+      setBusy(true);
+      setError('');
+      props.onSave(text).then(function (res) {
+        setBusy(false);
+        if (res.ok) setEditing(false);
+        else setError(res.error || '保存できませんでした');
+      });
+    };
+    if (!editing) {
+      return html`<span class="diffnote-inline">${props.children}<button type="button" class="diffnote-inline__edit"
+        data-diffnote-inline=${props.name} title=${props.label} aria-label=${props.label}
+        onClick=${function () { setText(props.value); setError(''); setEditing(true); }}>✎</button></span>`;
+    }
+    return html`<span class="diffnote-inline">${props.children}<form class=${'diffnote-inline diffnote-inline--editing diffnote-inline--' + props.name} onSubmit=${save}>
+      <input ref=${box} type="text" value=${text} maxlength=${props.max} placeholder=${props.placeholder} aria-label=${props.label}
+        data-diffnote-inline-input=${props.name}
+        onInput=${function (e) { setText(e.target.value); }}
+        onKeyDown=${function (e) { if (e.key === 'Escape') { e.stopPropagation(); setEditing(false); } }} />
+      <button type="submit" class="diffnote-button diffnote-button--primary" disabled=${busy}>保存</button>
+      <button type="button" class="diffnote-button" onClick=${function () { setEditing(false); }}>取消</button>
+      ${error && html`<span class="diffnote-error" role="alert">${error}</span>`}
+    </form></span>`;
+  }
+
   // One comment. One added since the server started has buttons to edit it and
   // to take it out (the first comment of a thread takes the whole thread out).
   function Comment(props) {
@@ -866,6 +910,17 @@
         remove: function (id) {
           return D.api.post('/api/comments/' + id + '/delete').then(whole);
         },
+        // The review's title (the answer is the whole model), and the name comments
+        // are written under for the rest of this session.
+        setTitle: function (title) {
+          return D.api.post('/api/title', { title: title }).then(whole);
+        },
+        setAuthor: function (name) {
+          return D.api.post('/api/author', { author: name }).then(function (res) {
+            if (res.ok) setModel(function (cur) { return Object.assign({}, cur, { author: res.author }); });
+            return res;
+          });
+        },
         setResolved: function (id, resolved) {
           var before = ref.current.threads.filter(function (t) { return t.id === id; })[0];
           setModel(replace(Object.assign({}, before, { resolved: resolved })));
@@ -1104,7 +1159,10 @@
     return html`<article class="diffnote-review">
       <div class="diffnote-topbar">
         <header class="diffnote-summary">
-          <h1>${model.title || DEFAULT_TITLE}</h1>
+          <h1>${review.actions
+            ? html`<${InlineEdit} name="title" value=${model.title || ''} max="200" label="タイトルを変える" placeholder="タイトル(空にすると、既定の見出しに戻ります)"
+                onSave=${review.actions.setTitle}>${model.title || DEFAULT_TITLE}<//>`
+            : model.title || DEFAULT_TITLE}</h1>
           <p>スレッド ${counts.all} 件(解決済み ${counts.resolved} 件)</p>
         </header>
         ${model.revisions.length > 1 && html`<nav class="diffnote-revisions"><ul>
@@ -1124,6 +1182,8 @@
             onChange=${function (e) { keep('diffnote-hide-resolved', e.target.checked ? '1' : '0'); setHide(e.target.checked); }} />
           解決済みを隠す<span class="diffnote-toggle__count" data-diffnote-resolved-count>${'(' + counts.resolved + ')'}</span>
         </label>`}
+        ${review.actions && model.author != null && html`<span class="diffnote-author">作者: <${InlineEdit} name="author" value=${model.author} max="100" label="作者名を変える(この起動の間だけ)" placeholder="作者名"
+          onSave=${review.actions.setAuthor}><strong data-diffnote-author>${model.author}</strong><//></span>`}
         ${model.interactive && html`<a class="diffnote-button" data-diffnote-export href="/export" title="今の内容を、誰でも開ける HTML として保存します">エクスポート</a>`}
         ${model.interactive && html`<button type="button" class="diffnote-button diffnote-topbar__quit" data-diffnote-shutdown title="サーバーを止めます"
           onClick=${function () { D.api.post('/api/shutdown').then(function (res) { stopped(res.summary); }); }}>終了</button>`}

@@ -134,9 +134,12 @@ enum Cmd {
         /// ブラウザを自動で開かない(URL だけを表示する)。
         #[arg(long)]
         no_open: bool,
-        /// 返信などの作者名。省略時は git の user.name、なければ user.email、なければ環境のユーザー名。
+        /// 返信などの作者名の既定値。省略時は git の user.name、なければ user.email、なければ環境のユーザー名。画面でも変えられます(その起動の間だけ)。
         #[arg(long, value_name = "NAME")]
         author: Option<String>,
+        /// レビューのタイトルを設定する(`edit --title` と同じ)。画面でも変えられます。
+        #[arg(long, value_name = "TITLE")]
+        title: Option<String>,
         /// git のレビューを作ったリポジトリ。バンドルに保存されていないファイルを、コミットから開くために使う。省略時は、起動したディレクトリ。
         #[arg(long, value_name = "DIR")]
         repo: Option<PathBuf>,
@@ -227,6 +230,7 @@ fn main() -> Result<()> {
             port,
             no_open,
             author,
+            title,
             repo,
             target,
             base,
@@ -236,6 +240,7 @@ fn main() -> Result<()> {
             port,
             no_open,
             author,
+            title,
             repo,
             Compare {
                 target,
@@ -410,6 +415,7 @@ fn cmd_serve(
     port: u16,
     no_open: bool,
     author: Option<String>,
+    title: Option<String>,
     repo: Option<PathBuf>,
     compare: Compare,
 ) -> Result<()> {
@@ -435,6 +441,20 @@ fn cmd_serve(
     }
     if !review.exists() {
         anyhow::bail!("レビューする差分がありません(バンドルは作りませんでした)");
+    }
+    if let Some(title) = title.as_deref() {
+        let loaded = bundle::load(&review)?;
+        let by = diffnote::author::resolve(author.as_deref());
+        if let Some(event) = review::title_change(&loaded.events, title, &by) {
+            let mut events = loaded.events.clone();
+            events.push(event);
+            let none = bundle::Additions {
+                diff: None,
+                blobs: Vec::new(),
+            };
+            bundle::save(&review, &loaded, &events, &none)?;
+            println!("タイトルを設定しました");
+        }
     }
     if bundle::load(&review)
         .ok()

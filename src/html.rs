@@ -146,18 +146,19 @@ pub fn render_export_with(
 pub fn render_served_page(
     loaded: &crate::bundle::Loaded,
     editable: Vec<String>,
+    author: String,
 ) -> anyhow::Result<String> {
-    client_page(loaded, Some(editable), ExpandLimit::Lines(0))
+    client_page(loaded, Some((editable, author)), ExpandLimit::Lines(0))
 }
 
 fn client_page(
     loaded: &crate::bundle::Loaded,
-    served: Option<Vec<String>>,
+    served: Option<(Vec<String>, String)>,
     limit: ExpandLimit,
 ) -> anyhow::Result<String> {
     let interactive = served.is_some();
-    let data = if let Some(editable) = served {
-        served_model_json(loaded, editable)?
+    let data = if let Some((editable, author)) = served {
+        served_model_json(loaded, editable, author)?
     } else {
         view_model_json(loaded, limit)?
     };
@@ -1189,7 +1190,7 @@ mod tests {
             "an exported page makes no requests"
         );
         assert!(
-            render_served_page(&loaded, Vec::new())
+            render_served_page(&loaded, Vec::new(), "a".into())
                 .unwrap()
                 .contains("D.api = ")
         );

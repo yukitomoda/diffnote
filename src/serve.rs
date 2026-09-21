@@ -101,7 +101,9 @@ impl Reply {
 /// behavior and does no networking.
 pub struct Server {
     review: PathBuf,
-    author: String,
+    /// The name comments are written under: `--author` or the default, and
+    /// what the page sets for the rest of the session.
+    author: std::sync::Mutex<String>,
     token: String,
     port: u16,
     git: GitFiles,
@@ -121,6 +123,7 @@ struct Stats {
     reopened: u32,
     edited: u32,
     deleted: u32,
+    titled: u32,
 }
 
 impl Stats {
@@ -142,6 +145,7 @@ impl Stats {
             (self.reopened, "再開"),
             (self.edited, "編集"),
             (self.deleted, "削除"),
+            (self.titled, "タイトル変更"),
         ] {
             if n > 0 {
                 parts.push(format!("{what} {n} 件"));
@@ -194,7 +198,7 @@ impl Server {
         let token = format!("{}{}", Ulid::new(), Ulid::new());
         Server {
             review: options.review.clone(),
-            author: author::resolve(options.author.as_deref()),
+            author: std::sync::Mutex::new(author::resolve(options.author.as_deref())),
             token,
             port,
             git: GitFiles {
@@ -204,6 +208,13 @@ impl Server {
             session: Default::default(),
             stats: Default::default(),
         }
+    }
+
+    fn author(&self) -> String {
+        self.author
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn count(&self, change: impl FnOnce(&mut Stats)) {
@@ -270,6 +281,7 @@ impl Server {
     fn model_of(&self, loaded: &bundle::Loaded) -> Result<html::ViewModel, Failure> {
         let mut model = html::view_model_for(loaded, true).map_err(internal)?;
         model.editable = self.editable(loaded);
+        model.author = Some(self.author());
         Ok(model)
     }
 
@@ -374,7 +386,7 @@ impl Server {
     fn page(&self) -> Reply {
         match bundle::load(&self.review).and_then(|l| {
             let editable = self.editable(&l);
-            html::render_served_page(&l, editable)
+            html::render_served_page(&l, editable, self.author())
         }) {
             Ok(page) => Reply::html(200, page),
             Err(e) => Reply::html(
@@ -611,7 +623,7 @@ impl Server {
         events.push(Event::Comment {
             id,
             parent: None,
-            author: self.author.clone(),
+            author: self.author(),
             created_at: OffsetDateTime::now_utc(),
             anchor: Some(anchor),
             body: text.to_string(),
@@ -658,6 +670,8 @@ impl Server {
             ["api", "threads", id, "reopen"] => {
                 self.with_thread(id, |thread| self.set_resolved(thread, false))
             }
+            ["api", "author"] => self.set_author(request.body),
+            ["api", "title"] => self.set_title(request.body),
             ["api", "comments", id, "edit"] => self.edit_comment(id, request.body),
             ["api", "comments", id, "delete"] => self.delete_comment(id),
             _ => return Reply::error(404, "見つかりません"),
@@ -696,6 +710,51 @@ impl Server {
                 "editable": self.editable(&loaded),
             }),
         ))
+    }
+
+    /// Sets the name comments are written under, for the rest of this session.
+    fn set_author(&self, body: &[u8]) -> Result<Reply, Failure> {
+        let value: serde_json::Value = serde_json::from_slice(body)
+            .map_err(|_| Failure(400, "送られた内容を読めません".into()))?;
+        let name = value
+            .get("author")
+            .and_then(|a| a.as_str())
+            .map(|a| a.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|a| !a.is_empty())
+            .ok_or_else(|| Failure(400, "作者名が空です".into()))?;
+        if name.chars().count() > 100 {
+            return Err(Failure(400, "作者名が長すぎます(100 文字まで)".into()));
+        }
+        *self.author.lock().unwrap_or_else(|e| e.into_inner()) = name.clone();
+        Ok(Reply::json(
+            200,
+            &serde_json::json!({ "ok": true, "author": name }),
+        ))
+    }
+
+    /// Sets the review's title (an empty one takes it away), as `edit --title`.
+    fn set_title(&self, body: &[u8]) -> Result<Reply, Failure> {
+        let value: serde_json::Value = serde_json::from_slice(body)
+            .map_err(|_| Failure(400, "送られた内容を読めません".into()))?;
+        let title = value
+            .get("title")
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| Failure(400, "タイトルが指定されていません".into()))?
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if title.chars().count() > 200 {
+            return Err(Failure(400, "タイトルが長すぎます(200 文字まで)".into()));
+        }
+        let loaded = bundle::load(&self.review).map_err(internal)?;
+        let before = html::stamp(&loaded);
+        if let Some(event) = review::title_change(&loaded.events, &title, &self.author()) {
+            let mut events = loaded.events.clone();
+            events.push(event);
+            self.save(&loaded, &events)?;
+            self.count(|s| s.titled += 1);
+        }
+        self.model_answer(&before, serde_json::json!({}))
     }
 
     /// The id of a comment of this session (only those may be changed).
@@ -835,7 +894,7 @@ impl Server {
         self.append(Event::Comment {
             id,
             parent: Some(thread.root_id),
-            author: self.author.clone(),
+            author: self.author(),
             created_at: OffsetDateTime::now_utc(),
             anchor: None,
             body: text.to_string(),
@@ -850,11 +909,8 @@ impl Server {
             // Already so (another tab, or the command line, got there first).
             return Ok(());
         }
-        let (parent, author, created_at) = (
-            thread.root_id,
-            self.author.clone(),
-            OffsetDateTime::now_utc(),
-        );
+        let (parent, author, created_at) =
+            (thread.root_id, self.author(), OffsetDateTime::now_utc());
         self.append(if resolved {
             Event::Resolve {
                 parent,
@@ -1545,6 +1601,60 @@ mod tests {
                 _ => None,
             })
             .unwrap()
+    }
+
+    #[test]
+    fn the_author_can_be_set_for_the_session_and_what_is_written_next_uses_it() {
+        let f = fixture();
+        let model = json(&f.request("GET", "/api/model", &[], ""));
+        assert_eq!(model["model"]["author"], "tester");
+        let set = json(&f.post("/api/author", r#"{"author":"  山田   太郎 "}"#));
+        assert_eq!(
+            (set["ok"].clone(), set["author"].clone()),
+            (true.into(), "山田 太郎".into())
+        );
+        let reply = json(&f.post(
+            &format!("/api/threads/{}/replies", f.thread),
+            r#"{"body":"hi"}"#,
+        ));
+        assert_eq!(reply["thread_data"]["comments"][1]["author"], "山田 太郎");
+        let model = json(&f.request("GET", "/api/model", &[], ""));
+        assert_eq!(model["model"]["author"], "山田 太郎");
+        // Blank or too long: refused, and the name stays.
+        assert_eq!(f.post("/api/author", r#"{"author":"   "}"#).status, 400);
+        assert_eq!(f.post("/api/author", r#"{}"#).status, 400);
+        let long = format!(r#"{{"author":"{}"}}"#, "あ".repeat(101));
+        assert_eq!(f.post("/api/author", &long).status, 400);
+        let model = json(&f.request("GET", "/api/model", &[], ""));
+        assert_eq!(model["model"]["author"], "山田 太郎");
+    }
+
+    #[test]
+    fn the_title_is_written_to_the_review_and_an_empty_one_takes_it_away() {
+        let f = fixture();
+        let before = f.events().len();
+        let set = json(&f.post("/api/title", r#"{"title":" ログイン  改修 "}"#));
+        assert_eq!(set["ok"], true, "{set}");
+        assert_eq!(set["model"]["title"], "ログイン 改修");
+        assert_eq!(f.events().len(), before + 1);
+        assert!(matches!(
+            f.events().last(),
+            Some(Event::Title { title, author, .. }) if title == "ログイン 改修" && author == "tester"
+        ));
+        // The same title again writes nothing; an empty one clears it.
+        f.post("/api/title", r#"{"title":"ログイン 改修"}"#);
+        assert_eq!(f.events().len(), before + 1);
+        let cleared = json(&f.post("/api/title", r#"{"title":""}"#));
+        assert!(cleared["model"]["title"].is_null());
+        assert_eq!(f.post("/api/title", "{}").status, 400);
+        let long = format!(r#"{{"title":"{}"}}"#, "あ".repeat(201));
+        assert_eq!(f.post("/api/title", &long).status, 400);
+        // It counts in what is said when the server stops.
+        let told = json(&f.post("/api/shutdown", "{}"))["farewell"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(told.contains("タイトル変更 2 件"), "{told}");
     }
 
     #[test]

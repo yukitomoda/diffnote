@@ -233,6 +233,58 @@ class Replies(ServedCase):
         self.assertNotEqual(self.counts(), threads)
         self.assertNotIn("やっぱり要らない全体コメント", show(self.review))
 
+    def test_a_title_given_when_serving_is_the_title(self):
+        self.review = os.path.join(self.fresh("review"), "r.diffnote")
+        shutil.copy(self.calc, self.review)
+        self.server = Served(self.review, author="検証者", extra=["--title", "起動時のタイトル"])
+        self.addCleanup(self.server.stop)
+        self.assertTrue(any("タイトルを設定しました" in l for l in self.server.said), self.server.said)
+        self.b = self.browser
+        self.b.open(self.server.url)
+        self.assertIn("起動時のタイトル", self.b.text(".diffnote-summary h1"))
+        self.assertIn("起動時のタイトル", show(self.review))
+
+    def test_the_title_can_be_changed_on_the_page_and_is_kept_in_the_review(self):
+        self.serve()
+        b = self.b
+        b.click("[data-diffnote-inline=title]")
+        self.assertTrue(b.wait_exists("[data-diffnote-inline-input=title]"))
+        b.set_value("[data-diffnote-inline-input=title]", "新しいタイトル")
+        b.js("document.querySelector('[data-diffnote-inline-input=title]').form.requestSubmit()")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-inline-input=title]')"))
+        self.assertEqual(b.text(".diffnote-summary h1"), "新しいタイトル✎")
+        self.assertTrue(self.same_page())
+        deadline = time.time() + 8
+        while "新しいタイトル" not in show(self.review) and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertIn("新しいタイトル", show(self.review))
+        # Emptied: the default heading comes back.
+        b.click("[data-diffnote-inline=title]")
+        b.set_value("[data-diffnote-inline-input=title]", "")
+        b.js("document.querySelector('[data-diffnote-inline-input=title]').form.requestSubmit()")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-inline-input=title]')"))
+        self.assertIn("diffnote レビュー", b.text(".diffnote-summary h1"))
+
+    def test_the_author_starts_from_the_default_and_can_be_changed_for_the_session(self):
+        self.serve()
+        b = self.b
+        self.assertEqual(b.text("[data-diffnote-author]"), "検証者", "the --author it was started with")
+        b.click("[data-diffnote-inline=author]")
+        self.assertTrue(b.wait_exists("[data-diffnote-inline-input=author]"))
+        b.set_value("[data-diffnote-inline-input=author]", "別の人")
+        b.js("document.querySelector('[data-diffnote-inline-input=author]').form.requestSubmit()")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-author]') && document.querySelector('[data-diffnote-author]').textContent==='別の人'"))
+        card = self.card("mul の型")
+        self.reply_to(card, "名前を変えたあとの返信")
+        authors = b.js(f"Array.from(document.getElementById({card!r}).querySelectorAll('.diffnote-comment__author')).map(function(a){{return a.textContent}})")
+        self.assertTrue(authors[-1].startswith("別の人"), authors)
+        # A blank name is refused, with a reason, and the name stays.
+        b.click("[data-diffnote-inline=author]")
+        b.set_value("[data-diffnote-inline-input=author]", "   ")
+        b.js("document.querySelector('[data-diffnote-inline-input=author]').form.requestSubmit()")
+        self.assertTrue(b.wait("!!document.querySelector('.diffnote-inline .diffnote-error')"))
+        b.escape()
+
     def test_the_shutdown_button_stops_the_server_and_says_roughly_what_was_saved(self):
         self.serve()
         b = self.b

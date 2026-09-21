@@ -30,6 +30,10 @@ pub struct ViewModel {
     /// added since the server started.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub editable: Vec<String>,
+    /// The name comments are written under (served page only; the page can
+    /// change it for the rest of the session).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
     /// Whether the page can change the review (the served one).
     pub interactive: bool,
     pub title: Option<String>,
@@ -225,6 +229,7 @@ pub fn view_model_with(
         version: VERSION,
         stamp: stamp(loaded),
         editable: Vec::new(),
+        author: None,
         interactive,
         title: crate::review::title(&loaded.events).map(str::to_string),
         threads: {
@@ -251,9 +256,11 @@ pub fn view_model_json(
 pub fn served_model_json(
     loaded: &crate::bundle::Loaded,
     editable: Vec<String>,
+    author: String,
 ) -> anyhow::Result<String> {
     let mut model = view_model_for(loaded, true)?;
     model.editable = editable;
+    model.author = Some(author);
     model_json(&model)
 }
 
