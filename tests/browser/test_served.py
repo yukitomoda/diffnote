@@ -244,10 +244,11 @@ class Replies(ServedCase):
         # (The page's own scripts are in its body, so look for the page going.)
         self.assertTrue(b.wait("!document.getElementById('app')"))
         told = b.js("document.body.textContent")
-        self.assertIn("終了しました。", told)
+        self.assertIn("終了しました", told)
         self.assertIn("返信 1 件を追加", told)
         self.assertIn("解決 1 件", told)
-        self.assertIn("に保存しました", told)
+        self.assertIn("保存先", told)
+        self.assertIn("スレッド 4 件", told)
         self.assertIn(os.path.basename(self.review), told)
 
 
