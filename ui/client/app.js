@@ -527,6 +527,7 @@
       var kids = markdown(n.c, links, inLink || n.t === 'a');
       switch (n.t) {
         case 'p': return h('p', { key: i }, kids);
+        case 'blank': return h('div', { key: i, class: 'diffnote-blank' });
         case 'h': return h('h' + Math.min(Math.max(n.l || 1, 1), 6), { key: i }, kids);
         case 'quote': return h('blockquote', { key: i }, kids);
         case 'ul': return h('ul', { key: i }, kids);

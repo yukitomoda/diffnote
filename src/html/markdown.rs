@@ -7,7 +7,9 @@
 //!
 //! A node is a string (text) or an object with `t` its type and, by type:
 //!
-//! - blocks: `p` (paragraph), `h` (`l` the level), `quote`, `ul`, `ol` (`start`),
+//! - blocks: `p` (paragraph), `blank` (a blank line that Markdown would have
+//!   folded into the paragraph break: each one after the first is kept), `h`
+//!   (`l` the level), `quote`, `ul`, `ol` (`start`),
 //!   `li` (the children of an item are blocks, or, in a tight list, text and
 //!   inline nodes directly), `pre` (`s` the code, `lang`), `hr`;
 //! - tables: `table` (`al` the columns' alignments: `l`, `c`, `r` or `""`) of
@@ -22,8 +24,79 @@
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use serde_json::{Value, json};
 
+/// What stands for a blank line kept between paragraphs, for the moment it is a
+/// paragraph of its own (a private-use character no comment has).
+const BLANK: &str = "\u{E000}";
+
+/// `body` with each blank line after the first of a run (outside code) made a
+/// paragraph of its own, so that Markdown doesn't fold them into one break.
+fn keep_blank_lines(body: &str) -> String {
+    let lines: Vec<&str> = body.split('\n').collect();
+    let mut out: Vec<&str> = Vec::with_capacity(lines.len());
+    // The fence a code block is in, if any: its character and length.
+    let mut fence: Option<(char, usize)> = None;
+    let fence_of = |line: &str| -> Option<(char, usize)> {
+        let t = line.trim_end_matches('\r').trim_start_matches(' ');
+        if line.len() - line.trim_start_matches(' ').len() > 3 {
+            return None;
+        }
+        let ch = t.chars().next().filter(|c| *c == '`' || *c == '~')?;
+        let n = t.chars().take_while(|c| *c == ch).count();
+        (n >= 3).then_some((ch, n))
+    };
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        if let Some((ch, n)) = fence {
+            if fence_of(line).is_some_and(|(c, m)| c == ch && m >= n)
+                && line.trim().chars().all(|c| c == ch)
+            {
+                fence = None;
+            }
+            out.push(line);
+            i += 1;
+            continue;
+        }
+        if let Some(f) = fence_of(line) {
+            fence = Some(f);
+            out.push(line);
+            i += 1;
+            continue;
+        }
+        if !line.trim().is_empty() {
+            out.push(line);
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        while j < lines.len() && lines[j].trim().is_empty() {
+            j += 1;
+        }
+        let run = j - i;
+        // Only between two lines of text (not at the ends, not inside an
+        // indented block of code).
+        let in_code = i > 0
+            && j < lines.len()
+            && lines[i - 1].starts_with("    ")
+            && lines[j].starts_with("    ");
+        if run >= 2 && i > 0 && j < lines.len() && !in_code {
+            out.push("");
+            for _ in 1..run {
+                out.push(BLANK);
+                out.push("");
+            }
+        } else {
+            out.extend(&lines[i..j]);
+        }
+        i = j;
+    }
+    out.join("\n")
+}
+
 /// The nodes of `body`.
 pub fn tree(body: &str) -> Vec<Value> {
+    let kept = keep_blank_lines(body);
+    let body = kept.as_str();
     // Open nodes, innermost last: (type and what it carries, children so far).
     let mut stack: Vec<(Value, Vec<Value>)> = vec![(Value::Null, Vec::new())];
     let mut code: Option<String> = None;
@@ -63,6 +136,9 @@ pub fn tree(body: &str) -> Vec<Value> {
                         push(&mut stack, child);
                     }
                     continue;
+                } else if node["t"] == "p" && children == [Value::String(BLANK.into())] {
+                    // A blank line kept.
+                    node = json!({ "t": "blank" });
                 } else if node["t"] == "image" {
                     // The image of the bundle: its alt text is what is inside.
                     let alt: String = children
@@ -307,6 +383,30 @@ mod tests {
             !out.contains(r#""t":"b""#) && out.contains("<b onclick=x>"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn each_blank_line_after_the_first_is_kept_as_one_and_code_is_left_alone() {
+        let p = |t: &str| format!(r#"{{"c":["{t}"],"t":"p"}}"#);
+        let blank = r#"{"t":"blank"}"#;
+        // One blank line is the usual paragraph break; each more is a blank of its own.
+        assert_eq!(json_of("a\n\nb"), format!("[{},{}]", p("a"), p("b")));
+        assert_eq!(
+            json_of("a\n\n\nb"),
+            format!("[{},{blank},{}]", p("a"), p("b"))
+        );
+        assert_eq!(
+            json_of("a\n\n\n\n\nb"),
+            format!("[{},{blank},{blank},{blank},{}]", p("a"), p("b"))
+        );
+        // (A line with only white space is blank too.)
+        assert_eq!(json_of("a\n \n\t\nb"), json_of("a\n\n\nb"));
+        // Not at the ends; not in code.
+        assert_eq!(json_of("a\n\n\n"), format!("[{}]", p("a")));
+        let fenced = json_of("```\nx\n\n\ny\n```");
+        assert_eq!(fenced, r#"[{"s":"x\n\n\ny\n","t":"pre"}]"#);
+        let indented = json_of("    x\n\n\n    y");
+        assert!(!indented.contains("blank"), "{indented}");
     }
 
     #[test]

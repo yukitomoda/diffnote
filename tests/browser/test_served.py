@@ -376,6 +376,20 @@ class Replies(ServedCase):
         self.assertTrue(box["above"] and box["top"] >= 0, box)
         b.escape()
 
+    def test_each_blank_line_in_a_comment_is_kept(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        self.write(box, "上\n\n\n\n下")
+        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
+        body = f"#{card} .diffnote-comment__body"
+        self.assertTrue(b.wait(f"!document.querySelector('.is-pending') && [...document.querySelectorAll({json.dumps(body)})].some(e => e.textContent.includes('下'))"))
+        # Three blank lines: the paragraph break, and two more, each one line high.
+        self.assertEqual(b.js(f"[...document.querySelectorAll({json.dumps(body)})].find(e => e.textContent.includes('下')).querySelectorAll('.diffnote-blank').length"), 2)
+        heights = b.js(f"(() => {{ const e = [...document.querySelectorAll({json.dumps(body)})].find(e => e.textContent.includes('下')); const p = e.querySelectorAll('p'); return [p[1].getBoundingClientRect().top - p[0].getBoundingClientRect().bottom, p[0].getBoundingClientRect().height]; }})()")
+        self.assertGreater(heights[0], 2 * heights[1] * 0.9, "the gap is about two lines of text more than a single break")
+
     def test_a_line_break_in_a_comment_stays_one_without_a_blank_line(self):
         self.serve()
         b = self.b
