@@ -175,6 +175,24 @@ impl Repo {
         Ok(out.trim().to_string())
     }
 
+    /// The full id of the commit `rev` names (`HEAD`, a branch, a tag, an id).
+    pub fn commit_id(&self, rev: &str) -> Result<String> {
+        if rev.starts_with('-') {
+            bail!("'{rev}' はコミットの指定として使えません");
+        }
+        let mut cmd = self.git();
+        cmd.args(["rev-parse", "--verify", "--quiet"])
+            .arg(format!("{rev}^{{commit}}"));
+        let out = run_text(cmd).map_err(|_| {
+            anyhow::anyhow!("'{rev}' というコミットが見つかりません(ブランチ名、タグ、コミット ID などで指定してください)")
+        })?;
+        let id = out.trim().to_string();
+        if !is_object_id(&id) {
+            bail!("'{rev}' をコミットとして解決できませんでした");
+        }
+        Ok(id)
+    }
+
     /// The unified diff from `range.base` to `range.head`.
     pub fn diff(&self, range: &GitSource) -> Result<String> {
         let mut cmd = self.git();

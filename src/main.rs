@@ -57,7 +57,7 @@ const HELP_TEMPLATE: &str = "{about}\n\n使い方: {usage}\n\n{all-args}";
 
 #[derive(Debug, Subcommand)]
 enum Cmd {
-    /// git を使わないディレクトリのスナップショットを新しいレビューバンドルに保存する。以降の `edit` で、その時点からの変更をレビューできる。git のレビューでは不要。
+    /// 最初のレビューバンドルを作る。git のリポジトリの中(`.git` がある)なら、指定したコミット(既定は HEAD)を基準として記録し、そうでなければ、ディレクトリの今の状態を基準として保存する。以降の `edit`(引数なし)で、その基準からの変更をレビューできる。
     Init {
         /// 作成するレビューバンドル(.diffnote、zip 形式)のパス。省略時は ./.diffnote。
         #[arg(
@@ -67,9 +67,12 @@ enum Cmd {
             hide_default_value = true
         )]
         review: PathBuf,
-        /// スナップショットを取るディレクトリ。省略時はカレントディレクトリ。`.diffnoteignore`(なければ`.gitignore`)に一致するファイルは含めない。
-        #[arg(value_name = "DIR", default_value = ".", hide_default_value = true)]
-        dir: PathBuf,
+        /// git のリポジトリの中では、基準にするコミット(HEAD、ブランチ名、タグ、コミット ID など。省略時は HEAD)。それ以外では、スナップショットを取るディレクトリ(省略時は `.`。`.diffnoteignore`(なければ`.gitignore`)に一致するファイルは含めない)。
+        #[arg(value_name = "REV|DIR")]
+        target: Option<String>,
+        /// git のリポジトリの中でも、ファイルのスナップショット(ディレクトリのレビュー)を作る。
+        #[arg(long)]
+        files: bool,
         /// レビューのタイトル。エクスポートの見出しに使われる(省略できる)。
         #[arg(long, value_name = "TITLE")]
         title: Option<String>,
@@ -87,7 +90,7 @@ enum Cmd {
             hide_default_value = true
         )]
         review: PathBuf,
-        /// git のレビュー: git 自身が解決するコミット指定。`A..B` または `A B`(A → B)、`A...B`(A と B のマージベース → B)、単一のコミット(その第一親 → そのコミット)。コミット済みの内容だけをレビューする。ディレクトリのレビュー(`init` で作ったバンドル): 引数は多くても 1 つで、バンドルの最後のスナップショットと比べるディレクトリ(省略時はカレント)。
+        /// git のレビュー: git 自身が解決するコミット指定。`A..B` または `A B`(A → B)、`A...B`(A と B のマージベース → B)、単一のコミット(その第一親 → そのコミット)。省略すると、バンドルの最後のリビジョンの head から今の HEAD までの変更(`init` した直後なら、その基準から HEAD まで)をレビューする。コミット済みの内容だけをレビューする。ディレクトリのレビュー(`init` で作ったバンドル): 引数は多くても 1 つで、バンドルの最後のスナップショットと比べるディレクトリ(省略時はカレント)。
         #[arg(value_name = "REV|DIR", num_args = 0..)]
         targets: Vec<String>,
         /// 新しい差分を初めて見て、かつこの回で何かを追加したときに、バンドルへ保存する内容。`changed`(差分が触れた全ファイルの両側と、コメントが参照する全ファイル)か、`full`(それに加えて head 全体のツリー)。省略時は、バンドルにすでに決まっているモード、なければ git のレビューでは `changed`(残りは git が持っている)。ディレクトリのレビューは常に全体を保存するので、そこで `--snapshot changed` を指定するとエラーになる。
@@ -168,10 +171,11 @@ fn main() -> Result<()> {
     match cli.command {
         Cmd::Init {
             review,
-            dir,
+            target,
+            files,
             title,
             author,
-        } => cmd_init(review, dir, title, author),
+        } => cmd_init(review, target, files, title, author),
         Cmd::Edit {
             review,
             targets,
@@ -314,6 +318,25 @@ struct Input {
     head_all: HeadAll,
 }
 
+/// What `edit` reviews in a git bundle when it is given nothing: the changes
+/// since the last revision's head, up to `HEAD`; or, if `HEAD` is that head,
+/// that revision again (so replies can still be added).
+fn git_targets(loaded: &bundle::Loaded, targets: Vec<String>) -> Result<Vec<String>> {
+    if !targets.is_empty() {
+        return Ok(targets);
+    }
+    let Some(diffnote::model::Source::Git(last)) = loaded.revisions().last().map(|r| &r.source)
+    else {
+        return Ok(targets);
+    };
+    let head = diffnote::git::Repo::current().commit_id("HEAD")?;
+    Ok(vec![if head == last.head {
+        format!("{}..{}", last.base, last.head)
+    } else {
+        format!("{}..{head}", last.head)
+    }])
+}
+
 fn git_input(targets: &[String]) -> Result<Input> {
     let repo = diffnote::git::Repo::current();
     let range = repo.resolve_range(targets)?;
@@ -407,30 +430,102 @@ fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Resu
 
 fn cmd_init(
     review_path: PathBuf,
-    dir: PathBuf,
+    target: Option<String>,
+    files: bool,
     title: Option<String>,
     author: Option<String>,
 ) -> Result<()> {
     if review_path.exists() {
         anyhow::bail!("{} はすでに存在します", review_path.display());
     }
-    let tree = diffnote::files::read_tree(&dir, std::slice::from_ref(&review_path))?;
-    let digest = diffnote::files::tree_digest(&tree);
-    let size: u64 = tree.values().map(|b| b.len() as u64).sum();
-    confirm_snapshot_size(bundle::SnapshotMode::Full, false, size);
+    let repo = diffnote::git::Repo::current();
+    if !files && repo.exists() {
+        return init_git(
+            &review_path,
+            &repo,
+            target.as_deref().unwrap_or("HEAD"),
+            title,
+            author,
+        );
+    }
+    let dir = PathBuf::from(target.as_deref().unwrap_or("."));
+    init_files(&review_path, &dir, title, author)
+}
+
+/// The events every new bundle starts with: what it was made by, and a title.
+fn first_events(title: Option<&str>, author: Option<&str>) -> Vec<Event> {
     let mut events = vec![Event::Meta {
         version: 1,
         created_at: OffsetDateTime::now_utc(),
         description: None,
         context_lines: 3,
     }];
-    if let Some(title) = title.as_deref() {
+    if let Some(title) = title {
         events.extend(review::title_change(
             &events,
             title,
-            &diffnote::author::resolve(author.as_deref()),
+            &diffnote::author::resolve(author),
         ));
     }
+    events
+}
+
+/// A git review that starts at a commit: the commit is the base, so that the
+/// next `edit` reviews what has changed since. Nothing is stored beyond the
+/// commit's id (git has the rest).
+fn init_git(
+    review_path: &Path,
+    repo: &diffnote::git::Repo,
+    rev: &str,
+    title: Option<String>,
+    author: Option<String>,
+) -> Result<()> {
+    let commit = repo.commit_id(rev)?;
+    let mut events = first_events(title.as_deref(), author.as_deref());
+    let empty_diff = String::new();
+    let digest = digest(&empty_diff);
+    events.push(Event::Revision(diffnote::model::Revision {
+        id: Ulid::new(),
+        created_at: OffsetDateTime::now_utc(),
+        digest: digest.clone(),
+        source: diffnote::model::Source::Git(diffnote::model::GitSource {
+            base: commit.clone(),
+            head: commit.clone(),
+            spec: rev.to_string(),
+        }),
+        snapshot_mode: bundle::SnapshotMode::Changed,
+        files: Vec::new(),
+        tree: Vec::new(),
+    }));
+    let additions = bundle::Additions {
+        diff: Some((digest, empty_diff)),
+        blobs: Vec::new(),
+    };
+    bundle::save(
+        review_path,
+        &bundle::load(review_path)?,
+        &events,
+        &additions,
+    )?;
+    println!(
+        "{rev}({}) を基準として {} を作成しました。`diffnote edit` で、ここから今の HEAD までの変更をレビューできます",
+        &commit[..commit.len().min(10)],
+        review_path.display()
+    );
+    Ok(())
+}
+
+fn init_files(
+    review_path: &Path,
+    dir: &Path,
+    title: Option<String>,
+    author: Option<String>,
+) -> Result<()> {
+    let tree = diffnote::files::read_tree(dir, &[review_path.to_path_buf()])?;
+    let digest = diffnote::files::tree_digest(&tree);
+    let size: u64 = tree.values().map(|b| b.len() as u64).sum();
+    confirm_snapshot_size(bundle::SnapshotMode::Full, false, size);
+    let mut events = first_events(title.as_deref(), author.as_deref());
     events.push(Event::Revision(diffnote::model::Revision {
         id: Ulid::new(),
         created_at: OffsetDateTime::now_utc(),
@@ -449,8 +544,8 @@ fn cmd_init(
         blobs: tree.into_values().collect(),
     };
     bundle::save(
-        &review_path,
-        &bundle::load(&review_path)?,
+        review_path,
+        &bundle::load(review_path)?,
         &events,
         &additions,
     )?;
@@ -494,10 +589,10 @@ fn cmd_edit(
                 &[review_path.clone(), draft_path_for(&review_path)],
             )?
         }
-        Some(diffnote::model::Source::Git(_)) => git_input(&targets)?,
+        Some(diffnote::model::Source::Git(_)) => git_input(&git_targets(&loaded, targets)?)?,
         None if targets.is_empty() => anyhow::bail!(
             "レビューするコミットを指定してください(例: `diffnote edit HEAD~3..HEAD`)。\
-            git を使わないディレクトリをレビューするには、先に `diffnote init` を実行してください"
+            基準になる状態を決めるには、先に `diffnote init` を実行してください"
         ),
         None => git_input(&targets)?,
     };

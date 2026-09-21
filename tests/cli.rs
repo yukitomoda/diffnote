@@ -1374,3 +1374,134 @@ fn the_export_carries_the_lines_a_diff_leaves_out_up_to_a_limit_smaller_places_f
     );
     assert!(!bad.status.success());
 }
+
+fn git_sources(review: &Path) -> Vec<diffnote::model::GitSource> {
+    bundle::load(review)
+        .unwrap()
+        .revisions()
+        .filter_map(|r| match &r.source {
+            diffnote::model::Source::Git(g) => Some(g.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn commit_id(repo: &Path, rev: &str) -> String {
+    git(repo, &["rev-parse", rev]).trim().to_string()
+}
+
+#[test]
+fn init_in_a_git_repository_takes_a_commit_as_the_base_head_by_default() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    let said = env.ok(&repo, &[], &["init", "-f", review_arg]);
+    assert!(said.contains("HEAD") && said.contains("基準"), "{said}");
+    let sources = git_sources(&review);
+    assert_eq!(sources.len(), 1);
+    let head = commit_id(&repo, "HEAD");
+    assert_eq!(
+        (sources[0].base.as_str(), sources[0].head.as_str()),
+        (head.as_str(), head.as_str())
+    );
+    assert_eq!(sources[0].spec, "HEAD");
+    // The commit's id is all it stores: git has the rest.
+    assert_eq!(count_blobs(&review), 0);
+    // It is an existing bundle now.
+    let again = env.run(&repo, &[], &["init", "-f", review_arg]);
+    assert!(!again.status.success());
+}
+
+#[test]
+fn init_takes_a_branch_a_tag_or_an_id_and_refuses_what_is_not_a_commit() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let base = commit_id(&repo, "c1");
+    for (name, rev) in [("tag", "c1"), ("branch", "main"), ("id", base.as_str())] {
+        let review = env.path(&format!("{name}.diffnote"));
+        env.ok(&repo, &[], &["init", "-f", review.to_str().unwrap(), rev]);
+        let want = commit_id(&repo, rev);
+        assert_eq!(git_sources(&review)[0].head, want, "{name}");
+        assert_eq!(git_sources(&review)[0].spec, rev);
+    }
+    let review = env.path("bad.diffnote");
+    let bad = env.run(
+        &repo,
+        &[],
+        &["init", "-f", review.to_str().unwrap(), "no-such-branch"],
+    );
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("no-such-branch"));
+    assert!(!review.exists(), "nothing is written for a bad ref");
+}
+
+#[test]
+fn edit_after_a_git_init_reviews_what_changed_since_and_then_reopens_that() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    env.ok(&repo, &[], &["init", "-f", review_arg, "c2"]);
+    // HEAD is c3: what has changed since c2 is reviewed, without being told.
+    env.ok(
+        &repo,
+        &[("+d", "d を追加した理由は?")],
+        &["edit", "-f", review_arg],
+    );
+    let sources = git_sources(&review);
+    assert_eq!(sources.len(), 2, "the base, then what was reviewed since");
+    assert_eq!(sources[1].base, commit_id(&repo, "c2"));
+    assert_eq!(sources[1].head, commit_id(&repo, "c3"));
+    let loaded = bundle::load(&review).unwrap();
+    assert_eq!(comment_bodies(&loaded), ["d を追加した理由は?"]);
+    // HEAD hasn't moved: the same revision again (to reply to what is there),
+    // not a new one.
+    env.ok(&repo, &[], &["edit", "-f", review_arg]);
+    assert_eq!(git_sources(&review).len(), 2);
+    // A new commit: reviewed from where the last review stopped.
+    std::fs::write(repo.join("calc.txt"), "a\nB\nc\nd\ne\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c4"]);
+    env.ok(&repo, &[("+e", "e も")], &["edit", "-f", review_arg]);
+    let sources = git_sources(&review);
+    assert_eq!(sources.len(), 3);
+    assert_eq!(sources[2].base, commit_id(&repo, "c3"));
+    assert_eq!(sources[2].head, commit_id(&repo, "HEAD"));
+}
+
+#[test]
+fn edit_with_nothing_changed_since_a_git_init_says_so_and_writes_nothing() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    env.ok(&repo, &[], &["init", "-f", review_arg]);
+    let before = std::fs::read(&review).unwrap();
+    let said = env.ok(&repo, &[], &["edit", "-f", review_arg]);
+    assert!(said.contains("変更がありません"), "{said}");
+    assert_eq!(std::fs::read(&review).unwrap(), before);
+}
+
+#[test]
+fn init_makes_a_file_review_outside_git_and_when_told_to_inside_it() {
+    let env = Env::new();
+    // Not in a repository: the directory, `.` by default.
+    let dir = env.path("plain");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    let review = env.path("plain.diffnote");
+    env.ok(&dir, &[], &["init", "-f", review.to_str().unwrap()]);
+    assert_eq!(bundle::load(&review).unwrap().revisions().count(), 1);
+    assert!(git_sources(&review).is_empty());
+    // In a repository, `--files` takes the directory's files instead of a commit.
+    let repo = git_repo(&env);
+    let review = env.path("files.diffnote");
+    let said = env.ok(
+        &repo,
+        &[],
+        &["init", "-f", review.to_str().unwrap(), "--files"],
+    );
+    assert!(said.contains("個のファイル"), "{said}");
+    assert!(git_sources(&review).is_empty());
+    assert!(count_blobs(&review) > 0);
+}
