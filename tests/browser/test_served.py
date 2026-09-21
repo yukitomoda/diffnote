@@ -452,6 +452,30 @@ class ThreadsOnFilesAndTheReview(ServedCase):
         self.assertFalse(b.exists("#evil"), "HTML in a cell is not an element")
         self.assertIn("<b id=evil>", b.js(f"document.querySelector({json.dumps(body + ' table')}).textContent"))
 
+    def test_lines_of_a_file_that_is_new_can_be_commented_on(self):
+        repo = os.path.join(self.root, "newfile")
+        os.makedirs(repo)
+        harness.git(repo, "init", "-q", "-b", "main")
+        harness.write(repo, "old.txt", "old\n")
+        harness.git(repo, "add", "-A")
+        harness.git(repo, "commit", "-q", "-m", "c1")
+        harness.git(repo, "tag", "c1")
+        harness.write(repo, "new.txt", "".join(f"line {n}\n" for n in range(1, 8)))
+        harness.git(repo, "add", "-A")
+        harness.git(repo, "commit", "-q", "-m", "c2")
+        harness.git(repo, "tag", "c2")
+        master = os.path.join(self.root, "newfile.diffnote")
+        assert harness.diffnote("edit", "-f", master, "--base", "c1", "c2", cwd=repo, comments=[("+line 1", "x")]).returncode == 0
+        self.serve(master)
+        b = self.b
+        row = lambda n: f"{CUR} table[data-diffnote-file='new.txt'] tr[data-diffnote-new='{n}'] .diffnote-line__gutter-new"
+        b.drag(row(4), row(7))
+        self.assertTrue(b.wait_exists(".diffnote-compose"))
+        self.write(".diffnote-compose textarea", "新しいファイルへ")
+        b.js("document.querySelector('.diffnote-compose').requestSubmit()")
+        self.assertTrue(b.wait("!document.querySelector('.diffnote-compose-wrap')"))
+        self.assertIn("new.txt:4-7", show(self.review))
+
     def test_a_file_thread_is_added_to_the_file_and_the_box_can_be_closed_with_escape(self):
         self.serve()
         b = self.b

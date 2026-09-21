@@ -591,7 +591,9 @@ impl Server {
                     .ok_or_else(|| bad("行の範囲が不正です"))
             };
             let (start, len) = (number("start")?, number("len")?);
-            if start == 0 {
+            // A side with no lines may sit at 0: a file that is new has no old
+            // side, and a deleted one has no new side.
+            if start == 0 && len > 0 {
                 return Err(bad("行番号は 1 から始まります"));
             }
             Ok(LineSpan { start, len })
