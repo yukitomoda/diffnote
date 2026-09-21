@@ -88,6 +88,24 @@
     var setError = _e[1];
     var attach = useAttach(text, setText);
     var field = useRef(null);
+    // A quotation asked for (from a comment of this thread) goes in the box.
+    useEffect(function () {
+      var on = function (e) {
+        if (!e.detail || e.detail.thread !== t.id) return;
+        var box = field.current;
+        if (!box) return;
+        var details = box.closest('details');
+        if (details) details.open = true;
+        setText(function (cur) { return lib.appendQuote(cur, e.detail.text); });
+        setTimeout(function () {
+          box.focus();
+          box.setSelectionRange(box.value.length, box.value.length);
+          box.scrollIntoView({ block: 'nearest' });
+        }, 0);
+      };
+      document.addEventListener('diffnote:quote', on);
+      return function () { document.removeEventListener('diffnote:quote', on); };
+    }, [t.id]);
 
     function send() {
       var body = text.trim();
@@ -276,6 +294,47 @@
     var setAsk = _a[1];
     var attach = useAttach(text, setText);
     var field = useRef(null);
+    // Text chosen in this comment's body, with where to offer to quote it.
+    var body = useRef(null);
+    var _q = useState(null);
+    var quote = _q[0];
+    var setQuote = _q[1];
+    var look = function () {
+      var sel = window.getSelection && window.getSelection();
+      var el = body.current;
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !el || !el.contains(sel.anchorNode) || !el.contains(sel.focusNode)) { setQuote(null); return; }
+      var chosen = sel.toString();
+      if (chosen.trim() === '') { setQuote(null); return; }
+      var rect = sel.getRangeAt(0).getBoundingClientRect();
+      setQuote({ text: chosen, top: Math.max(rect.top - 34, 4), left: Math.min(Math.max(rect.left, 4), window.innerWidth - 150) });
+    };
+    useEffect(function () {
+      if (!quote) return undefined;
+      var away = function () { setQuote(null); };
+      var changed = function () {
+        var sel = window.getSelection();
+        if (!sel || sel.isCollapsed) setQuote(null);
+      };
+      document.addEventListener('selectionchange', changed);
+      window.addEventListener('scroll', away, true);
+      return function () {
+        document.removeEventListener('selectionchange', changed);
+        window.removeEventListener('scroll', away, true);
+      };
+    }, [!!quote]);
+    // Quoting: what was chosen, or (from the menu) the whole comment as it was written.
+    var quoteIt = function (text) {
+      document.dispatchEvent(new CustomEvent('diffnote:quote', { detail: { thread: props.threadId, text: text } }));
+      var sel = window.getSelection && window.getSelection();
+      if (sel) sel.removeAllRanges();
+      setQuote(null);
+    };
+    var quoteWhole = function () {
+      var sel = window.getSelection && window.getSelection();
+      var el = body.current;
+      var chosen = sel && !sel.isCollapsed && el && el.contains(sel.anchorNode) ? sel.toString() : '';
+      quoteIt(chosen.trim() !== '' ? chosen : c.body || lib.plainText(c.doc));
+    };
     var save = function () {
       if (!text.trim() || busy) return;
       setBusy(true);
@@ -316,8 +375,8 @@
       setAsk({ kind: kind, reasons: reasons });
     };
     return html`<article class="diffnote-comment" data-diffnote-comment=${c.id} data-diffnote-mine=${actions && !others ? '' : undefined}>
-      <p class="diffnote-comment__author">${c.author}<${Time} at=${c.at} />${canChange && !editing && html`<${CommentMenu} busy=${busy}
-        onEdit=${function () { change('edit'); }} onDelete=${function () { change('delete'); }} />`}</p>
+      <p class="diffnote-comment__author">${c.author}<${Time} at=${c.at} />${actions && !c.deleted && !editing && html`<${CommentMenu} busy=${busy} canChange=${canChange}
+        onQuote=${quoteWhole} onEdit=${function () { change('edit'); }} onDelete=${function () { change('delete'); }} />`}</p>
       ${ask && html`<div class="diffnote-comment__warn" role="alert" data-diffnote-warn>
         ${ask.reasons.map(function (r, i) { return html`<p key=${i}>${r}</p>`; })}
         <div class="diffnote-reply__buttons">
@@ -343,7 +402,9 @@
           </form>`
         : c.deleted
           ? html`<p class="diffnote-comment__deleted" data-diffnote-deleted>このコメントは削除されました</p>`
-          : html`<div class="diffnote-comment__body">${markdown(c.doc, links)}</div>${error && html`<p class="diffnote-error">${error}</p>`}`}
+          : html`<div class="diffnote-comment__body" ref=${body} onMouseUp=${function () { setTimeout(look, 0); }} onKeyUp=${look}>${markdown(c.doc, links)}</div>${error && html`<p class="diffnote-error">${error}</p>`}`}
+      ${quote && html`<button type="button" class="diffnote-quote-button" data-diffnote-quote-selection style=${'top:' + quote.top + 'px;left:' + quote.left + 'px'}
+        onMouseDown=${function (e) { e.preventDefault(); }} onClick=${function () { quoteIt(quote.text); }}>❝ 引用して返信</button>`}
     </article>`;
   }
 
@@ -369,10 +430,12 @@
       <button type="button" class="diffnote-comment__more" data-diffnote-comment-menu aria-label="コメントの操作" aria-haspopup="true" aria-expanded=${open}
         onClick=${function () { setOpen(!open); }}>⋮</button>
       <span class="diffnote-comment__panel" hidden=${!open}>
-        <button type="button" class="diffnote-comment__item" data-diffnote-edit disabled=${props.busy}
+        <button type="button" class="diffnote-comment__item" data-diffnote-quote
+          onClick=${function () { setOpen(false); props.onQuote(); }}>引用して返信</button>
+        ${props.canChange && html`<button type="button" class="diffnote-comment__item" data-diffnote-edit disabled=${props.busy}
           onClick=${function () { setOpen(false); props.onEdit(); }}>編集</button>
         <button type="button" class="diffnote-comment__item diffnote-comment__item--danger" data-diffnote-delete disabled=${props.busy}
-          onClick=${function () { setOpen(false); props.onDelete(); }}>削除</button>
+          onClick=${function () { setOpen(false); props.onDelete(); }}>削除</button>`}
       </span>
     </span>`;
   }
@@ -398,7 +461,7 @@
       </summary>
       ${absent && absent.was.length > 0 && html`<pre class="diffnote-deleted__snippet">${absent.was.join('\n') + '\n'}</pre>`}
       ${t.comments.map(function (c, i) {
-        return html`<${Comment} key=${c.id} comment=${c} actions=${actions} first=${i === 0} replies=${t.comments.length - 1}
+        return html`<${Comment} key=${c.id} comment=${c} actions=${actions} threadId=${t.id} first=${i === 0} replies=${t.comments.length - 1}
           othersReplies=${actions ? t.comments.slice(1).filter(function (x) { return x.author !== actions.author; }).length : 0} />`;
       })}
       ${actions && html`<${Actions} thread=${t} actions=${actions} />`}

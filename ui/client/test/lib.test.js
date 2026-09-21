@@ -405,3 +405,15 @@ test('a limit is shown in megabytes and read back from what was typed', () => {
   assert.equal(lib.mbToBytes(' 2,5 '), Math.round(2.5 * 1024 * 1024), 'a comma is a point too');
   for (const bad of ['', '  ', 'abc', '0', '-1', 'Infinity']) assert.equal(lib.mbToBytes(bad), null, bad);
 });
+
+test('a text is quoted line by line, and put after what is already written', () => {
+  assert.equal(lib.quoteMarkdown('one'), '> one');
+  assert.equal(lib.quoteMarkdown('one\ntwo'), '> one\n> two');
+  assert.equal(lib.quoteMarkdown('one\n\ntwo\r\nthree'), '> one\n>\n> two\n> three', 'a blank line stays a quotation');
+  assert.equal(lib.quoteMarkdown('\n  padded  \n\n'), '>   padded', 'the ends are trimmed, the inside is kept');
+  assert.equal(lib.quoteMarkdown('  \n '), '');
+  assert.equal(lib.appendQuote('', 'q'), '> q\n\n');
+  assert.equal(lib.appendQuote('hello\n', 'q'), 'hello\n\n> q\n\n');
+  assert.equal(lib.appendQuote('> a\n\nmine', 'b'), '> a\n\nmine\n\n> b\n\n');
+  assert.equal(lib.appendQuote('keep', ' \n '), 'keep', 'nothing to quote: nothing is changed');
+});

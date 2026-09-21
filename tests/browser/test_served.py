@@ -996,6 +996,73 @@ class Images(ServedCase):
         self.assertEqual(b.count(f"#{card} img"), 0, "nothing is loaded from an address")
 
 
+class Quoting(ServedCase):
+    """Quoting a comment (or what was chosen in it) in the reply box of its thread."""
+
+    def select(self, card, start, end):
+        """Chooses characters of the first paragraph of the first comment, as a mouse would."""
+        return self.b.js("""(function(id, start, end){
+          var body = document.getElementById(id).querySelector('.diffnote-comment__body');
+          var node = body.querySelector('p').firstChild;
+          var r = document.createRange(); r.setStart(node, start); r.setEnd(node, end);
+          var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+          body.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+          return node.data.slice(start, end);
+        })(%s, %d, %d)""" % (json.dumps(card), start, end))
+
+    def test_what_is_chosen_in_a_comment_is_offered_as_a_quotation_for_a_reply(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        self.assertFalse(b.exists("[data-diffnote-quote-selection]"))
+        chosen = self.select(card, 5, 9)
+        self.assertEqual(chosen, "型を確認")
+        self.assertTrue(b.wait_exists("[data-diffnote-quote-selection]"), "offered next to what was chosen")
+        b.click("[data-diffnote-quote-selection]")
+        self.assertEqual(b.value(box), "> 型を確認\n\n")
+        self.assertTrue(b.js(f"document.activeElement === document.querySelector({json.dumps(box)})"), "ready to be written under")
+        self.assertFalse(b.exists("[data-diffnote-quote-selection]"), "and the offer is gone")
+        # Another goes after what is there.
+        self.write(box, "> 型を確認\n\nはい。\n")
+        self.select(card, 0, 3)
+        self.assertTrue(b.wait_exists("[data-diffnote-quote-selection]"))
+        b.click("[data-diffnote-quote-selection]")
+        self.assertEqual(b.value(box), "> 型を確認\n\nはい。\n\n> mul\n\n")
+        # Nothing chosen, nothing offered.
+        b.js("window.getSelection().removeAllRanges()")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-quote-selection]')"))
+
+    def test_the_whole_comment_can_be_quoted_from_its_menu_as_it_was_written(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        b.click(f"#{card} [data-diffnote-comment]:not([data-diffnote-mine]) [data-diffnote-quote]")
+        self.assertEqual(b.value(box), "> mul の型を確認してください。\n\n")
+        # Sent, it is a quotation in the thread.
+        self.write(box, b.value(box) + "確認しました。")
+        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
+        quote = f"#{card} .diffnote-comment__body blockquote"
+        self.assertTrue(b.wait_exists(quote))
+        self.assertIn("mul の型を確認してください。", b.text(quote))
+
+    def test_a_quotation_is_a_bar_and_quieter_text_not_only_an_indent(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        self.write(box, "> 引用されたことば\n\n本文")
+        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
+        quote = f"#{card} .diffnote-comment__body blockquote"
+        self.assertTrue(b.wait_exists(quote))
+        style = b.js("(() => { const q = getComputedStyle(document.querySelector(%s)); const p = getComputedStyle(document.querySelector(%s).closest('.diffnote-comment__body')); return {bar: q.borderLeftWidth, style: q.borderLeftStyle, pad: q.paddingLeft, color: q.color, body: p.color}; })()" % (json.dumps(quote), json.dumps(quote)))
+        self.assertEqual(style["bar"], "4px")
+        self.assertEqual(style["style"], "solid")
+        self.assertEqual(style["pad"], "14px")
+        self.assertNotEqual(style["color"], style["body"], "quieter than the text under it")
+
+
 class ThreadsOnFilesAndTheReview(ServedCase):
     def test_a_review_wide_thread_is_added_to_its_place(self):
         self.serve()

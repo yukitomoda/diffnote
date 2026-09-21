@@ -378,3 +378,12 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
 .diffnote-settings__info div { display: flex; gap: 12px; }
 .diffnote-settings__info dt { width: 8em; color: var(--diffnote-color-muted); }
 .diffnote-settings__info dd { margin: 0; }
+
+/* A quotation in a comment: a bar at the left, the text a little quieter. */
+.diffnote-comment__body blockquote { margin: 8px 0; padding: 2px 0 2px 14px; color: var(--diffnote-color-muted); border-left: 4px solid var(--diffnote-color-border); }
+.diffnote-comment__body blockquote > :first-child { margin-top: 0; }
+.diffnote-comment__body blockquote > :last-child { margin-bottom: 0; }
+.diffnote-comment__body blockquote blockquote { margin: 6px 0; }
+/* The button that offers to quote what was chosen in a comment. */
+.diffnote-quote-button { position: fixed; z-index: 40; font: inherit; font-size: 12.5px; padding: 4px 10px; color: #fff; background: var(--diffnote-color-fg); border: 0; border-radius: 6px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); cursor: pointer; white-space: nowrap; }
+.diffnote-quote-button:hover { background: var(--diffnote-color-accent); }

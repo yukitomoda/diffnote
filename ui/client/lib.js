@@ -476,6 +476,23 @@
     return Math.round(mb * 1024 * 1024);
   };
 
+  // A text as a quotation in a comment (Markdown): each line after `> `, a blank
+  // line as a bare `>`; nothing for a text with only white space.
+  lib.quoteMarkdown = function (text) {
+    var lines = String(text).replace(/\r\n?/g, '\n').replace(/^\n+|\s+$/g, '').split('\n');
+    if (lines.join('').trim() === '') return '';
+    return lines.map(function (l) { return l.trim() === '' ? '>' : '> ' + l; }).join('\n');
+  };
+
+  // A box's text with a quotation put after what is there (a blank line between),
+  // and a blank line after it, ready to be written under.
+  lib.appendQuote = function (existing, text) {
+    var quote = lib.quoteMarkdown(text);
+    if (quote === '') return existing;
+    var before = String(existing).replace(/\s+$/, '');
+    return (before === '' ? '' : before + '\n\n') + quote + '\n\n';
+  };
+
   // What a comment says for an image of the review, to put in its text.
   lib.imageMarkdown = function (id) {
     return '![画像](diffnote-image:' + id + ')';
