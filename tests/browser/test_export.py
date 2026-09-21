@@ -230,6 +230,8 @@ class SideBySide(BrowserCase):
         # The new side, from the line before the change to the last added one.
         copied = self.copy_after_dragging("new", 8, 12)
         self.assertIn("  if (!account) {\n    return res.status(401).end()\n  }\n  const ok = await compare(pass, ", copied)
+        # The "@@" row (and cards) in between are not selected either.
+        self.assertEqual(b.js("getComputedStyle(document.querySelector('.diffnote-diff--split .diffnote-hunk-header td')).userSelect"), "none")
         self.assertNotIn("account.pass === pass", copied, "the old side is not taken along")
         self.assertNotRegex(copied, r"^\d+\t", "nor are the line numbers")
         # From the old side: its own lines only.

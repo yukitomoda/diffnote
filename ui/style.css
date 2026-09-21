@@ -211,3 +211,5 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-line__gutter-old, .diffnote-line__gutter-new { user-select: none; }
 .diffnote-diff--split[data-diffnote-copy-side="old"] .diffnote-split-row > td:nth-child(n+3) { user-select: none; }
 .diffnote-diff--split[data-diffnote-copy-side="new"] .diffnote-split-row > td:nth-child(-n+2) { user-select: none; }
+/* Nor the "@@" rows and the thread cards in between, which the copy leaves out. */
+.diffnote-diff--split[data-diffnote-copy-side] .diffnote-hunk-header, .diffnote-diff--split[data-diffnote-copy-side] .diffnote-thread-row { user-select: none; }
