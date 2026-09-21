@@ -291,8 +291,10 @@ class Served:
         self.proc = subprocess.Popen([BIN, "serve", "-f", review, "--no-open", "--author", author, *extra],
                                      cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8")
         self.notices = []
+        self.said = []
         self.url = None
         for line in self.proc.stdout:
+            self.said.append(line.strip())
             if "注意" in line:
                 self.notices.append(line.strip())
             m = re.search(r"(http://127\.0\.0\.1:\d+/\?t=\w+)", line)

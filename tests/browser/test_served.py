@@ -5,6 +5,7 @@ import unittest
 import json
 import time
 
+import harness
 from harness import BrowserCase, Served, entries, make_calc_review, make_gaps_review, make_login_review, show
 import os
 import shutil
@@ -511,6 +512,60 @@ class ExpandLeftOutLines(ServedCase):
         self.assertTrue(b.wait_exists(f"{CUR} table[data-diffnote-file='long.txt'] .diffnote-thread-row"))
         self.assertTrue(b.exists("tr[data-diffnote-new='30']"))
         self.assertTrue(b.exists("tr[data-diffnote-new='70']"))
+
+
+class ServeAddsTheLatestDiff(ServedCase):
+    """`init` on a commit, more commits, then `serve`: the changes since are there to review."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.repo = make_gaps_review(cls.root, name="since")[1]
+
+    def start(self):
+        self.review = os.path.join(self.fresh("review"), "since.diffnote")
+        out = harness.diffnote("init", "-f", self.review, "c1", cwd=self.repo)
+        assert out.returncode == 0, out.stdout + out.stderr
+        self.server = Served(self.review, cwd=self.repo, author="検証者")
+        self.addCleanup(self.server.stop)
+        self.b = self.browser
+        ready = "!!document.querySelector('.diffnote-file')"
+        self.b.open(self.server.url, ready=ready)
+        self.b.js("localStorage.setItem('diffnote-layout','unified')")
+        self.b.reload(ready=ready)
+
+    def test_the_commits_since_the_base_are_added_and_can_be_commented_on(self):
+        self.start()
+        b = self.b
+        self.assertTrue(any("最新の差分を記録しました" in l for l in self.server.said), self.server.said)
+        self.assertEqual(entries(self.review), 3, "meta, the base, and the revision since")
+        self.assertTrue(b.wait_exists("section.diffnote-file[data-diffnote-file='long.txt']"))
+        b.js("document.querySelector('section.diffnote-file[data-diffnote-file=\"long.txt\"] details').open = true")
+        b.js("document.querySelector('section.diffnote-file[data-diffnote-file=\"long.txt\"] details').dispatchEvent(new Event('toggle'))")
+        self.assertTrue(b.wait_exists("tr[data-diffnote-new='20']"))
+        b.click_at("tr[data-diffnote-new='20'] .diffnote-line__gutter-new")
+        self.assertTrue(b.wait_exists(".diffnote-composer-row"))
+        self.write(".diffnote-composer-row textarea", "ここを見てください")
+        b.js("document.querySelector('.diffnote-composer-row .diffnote-compose').requestSubmit()")
+        self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row')"))
+        self.assertIn("long.txt:20", show(self.review))
+
+    def test_with_no_commit_since_the_base_it_says_there_is_nothing_to_review_yet(self):
+        review = os.path.join(self.fresh("review"), "none.diffnote")
+        assert harness.diffnote("init", "-f", review, "HEAD", cwd=self.repo).returncode == 0
+        server = Served(review, cwd=self.repo)
+        self.addCleanup(server.stop)
+        self.assertTrue(any("差分がまだありません" in n for n in server.notices), server.notices)
+        self.assertEqual(entries(review), 2, "nothing was added")
+
+    def test_serving_again_with_nothing_new_adds_nothing(self):
+        self.start()
+        self.server.stop()
+        before = entries(self.review)
+        again = Served(self.review, cwd=self.repo, author="検証者")
+        self.addCleanup(again.stop)
+        self.assertFalse(any("最新の差分" in l for l in again.said), again.said)
+        self.assertEqual(entries(self.review), before)
 
 
 if __name__ == "__main__":

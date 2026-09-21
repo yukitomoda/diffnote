@@ -214,6 +214,68 @@ fn main() -> Result<()> {
     }
 }
 
+/// For `serve` on a git bundle: the changes from where the last revision
+/// stopped up to `HEAD` are recorded as a revision (so they can be reviewed in
+/// the browser), if `HEAD` has moved since. Says what it did, or why it didn't
+/// when that is worth saying.
+fn add_latest_git_revision(review_path: &Path, repo: &diffnote::git::Repo) -> Result<()> {
+    let loaded = bundle::load(review_path)?;
+    let Some(diffnote::model::Source::Git(last)) = loaded.revisions().last().map(|r| &r.source)
+    else {
+        return Ok(());
+    };
+    if !repo.exists() {
+        return Ok(());
+    }
+    let head = repo.commit_id("HEAD")?;
+    if head == last.head {
+        return Ok(());
+    }
+    let last_head = last.head.clone();
+    let input = git_input(repo.clone(), &[format!("{last_head}..{head}")])?;
+    if input.diff_text.trim().is_empty() {
+        return Ok(());
+    }
+    let Input {
+        diff_text,
+        files,
+        new_files,
+        base_files,
+        source,
+        digest,
+        tree_size,
+        head_some,
+        head_all,
+    } = input;
+    let mode = diffnote::record::pick_snapshot_mode(None, loaded.snapshot_mode(), &source);
+    let mut new_events = Vec::new();
+    let additions = diffnote::record::record_session(
+        &loaded,
+        &mut new_events,
+        diffnote::record::Capture {
+            diff_text: &diff_text,
+            diff_digest: &digest,
+            source,
+            files: &files,
+            new_files: &new_files,
+            base_files: &base_files,
+        },
+        &|| confirm_snapshot_size(mode, true, tree_size),
+        &*head_some,
+        head_all,
+    )?;
+    let mut events = loaded.events.clone();
+    events.extend(new_events);
+    bundle::save(review_path, &loaded, &events, &additions)?;
+    let short = |id: &str| id[..id.len().min(10)].to_string();
+    println!(
+        "最新の差分を記録しました: {}..{}(HEAD)",
+        short(&last_head),
+        short(&head)
+    );
+    Ok(())
+}
+
 fn cmd_serve(
     review: PathBuf,
     port: u16,
@@ -225,6 +287,22 @@ fn cmd_serve(
         anyhow::bail!(
             "{} がありません。先に `diffnote edit` か `diffnote init` でレビューを作ってください",
             review.display()
+        );
+    }
+    // A git bundle: what has been committed since it was last looked at is
+    // added, so it can be reviewed here.
+    let git = repo
+        .clone()
+        .map_or_else(diffnote::git::Repo::current, diffnote::git::Repo::at);
+    if let Err(e) = add_latest_git_revision(&review, &git) {
+        println!("注意: 最新の差分を記録できませんでした: {e}");
+    }
+    if bundle::load(&review)
+        .ok()
+        .is_some_and(|l| diffnote::html::view_model(&l).is_err())
+    {
+        println!(
+            "注意: レビューする差分がまだありません。基準のあとにコミットを重ねてから、もう一度 `diffnote serve` を起動してください(`diffnote edit A..B` で範囲を指定して追加することもできます)"
         );
     }
     let options = diffnote::serve::Options {
@@ -321,7 +399,11 @@ struct Input {
 /// What `edit` reviews in a git bundle when it is given nothing: the changes
 /// since the last revision's head, up to `HEAD`; or, if `HEAD` is that head,
 /// that revision again (so replies can still be added).
-fn git_targets(loaded: &bundle::Loaded, targets: Vec<String>) -> Result<Vec<String>> {
+fn git_targets(
+    repo: &diffnote::git::Repo,
+    loaded: &bundle::Loaded,
+    targets: Vec<String>,
+) -> Result<Vec<String>> {
     if !targets.is_empty() {
         return Ok(targets);
     }
@@ -329,7 +411,7 @@ fn git_targets(loaded: &bundle::Loaded, targets: Vec<String>) -> Result<Vec<Stri
     else {
         return Ok(targets);
     };
-    let head = diffnote::git::Repo::current().commit_id("HEAD")?;
+    let head = repo.commit_id("HEAD")?;
     Ok(vec![if head == last.head {
         format!("{}..{}", last.base, last.head)
     } else {
@@ -337,8 +419,7 @@ fn git_targets(loaded: &bundle::Loaded, targets: Vec<String>) -> Result<Vec<Stri
     }])
 }
 
-fn git_input(targets: &[String]) -> Result<Input> {
-    let repo = diffnote::git::Repo::current();
+fn git_input(repo: diffnote::git::Repo, targets: &[String]) -> Result<Input> {
     let range = repo.resolve_range(targets)?;
     let diff_text = repo.diff(&range)?;
     let parsed = diffnote::diff::parse(&diff_text).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -589,12 +670,15 @@ fn cmd_edit(
                 &[review_path.clone(), draft_path_for(&review_path)],
             )?
         }
-        Some(diffnote::model::Source::Git(_)) => git_input(&git_targets(&loaded, targets)?)?,
+        Some(diffnote::model::Source::Git(_)) => {
+            let repo = diffnote::git::Repo::current();
+            git_input(repo.clone(), &git_targets(&repo, &loaded, targets)?)?
+        }
         None if targets.is_empty() => anyhow::bail!(
             "レビューするコミットを指定してください(例: `diffnote edit HEAD~3..HEAD`)。\
             基準になる状態を決めるには、先に `diffnote init` を実行してください"
         ),
-        None => git_input(&targets)?,
+        None => git_input(diffnote::git::Repo::current(), &targets)?,
     };
     let Input {
         diff_text,
