@@ -14,9 +14,12 @@ const MAX_LINE: usize = 2000;
 /// two lines that have almost nothing in common are just different lines.
 const MIN_SIMILARITY: f64 = 0.35;
 
-/// The changed ranges `[start, end)` of the old and of the new line, or `None`
-/// if the lines are too different, too long, or the change is all of the line.
-pub fn changed(old: &str, new: &str) -> Option<(Vec<[u32; 2]>, Vec<[u32; 2]>)> {
+/// Ranges `[start, end)` of a line.
+pub type Ranges = Vec<[u32; 2]>;
+
+/// The changed ranges of the old and of the new line, or `None` if the lines
+/// are too different, too long, or the change is all of the line.
+pub fn changed(old: &str, new: &str) -> Option<(Ranges, Ranges)> {
     if old.len() > MAX_LINE || new.len() > MAX_LINE {
         return None;
     }
