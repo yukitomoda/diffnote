@@ -1002,7 +1002,7 @@
       <div class="diffnote-viewbar">
         ${props.compose && html`<div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global"
           onClick=${function () { props.compose.openScope('global', rev); }}>レビュー全体にコメントする</button></div>`}
-        ${props.override && html`<p class="diffnote-compare-note" data-diffnote-compare-note>${props.overrideNote}</p>`}
+        ${props.override && html`<p class="diffnote-compare-note" data-diffnote-compare-note tabindex="0" title=${props.overrideNote.tip} aria-label=${props.overrideNote.short + '。' + props.overrideNote.tip}>${props.overrideNote.short}<span class="diffnote-compare-note__icon" aria-hidden="true">⚠</span></p>`}
         <${ViewMenu} />
       </div>
       ${(globals.length > 0 || props.compose) && html`<section class="diffnote-global-comments" data-diffnote-global>
@@ -1518,7 +1518,10 @@
         <${ComposeContext.Provider} value=${compose}>
           <${OpenedContext.Provider} value=${openedFiles}>
             <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} ignoreSpace=${ignoreSpace} compose=${compose} override=${override}
-              overrideNote=${override ? model.revisions[against].label.replace(/ \(.*$/, '') + ' → ' + model.revisions[current].label.replace(/ \(.*$/, '') + ' の間の変更を表示しています。コメントは、ベースとの差分に付きます(削除された行には付けられません)。' : ''}
+              overrideNote=${override ? {
+                short: model.revisions[against].label.replace(/ \(.*$/, '') + ' .. ' + model.revisions[current].label.replace(/ \(.*$/, ''),
+                tip: 'ベースの代わりに、選んだリビジョンと比べた差分を表示しています(表示だけの切り替えです)。コメントは、これまでどおり、ベースとの差分に付きます。比べた相手にだけある、削除された行には、コメントを付けられません。',
+              } : null}
               author=${review.actions ? model.author : null} onAuthor=${review.actions && review.actions.setAuthor} />
           <//>
         <//>
