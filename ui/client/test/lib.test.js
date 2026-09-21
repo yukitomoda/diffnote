@@ -417,3 +417,34 @@ test('a text is quoted line by line, and put after what is already written', () 
   assert.equal(lib.appendQuote('> a\n\nmine', 'b'), '> a\n\nmine\n\n> b\n\n');
   assert.equal(lib.appendQuote('keep', ' \n '), 'keep', 'nothing to quote: nothing is changed');
 });
+
+const EMOJI = [
+  ['👍', '+1', 'いいね 賛成 ok'],
+  ['🐛', 'bug', 'バグ 虫 不具合'],
+  ['🐞', 'lady_beetle', 'バグ 虫'],
+  ['🎉', 'tada', 'おめでとう お祝い'],
+];
+
+test('an emoji is found by its code, a word or itself, and the codes that begin with the search come first', () => {
+  assert.equal(lib.findEmoji(EMOJI, '').length, 4);
+  assert.deepEqual(lib.findEmoji(EMOJI, 'bug').map((e) => e[0]), ['🐛']);
+  assert.deepEqual(lib.findEmoji(EMOJI, ':bug:').map((e) => e[0]), ['🐛'], 'with the colons');
+  assert.deepEqual(lib.findEmoji(EMOJI, 'バグ').map((e) => e[0]), ['🐛', '🐞'], 'by a word');
+  assert.deepEqual(lib.findEmoji(EMOJI, '+1').map((e) => e[0]), ['👍']);
+  assert.deepEqual(lib.findEmoji(EMOJI, 'BUG').map((e) => e[0]), ['🐛'], 'upper case too');
+  assert.deepEqual(lib.findEmoji(EMOJI, '🎉').map((e) => e[0]), ['🎉'], 'the emoji itself');
+  assert.deepEqual(lib.findEmoji(EMOJI, 'la').map((e) => e[0]), ['🐞'], 'a part of a code');
+  assert.deepEqual(lib.findEmoji(EMOJI, 'zzz'), []);
+  // A code that begins with it is before one that only has it in a word.
+  const list = [['A', 'alpha', 'beta'], ['B', 'beta', '']];
+  assert.deepEqual(lib.findEmoji(list, 'beta').map((e) => e[0]), ['B', 'A']);
+});
+
+test('a shortcode is written as its emoji and what is not one is left as it is', () => {
+  assert.equal(lib.withShortcodes(EMOJI, 'ok :+1: and :bug:'), 'ok 👍 and 🐛');
+  assert.equal(lib.withShortcodes(EMOJI, ':tada::tada:'), '🎉🎉');
+  assert.equal(lib.withShortcodes(EMOJI, 'at 12:30:45 and :nope: and http://x:80:'), 'at 12:30:45 and :nope: and http://x:80:');
+  assert.equal(lib.withShortcodes(EMOJI, 'no colon'), 'no colon');
+  assert.equal(lib.withShortcodes(EMOJI, ':BUG:'), ':BUG:', 'codes are lower case');
+  assert.equal(lib.withShortcodes(EMOJI, ':constructor:'), ':constructor:', 'nothing from the object itself');
+});

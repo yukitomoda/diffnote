@@ -493,6 +493,32 @@
     return (before === '' ? '' : before + '\n\n') + quote + '\n\n';
   };
 
+  // The emoji (`[emoji, code, words]`, see `emoji.js`) that a search asks for: by
+  // the code (`bug`, `+1`, also as `:bug:`), a word (`バグ`), or the emoji
+  // itself. Codes that begin with it come first. An empty search is all of them.
+  lib.findEmoji = function (list, query) {
+    var q = String(query).trim().toLowerCase().replace(/^:|:$/g, '');
+    if (q === '') return list.slice();
+    var starts = [];
+    var rest = [];
+    list.forEach(function (e) {
+      if (e[1].toLowerCase().indexOf(q) === 0 || e[0] === q) starts.push(e);
+      else if (e[1].toLowerCase().indexOf(q) >= 0 || e[2].toLowerCase().indexOf(q) >= 0) rest.push(e);
+    });
+    return starts.concat(rest);
+  };
+
+  // A text with each `:code:` that is the code of an emoji written as the emoji
+  // (`:+1:` as 👍); what isn't one (`12:30:45`, `:nope:`) is left as it is.
+  lib.withShortcodes = function (list, text) {
+    if (String(text).indexOf(':') < 0) return text;
+    var by = {};
+    list.forEach(function (e) { by[e[1]] = e[0]; });
+    return String(text).replace(/:([a-z0-9_+-]+):/g, function (whole, code) {
+      return Object.prototype.hasOwnProperty.call(by, code) ? by[code] : whole;
+    });
+  };
+
   // What a comment says for an image of the review, to put in its text.
   lib.imageMarkdown = function (id) {
     return '![画像](diffnote-image:' + id + ')';

@@ -1108,6 +1108,56 @@ class BoxesGrowWithWhatIsWritten(ServedCase):
         self.assertFalse(b.js("(e => e.scrollHeight > e.clientHeight + 1)(document.querySelector(%s))" % json.dumps(edit)))
 
 
+class EmojiTable(ServedCase):
+    def test_an_emoji_is_chosen_from_a_table_and_put_where_the_cursor_is(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        form = f"#{card} .diffnote-reply"
+        box = f"{form} textarea"
+        self.write(box, "前後")
+        b.js(f"(e => {{ e.focus(); e.setSelectionRange(1, 1); }})(document.querySelector({json.dumps(box)}))")
+        b.click(f"{form} [data-diffnote-emoji-button]")
+        self.assertTrue(b.wait_exists("[data-diffnote-emoji-panel]"))
+        self.assertTrue(b.js("document.activeElement === document.querySelector('[data-diffnote-emoji-search]')"), "ready to search")
+        # All of them at first, the reaction ones first; a word narrows them.
+        total = b.count("[data-diffnote-emoji]")
+        self.assertGreaterEqual(total, 100)
+        self.assertEqual(b.js("[...document.querySelectorAll('[data-diffnote-emoji]')].slice(0, 8).map(e => e.textContent).join('')"), "👍👎😄🎉😕❤️🚀👀")
+        self.write_search("バグ")
+        self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-emoji]').length < 6"))
+        b.click("[data-diffnote-emoji=bug]")
+        self.assertFalse(b.exists("[data-diffnote-emoji-panel]"), "the table is shut")
+        self.assertEqual(b.value(box), "前🐛後")
+        self.assertTrue(b.js(f"document.activeElement === document.querySelector({json.dumps(box)})"), "back in the box")
+        self.assertEqual(b.js(f"document.querySelector({json.dumps(box)}).selectionStart"), 3, "after the emoji (a UTF-16 count: 前 is one, 🐛 two)")
+
+    def test_enter_takes_the_first_found_and_escape_shuts_the_table_and_a_miss_is_told(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        form = f"#{card} .diffnote-reply"
+        box = f"{form} textarea"
+        b.click(f"{form} [data-diffnote-emoji-button]")
+        self.assertTrue(b.wait_exists("[data-diffnote-emoji-search]"))
+        self.write_search("zzzz")
+        self.assertTrue(b.wait_exists(".diffnote-emoji__none"))
+        self.write_search(":tada:")
+        self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-emoji]').length === 1"))
+        b.js("document.querySelector('[data-diffnote-emoji-search]').dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true, cancelable: true}))")
+        self.assertTrue(b.wait(f"document.querySelector({json.dumps(box)}).value === '🎉'"))
+        b.click(f"{form} [data-diffnote-emoji-button]")
+        self.assertTrue(b.wait_exists("[data-diffnote-emoji-panel]"))
+        time.sleep(0.2)  # (the table listens for Escape once it has been drawn)
+        b.escape()
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-emoji-panel]')"))
+        self.assertEqual(b.value(box), "🎉", "nothing was added")
+
+    def write_search(self, text):
+        self.b.js("var t=document.querySelector('[data-diffnote-emoji-search]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(t,%s); t.dispatchEvent(new Event('input',{bubbles:true}))" % json.dumps(text))
+        time.sleep(0.1)
+
+
 class ThreadsOnFilesAndTheReview(ServedCase):
     def test_a_review_wide_thread_is_added_to_its_place(self):
         self.serve()

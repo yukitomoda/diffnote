@@ -170,6 +170,49 @@
     }, []);
   }
 
+  // The button that opens the table of emoji, and the table: a search box and the
+  // emoji that fit it; one chosen goes to `onPick`.
+  function EmojiButton(props) {
+    var _o = useState(false);
+    var open = _o[0];
+    var setOpen = _o[1];
+    var _q = useState('');
+    var query = _q[0];
+    var setQuery = _q[1];
+    var box = useRef(null);
+    var input = useRef(null);
+    useEffect(function () { if (open && input.current) input.current.focus(); }, [open]);
+    useEffect(function () {
+      if (!open) return undefined;
+      var away = function (e) { if (box.current && !box.current.contains(e.target)) setOpen(false); };
+      var key = function (e) { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
+      document.addEventListener('mousedown', away);
+      document.addEventListener('keydown', key, true);
+      return function () {
+        document.removeEventListener('mousedown', away);
+        document.removeEventListener('keydown', key, true);
+      };
+    }, [open]);
+    var found = lib.findEmoji(D.emoji || [], query);
+    var pick = function (ch) { setOpen(false); setQuery(''); props.onPick(ch); };
+    return html`<span class="diffnote-emoji" ref=${box}>
+      <button type="button" class="diffnote-attach diffnote-emoji__open" data-diffnote-emoji-button aria-haspopup="true" aria-expanded=${open}
+        title="絵文字を入れます" onClick=${function () { setOpen(!open); }}>😀</button>
+      ${open && html`<div class="diffnote-emoji__panel" data-diffnote-emoji-panel>
+        <input ref=${input} type="search" class="diffnote-emoji__search" data-diffnote-emoji-search placeholder="絵文字を探す(例: ok、バグ)" value=${query}
+          onInput=${function (e) { setQuery(e.target.value); }}
+          onKeyDown=${function (e) { if (e.key === 'Enter') { e.preventDefault(); if (found[0]) pick(found[0][0]); } }} />
+        <div class="diffnote-emoji__grid">
+          ${found.map(function (e) {
+            return html`<button type="button" key=${e[1]} class="diffnote-emoji__item" data-diffnote-emoji=${e[1]} title=${':' + e[1] + ': ' + e[2]}
+              onClick=${function () { pick(e[0]); }}>${e[0]}</button>`;
+          })}
+        </div>
+        ${found.length === 0 && html`<p class="diffnote-emoji__none">見つかりません</p>`}
+      </div>`}
+    </span>`;
+  }
+
   // Pictures for a box that a comment is written in: pasted (a screenshot),
   // dropped, or chosen. Each goes to the server, and what stands for it in the
   // text is put where the cursor was. Only on the served page.
@@ -237,10 +280,18 @@
         },
         onDragLeave: function (e) { e.currentTarget.classList.remove('is-dropping'); },
       } : {},
-      // The button that opens the file chooser, and the note under the box.
+      // The buttons above the box (emoji, and the file chooser), and, below, the
+      // note under it.
       picker: function (field) {
         if (!D.api) return null;
-        return html`<label class="diffnote-attach" title="ファイルや画像を添付します(貼り付けや、ドラッグ&ドロップでも追加できます)">📎 添付
+        var pick = function (ch) {
+          var box = field();
+          if (!box) return;
+          var put = lib.insertAt(latest.current, box.selectionStart, box.selectionEnd, ch);
+          setText(put.text);
+          setTimeout(function () { box.focus(); box.setSelectionRange(put.cursor, put.cursor); }, 0);
+        };
+        return html`<${EmojiButton} onPick=${pick} /><label class="diffnote-attach" title="ファイルや画像を添付します(貼り付けや、ドラッグ&ドロップでも追加できます)">📎 添付
           <input type="file" multiple data-diffnote-attach
             onChange=${function (e) { var f = field(); if (f) send(e.target.files, f); e.target.value = ''; }} /></label>`;
       },

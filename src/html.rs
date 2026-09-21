@@ -114,10 +114,11 @@ fn revision_views<'a>(shown: &'a [Shown<'a>]) -> Vec<RevisionView<'a>> {
 /// The scripts of the client-side page, in the order they are put in it: the
 /// libraries (plain-script builds, so the page works from a file), then the
 /// page's own. Each adds to `window.Diffnote`.
-const CLIENT_LIBS: [&str; 5] = [
+const CLIENT_LIBS: [&str; 6] = [
     include_str!("../ui/vendor/preact.min.js"),
     include_str!("../ui/vendor/hooks.umd.js"),
     include_str!("../ui/vendor/htm.js"),
+    include_str!("../ui/client/emoji.js"),
     include_str!("../ui/client/lib.js"),
     include_str!("../ui/client/interact.js"),
 ];
@@ -1182,7 +1183,13 @@ mod tests {
         // What the page shows is made of elements, never of HTML text (a comment
         // or a line of code can't become markup): true of the page's own
         // scripts (the libraries are theirs).
-        for own in [CLIENT_LIBS[3], CLIENT_LIBS[4], CLIENT_APP, CLIENT_API] {
+        for own in [
+            CLIENT_LIBS[3],
+            CLIENT_LIBS[4],
+            CLIENT_LIBS[5],
+            CLIENT_APP,
+            CLIENT_API,
+        ] {
             for banned in [
                 "innerHTML",
                 "dangerouslySetInnerHTML",
