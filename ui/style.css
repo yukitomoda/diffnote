@@ -129,6 +129,8 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-filelist a:hover { background: var(--diffnote-color-gutter); }
 .diffnote-filelist a.is-visible { background: var(--diffnote-color-hunk-bg); }
 .diffnote-compose__head { display: flex; align-items: center; gap: 4px; }
+.diffnote-file.diffnote-flash { animation: diffnote-flash 1.8s ease-out; }
+@keyframes diffnote-flash { 0%, 50% { box-shadow: 0 0 0 3px var(--diffnote-color-accent); } 100% { box-shadow: 0 0 0 3px transparent; } }
 .diffnote-lineref { font-family: var(--diffnote-font-mono); font-size: 12.5px; }
 tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 @keyframes diffnote-linked { 0%, 55% { background-color: #fff2a8; } 100% { background-color: transparent; } }

@@ -597,6 +597,24 @@ class LineLinks(BrowserCase):
         b = self.b
         self.assertEqual(b.js("document.querySelector(`${'%s'} .diffnote-thread .diffnote-copy`).getAttribute('data-diffnote-copy')" % CUR).endswith("@2"), True)
 
+    def test_picking_a_file_in_the_list_brings_it_back_opens_it_and_marks_it(self):
+        b = self.b
+        section = f"{CUR} section.diffnote-file[data-diffnote-file='other.txt']"
+        self.assertFalse(b.js(f"document.querySelector({json.dumps(section + ' details')}).open"), "it starts folded")
+        # Folded: picking it opens it.
+        b.click("[data-diffnote-file-link='other.txt']")
+        self.assertTrue(b.wait(f"document.querySelector({json.dumps(section + ' details')}).open"))
+        self.assertTrue(b.wait(f"document.querySelector({json.dumps(section)}).classList.contains('diffnote-flash')"), "marked")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(section)}).classList.contains('diffnote-flash')"), "and not for long")
+        # Looked at: picking it takes that back too.
+        b.click(f"{section} [data-diffnote-viewed]")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(section)})"))
+        b.click("[data-diffnote-file-link='other.txt']")
+        self.assertTrue(b.wait(f"!!document.querySelector({json.dumps(section)})"))
+        self.assertFalse(b.exists("[data-diffnote-check='other.txt'][aria-pressed='true']"))
+        self.assertTrue(b.wait(f"document.querySelector({json.dumps(section + ' details')}).open"))
+        self.assertTrue(b.wait(f"document.querySelector({json.dumps(section)}).classList.contains('diffnote-flash')"))
+
 
 class IgnoreWhitespace(BrowserCase):
     """Lines that differ only in white space, shown as unchanged when asked."""

@@ -254,6 +254,30 @@
       pinned = null;
       clear();
     },
+    // Show a file: open it, scroll to it and mark it for a moment (once the page
+    // has drawn it, if it is being brought back).
+    showFile: function (rev, path) {
+      var tries = 0;
+      var look = function () {
+        var section = Array.prototype.filter.call(
+          document.querySelectorAll('#rev-' + rev + ' section.diffnote-file'),
+          function (e) { return e.getAttribute('data-diffnote-file') === path; }
+        )[0];
+        if (!section) {
+          if (++tries < 40) requestAnimationFrame(look);
+          return;
+        }
+        var details = section.querySelector('details');
+        if (details && !details.open) {
+          details.open = true;
+          details.dispatchEvent(new Event('toggle'));
+        }
+        section.scrollIntoView({ block: 'start' });
+        section.classList.add('diffnote-flash');
+        setTimeout(function () { section.classList.remove('diffnote-flash'); }, 1800);
+      };
+      requestAnimationFrame(look);
+    },
     // Show lines of a file (as the side, `old` or `new`, numbers them): open the file, scroll
     // to them and mark them for a moment. Lines the diff leaves out are not on
     // the page: the nearest that are shown stand for them.

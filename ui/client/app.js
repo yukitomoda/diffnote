@@ -745,7 +745,13 @@
           return html`<li key=${f.path} class=${done ? 'is-viewed' : ''}>
             ${viewed && html`<button type="button" class="diffnote-check" data-diffnote-check=${f.path} aria-pressed=${done}
               title=${done ? '確認済みを解除して、表示に戻します' : '確認済みにします'} onClick=${function () { viewed.toggle(f); }}>${done ? '✓' : ''}</button>`}
-            <a href=${'#r' + ctx.rev + '-file-' + htmlId(f.path)}>${f.path}</a>
+            <a href=${'#r' + ctx.rev + '-file-' + htmlId(f.path)} data-diffnote-file-link=${f.path}
+              onClick=${function (e) {
+                // A file that was looked at comes back; one that was folded opens; and it is marked.
+                e.preventDefault();
+                if (viewed && viewed.is(f)) viewed.toggle(f);
+                D.interact.showFile(ctx.rev, f.path);
+              }}>${f.path}</a>
             ${done
               ? open > 0 && html`<span class="diffnote-badge" data-diffnote-open-count title=${'未解決のスレッドが ' + open + ' 件あります'}>${open}</span>`
               : n > 0 && html` <span class="diffnote-badge">${n}</span>`}
