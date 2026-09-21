@@ -232,5 +232,92 @@ class ThreadsOnFilesAndTheReview(ClientServed):
         self.assertTrue(any("ファイル全体: calc.py" in l for l in show(self.review).splitlines()))
 
 
+class SideBySideLines(ClientServed):
+    def serve_split(self):
+        self.serve(self.login)
+        self.b.js("localStorage.setItem('diffnote-layout','split')")
+        self.b.reload()
+        self.b.js("window.__marker='same-page'; window.__table=document.querySelector('.diffnote-diff')")
+        self.assertTrue(self.b.exists(f"{CUR} {LOGIN}.diffnote-diff--split"))
+
+    def gutter(self, side, n):
+        return f"{CUR} {LOGIN} td.diffnote-line__gutter-{side}[data-diffnote-{side}='{n}']"
+
+    def picked(self, side=None):
+        cells = "td.is-picked"
+        if side:
+            cells += f".diffnote-cell--{'removed' if side == 'old' else 'added'}"
+        return self.b.count(f"{CUR} {LOGIN} {cells}")
+
+    def test_an_added_line_is_chosen_on_the_new_side_only(self):
+        self.serve_split()
+        b = self.b
+        b.click_at(self.gutter("new", 10))
+        self.assertTrue(b.wait_exists(".diffnote-composer-row"))
+        self.assertEqual(b.text(".diffnote-compose__where"), "src/auth/login.ts:10")
+        self.assertEqual(self.picked(), 2, "its number and its text")
+        self.assertEqual(b.count(f"{CUR} {LOGIN} .diffnote-cell--removed.is-picked"), 0)
+        self.assertEqual(b.count(f"{CUR} {LOGIN} .diffnote-composer-row td[colspan='4']"), 1)
+        self.write(".diffnote-composer-row textarea", "追加した行について")
+        b.js("document.querySelector('.diffnote-composer-row .diffnote-compose').requestSubmit()")
+        self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row')"))
+        self.assertTrue(self.same_page())
+        self.assertTrue(b.wait_exists(f"{CUR} {LOGIN} .diffnote-thread-row"))
+        out = show(self.review)
+        self.assertIn("追加した行について", out)
+        line = [l for l in out.splitlines() if "login.ts:10" in l]
+        self.assertTrue(line and "<-" not in line[0], out)
+
+    def test_a_removed_line_is_chosen_on_the_old_side_only(self):
+        self.serve_split()
+        b = self.b
+        b.click_at(self.gutter("old", 8))
+        self.assertTrue(b.wait_exists(".diffnote-composer-row"))
+        self.assertEqual(b.text(".diffnote-compose__where"), "src/auth/login.ts:8")
+        self.assertEqual(self.picked("old"), 2)
+        self.assertEqual(self.picked("new"), 0)
+        self.write(".diffnote-composer-row textarea", "消した行について")
+        b.js("document.querySelector('.diffnote-composer-row .diffnote-compose').requestSubmit()")
+        self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row')"))
+        self.assertTrue(any("login.ts:8" in l for l in show(self.review).splitlines()), show(self.review))
+
+    def test_dragging_stays_on_the_side_it_started_on(self):
+        self.serve_split()
+        b = self.b
+        b.drag(self.gutter("new", 9), self.gutter("new", 11))
+        self.assertTrue(b.wait_exists(".diffnote-composer-row"))
+        self.assertEqual(b.text(".diffnote-compose__where"), "src/auth/login.ts:9-11")
+        self.assertEqual(self.picked("new"), 6, "three lines, number and text")
+        self.assertEqual(self.picked("old"), 0)
+        self.assertEqual(b.count(f"{CUR} {LOGIN} td.is-picked-first"), 2)
+        self.assertEqual(b.count(f"{CUR} {LOGIN} td.is-picked-last"), 2)
+        b.escape()
+        self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row') && !document.querySelector('.is-picked')"))
+
+    def test_an_unchanged_line_is_on_both_sides_and_shift_click_extends_on_the_same_side(self):
+        self.serve_split()
+        b = self.b
+        b.click_at(self.gutter("new", 2))
+        self.assertTrue(b.wait_exists(".diffnote-composer-row"))
+        self.assertEqual(b.text(".diffnote-compose__where"), "src/auth/login.ts:2")
+        self.assertEqual(b.count(f"{CUR} {LOGIN} td.is-picked"), 2)
+        b.click_at(self.gutter("new", 4), modifiers=8)
+        self.assertTrue(b.wait("document.querySelector('.diffnote-compose__where').textContent==='src/auth/login.ts:2-4'"))
+        self.write(".diffnote-composer-row textarea", "書きかけ")
+        # Pressing the other side starts a new choice; the draft stays.
+        b.click_at(self.gutter("old", 5))
+        self.assertTrue(b.wait("document.querySelector('.diffnote-compose__where').textContent!=='src/auth/login.ts:2-4'"))
+        self.assertEqual(b.count(f"{CUR} {LOGIN} td.is-picked"), 2, "one cell's number and text, on the old side")
+        self.assertEqual(b.value(".diffnote-composer-row textarea"), "書きかけ")
+
+    def test_changing_the_layout_lets_go_of_the_choice(self):
+        self.serve_split()
+        b = self.b
+        b.click_at(self.gutter("new", 10))
+        self.assertTrue(b.wait_exists(".diffnote-composer-row"))
+        b.click("[data-diffnote-layout=unified]")
+        self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row') && !document.querySelector('.is-picked, .diffnote-select')"))
+
+
 if __name__ == "__main__":
     unittest.main()

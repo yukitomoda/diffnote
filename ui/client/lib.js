@@ -198,14 +198,33 @@
 
   // The lines the rows from `a` to `b` (either way round) cover, on each side:
   // where the counters stand before the first, and after the last.
-  lib.counters = function (flat, a, b) {
-    var first = flat[Math.min(a, b)];
-    var last = flat[Math.max(a, b)];
+  //
+  // With a `side` ('old' or 'new': the choice was made on one side of a side by
+  // side view) the choice is of that side's lines, and `a` and `b` are rows that
+  // have one. The other side's lines are those of the same rows only if all of
+  // them are unchanged; otherwise it is none, at the place where the first row
+  // is.
+  lib.counters = function (flat, a, b, side) {
+    var lo = Math.min(a, b);
+    var hi = Math.max(a, b);
+    var first = flat[lo];
+    var last = flat[hi];
     var span = function (next, has) {
       var start = first[next];
       return { start: start, len: last[next] + (has ? 1 : 0) - start };
     };
-    return { base: span('oldNext', last.row.o != null), head: span('newNext', last.row.n != null) };
+    var base = span('oldNext', last.row.o != null);
+    var head = span('newNext', last.row.n != null);
+    if (side) {
+      var unchanged = flat.slice(lo, hi + 1).every(function (f) {
+        return f.row.k === 'c';
+      });
+      if (!unchanged) {
+        if (side === 'old') head = { start: first.newNext, len: 0 };
+        else base = { start: first.oldNext, len: 0 };
+      }
+    }
+    return { base: base, head: head };
   };
 
   // `src/a.rs:10-13`: the lines of the choice, as the new side has them (the old

@@ -197,5 +197,10 @@ body.is-selecting { user-select: none; }
 .diffnote-diff--split .diffnote-cell--empty { background: var(--diffnote-color-gutter); }
 .diffnote-diff--split .diffnote-line__content.diffnote-cell--removed::before { content: "-"; }
 .diffnote-diff--split .diffnote-line__content.diffnote-cell--added::before { content: "+"; }
+.diffnote-diff--split td.is-picked { background-image: linear-gradient(rgba(9, 105, 218, 0.16), rgba(9, 105, 218, 0.16)); }
+.diffnote-diff--split td.diffnote-line__gutter-old.is-picked, .diffnote-diff--split td.diffnote-line__gutter-new.is-picked { --dn-l: inset 4px 0 0 0 var(--diffnote-color-accent); }
+.diffnote-diff--split td.diffnote-line__content.is-picked { --dn-r: inset -3px 0 0 0 var(--diffnote-color-accent); }
+.diffnote-diff--split td.is-picked-first { --dn-t: inset 0 3px 0 0 var(--diffnote-color-accent); }
+.diffnote-diff--split td.is-picked-last { --dn-b: inset 0 -3px 0 0 var(--diffnote-color-accent); }
 .diffnote-diff--split td.diffnote-gutter--commented { --dn-l: var(--diffnote-bars); color: var(--diffnote-color-fg); font-weight: 600; }
-.diffnote-diff--split .diffnote-thread-row > td { padding-left: 16px !important; }
+.diffnote-diff--split .diffnote-thread-row > td, .diffnote-diff--split .diffnote-composer-row > td { padding-left: 16px !important; }

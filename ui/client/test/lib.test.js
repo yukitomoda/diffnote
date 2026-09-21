@@ -174,3 +174,28 @@ test('the lines chosen are counted on each side from the counters before the fir
   assert.equal(lib.chosenLocation('a.rs', lib.counters(flat, 1, 1)), 'a.rs:11'.replace('11', '11'));
   assert.equal(lib.chosenLocation('a.rs', lib.counters(flat, 4, 4)), 'a.rs:41');
 });
+
+test('lines chosen on one side of a side by side view are that side\'s, and the other side\'s only if all are unchanged', () => {
+  const file = {
+    hunks: [{
+      header: '@@ -10,4 +10,4 @@',
+      rows: [
+        { k: 'c', o: 10, n: 10 },
+        { k: 'd', o: 11 },
+        { k: 'a', n: 11 },
+        { k: 'c', o: 12, n: 12 },
+      ],
+    }],
+  };
+  const flat = lib.flatRows(file);
+  // The removed line, chosen on the old side: no new lines.
+  assert.deepEqual(lib.counters(flat, 1, 1, 'old'), { base: { start: 11, len: 1 }, head: { start: 11, len: 0 } });
+  // The added line, chosen on the new side: no old lines.
+  assert.deepEqual(lib.counters(flat, 2, 2, 'new'), { base: { start: 12, len: 0 }, head: { start: 11, len: 1 } });
+  // From the unchanged line above to the added one, on the new side: the
+  // removed line between them is not chosen.
+  assert.deepEqual(lib.counters(flat, 0, 2, 'new'), { base: { start: 10, len: 0 }, head: { start: 10, len: 2 } });
+  // An unchanged line is on both sides, whichever was pressed.
+  assert.deepEqual(lib.counters(flat, 3, 3, 'old'), lib.counters(flat, 3, 3));
+  assert.deepEqual(lib.counters(flat, 3, 3, 'new'), { base: { start: 12, len: 1 }, head: { start: 12, len: 1 } });
+});

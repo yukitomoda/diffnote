@@ -262,6 +262,33 @@
     var hidden = function (ids) {
       return ctx.hideResolved && ids.length > 0 && ids.every(function (id) { return ctx.byId[id].resolved; });
     };
+    // Lines are chosen on one side: the cells of that side, from the first row
+    // chosen to the last.
+    var compose = useContext(ComposeContext);
+    var flat = useMemo(function () { return lib.flatRows(file); }, [file]);
+    var indexOf = useMemo(function () {
+      var m = new Map();
+      flat.forEach(function (f, i) { m.set(f.row, i); });
+      return m;
+    }, [flat]);
+    var sel = compose && compose.sel && compose.sel.rev === ctx.rev && compose.sel.path === file.path && compose.sel.side ? compose.sel : null;
+    var lo = sel ? Math.min(sel.anchor, sel.to) : -1;
+    var hi_ = sel ? Math.max(sel.anchor, sel.to) : -1;
+    var idxOf = function (row) { return row ? indexOf.get(row) : undefined; };
+    var pickedCell = function (row, side) {
+      if (!sel || sel.side !== side || !row) return '';
+      var i = idxOf(row);
+      var has = side === 'old' ? row.o != null : row.n != null;
+      if (!has || i < lo || i > hi_) return '';
+      return ' is-picked' + (i === lo ? ' is-picked-first' : '') + (i === hi_ ? ' is-picked-last' : '');
+    };
+    var begin = function (row, side) {
+      return compose && row && function (e) {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        compose.begin(ctx.rev, file.path, idxOf(row), e.shiftKey, side);
+      };
+    };
     var cellKind = function (row, side) {
       if (!row) return 'empty';
       return row.k === 'c' ? 'context' : side === 'old' ? 'removed' : 'added';
@@ -282,12 +309,26 @@
         };
         var kl = cellKind(l, 'old');
         var kr = cellKind(r, 'new');
-        out.push(html`<tr class="diffnote-split-row" key=${hi + ':' + pi} data-diffnote-threads=${ids.length ? ids.join(' ') : undefined}>
-          <td class=${'diffnote-line__gutter-old diffnote-cell--' + kl + (shownL ? ' diffnote-gutter--commented' : '')} style=${shownL ? bars(idsL) : undefined}>${l && l.o != null ? l.o : ''}</td>
-          <td class=${'diffnote-line__content diffnote-cell--' + kl}>${l && html`<code dangerouslySetInnerHTML=${{ __html: l.h }}></code>`}</td>
-          <td class=${'diffnote-line__gutter-new diffnote-cell--' + kr + (shownR ? ' diffnote-gutter--commented' : '')} style=${shownR ? bars(idsR) : undefined}>${r && r.n != null ? r.n : ''}</td>
-          <td class=${'diffnote-line__content diffnote-cell--' + kr}>${r && html`<code dangerouslySetInnerHTML=${{ __html: r.h }}></code>`}</td>
+        var pl = pickedCell(l, 'old');
+        var pr = pickedCell(r, 'new');
+        out.push(html`<tr class="diffnote-split-row" key=${hi + ':' + pi} data-diffnote-threads=${ids.length ? ids.join(' ') : undefined}
+          onMouseOver=${compose ? function () { compose.extend(function (side) { return side === 'old' ? idxOf(l) : idxOf(r); }); } : undefined}>
+          <td class=${'diffnote-line__gutter-old diffnote-cell--' + kl + (shownL ? ' diffnote-gutter--commented' : '') + pl} style=${shownL ? bars(idsL) : undefined}
+            data-diffnote-old=${l && l.o != null ? l.o : undefined} onMouseDown=${begin(l, 'old')}>${l && l.o != null ? l.o : ''}</td>
+          <td class=${'diffnote-line__content diffnote-cell--' + kl + pl}>${l && html`<code dangerouslySetInnerHTML=${{ __html: l.h }}></code>`}</td>
+          <td class=${'diffnote-line__gutter-new diffnote-cell--' + kr + (shownR ? ' diffnote-gutter--commented' : '') + pr} style=${shownR ? bars(idsR) : undefined}
+            data-diffnote-new=${r && r.n != null ? r.n : undefined} onMouseDown=${begin(r, 'new')}>${r && r.n != null ? r.n : ''}</td>
+          <td class=${'diffnote-line__content diffnote-cell--' + kr + pr}>${r && html`<code dangerouslySetInnerHTML=${{ __html: r.h }}></code>`}</td>
         </tr>`);
+        // The box for the choice: under the pair that has its last row.
+        var last = sel && !compose.selecting ? flat[hi_].row : null;
+        if (last && (l === last || r === last)) {
+          var c = lib.counters(flat, sel.anchor, sel.to, sel.side);
+          out.push(html`<tr class="diffnote-composer-row" key="compose"><td colspan="4">
+            <${Composer} scope="lines" where=${lib.chosenLocation(file.path, c)}
+              request=${{ revision: ctx.rev, file: file.path, base: c.base, head: c.head }} />
+          </td></tr>`);
+        }
         // The cards of the pair: those of its new-side line, then its old-side line.
         var cards = lib.cardsOfRow(after, r || {});
         if (l && l !== r) cards = cards.concat(lib.cardsOfRow(after, { o: l.o }));
@@ -296,7 +337,7 @@
         });
       });
     });
-    return html`<div class="diffnote-diff-scroll"><table class="diffnote-diff diffnote-diff--split">
+    return html`<div class="diffnote-diff-scroll"><table class="diffnote-diff diffnote-diff--split" data-diffnote-file=${file.path}>
       <colgroup><col class="diffnote-col-gutter" /><col /><col class="diffnote-col-gutter" /><col /></colgroup>
       <tbody>${out}</tbody>
     </table></div>`;
@@ -705,23 +746,31 @@
       return {
         sel: sel, selecting: selecting, scope: scope, draft: draft, pending: pending, error: error,
         setDraft: setDraft, close: close,
-        begin: function (rev, path, idx, shift) {
+        // `side` is 'old' or 'new' where lines are chosen on one side of a side
+        // by side view (else none: both sides, as in the unified view).
+        begin: function (rev, path, idx, shift, side) {
           // Whatever comment's range was shown gives way to the choice.
           D.interact.reset();
           setScope(null);
           setError('');
           setSel(function (cur) {
-            return shift && cur && cur.rev === rev && cur.path === path
-              ? { rev: rev, path: path, anchor: cur.anchor, to: idx }
-              : { rev: rev, path: path, anchor: idx, to: idx };
+            return shift && cur && cur.rev === rev && cur.path === path && cur.side === side
+              ? { rev: rev, path: path, side: side, anchor: cur.anchor, to: idx }
+              : { rev: rev, path: path, side: side, anchor: idx, to: idx };
           });
           dragging.current = true;
           document.body.classList.add('is-selecting');
           setSelecting(true);
         },
-        extend: function (idx) {
+        // `at` is the row's index, or a function of the side that gives the
+        // index of the row that side has there (or nothing).
+        extend: function (at) {
           if (!dragging.current) return;
-          setSel(function (cur) { return cur && cur.to !== idx ? Object.assign({}, cur, { to: idx }) : cur; });
+          setSel(function (cur) {
+            if (!cur) return cur;
+            var idx = typeof at === 'function' ? at(cur.side) : at;
+            return idx == null || cur.to === idx ? cur : Object.assign({}, cur, { to: idx });
+          });
         },
         openScope: function (kind, rev, path) {
           setSel(null);
@@ -810,7 +859,6 @@
     var _c = useState(revisionFromHash(model));
     var current = _c[0];
     var setCurrent = _c[1];
-    var compose = useCompose(review.actions, current);
     // Resolved threads are hidden unless that was turned off before.
     var _h = useState(kept('diffnote-hide-resolved', '1') !== '0');
     var hide = _h[0];
@@ -822,6 +870,8 @@
     var setChosen = _l[1];
     var wide = useWide();
     var layout = chosen === 'split' && wide ? 'split' : 'unified';
+    // What was chosen or written belongs to the revision and layout it was in.
+    var compose = useCompose(review.actions, current + ':' + layout);
 
     // At once (not after the next paint): the style that hides cards hangs on it.
     useLayoutEffect(function () {
