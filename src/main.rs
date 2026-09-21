@@ -1320,8 +1320,12 @@ fn cmd_show(review_path: PathBuf) -> Result<()> {
             }
             Event::IgnoreWhitespace { value, author, .. } => {
                 println!(
-                    "[設定] 空白だけの違いを{} -- {author}",
-                    if *value { "隠す" } else { "隠さない" }
+                    "[設定] 空白の違いを{} -- {author}",
+                    if *value {
+                        "無視する"
+                    } else {
+                        "無視しない"
+                    }
                 );
             }
             Event::Pin { revision, files } => {

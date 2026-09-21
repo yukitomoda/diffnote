@@ -1382,7 +1382,7 @@
         </div>`}
         <label class="diffnote-toggle" title="行の中の空白だけが違う変更を、変更なしとして表示します">
           <input type="checkbox" data-diffnote-ignore-space checked=${ignoreSpace} onChange=${function (e) { toggleSpace(e.target.checked); }} />
-          空白の違いを隠す
+          空白の違いを無視
         </label>
         ${(counts.resolved > 0 || model.interactive) && html`<label class="diffnote-toggle">
           <input type="checkbox" data-diffnote-hide-resolved checked=${hide}
