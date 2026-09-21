@@ -1172,6 +1172,17 @@ class EmojiTable(ServedCase):
         b.open(pathlib.Path(path).as_uri(), ready="!!document.querySelector('.diffnote-comment__body')")
         self.assertTrue(b.js("[...document.querySelectorAll('.diffnote-comment__body')].some(e => e.textContent.includes('承認 👍 🎉'))"))
 
+    def test_the_buttons_above_a_box_do_not_touch_it(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        b.click(f"{CUR} [data-diffnote-add=global]")
+        gap = lambda box: b.js("(() => { const t = document.querySelector(%s); const bar = t.closest('form').querySelector('.diffnote-attach-bar').getBoundingClientRect(); return t.getBoundingClientRect().top - bar.bottom; })()" % json.dumps(box))
+        composer = ".diffnote-compose textarea[placeholder^='コメントを書く']"
+        self.assertTrue(b.wait_exists(composer))
+        self.assertGreaterEqual(gap(composer), 3, "a new comment")
+        self.assertGreaterEqual(gap(f"#{card} .diffnote-reply textarea"), 3, "a reply")
+
     def write_search(self, text):
         self.b.js("var t=document.querySelector('[data-diffnote-emoji-search]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(t,%s); t.dispatchEvent(new Event('input',{bubbles:true}))" % json.dumps(text))
         time.sleep(0.1)

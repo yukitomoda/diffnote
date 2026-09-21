@@ -130,7 +130,8 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-filelist a { flex: 1; min-width: 0; padding: 3px 8px; color: var(--diffnote-color-fg); text-decoration: none; font-family: var(--diffnote-font-mono); word-break: break-all; border-radius: 6px; }
 .diffnote-filelist a:hover { background: var(--diffnote-color-gutter); }
 .diffnote-filelist a.is-visible { background: var(--diffnote-color-hunk-bg); }
-.diffnote-compose__head { display: flex; align-items: center; gap: 4px; }
+.diffnote-compose__head { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
+.diffnote-compose__head .diffnote-compose__where { margin-bottom: 0; }
 .diffnote-file.diffnote-flash { animation: diffnote-flash 1.8s ease-out; }
 @keyframes diffnote-flash { 0%, 50% { box-shadow: 0 0 0 3px var(--diffnote-color-accent); } 100% { box-shadow: 0 0 0 3px transparent; } }
 .diffnote-lineref { font-family: var(--diffnote-font-mono); font-size: 12.5px; }
