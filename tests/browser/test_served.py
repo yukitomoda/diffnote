@@ -337,26 +337,89 @@ class Replies(ServedCase):
         self.reply_to(card, "二つのサーバーの間で")
         self.assertIn("二つのサーバーの間で", show(self.review))
 
-    def test_the_title_can_be_changed_on_the_page_and_is_kept_in_the_review(self):
+    def open_settings(self):
+        b = self.b
+        b.click("[data-diffnote-settings]")
+        self.assertTrue(b.wait_exists("[data-diffnote-settings-dialog]"))
+
+    def test_the_title_is_the_way_into_the_settings_and_they_are_kept_in_the_review(self):
         self.serve()
         b = self.b
-        b.click("[data-diffnote-inline=title]")
-        self.assertTrue(b.wait_exists("[data-diffnote-inline-input=title]"))
-        b.set_value("[data-diffnote-inline-input=title]", "新しいタイトル")
-        b.js("document.querySelector('[data-diffnote-inline-input=title]').form.requestSubmit()")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-inline-input=title]')"))
-        self.assertEqual(b.text(".diffnote-summary h1"), "新しいタイトル✎")
+        self.assertIn("diffnote レビュー", b.text("[data-diffnote-settings]"))
+        self.assertFalse(b.exists("[data-diffnote-inline=title]"), "the old pencil is gone")
+        self.open_settings()
+        # What it says now, and what the bundle holds.
+        self.assertEqual(b.value("[data-diffnote-setting-title]"), "")
+        self.assertEqual(b.value("[data-diffnote-setting-limit]"), "5")
+        self.assertFalse(b.js("document.querySelector('[data-diffnote-setting-ignore]').checked"))
+        info = b.text("[data-diffnote-bundle-info]")
+        self.assertIn("リビジョン2 件", info)
+        self.assertIn("画像0 件", info)
+        # Nothing is kept until it is saved.
+        b.set_value("[data-diffnote-setting-title]", "新しいタイトル")
+        b.click("[data-diffnote-settings-cancel]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-dialog]')"))
+        self.assertNotIn("新しいタイトル", show(self.review))
+        self.assertIn("diffnote レビュー", b.text("[data-diffnote-settings]"))
+        # Saved.
+        self.open_settings()
+        self.assertEqual(b.value("[data-diffnote-setting-title]"), "", "starts again from what is kept")
+        b.set_value("[data-diffnote-setting-title]", "新しいタイトル")
+        b.js("document.querySelector('[data-diffnote-setting-ignore]').click()")
+        b.set_value("[data-diffnote-setting-limit]", "2")
+        b.click("[data-diffnote-settings-save]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-dialog]')"))
+        self.assertIn("新しいタイトル", b.text("[data-diffnote-settings]"))
         self.assertTrue(self.same_page())
-        deadline = time.time() + 8
-        while "新しいタイトル" not in show(self.review) and time.time() < deadline:
-            time.sleep(0.05)
-        self.assertIn("新しいタイトル", show(self.review))
+        out = show(self.review)
+        self.assertIn("[設定] タイトル=新しいタイトル", out)
+        self.assertIn("[設定] 空白の違いを無視(初期表示)", out)
+        self.assertIn(f"[設定] 添付ファイルの上限={2 * 1024 * 1024} バイト", out)
+        # The page itself is not changed by the default it was told to start from.
+        self.assertFalse(b.js("document.querySelector('[data-diffnote-ignore-space]').checked"))
+        # The limit is the one the page checks a file against.
+        self.open_settings()
+        self.assertEqual(b.value("[data-diffnote-setting-limit]"), "2")
+        b.escape()
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-dialog]')"), "Escape shuts it")
         # Emptied: the default heading comes back.
-        b.click("[data-diffnote-inline=title]")
-        b.set_value("[data-diffnote-inline-input=title]", "")
-        b.js("document.querySelector('[data-diffnote-inline-input=title]').form.requestSubmit()")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-inline-input=title]')"))
-        self.assertIn("diffnote レビュー", b.text(".diffnote-summary h1"))
+        self.open_settings()
+        b.set_value("[data-diffnote-setting-title]", "")
+        b.click("[data-diffnote-settings-save]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-dialog]')"))
+        self.assertIn("diffnote レビュー", b.text("[data-diffnote-settings]"))
+        self.assertNotIn("タイトル=", show(self.review))
+
+    def test_a_setting_that_is_not_a_number_or_out_of_range_is_told_and_nothing_is_kept(self):
+        self.serve()
+        b = self.b
+        self.open_settings()
+        b.set_value("[data-diffnote-setting-limit]", "")
+        b.click("[data-diffnote-settings-save]")
+        self.assertTrue(b.wait_exists("[data-diffnote-settings-dialog] .diffnote-error"))
+        self.assertIn("数字", b.text("[data-diffnote-settings-dialog] .diffnote-error"))
+        b.set_value("[data-diffnote-setting-limit]", "500")
+        b.click("[data-diffnote-settings-save]")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-settings-dialog] .diffnote-error').textContent.includes('指定してください')"))
+        self.assertTrue(b.exists("[data-diffnote-settings-dialog]"), "stays open to be put right")
+        self.assertNotIn("上限", show(self.review))
+
+    def test_a_file_over_the_limit_that_was_set_is_refused_on_the_page(self):
+        self.serve()
+        b = self.b
+        self.open_settings()
+        b.set_value("[data-diffnote-setting-limit]", "1")
+        b.click("[data-diffnote-settings-save]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-dialog]')"))
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        b.js("""(function(sel){
+          var dt = new DataTransfer(); dt.items.add(new File([new Uint8Array(1200 * 1024)], 'over.bin', {type: 'application/octet-stream'}));
+          var ta = document.querySelector(sel); ta.focus();
+          ta.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}));
+        })(%s)""" % json.dumps(box))
+        self.assertTrue(b.wait("!!document.querySelector('.is-failed[data-diffnote-attach-status]')"))
+        self.assertIn("1 MB", b.text("[data-diffnote-attach-status]"))
 
     def test_the_author_starts_from_the_default_and_can_be_changed_for_the_session(self):
         self.serve()

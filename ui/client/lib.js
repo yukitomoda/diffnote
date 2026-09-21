@@ -465,6 +465,17 @@
     return (Math.round((bytes / (1024 * 1024)) * 10) / 10) + ' MB';
   };
 
+  // A limit in bytes as megabytes to show (`5`, `2.5`), and back: the number a
+  // person typed as bytes, or `null` if it isn't a number.
+  lib.bytesToMB = function (bytes) {
+    return Math.round((bytes / (1024 * 1024)) * 1000) / 1000;
+  };
+  lib.mbToBytes = function (text) {
+    var mb = Number(String(text).trim().replace(',', '.'));
+    if (!isFinite(mb) || String(text).trim() === '' || mb <= 0) return null;
+    return Math.round(mb * 1024 * 1024);
+  };
+
   // What a comment says for an image of the review, to put in its text.
   lib.imageMarkdown = function (id) {
     return '![画像](diffnote-image:' + id + ')';

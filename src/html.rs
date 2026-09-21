@@ -150,22 +150,23 @@ pub fn render_served_page(
     editable: Vec<String>,
     author: String,
     refreshable: bool,
+    bundle_size: u64,
 ) -> anyhow::Result<String> {
     client_page(
         loaded,
-        Some((editable, author, refreshable)),
+        Some((editable, author, refreshable, bundle_size)),
         ExpandLimit::Lines(0),
     )
 }
 
 fn client_page(
     loaded: &crate::bundle::Loaded,
-    served: Option<(Vec<String>, String, bool)>,
+    served: Option<(Vec<String>, String, bool, u64)>,
     limit: ExpandLimit,
 ) -> anyhow::Result<String> {
     let interactive = served.is_some();
-    let data = if let Some((editable, author, refreshable)) = served {
-        served_model_json(loaded, editable, author, refreshable)?
+    let data = if let Some((editable, author, refreshable, size)) = served {
+        served_model_json(loaded, editable, author, refreshable, size)?
     } else {
         view_model_json(loaded, limit)?
     };
@@ -758,9 +759,9 @@ pub(crate) mod tokens;
 mod viewmodel;
 mod words;
 pub use viewmodel::{
-    ExpandLimit, OpenedData, ViewModel, chunk_data, compare_data, lines_json, opened_data,
-    served_model_json, stamp, thread_json, tree_json, view_model, view_model_for, view_model_json,
-    view_model_with,
+    ExpandLimit, OpenedData, ViewModel, bundle_info, chunk_data, compare_data, lines_json,
+    opened_data, served_model_json, stamp, thread_json, tree_json, view_model, view_model_for,
+    view_model_json, view_model_with,
 };
 
 #[cfg(test)]
@@ -1198,7 +1199,7 @@ mod tests {
             "an exported page makes no requests"
         );
         assert!(
-            render_served_page(&loaded, Vec::new(), "a".into(), false)
+            render_served_page(&loaded, Vec::new(), "a".into(), false, 0)
                 .unwrap()
                 .contains("D.api = ")
         );

@@ -204,6 +204,7 @@ struct Stats {
     edited: u32,
     deleted: u32,
     titled: u32,
+    settings: u32,
     images: u32,
     files: u32,
 }
@@ -234,6 +235,7 @@ impl Stats {
             (self.edited, "編集"),
             (self.deleted, "削除"),
             (self.titled, "タイトル変更"),
+            (self.settings, "設定変更"),
         ] {
             if n > 0 {
                 parts.push(format!("{what} {n} 件"));
@@ -414,6 +416,11 @@ impl Server {
         model.editable = self.editable(loaded);
         model.author = Some(self.author());
         model.refreshable = self.refresh.is_some();
+        model.settings = Some(loaded.settings.clone());
+        let size = std::fs::metadata(&self.review)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        model.bundle = Some(html::bundle_info(loaded, size, model.revisions.len()));
         Ok(model)
     }
 
@@ -527,7 +534,15 @@ impl Server {
     fn page(&self) -> Reply {
         match bundle::load(&self.review).and_then(|l| {
             let editable = self.editable(&l);
-            html::render_served_page(&l, editable, self.author(), self.refresh.is_some())
+            html::render_served_page(
+                &l,
+                editable,
+                self.author(),
+                self.refresh.is_some(),
+                std::fs::metadata(&self.review)
+                    .map(|m| m.len())
+                    .unwrap_or(0),
+            )
         }) {
             Ok(page) => Reply::html(200, page),
             Err(e) => Reply::html(
@@ -1044,7 +1059,7 @@ impl Server {
                 self.with_thread(id, |thread| self.set_resolved(thread, false))
             }
             ["api", "author"] => self.set_author(request.body),
-            ["api", "title"] => self.set_title(request.body),
+            ["api", "settings"] => self.set_settings(request.body),
             ["api", "images"] => self.add_image(request.body),
             ["api", "attachments"] => self.add_attachment(request.target, request.body),
             ["api", "refresh"] => self.refresh(),
@@ -1124,26 +1139,71 @@ impl Server {
         )
     }
 
-    /// Sets the review's title (an empty one takes it away), as `edit --title`.
-    fn set_title(&self, body: &[u8]) -> Result<Reply, Failure> {
+    /// Changes the review's settings: what is given is set (a title that is empty
+    /// takes the title away), the rest is left as it is. They are kept in the
+    /// review.
+    fn set_settings(&self, body: &[u8]) -> Result<Reply, Failure> {
         let value: serde_json::Value = serde_json::from_slice(body)
             .map_err(|_| Failure(400, "送られた内容を読めません".into()))?;
-        let title = value
-            .get("title")
-            .and_then(|t| t.as_str())
-            .ok_or_else(|| Failure(400, "タイトルが指定されていません".into()))?
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        if title.chars().count() > 200 {
-            return Err(Failure(400, "タイトルが長すぎます(200 文字まで)".into()));
-        }
+        let bad = |m: &str| Failure(400, m.to_string());
+        let title = match value.get("title") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(t) => {
+                let title = t
+                    .as_str()
+                    .ok_or_else(|| bad("タイトルが文字ではありません"))?
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if title.chars().count() > 200 {
+                    return Err(bad("タイトルが長すぎます(200 文字まで)"));
+                }
+                Some(title)
+            }
+        };
+        let ignore = match value.get("ignore_whitespace") {
+            None => None,
+            Some(v) => Some(
+                v.as_bool()
+                    .ok_or_else(|| bad("空白の設定が正しくありません"))?,
+            ),
+        };
+        let limit = match value.get("attachment_limit") {
+            None => None,
+            Some(v) => {
+                let bytes = v
+                    .as_u64()
+                    .ok_or_else(|| bad("添付の上限が正しくありません"))?;
+                if !(1024..=crate::image::CEILING as u64).contains(&bytes) {
+                    return Err(bad(&format!(
+                        "添付の上限は、{} から {} の間で指定してください",
+                        size_words(1024),
+                        size_words(crate::image::CEILING as u64)
+                    )));
+                }
+                Some(bytes)
+            }
+        };
         let mut loaded = bundle::load(&self.review).map_err(internal)?;
         let before = html::stamp(&loaded);
-        if review::set_title(&mut loaded.settings, &title) {
+        let titled = title.is_some_and(|t| review::set_title(&mut loaded.settings, &t));
+        let mut others = false;
+        if let Some(on) = ignore {
+            others |= review::set_ignore_whitespace(&mut loaded.settings, on);
+        }
+        if let Some(bytes) = limit
+            && loaded.settings.attachment_limit != bytes
+        {
+            loaded.settings.attachment_limit = bytes;
+            others = true;
+        }
+        if titled || others {
             let events = loaded.events.clone();
             self.save(&loaded, &events)?;
-            self.count(|s| s.titled += 1);
+            self.count(|s| {
+                s.titled += u32::from(titled);
+                s.settings += u32::from(others);
+            });
         }
         self.model_answer(&before, serde_json::json!({}))
     }
@@ -2113,29 +2173,73 @@ mod tests {
     }
 
     #[test]
-    fn the_title_is_kept_in_the_settings_and_an_empty_one_takes_it_away() {
+    fn the_settings_are_changed_together_or_one_by_one_and_kept_in_the_review() {
         let f = fixture();
         let before = f.events().len();
-        let title = |f: &Fixture| bundle::load(&f.path).unwrap().settings.title;
-        let set = json(&f.post("/api/title", r#"{"title":" ログイン  改修 "}"#));
+        let settings = |f: &Fixture| bundle::load(&f.path).unwrap().settings;
+        // The page is given them, and what the bundle holds, to show.
+        let model = json(&f.request("GET", "/api/model", &[], ""))["model"].clone();
+        assert_eq!(model["settings"]["attachment_limit"], 5 * 1024 * 1024);
+        assert!(model["bundle"]["size"].as_u64().unwrap() > 0);
+        assert_eq!(model["bundle"]["revisions"], 1);
+        assert_eq!(model["bundle"]["images"]["count"], 0);
+        // Some at a time: what is not given stays.
+        let set = json(&f.post(
+            "/api/settings",
+            r#"{"title":" ログイン  改修 ","ignore_whitespace":true}"#,
+        ));
         assert_eq!(set["ok"], true, "{set}");
         assert_eq!(set["model"]["title"], "ログイン 改修");
-        assert_eq!(title(&f).as_deref(), Some("ログイン 改修"));
-        assert_eq!(f.events().len(), before, "state, not an event");
-        // The same title again changes nothing (and isn't counted); an empty one clears it.
-        f.post("/api/title", r#"{"title":"ログイン 改修"}"#);
-        let cleared = json(&f.post("/api/title", r#"{"title":""}"#));
+        assert_eq!(set["model"]["ignore_whitespace"], true);
+        assert_eq!(set["model"]["settings"]["title"], "ログイン 改修");
+        assert_eq!(settings(&f).title.as_deref(), Some("ログイン 改修"));
+        assert_eq!(settings(&f).attachment_limit, 5 * 1024 * 1024);
+        f.post("/api/settings", r#"{"attachment_limit":2000000}"#);
+        let now = settings(&f);
+        assert_eq!(now.attachment_limit, 2_000_000);
+        assert_eq!(
+            now.title.as_deref(),
+            Some("ログイン 改修"),
+            "left as it was"
+        );
+        assert!(now.ignore_whitespace);
+        assert_eq!(f.events().len(), before, "state, not events");
+        // An empty title takes it away; the same again changes (and counts) nothing.
+        let cleared = json(&f.post("/api/settings", r#"{"title":""}"#));
         assert!(cleared["model"]["title"].is_null());
-        assert_eq!(title(&f), None);
-        assert_eq!(f.post("/api/title", "{}").status, 400);
-        let long = format!(r#"{{"title":"{}"}}"#, "あ".repeat(201));
-        assert_eq!(f.post("/api/title", &long).status, 400);
+        assert_eq!(settings(&f).title, None);
+        let stamp = json(&f.request("GET", "/api/version", &[], ""))["stamp"].clone();
+        f.post(
+            "/api/settings",
+            r#"{"title":"","attachment_limit":2000000}"#,
+        );
+        assert_eq!(
+            json(&f.request("GET", "/api/version", &[], ""))["stamp"],
+            stamp
+        );
+        // Refused, with a reason, and nothing is changed.
+        for bad in [
+            r#"{"title":5}"#.to_string(),
+            format!(r#"{{"title":"{}"}}"#, "あ".repeat(201)),
+            r#"{"ignore_whitespace":"yes"}"#.to_string(),
+            r#"{"attachment_limit":10}"#.to_string(),
+            r#"{"attachment_limit":999999999999}"#.to_string(),
+            r#"{"attachment_limit":"5"}"#.to_string(),
+            "not json".to_string(),
+        ] {
+            let refused = f.post("/api/settings", &bad);
+            assert_eq!(refused.status, 400, "{bad}");
+            assert_eq!(settings(&f).attachment_limit, 2_000_000, "{bad}");
+        }
         // It counts in what is said when the server stops.
         let told = json(&f.post("/api/shutdown", "{}"))["farewell"]
             .as_str()
             .unwrap()
             .to_string();
-        assert!(told.contains("タイトル変更 2 件"), "{told}");
+        assert!(
+            told.contains("タイトル変更 2 件") && told.contains("設定変更 2 件"),
+            "{told}"
+        );
     }
 
     #[test]
@@ -2462,7 +2566,7 @@ mod tests {
             "embedded"
         );
         // (The served page asks the server instead.)
-        let served = html::render_served_page(&loaded, Vec::new(), "a".into(), false).unwrap();
+        let served = html::render_served_page(&loaded, Vec::new(), "a".into(), false, 0).unwrap();
         assert!(!served.contains("data:image/png"));
     }
 

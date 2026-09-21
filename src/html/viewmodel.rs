@@ -34,6 +34,12 @@ pub struct ViewModel {
     /// change it for the rest of the session).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
+    /// The review's settings as they are, and what the bundle holds (served page
+    /// only: for the page that changes them).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settings: Option<crate::model::Settings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle: Option<BundleInfo>,
     /// Whether the page may ask the server to take in what was added to the
     /// target since it started (served page only).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -87,6 +93,23 @@ pub struct CommentData {
     /// the log while replies stand on it: it is kept with no text).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+}
+
+/// What a bundle holds, for the page that shows the settings.
+#[derive(Serialize)]
+pub struct BundleInfo {
+    /// The size of the bundle file, in bytes.
+    pub size: u64,
+    pub revisions: usize,
+    pub images: Count,
+    pub files: Count,
+}
+
+/// A number of things, and how many bytes they are.
+#[derive(Serialize)]
+pub struct Count {
+    pub count: usize,
+    pub bytes: u64,
 }
 
 /// The base of a review: a commit (its short id), or, for a directory, when
@@ -272,6 +295,8 @@ pub fn view_model_with(
         stamp: stamp(loaded),
         editable: Vec::new(),
         author: None,
+        settings: None,
+        bundle: None,
         refreshable: false,
         base: loaded.revisions().next().map(|r| match &r.source {
             crate::model::Source::Git(g) => BaseData::Git {
@@ -321,11 +346,14 @@ pub fn served_model_json(
     editable: Vec<String>,
     author: String,
     refreshable: bool,
+    bundle_size: u64,
 ) -> anyhow::Result<String> {
     let mut model = view_model_for(loaded, true)?;
     model.editable = editable;
     model.author = Some(author);
     model.refreshable = refreshable;
+    model.settings = Some(loaded.settings.clone());
+    model.bundle = Some(bundle_info(loaded, bundle_size, model.revisions.len()));
     model_json(&model)
 }
 
@@ -536,6 +564,24 @@ fn file_sig(files: &[crate::model::FileDigest], path: &str) -> Option<String> {
         return None;
     }
     Some(format!("{}|{}", old.unwrap_or(""), new.unwrap_or("")))
+}
+
+/// What a bundle holds: for the model of the served page.
+pub fn bundle_info(loaded: &crate::bundle::Loaded, size: u64, revisions: usize) -> BundleInfo {
+    let (images, image_bytes) = loaded.image_stats();
+    let (files, file_bytes) = loaded.attachment_stats();
+    BundleInfo {
+        size,
+        revisions,
+        images: Count {
+            count: images,
+            bytes: image_bytes,
+        },
+        files: Count {
+            count: files,
+            bytes: file_bytes,
+        },
+    }
 }
 
 /// What the revision `to` looks like when compared with the revision `from`

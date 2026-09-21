@@ -303,6 +303,23 @@ impl Loaded {
             .collect()
     }
 
+    /// How many images the bundle holds, and how many bytes they are.
+    pub fn image_stats(&self) -> (usize, u64) {
+        Self::stats(&self.carried_entries, "images/")
+    }
+
+    /// The same for the other attached files.
+    pub fn attachment_stats(&self) -> (usize, u64) {
+        Self::stats(&self.carried_entries, "attachments/")
+    }
+
+    fn stats(entries: &[(String, Vec<u8>)], prefix: &str) -> (usize, u64) {
+        entries
+            .iter()
+            .filter(|(name, _)| name.starts_with(prefix))
+            .fold((0, 0), |(n, bytes), (_, b)| (n + 1, bytes + b.len() as u64))
+    }
+
     pub fn image_ids(&self) -> Vec<String> {
         self.carried_entries
             .iter()

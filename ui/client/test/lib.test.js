@@ -397,3 +397,11 @@ test('a link to another attached file is named by the file, without what would e
   assert.equal(lib.fileMarkdown('report.pdf', id), `[report.pdf](diffnote-file:${id})`);
   assert.equal(lib.fileMarkdown('a[1]\\b.txt', id), `[a1b.txt](diffnote-file:${id})`);
 });
+
+test('a limit is shown in megabytes and read back from what was typed', () => {
+  assert.equal(lib.bytesToMB(5 * 1024 * 1024), 5);
+  assert.equal(lib.bytesToMB(2.5 * 1024 * 1024), 2.5);
+  assert.equal(lib.mbToBytes('5'), 5 * 1024 * 1024);
+  assert.equal(lib.mbToBytes(' 2,5 '), Math.round(2.5 * 1024 * 1024), 'a comma is a point too');
+  for (const bad of ['', '  ', 'abc', '0', '-1', 'Infinity']) assert.equal(lib.mbToBytes(bad), null, bad);
+});
