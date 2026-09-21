@@ -232,8 +232,8 @@
   // `shown[i]` is `{ top: rows, bottom: rows }` for the place `file.gaps[i]`
   // (before hunk i): `top` the lines next to the hunk before it, `bottom` those
   // next to the hunk after it. What is still left out is a marker (`{ marker }`
-  // with no rows) between them; a hunk whose place is shown whole gives up its
-  // `@@` row (`quiet`). The added blocks have headers, so the rows can be told
+  // with no rows) between them; a hunk whose place is shown whole, or shown up to it,
+  // gives up its `@@` row (`quiet`). The added blocks have headers, so the rows can be told
   // their line numbers as those of a hunk.
   lib.withGaps = function (file, shown) {
     var gaps = file.gaps;
@@ -251,7 +251,9 @@
       if (g) {
         var st = (shown && shown[i]) || { top: [], bottom: [] };
         var left = g.n - st.top.length - st.bottom.length;
-        whole = left <= 0;
+        // The hunk's `@@` row is not needed once lines next to it are shown:
+        // they run into it (and it would sit in the middle of the code).
+        whole = left <= 0 || st.bottom.length > 0;
         if (st.top.length) hunks.push(block(st.top));
         if (left > 0) {
           hunks.push({ marker: { gap: i, left: left, n: g.n, prev: i > 0, next: i < count, x: !!g.x, embedded: !!g.t }, header: '', rows: [] });

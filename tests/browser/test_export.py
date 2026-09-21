@@ -390,6 +390,20 @@ class ExpandLeftOutLines(BrowserCase):
         self.assertIn(57, self.rows())
         self.assertNotIn(50, self.rows(), "the middle of the place is still out")
 
+    def test_the_at_at_row_of_a_hunk_is_dropped_once_lines_next_to_it_are_shown(self):
+        self.open("all")
+        b = self.b
+        self.assertEqual(b.count(".diffnote-hunk-header"), 2)
+        # "↑" on the middle place shows the 20 lines before the second hunk.
+        b.js("Array.from(document.querySelectorAll('.diffnote-expand-row')).filter(function(r){return r.textContent.includes('53')})[0].querySelector('[data-diffnote-expand=bottom]').click()")
+        self.assertTrue(b.wait("document.querySelectorAll('.diffnote-hunk-header').length === 1"))
+        # The shown lines run into the hunk: the row before its first line (77)
+        # is the shown line 76, not a @@ row.
+        before = b.js("document.querySelector('.diffnote-diff tr[data-diffnote-new=\"77\"]').previousElementSibling.getAttribute('data-diffnote-new')")
+        self.assertEqual(before, "76")
+        # The place is still marked, above the lines shown.
+        self.assertEqual(b.count(".diffnote-expand-row"), 3)
+
     def test_all_at_once_leaves_no_marker_and_the_lines_are_whole_and_in_order(self):
         self.open("all")
         b = self.b

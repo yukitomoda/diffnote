@@ -258,10 +258,11 @@ test('the lines a diff leaves out are a marker between the hunks until they are 
   assert.equal(out.hunks[4].marker.next, false, 'nothing after the last');
   // A file with no places is left alone.
   assert.equal(lib.withGaps({ hunks: [hunk(1, 1, 1)] }, {}).hunks.length, 1);
-  // Part of the middle place shown at both ends: the marker keeps what is left.
+  // Part of the middle place shown at both ends: the marker keeps what is left,
+  // and the hunk after it, run into by the lines shown, gives up its @@ row.
   const rows = (o, c) => Array.from({ length: c }, (_, i) => ({ k: 'c', o: o + i, n: o + i, t: [] }));
   out = lib.withGaps(file, { 1: { top: rows(14, 5), bottom: rows(30, 3) } });
-  assert.deepEqual(out.hunks.map((h) => (h.marker ? 'marker:' + h.marker.left : h.quiet ? 'quiet' : 'hunk')), ['marker:6', 'hunk', 'quiet', 'marker:5', 'quiet', 'hunk', 'marker:7']);
+  assert.deepEqual(out.hunks.map((h) => (h.marker ? 'marker:' + h.marker.left : h.quiet ? 'quiet' : 'hunk')), ['marker:6', 'hunk', 'quiet', 'marker:5', 'quiet', 'quiet', 'marker:7']);
   assert.equal(out.hunks[2].header, '@@ -14,5 +14,5 @@', 'a block has a header, for its line numbers');
   // All of it shown: no marker, and the hunk after gives up its @@ row.
   out = lib.withGaps(file, { 1: { top: rows(14, 13), bottom: [] } });
