@@ -124,6 +124,8 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 /* Files: a sticky header bar per file, like a code review page. */
 .diffnote-file { border: 1px solid var(--diffnote-color-border); border-radius: 6px; margin-top: 12px; scroll-margin-top: calc(var(--diffnote-topbar-h) + 8px); }
 .diffnote-file > details > summary { position: sticky; top: var(--diffnote-topbar-h); z-index: 5; padding: 6px 12px; cursor: pointer; background: var(--diffnote-color-gutter); border-bottom: 1px solid var(--diffnote-color-border); border-radius: 6px 6px 0 0; }
+.diffnote-file--added > details > summary { background: var(--diffnote-color-added-bg); }
+.diffnote-file--deleted > details > summary { background: var(--diffnote-color-removed-bg); }
 .diffnote-file h2 { display: inline; font-size: 13px; font-weight: 600; font-family: var(--diffnote-font-mono); }
 .diffnote-file__missing { margin: 0; padding: 8px 12px; color: #7a5900; background: #fffbea; }
 .diffnote-diff-scroll { overflow-x: auto; }

@@ -598,7 +598,9 @@
       });
     };
     var composing = compose && compose.scope && compose.scope.kind === 'file' && compose.scope.rev === ctx.rev && compose.scope.path === file.path;
-    return html`<section class="diffnote-file" id=${'r' + ctx.rev + '-file-' + htmlId(file.path)} data-diffnote-file=${file.path}>
+    // A file that was added or deleted as a whole (a binary one too) is tinted.
+    var kind = file.status === 'binary' ? file.change : file.status;
+    return html`<section class=${'diffnote-file' + (kind === 'added' || kind === 'deleted' ? ' diffnote-file--' + kind : '')} id=${'r' + ctx.rev + '-file-' + htmlId(file.path)} data-diffnote-file=${file.path}>
       <details ref=${details} open=${startsOpen} onToggle=${function (e) { if (e.target.open && !opened) setOpened(true); }}>
         <summary>
           <h2>${file.path}${file.status === 'binary' ? ' (バイナリ' + (BINARY_CHANGES[file.change] ? '・' + BINARY_CHANGES[file.change] : '') + ')' : ''}${file.status === 'renamed' ? ' (名前変更)' : ''}</h2>
