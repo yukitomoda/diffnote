@@ -1287,7 +1287,10 @@ mod tests {
         };
         assert_eq!(bare("GET", "/", None).status, 403);
         assert_eq!(bare("GET", "/?t=wrong", None).status, 403);
-        assert_eq!(bare("GET", "/", Some("diffnote_token=wrong")).status, 403);
+        assert_eq!(
+            bare("GET", "/", Some("diffnote_token_4242=wrong")).status,
+            403
+        );
         let resolve = format!("/api/threads/{}/resolve", f.thread);
         assert_eq!(bare("POST", &resolve, None).status, 403);
         assert_eq!(f.events().len(), 3, "nothing was written");
@@ -2890,11 +2893,12 @@ mod tests {
         assert_eq!(http(port, "GET", "/", &[], "").0, 403);
         let (status, head, _) = http(port, "GET", &format!("/?t={token}"), &[], "");
         assert_eq!(status, 302);
-        assert!(head.contains("set-cookie: diffnote_token="), "{head}");
+        let name = format!("diffnote_token_{port}");
+        assert!(head.contains(&format!("set-cookie: {name}=")), "{head}");
         assert!(head.contains("location: /"), "{head}");
 
         // With the cookie: the page, then a change, whose answer is JSON.
-        let cookie = format!("diffnote_token={token}");
+        let cookie = format!("{name}={token}");
         let (status, head, page) = http(port, "GET", "/", &[("Cookie", &cookie)], "");
         assert_eq!(status, 200);
         assert!(
