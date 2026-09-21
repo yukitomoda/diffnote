@@ -144,13 +144,13 @@ impl Default for ExpandLimit {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct HunkData {
     pub header: String,
     pub rows: Vec<RowData>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct RowData {
     pub k: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -467,7 +467,50 @@ pub(super) fn file_status(file: Option<&FileDiff>, in_diff: bool) -> &'static st
     }
 }
 
+/// The hunks that were worked out (coloring a file is by far the most of the
+/// work of the model, and what is reviewed doesn't change: a comment added
+/// leaves the code as it was), by what a hunk is made of.
+static HUNKS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, HunkData>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// How many hunks are kept: past it they are let go of (and worked out again
+/// when they are asked for).
+const KEPT_HUNKS: usize = 20_000;
+
 fn hunk_data(hunk: &Hunk, syntax: &SyntaxReference, syntax_set: &SyntaxSet) -> HunkData {
+    // Everything the result depends on: the syntax, and the hunk's header and lines.
+    let mut key = Vec::new();
+    key.extend_from_slice(syntax.name.as_bytes());
+    key.push(0);
+    key.extend_from_slice(
+        format!(
+            "{} {} {} {} {:?}",
+            hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines, hunk.section_heading
+        )
+        .as_bytes(),
+    );
+    for line in &hunk.lines {
+        key.push(0);
+        key.extend_from_slice(
+            format!("{:?} {:?} {:?} ", line.kind, line.old_line, line.new_line).as_bytes(),
+        );
+        key.extend_from_slice(line.content.as_bytes());
+    }
+    let key = crate::digest::digest(&key);
+    if let Some(done) = HUNKS.lock().ok().and_then(|kept| kept.get(&key).cloned()) {
+        return done;
+    }
+    let done = make_hunk_data(hunk, syntax, syntax_set);
+    if let Ok(mut kept) = HUNKS.lock() {
+        if kept.len() >= KEPT_HUNKS {
+            kept.clear();
+        }
+        kept.insert(key, done.clone());
+    }
+    done
+}
+
+fn make_hunk_data(hunk: &Hunk, syntax: &SyntaxReference, syntax_set: &SyntaxSet) -> HunkData {
     // Each hunk is read from its start.
     let mut tokenizer = Tokenizer::new(syntax, syntax_set);
     let mut rows: Vec<RowData> = hunk
@@ -861,5 +904,38 @@ mod tests {
                 .iter()
                 .all(|f| file_status(Some(f), true) == "binary")
         );
+    }
+
+    #[test]
+    fn a_hunk_that_was_worked_out_is_kept_and_only_the_same_hunk_gets_it_back() {
+        let json = |h: &HunkData| serde_json::to_string(h).unwrap();
+        let syntax_set = &*SYNTAXES;
+        let fresh =
+            |h: &Hunk, name: &str| make_hunk_data(h, guess_syntax(name, syntax_set), syntax_set);
+        let colored =
+            |h: &Hunk, name: &str| hunk_data(h, guess_syntax(name, syntax_set), syntax_set);
+        let a = hunk(vec![line(
+            LineKind::Added,
+            "let kept = 1; // one",
+            None,
+            Some(1),
+        )]);
+        for _ in 0..2 {
+            assert_eq!(json(&colored(&a, "k.rs")), json(&fresh(&a, "k.rs")));
+        }
+        // Another text, another syntax or another position is another hunk.
+        let b = hunk(vec![line(
+            LineKind::Added,
+            "let kept = 2; // one",
+            None,
+            Some(1),
+        )]);
+        assert_eq!(json(&colored(&b, "k.rs")), json(&fresh(&b, "k.rs")));
+        assert_ne!(json(&colored(&a, "k.rs")), json(&colored(&b, "k.rs")));
+        assert_eq!(json(&colored(&a, "k.txt")), json(&fresh(&a, "k.txt")));
+        assert_ne!(json(&colored(&a, "k.rs")), json(&colored(&a, "k.txt")));
+        let mut moved = a.clone();
+        moved.lines[0].new_line = Some(7);
+        assert_eq!(json(&colored(&moved, "k.rs")), json(&fresh(&moved, "k.rs")));
     }
 }

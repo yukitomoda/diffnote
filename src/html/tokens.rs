@@ -10,7 +10,7 @@ use serde::Serialize;
 use syntect::easy::ScopeRegionIterator;
 use syntect::parsing::{ParseState, ScopeStack};
 
-#[derive(Serialize, Debug, PartialEq, Eq)]
+#[derive(Serialize, Debug, PartialEq, Eq, Clone)]
 #[serde(untagged)]
 pub enum Token {
     Plain(String),
