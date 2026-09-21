@@ -1340,6 +1340,13 @@
     var hide = _h[0];
     var setHide = _h[1];
     var counts = lib.counts(model.threads);
+    // The tab that is shown is kept in view when there are more than fit.
+    var tabs = useRef(null);
+    useLayoutEffect(function () {
+      var nav = tabs.current;
+      var here = nav && nav.querySelector('a.is-current');
+      if (here) nav.scrollLeft = here.offsetLeft - (nav.clientWidth - here.offsetWidth) / 2;
+    }, [current, model.revisions.length]);
     // The files marked as looked at, by path, with what the file was then.
     var _v = useState({});
     var seen = _v[0];
@@ -1435,7 +1442,10 @@
             : model.title || DEFAULT_TITLE}</h1>
           ${model.base && html`<p data-diffnote-base title="すべてのリビジョンは、これと比べた差分です">ベース: ${model.base.kind === 'git' ? html`<code>${model.base.id}</code>` : lib.formatTime(model.base.at)}</p>`}
         </header>
-        ${model.revisions.length > 0 && html`<nav class="diffnote-revisions"><ul>
+        ${model.revisions.length > 0 && html`<nav class="diffnote-revisions" ref=${tabs} onWheel=${function (e) {
+          // The tabs scroll sideways (no bar is shown): the wheel does it too.
+          if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.currentTarget.scrollLeft += e.deltaY; e.preventDefault(); }
+        }}><ul>
           ${model.revisions.map(function (r, i) {
             return html`<li key=${i}><a href=${'#rev-' + i} data-diffnote-revision-link=${i} class=${i === current ? 'is-current' : ''}
               onClick=${function (e) { e.preventDefault(); setCurrent(i); }}>${r.label}</a></li>`;

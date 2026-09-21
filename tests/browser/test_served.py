@@ -339,6 +339,28 @@ class Replies(ServedCase):
             time.sleep(0.05)
         return self.server.said_more()
 
+    def test_many_revisions_do_not_change_the_top_bar(self):
+        self.serve()
+        b = self.b
+        before = b.js("document.querySelector('.diffnote-topbar').offsetHeight")
+        # Many tabs, as a long review has.
+        b.js("""(function(){var ul=document.querySelector('.diffnote-revisions ul'); var li=ul.querySelector('li');
+          for (var i=0;i<12;i++) { var c=li.cloneNode(true); c.querySelector('a').textContent='#'+(i+3)+' abcdef'+i+' (2026-09-21)'; ul.appendChild(c); } })()""")
+        time.sleep(0.2)
+        self.assertEqual(b.js("document.querySelector('.diffnote-topbar').offsetHeight"), before, "the bar keeps its height")
+        nav = b.js("(() => { const n = document.querySelector('.diffnote-revisions'); return {over: n.scrollWidth > n.clientWidth, bar: n.offsetHeight - n.clientHeight}; })()")
+        self.assertTrue(nav["over"], "the tabs scroll sideways")
+        self.assertEqual(nav["bar"], 0, "with no scroll bar taking height")
+        for sel in ("[data-diffnote-pull]", "[data-diffnote-export]", "[data-diffnote-shutdown]"):
+            h = b.js(f"document.querySelector({json.dumps(sel)}).getBoundingClientRect().height")
+            self.assertLess(h, 32, f"{sel} stays on one line")
+        right = b.js("document.querySelector('[data-diffnote-quit-more]').getBoundingClientRect().right")
+        self.assertLessEqual(right, b.js("innerWidth"), "and is in the window")
+        # The wheel scrolls them sideways.
+        b.js("document.querySelector('.diffnote-revisions').scrollLeft = 0")
+        b.js("document.querySelector('.diffnote-revisions').dispatchEvent(new WheelEvent('wheel', {deltaY: 120, bubbles: true, cancelable: true}))")
+        self.assertGreater(b.js("document.querySelector('.diffnote-revisions').scrollLeft"), 0)
+
     def test_the_author_is_at_the_foot_of_the_side_like_a_signed_in_user(self):
         self.serve()
         b = self.b

@@ -28,7 +28,9 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-summary { display: flex; align-items: baseline; gap: 1rem; white-space: nowrap; }
 .diffnote-summary h1 { font-size: 15px; margin: 0; }
 .diffnote-summary p { margin: 0; color: var(--diffnote-color-muted); font-size: 13px; }
-.diffnote-revisions { min-width: 0; overflow-x: auto; }
+.diffnote-revisions { flex: 1 1 0; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.diffnote-revisions::-webkit-scrollbar { display: none; }
+.diffnote-topbar__actions, .diffnote-topbar__actions .diffnote-button, .diffnote-quit button, .diffnote-pull { flex: none; white-space: nowrap; }
 .diffnote-revisions ul { list-style: none; margin: 0; padding: 0; display: flex; gap: 4px; }
 .diffnote-revisions a { display: block; white-space: nowrap; color: var(--diffnote-color-fg); text-decoration: none; border: 1px solid transparent; border-radius: 6px; padding: 3px 10px; font-size: 13px; }
 .diffnote-revisions a:hover { background: var(--diffnote-color-border); }
