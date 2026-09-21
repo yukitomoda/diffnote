@@ -625,6 +625,7 @@
         ${composing && html`<div class="diffnote-compose-wrap"><${Composer} scope="file" where=${file.path + ' へのコメント'} request=${{ scope: 'file', revision: ctx.rev, file: file.path }} /></div>`}
         ${fileThreads.map(function (id) { return html`<${Card} key=${id} rev=${ctx.rev} thread=${ctx.byId[id]} placement=${ctx.placements[id]} />`; })}
         ${missing && html`<p class="diffnote-file__missing">このファイルは指定したdiffに含まれていません(コメント作成時点と異なるdiffを指定している可能性があります)。</p>`}
+        ${file.status === 'binary' && html`<p class="diffnote-file__binary" data-diffnote-binary>バイナリファイルのため、内容は表示しません。</p>`}
         ${opened && file.hunks.length > 0 && (ctx.layout === 'split' ? html`<${SplitTable} file=${view} ctx=${ctx} expand=${expand} />` : html`<${DiffTable} file=${view} ctx=${ctx} expand=${expand} />`)}
         ${opened && file.opened && file.next && html`<div class="diffnote-more-row"><button type="button" class="diffnote-button" data-diffnote-more
           onClick=${function (e) { e.target.disabled = true; files.more(ctx.rev, file.path).then(function () { e.target.disabled = false; }); }}>続きを表示(${file.next}〜 / 全 ${file.total} 行)</button></div>`}

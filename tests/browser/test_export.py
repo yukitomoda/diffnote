@@ -473,6 +473,8 @@ class BinaryFiles(BrowserCase):
         self.assertIn("gone.bin (バイナリ・削除)", titles)
         self.assertIn("new.bin (バイナリ・追加)", titles)
         self.assertIn("same.bin (バイナリ・変更)", titles)
+        self.assertEqual(b.count("[data-diffnote-binary]"), 3, "each binary file says why nothing is shown")
+        self.assertIn("バイナリ", b.js("document.querySelector('[data-diffnote-binary]').textContent"))
         tint = lambda name: b.js("getComputedStyle(document.querySelector('section.diffnote-file[data-diffnote-file=\"%s\"] summary')).backgroundColor" % name)
         self.assertEqual(tint("new.bin"), "rgb(230, 255, 236)", "added: greenish")
         self.assertEqual(tint("gone.bin"), "rgb(255, 235, 233)", "deleted: reddish")

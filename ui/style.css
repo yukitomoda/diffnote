@@ -127,6 +127,7 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-file--added > details > summary { background: var(--diffnote-color-added-bg); }
 .diffnote-file--deleted > details > summary { background: var(--diffnote-color-removed-bg); }
 .diffnote-file h2 { display: inline; font-size: 13px; font-weight: 600; font-family: var(--diffnote-font-mono); }
+.diffnote-file__binary { margin: 8px 12px; color: var(--diffnote-color-muted); font-size: 13px; }
 .diffnote-file__missing { margin: 0; padding: 8px 12px; color: #7a5900; background: #fffbea; }
 .diffnote-diff-scroll { overflow-x: auto; }
 .diffnote-diff { width: 100%; border-collapse: collapse; font-family: var(--diffnote-font-mono); font-size: 12.5px; line-height: 20px; }
