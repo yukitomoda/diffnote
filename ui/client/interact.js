@@ -60,6 +60,13 @@
     var own = el.getAttribute('data-diffnote-thread-id');
     if (own) return own;
     var ids = (el.getAttribute('data-diffnote-threads') || '').split(' ').filter(Boolean);
+    // A thread that is hidden as resolved shows no range either: the person
+    // couldn't tell what the highlight was for.
+    if (document.body.classList.contains('diffnote-hide-resolved')) {
+      ids = ids.filter(function (id) {
+        return !document.querySelector('.diffnote-thread--resolved[data-diffnote-thread-id="' + id + '"]');
+      });
+    }
     var best = null;
     var size = Infinity;
     ids.forEach(function (id) {

@@ -117,6 +117,18 @@ class StaticExport(BrowserCase):
         self.assertEqual(b.js("document.querySelectorAll('#rev-0 .diffnote-line--resolved-only').length"), 0)
         self.assertEqual(sum(1 for r in rows if bar(r)), len(rows))
 
+    def test_hovering_a_line_of_a_hidden_resolved_thread_shows_no_range(self):
+        b = self.b
+        b.click("[data-diffnote-revision-link='0']")
+        line = "#rev-0 .diffnote-line--resolved-only .diffnote-line__gutter-new, #rev-0 .diffnote-line--resolved-only .diffnote-line__gutter-old"
+        self.assertGreaterEqual(b.count("#rev-0 .diffnote-line--resolved-only"), 1)
+        b.hover(line)
+        self.assertEqual(b.count(".diffnote-range"), 0, "hidden: no highlight")
+        b.cdp.mouse("mouseMoved", 5, 5)
+        b.click("[data-diffnote-hide-resolved]")
+        b.hover("#rev-0 tr[data-diffnote-threads] .diffnote-line__gutter-new, #rev-0 tr[data-diffnote-threads] .diffnote-line__gutter-old")
+        self.assertGreaterEqual(b.count(".diffnote-range"), 1)
+
     def test_the_page_fits_a_narrow_screen(self):
         b = self.b
         b.cdp.call("Emulation.setDeviceMetricsOverride", width=500, height=800, deviceScaleFactor=1, mobile=False)
