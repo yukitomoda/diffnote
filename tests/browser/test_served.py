@@ -241,8 +241,10 @@ class Replies(ServedCase):
         while "解決" not in show(self.review) and time.time() < deadline:
             time.sleep(0.05)
         b.js("document.querySelector('[data-diffnote-shutdown]').click()")
-        self.assertTrue(b.wait("document.body.textContent.includes('終了しました')"))
+        # (The page's own scripts are in its body, so look for the page going.)
+        self.assertTrue(b.wait("!document.getElementById('app')"))
         told = b.js("document.body.textContent")
+        self.assertIn("終了しました。", told)
         self.assertIn("返信 1 件を追加", told)
         self.assertIn("解決 1 件", told)
         self.assertIn("に保存しました", told)
