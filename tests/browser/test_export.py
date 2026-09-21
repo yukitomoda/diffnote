@@ -39,6 +39,33 @@ class StaticExport(BrowserCase):
         })()""" % (CUR, repr(text)))
         return "[data-test-card] summary"
 
+    def test_a_file_marked_as_looked_at_is_hidden_with_its_threads_and_can_be_brought_back(self):
+        b = self.b
+        files = b.count(f"{CUR} section.diffnote-file")
+        self.assertEqual(b.js("document.querySelector('[data-diffnote-viewed-count]').textContent.replace(/\\s+/g, ' ').trim()"), f"確認済み 0 / {files}")
+        threads_before = b.count(".diffnote-threadlist li")
+        section = f"{CUR} section.diffnote-file[data-diffnote-file='calc.py']"
+        self.assertTrue(b.exists(section))
+        b.click(f"{section} [data-diffnote-viewed]")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(section)})"), "the file and its threads are gone")
+        self.assertEqual(b.count(f"{CUR} section.diffnote-file"), files - 1)
+        self.assertIn(f"1 / {files}", b.js("document.querySelector('[data-diffnote-viewed-count]').textContent"))
+        item = "[data-diffnote-check='calc.py']"
+        self.assertEqual(b.js(f"document.querySelector({json.dumps(item)}).textContent"), "✓")
+        self.assertTrue(b.exists("li.is-viewed [data-diffnote-open-count]"), "what is still open is said, small")
+        self.assertLess(b.count(".diffnote-threadlist li"), threads_before, "its threads are not listed")
+        b.click(item)
+        self.assertTrue(b.wait(f"!!document.querySelector({json.dumps(section)})"), "brought back")
+        self.assertEqual(b.count(".diffnote-threadlist li"), threads_before)
+        self.assertIn(f"0 / {files}", b.js("document.querySelector('[data-diffnote-viewed-count]').textContent"))
+
+    def test_a_looked_at_file_that_is_another_file_in_the_other_revision_is_not_marked_there(self):
+        b = self.b
+        b.click(f"{CUR} section.diffnote-file[data-diffnote-file='calc.py'] [data-diffnote-viewed]")
+        self.assertTrue(b.wait("!document.querySelector('section.diffnote-file[data-diffnote-file=\"calc.py\"]')"))
+        b.click("[data-diffnote-revision-link='0']")
+        self.assertTrue(b.wait_exists("section.diffnote-file[data-diffnote-file='calc.py']"), "calc.py differs in #1")
+
     def test_the_latest_revision_is_shown_and_the_tabs_switch(self):
         b = self.b
         self.assertEqual(b.count("[data-diffnote-revision-link]"), 2)

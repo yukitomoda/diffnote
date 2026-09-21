@@ -26,6 +26,9 @@
 
   // Files opened to look at (`null` on an exported page).
   var OpenedContext = preact.createContext(null);
+  // The files marked as looked at: `is(file)` and `toggle(file)` (a file that has
+  // become another one since is not marked any more).
+  var ViewedContext = preact.createContext(null);
 
   var DEFAULT_TITLE = 'diffnote レビュー';
   var BINARY_CHANGES = { added: '追加', deleted: '削除', renamed: '名前変更', modified: '変更' };
@@ -661,11 +664,17 @@
     var composing = compose && compose.scope && compose.scope.kind === 'file' && compose.scope.rev === ctx.rev && compose.scope.path === file.path;
     // A file that was added or deleted as a whole (a binary one too) is tinted.
     var kind = file.status === 'binary' ? file.change : file.status;
+    var viewed = useContext(ViewedContext);
+    // A file that was looked at is not shown at all (with its threads): the
+    // list at the side says so, and takes it back.
+    if (viewed && viewed.is(file)) return null;
     return html`<section class=${'diffnote-file' + (kind === 'added' || kind === 'deleted' ? ' diffnote-file--' + kind : '')} id=${'r' + ctx.rev + '-file-' + htmlId(file.path)} data-diffnote-file=${file.path}>
       <details ref=${details} open=${startsOpen} onToggle=${function (e) { if (e.target.open && !opened) setOpened(true); }}>
         <summary>
           <h2>${file.path}${file.status === 'binary' ? ' (バイナリ' + (BINARY_CHANGES[file.change] ? '・' + BINARY_CHANGES[file.change] : '') + ')' : ''}${file.status === 'renamed' ? ' (名前変更)' : ''}</h2>
           <button type="button" class="diffnote-copy" data-diffnote-copy=${file.path} title="パスをコピー">コピー</button>
+          ${viewed && html`<button type="button" class="diffnote-mini diffnote-mini--check" data-diffnote-viewed=${file.path} title="確認済みにして、表示をたたみます(左の一覧から戻せます)"
+            onClick=${function (e) { e.preventDefault(); e.stopPropagation(); viewed.toggle(file); }}>✓ 確認済み</button>`}
           ${file.opened && files && html`<button type="button" class="diffnote-mini" data-diffnote-close title="この表示を閉じる(記録には残りません)"
             onClick=${function (e) {
               e.preventDefault();
@@ -706,15 +715,27 @@
 
   function FileList(props) {
     var ctx = props.ctx;
+    var viewed = useContext(ViewedContext);
     return html`<details class="diffnote-side" open>
       <summary>ファイル</summary>
       <nav class="diffnote-filelist"><ul>
         ${ctx.revision.files.map(function (f) {
+          var done = !!(viewed && viewed.is(f));
+          var ids = lib.threadsOfFile(ctx.order, ctx.placements, f.path);
           // The threads that are shown: resolved ones don't count while hidden.
-          var n = lib.threadsOfFile(ctx.order, ctx.placements, f.path).filter(function (id) {
+          var n = ids.filter(function (id) {
             return !(ctx.hideResolved && ctx.byId[id].resolved);
           }).length;
-          return html`<li key=${f.path}><a href=${'#r' + ctx.rev + '-file-' + htmlId(f.path)}>${f.path}</a>${n > 0 && html` <span class="diffnote-badge">${n}</span>`}</li>`;
+          // What is left open in a file that was looked at.
+          var open = ids.filter(function (id) { return !ctx.byId[id].resolved; }).length;
+          return html`<li key=${f.path} class=${done ? 'is-viewed' : ''}>
+            ${viewed && html`<button type="button" class="diffnote-check" data-diffnote-check=${f.path} aria-pressed=${done}
+              title=${done ? '確認済みを解除して、表示に戻します' : '確認済みにします'} onClick=${function () { viewed.toggle(f); }}>${done ? '✓' : ''}</button>`}
+            <a href=${'#r' + ctx.rev + '-file-' + htmlId(f.path)}>${f.path}</a>
+            ${done
+              ? open > 0 && html`<span class="diffnote-open" data-diffnote-open-count title=${'未解決のスレッドが ' + open + ' 件あります'}>💬${open}</span>`
+              : n > 0 && html` <span class="diffnote-badge">${n}</span>`}
+          </li>`;
         })}
       </ul></nav>
     </details>`;
@@ -726,7 +747,11 @@
     return html`<details class="diffnote-side" open>
       <summary>スレッド <span class="diffnote-badge" title="未解決 / 全部">${open} / ${ctx.model.threads.length}</span></summary>
       <nav class="diffnote-threadlist"><ol>
-        ${ctx.order.map(function (id) {
+        ${ctx.order.filter(function (id) {
+          // Not those of a file that was looked at: they are not shown.
+          var p = ctx.placements[id];
+          return !(p && p.file && ctx.viewedPaths && ctx.viewedPaths[p.file]);
+        }).map(function (id) {
           var t = ctx.byId[id];
           var p = ctx.placements[id];
           var color = p && p.kind === 'line' ? lib.color(p.color) : '#8b949e';
@@ -851,7 +876,10 @@
       placements: revision.placements, hideResolved: props.hideResolved, layout: props.layout,
     };
     var globals = order.filter(function (id) { return revision.placements[id].kind === 'global'; });
-    var listOrder = { model: model, rev: rev, revision: Object.assign({}, revision, { files: files }), hideResolved: props.hideResolved, byId: byId, order: revision.order, placements: revision.placements };
+    var viewed = useContext(ViewedContext);
+    var viewedPaths = {};
+    files.forEach(function (f) { if (viewed && viewed.is(f)) viewedPaths[f.path] = true; });
+    var listOrder = { viewedPaths: viewedPaths, model: model, rev: rev, revision: Object.assign({}, revision, { files: files }), hideResolved: props.hideResolved, byId: byId, order: revision.order, placements: revision.placements };
 
     // The file list marks the files that are on screen.
     useEffect(function () {
@@ -868,7 +896,7 @@
       }, { rootMargin: '-48px 0px -55% 0px' });
       document.querySelectorAll('#rev-' + rev + ' .diffnote-file').forEach(function (f) { io.observe(f); });
       return function () { io.disconnect(); };
-    }, [rev]);
+    }, [rev, Object.keys(viewedPaths).join('\n')]);
 
     return html`<section class="diffnote-revision is-current" id=${'rev-' + rev} data-diffnote-revision=${rev}>
       <h2 class="diffnote-revision__title">${revision.label}</h2>
@@ -1219,6 +1247,26 @@
     var hide = _h[0];
     var setHide = _h[1];
     var counts = lib.counts(model.threads);
+    // The files marked as looked at, by path, with what the file was then.
+    var _v = useState({});
+    var seen = _v[0];
+    var setSeen = _v[1];
+    var viewed = useMemo(function () {
+      var is = function (f) { return Object.prototype.hasOwnProperty.call(seen, f.path) && seen[f.path] === (f.sig || ''); };
+      return {
+        is: is,
+        toggle: function (f) {
+          setSeen(function (cur) {
+            var next = Object.assign({}, cur);
+            if (Object.prototype.hasOwnProperty.call(cur, f.path) && cur[f.path] === (f.sig || '')) delete next[f.path];
+            else next[f.path] = f.sig || '';
+            return next;
+          });
+        },
+      };
+    }, [seen]);
+    var here = model.revisions[current] ? model.revisions[current].files : [];
+    var seenCount = here.filter(viewed.is).length;
     // What pressing 「最新を取り込む」 did, said next to it.
     var _n = useState(null);
     var note = _n[0];
@@ -1259,6 +1307,7 @@
             ? html`<${InlineEdit} name="title" value=${model.title || ''} max="200" label="タイトルを変える" placeholder="タイトル(空にすると、既定の見出しに戻ります)"
                 onSave=${review.actions.setTitle}>${model.title || DEFAULT_TITLE}<//>`
             : model.title || DEFAULT_TITLE}</h1>
+          ${here.length > 0 && html`<p class="diffnote-progress" data-diffnote-viewed-count title="確認済みにしたファイル / ファイル数">確認済み <strong>${seenCount}</strong> / ${here.length}</p>`}
           ${model.base && html`<p data-diffnote-base title="すべてのリビジョンは、これと比べた差分です">ベース: ${model.base.kind === 'git' ? html`<code>${model.base.id}</code>` : lib.formatTime(model.base.at)}</p>`}
         </header>
         ${model.revisions.length > 0 && html`<nav class="diffnote-revisions"><ul>
@@ -1289,12 +1338,14 @@
         ${model.interactive && html`<a class="diffnote-button" data-diffnote-export href="/export" title="今の内容を、誰でも開ける HTML として保存します">エクスポート</a>`}
         ${model.interactive && html`<${QuitButton} />`}
       </div>
+      <${ViewedContext.Provider} value=${viewed}>
       <${ActionsContext.Provider} value=${review.actions}>
         <${ComposeContext.Provider} value=${compose}>
           <${OpenedContext.Provider} value=${openedFiles}>
             <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} compose=${compose} />
           <//>
         <//>
+      <//>
       <//>
     </article>`;
   }

@@ -128,6 +128,13 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-filelist a { flex: 1; min-width: 0; padding: 3px 8px; color: var(--diffnote-color-fg); text-decoration: none; font-family: var(--diffnote-font-mono); word-break: break-all; border-radius: 6px; }
 .diffnote-filelist a:hover { background: var(--diffnote-color-gutter); }
 .diffnote-filelist a.is-visible { background: var(--diffnote-color-hunk-bg); }
+.diffnote-progress strong { color: var(--diffnote-color-fg); }
+.diffnote-check { flex: none; width: 18px; height: 18px; padding: 0; margin-left: 2px; font-size: 12px; line-height: 16px; text-align: center; color: #fff; background: transparent; border: 1px solid transparent; border-radius: 50%; cursor: pointer; }
+.diffnote-filelist li:hover .diffnote-check, .diffnote-check:focus-visible { border-color: var(--diffnote-color-border); }
+.diffnote-filelist li.is-viewed .diffnote-check { background: #1a7f37; border-color: #1a7f37; }
+.diffnote-filelist li.is-viewed a { color: var(--diffnote-color-muted); }
+.diffnote-open { flex: none; font-size: 11px; color: var(--diffnote-color-muted); padding-right: 4px; }
+.diffnote-mini--check { margin-left: 4px; }
 .diffnote-badge { background: var(--diffnote-color-accent); color: #fff; border-radius: 1em; padding: 0 7px; font-size: 11px; line-height: 18px; }
 
 .diffnote-global-comments { margin-top: 12px; }

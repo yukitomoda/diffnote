@@ -105,6 +105,10 @@ pub struct FileData {
     /// `added`, `deleted`, `renamed` or `modified`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub change: Option<&'static str>,
+    /// What the file is in this revision (its two versions' digests): the page
+    /// takes a file marked as looked at for a new one if this changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sig: Option<String>,
     pub hunks: Vec<HunkData>,
     /// The lines the diff leaves out: one place before the first hunk, one
     /// between each two, one after the last (`null` where nothing is left out).
@@ -416,6 +420,7 @@ fn revision_data(
                 change: file_diff
                     .filter(|f| f.is_binary && in_diff.contains(key))
                     .map(binary_change),
+                sig: file_sig(view.files, key),
                 hunks,
                 gaps,
             }
@@ -441,6 +446,17 @@ fn revision_data(
         placements,
         order,
     }
+}
+
+/// The digests of a file's two versions, as one string (`None` for a file that
+/// is not in the diff).
+fn file_sig(files: &[crate::model::FileDigest], path: &str) -> Option<String> {
+    let old = anchor::digest_for(files, path, Side::Old);
+    let new = anchor::digest_for(files, path, Side::New);
+    if old.is_none() && new.is_none() {
+        return None;
+    }
+    Some(format!("{}|{}", old.unwrap_or(""), new.unwrap_or("")))
 }
 
 /// What a change to a file did to it, whatever it is that is in it.
