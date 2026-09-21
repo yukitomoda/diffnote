@@ -201,6 +201,8 @@ pub struct Server {
     /// The comments added since this server started: the ones the page may
     /// still edit or delete. Once the server stops, they are settled.
     session: std::sync::Mutex<std::collections::HashSet<Ulid>>,
+    /// The comments this session added or edited (the page tints them).
+    changed: std::sync::Mutex<std::collections::HashSet<Ulid>>,
     /// What was done since the server started, to say so when it stops.
     stats: std::sync::Mutex<Stats>,
 }
@@ -317,6 +319,7 @@ impl Server {
                 trees: Default::default(),
             },
             session: Default::default(),
+            changed: Default::default(),
             stats: Default::default(),
         }
     }
@@ -418,7 +421,20 @@ impl Server {
             .collect()
     }
 
+    /// Which of the comments there are this session added or edited.
+    fn changed(&self, loaded: &bundle::Loaded) -> Vec<String> {
+        let changed = self.changed.lock().unwrap_or_else(|e| e.into_inner());
+        self.editable(loaded)
+            .into_iter()
+            .filter(|id| id.parse::<Ulid>().is_ok_and(|u| changed.contains(&u)))
+            .collect()
+    }
+
     fn remember(&self, id: Ulid) {
+        self.changed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id);
         self.session
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -429,6 +445,7 @@ impl Server {
     fn model_of(&self, loaded: &bundle::Loaded) -> Result<html::ViewModel, Failure> {
         let mut model = html::view_model_for(loaded, true).map_err(internal)?;
         model.editable = self.editable(loaded);
+        model.changed = self.changed(loaded);
         model.author = Some(self.author());
         model.refreshable = self.refresh.is_some();
         model.settings = Some(loaded.settings.clone());
@@ -549,9 +566,11 @@ impl Server {
     fn page(&self) -> Reply {
         match bundle::load(&self.review).and_then(|l| {
             let editable = self.editable(&l);
+            let changed = self.changed(&l);
             html::render_served_page(
                 &l,
                 editable,
+                changed,
                 self.author(),
                 self.refresh.is_some(),
                 std::fs::metadata(&self.review)
@@ -1115,6 +1134,7 @@ impl Server {
                 "before": before,
                 "stamp": html::stamp(&loaded),
                 "editable": self.editable(&loaded),
+                "changed": self.changed(&loaded),
             }),
         ))
     }
@@ -1306,6 +1326,10 @@ impl Server {
         }
         *target = text.to_string();
         self.save(&loaded, &events)?;
+        self.changed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id);
         self.count(|s| s.edited += 1);
         self.model_answer(&before, serde_json::json!({}))
     }
@@ -2640,7 +2664,9 @@ mod tests {
             "embedded"
         );
         // (The served page asks the server instead.)
-        let served = html::render_served_page(&loaded, Vec::new(), "a".into(), false, 0).unwrap();
+        let served =
+            html::render_served_page(&loaded, Vec::new(), Vec::new(), "a".into(), false, 0)
+                .unwrap();
         assert!(!served.contains("data:image/png"));
     }
 

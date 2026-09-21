@@ -30,6 +30,9 @@ pub struct ViewModel {
     /// added since the server started.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub editable: Vec<String>,
+    /// Of those, the ones added or edited in this session (shown tinted).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub changed: Vec<String>,
     /// The name comments are written under (served page only; the page can
     /// change it for the rest of the session).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -297,6 +300,7 @@ pub fn view_model_with(
         version: VERSION,
         stamp: stamp(loaded),
         editable: Vec::new(),
+        changed: Vec::new(),
         author: None,
         settings: None,
         bundle: None,
@@ -347,12 +351,14 @@ pub fn view_model_json(
 pub fn served_model_json(
     loaded: &crate::bundle::Loaded,
     editable: Vec<String>,
+    changed: Vec<String>,
     author: String,
     refreshable: bool,
     bundle_size: u64,
 ) -> anyhow::Result<String> {
     let mut model = view_model_for(loaded, true)?;
     model.editable = editable;
+    model.changed = changed;
     model.author = Some(author);
     model.refreshable = refreshable;
     model.settings = Some(loaded.settings.clone());

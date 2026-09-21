@@ -149,25 +149,30 @@ pub fn render_export_with(
 pub fn render_served_page(
     loaded: &crate::bundle::Loaded,
     editable: Vec<String>,
+    changed: Vec<String>,
     author: String,
     refreshable: bool,
     bundle_size: u64,
 ) -> anyhow::Result<String> {
     client_page(
         loaded,
-        Some((editable, author, refreshable, bundle_size)),
+        Some((editable, changed, author, refreshable, bundle_size)),
         ExpandLimit::Lines(0),
     )
 }
 
+/// What the served page is given: the comments it may change, those of them
+/// changed in this session, the author, whether it can pull, the bundle size.
+type Served = (Vec<String>, Vec<String>, String, bool, u64);
+
 fn client_page(
     loaded: &crate::bundle::Loaded,
-    served: Option<(Vec<String>, String, bool, u64)>,
+    served: Option<Served>,
     limit: ExpandLimit,
 ) -> anyhow::Result<String> {
     let interactive = served.is_some();
-    let data = if let Some((editable, author, refreshable, size)) = served {
-        served_model_json(loaded, editable, author, refreshable, size)?
+    let data = if let Some((editable, changed, author, refreshable, size)) = served {
+        served_model_json(loaded, editable, changed, author, refreshable, size)?
     } else {
         view_model_json(loaded, limit)?
     };
@@ -1206,7 +1211,7 @@ mod tests {
             "an exported page makes no requests"
         );
         assert!(
-            render_served_page(&loaded, Vec::new(), "a".into(), false, 0)
+            render_served_page(&loaded, Vec::new(), Vec::new(), "a".into(), false, 0)
                 .unwrap()
                 .contains("D.api = ")
         );

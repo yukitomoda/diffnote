@@ -472,7 +472,7 @@
       if (reasons.length === 0) { startEdit(); return; }
       setAsk({ kind: kind, reasons: reasons });
     };
-    return html`<article class="diffnote-comment" data-diffnote-comment=${c.id} data-diffnote-mine=${actions && !others ? '' : undefined}>
+    return html`<article class="diffnote-comment" data-diffnote-comment=${c.id} data-diffnote-mine=${actions && !others ? '' : undefined} data-diffnote-changed=${actions && actions.changed && actions.changed.has(c.id) && !c.deleted ? '' : undefined}>
       <p class="diffnote-comment__author">${c.author}<${Time} at=${c.at} />${actions && !c.deleted && !editing && html`<${CommentMenu} busy=${busy} canChange=${canChange}
         onQuote=${quoteWhole} onEdit=${function () { change('edit'); }} onDelete=${function () { change('delete'); }} />`}</p>
       ${ask && html`<div class="diffnote-comment__warn" role="alert" data-diffnote-warn>
@@ -1500,7 +1500,7 @@
           return;
         }
         setModel(function (cur) {
-          return Object.assign({}, replace(res.thread_data)(cur), { stamp: res.stamp, editable: res.editable });
+          return Object.assign({}, replace(res.thread_data)(cur), { stamp: res.stamp, editable: res.editable, changed: res.changed });
         });
       };
       var latest = {};
@@ -1561,7 +1561,7 @@
           var n = (latest[id] = (latest[id] || 0) + 1);
           return D.api.post('/api/threads/' + id + '/' + (resolved ? 'resolve' : 'reopen')).then(function (res) {
             if (latest[id] !== n) {
-              if (res.ok) setModel(function (cur) { return Object.assign({}, cur, { stamp: res.stamp, editable: res.editable }); });
+              if (res.ok) setModel(function (cur) { return Object.assign({}, cur, { stamp: res.stamp, editable: res.editable, changed: res.changed }); });
             } else if (res.ok) settle(res);
             else setModel(replace(before));
             return res;
@@ -1592,8 +1592,8 @@
     // What the page may change, and which comments those are.
     var full = useMemo(function () {
       if (!actions) return null;
-      return Object.assign({}, actions, { editable: new Set(model.editable || []), author: model.author });
-    }, [actions, model.editable, model.author]);
+      return Object.assign({}, actions, { editable: new Set(model.editable || []), changed: new Set(model.changed || []), author: model.author });
+    }, [actions, model.editable, model.changed, model.author]);
     return { model: model, actions: full, pending: pending };
   }
 

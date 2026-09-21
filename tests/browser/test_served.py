@@ -247,6 +247,18 @@ class Replies(ServedCase):
         b.click(f"#{card} [data-diffnote-warn-ok]")
         self.assertTrue(b.wait(f"!document.getElementById({card!r})"))
 
+    def test_what_this_session_added_or_edited_is_tinted_faintly(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        self.assertEqual(b.count("[data-diffnote-changed]"), 0, "nothing of this session yet")
+        self.reply_to(card, "追加した")
+        self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-changed]').length === 1"))
+        # It stays after the page is loaded again.
+        b.js("location.reload()")
+        self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-changed]').length === 1"))
+        self.assertNotEqual(b.js("getComputedStyle(document.querySelector('[data-diffnote-changed]')).backgroundColor"), "rgba(0, 0, 0, 0)")
+
     def test_a_comment_of_this_session_can_be_edited(self):
         self.serve()
         b = self.b
