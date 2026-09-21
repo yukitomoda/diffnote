@@ -203,7 +203,10 @@ class Browser:
         return self.wait("document.querySelectorAll(%s).length === %d" % (json.dumps(selector), n), timeout)
 
     def set_value(self, selector, text):
-        self.js("document.querySelector(%s).value = %s" % (json.dumps(selector), json.dumps(text)))
+        # As typing does: the page hears an `input` (and gets a moment to draw).
+        self.js("var t=document.querySelector(%s); Object.getOwnPropertyDescriptor(Object.getPrototypeOf(t),'value').set.call(t,%s); t.dispatchEvent(new Event('input',{bubbles:true}))"
+                % (json.dumps(selector), json.dumps(text)))
+        time.sleep(0.1)
 
     def click(self, selector):
         self.js("document.querySelector(%s).click()" % json.dumps(selector))

@@ -336,6 +336,36 @@ impl Server {
             return Reply::error(404, "見つかりません");
         };
         let refused = |message: String| Reply::error(400, &message);
+        // The client page asks for data, the older one for HTML.
+        if query_param(query, "json").is_some() {
+            return match action {
+                "tree" => {
+                    match html::tree_json(&loaded, revision, &param("dir"), &param("q"), self.git())
+                    {
+                        Some(mut list) => {
+                            list["ok"] = true.into();
+                            Reply::json(200, &list)
+                        }
+                        None => Reply::error(404, "そのリビジョンはありません"),
+                    }
+                }
+                "open" => match html::opened_data(&loaded, revision, &param("path"), self.git()) {
+                    Ok(file) => Reply::json(200, &serde_json::json!({ "ok": true, "file": file })),
+                    Err(message) => refused(message),
+                },
+                "more" => {
+                    let from = param("from").parse::<usize>().unwrap_or(1);
+                    match html::chunk_data(&loaded, revision, &param("path"), from, self.git()) {
+                        Ok((hunk, next)) => Reply::json(
+                            200,
+                            &serde_json::json!({ "ok": true, "hunk": hunk, "next": next }),
+                        ),
+                        Err(message) => refused(message),
+                    }
+                }
+                _ => Reply::error(404, "見つかりません"),
+            };
+        }
         match action {
             "tree" => {
                 match html::tree_listing(&loaded, revision, &param("dir"), &param("q"), self.git())
@@ -1830,6 +1860,33 @@ mod tests {
         let reply = get(f, &format!("/api/files/0/tree{query}"));
         assert_eq!(reply.status, 200, "{}", text(&reply));
         json(&reply)["html"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn the_client_page_reads_the_tree_and_opened_files_as_data() {
+        let f = fixture_with_a_tree();
+        let tree = json(&get(&f, "/api/files/0/tree?json=1"));
+        assert_eq!(tree["ok"], true);
+        let entries = tree["entries"].as_array().unwrap();
+        assert!(!entries.is_empty());
+        let file = entries
+            .iter()
+            .find(|e| e["kind"] == "file")
+            .expect("a file at the top");
+        let path = file["path"].as_str().unwrap();
+        let opened = json(&get(
+            &f,
+            &format!("/api/files/0/open?json=1&path={}", path.replace(' ', "%20")),
+        ));
+        assert_eq!(opened["ok"], true, "{opened}");
+        assert_eq!(opened["file"]["path"], path);
+        let row = &opened["file"]["hunks"][0]["rows"][0];
+        assert_eq!(
+            (row["k"].as_str(), row["o"].as_u64(), row["n"].as_u64()),
+            (Some("c"), Some(1), Some(1))
+        );
+        let none = get(&f, "/api/files/0/open?json=1&path=no/such");
+        assert_eq!(none.status, 400);
     }
 
     #[test]

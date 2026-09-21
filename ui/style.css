@@ -59,7 +59,7 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-tree__file:hover { background: var(--diffnote-color-gutter); }
 .diffnote-tree__count { color: var(--diffnote-color-muted); font-size: 11px; }
 .diffnote-tree__empty { margin: 4px 0; color: var(--diffnote-color-muted); font-size: 12px; }
-.diffnote-more-row > td { padding: 6px 12px !important; background: var(--diffnote-color-gutter); text-align: center; }
+.diffnote-more-row > td, div.diffnote-more-row { padding: 6px 12px !important; background: var(--diffnote-color-gutter); text-align: center; }
 .diffnote-add { padding: 8px 12px 0; }
 .diffnote-compose-wrap { padding: 8px 12px; }
 .diffnote-global-comments .diffnote-add { padding: 0; }

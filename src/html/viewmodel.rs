@@ -360,3 +360,82 @@ fn placement_data(
         },
     }
 }
+
+// ---- other files, for the client page ----------------------------------------
+
+/// The list of other files as JSON: `entries` (`{dir, path, name, count}` or
+/// `{file, path, name}`), `message`, `note`, `more`.
+pub fn tree_json(
+    loaded: &crate::bundle::Loaded,
+    revision: usize,
+    dir: &str,
+    query: &str,
+    git: Option<&dyn CommitFiles>,
+) -> Option<serde_json::Value> {
+    let data = tree_data(loaded, revision, dir, query, git)?;
+    let entries: Vec<serde_json::Value> = data
+        .items
+        .iter()
+        .map(|item| match item {
+            TreeItem::Dir { path, name, count } => {
+                serde_json::json!({ "kind": "dir", "path": path, "name": name, "count": count })
+            }
+            TreeItem::File { path, label } => {
+                serde_json::json!({ "kind": "file", "path": path, "name": label })
+            }
+        })
+        .collect();
+    Some(serde_json::json!({
+        "entries": entries,
+        "message": data.message,
+        "note": data.note,
+        "more": data.more,
+    }))
+}
+
+/// A file opened to look at, as the client page draws one: its first lines
+/// as a hunk of unchanged lines, how many lines it has, and where the next
+/// lines start (`null` at the end).
+#[derive(Serialize)]
+pub struct OpenedData {
+    pub path: String,
+    pub total: usize,
+    pub hunks: Vec<HunkData>,
+    pub next: Option<usize>,
+}
+
+fn context_hunk_data(path: &str, text: &str, from: usize) -> (HunkData, Option<usize>) {
+    let (hunk, next) = context_chunk(text, from);
+    let syntax_set = &*SYNTAXES;
+    let theme = &THEMES.themes["InspiredGitHub"];
+    let syntax = guess_syntax(path, syntax_set);
+    (hunk_data(&hunk, syntax, syntax_set, theme), next)
+}
+
+pub fn opened_data(
+    loaded: &crate::bundle::Loaded,
+    revision: usize,
+    path: &str,
+    git: Option<&dyn CommitFiles>,
+) -> Result<OpenedData, String> {
+    let text = stored_text(loaded, revision, path, git)?;
+    let (hunk, next) = context_hunk_data(path, &text, 1);
+    Ok(OpenedData {
+        path: path.to_string(),
+        total: text.lines().count(),
+        hunks: vec![hunk],
+        next,
+    })
+}
+
+/// The next lines of an opened file, from line `from`.
+pub fn chunk_data(
+    loaded: &crate::bundle::Loaded,
+    revision: usize,
+    path: &str,
+    from: usize,
+    git: Option<&dyn CommitFiles>,
+) -> Result<(HunkData, Option<usize>), String> {
+    let text = stored_text(loaded, revision, path, git)?;
+    Ok(context_hunk_data(path, &text, from))
+}

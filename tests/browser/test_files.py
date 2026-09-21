@@ -29,11 +29,12 @@ class FilesCase(BrowserCase):
         self.addCleanup(self.server.stop)
         self.b = self.browser
         self.b.open(self.server.url)
+        self.b.open(self.server.url.split("/?")[0] + "/next")
         self.b.js("window.__marker='same-page'; window.__table=document.querySelector('.diffnote-diff')")
 
     def open_tree(self):
         self.b.click(f"{TREE} summary")
-        self.assertTrue(self.b.wait_exists(f"{LIST} > *"))
+        self.assertTrue(self.b.wait(f"document.querySelector('{LIST}').textContent.trim() !== '' && !document.querySelector('{LIST}').textContent.includes('読み込み中')"))
 
     def search(self, query):
         self.b.js("var s=document.querySelector(%s); s.value=%s; s.dispatchEvent(new Event('input',{bubbles:true}))"
@@ -87,8 +88,7 @@ class StoredFiles(FilesCase):
                     % json.dumps(f"{LIST} > .diffnote-tree__list > li"))
         self.assertEqual(root, ["docs/ 2", "src/ 1", "big.txt", "data.bin", "huge.txt"])
         # A directory reads its files when it is opened.
-        children = f"{LIST} [data-diffnote-dir='docs'] [data-diffnote-children]"
-        self.assertFalse(b.js("document.querySelector(%s).hasChildNodes()" % json.dumps(children)))
+        self.assertFalse(b.exists(f"{LIST} [data-diffnote-dir='docs'] .diffnote-tree__list"))
         b.click(f"{LIST} [data-diffnote-dir='docs'] summary")
         self.assertTrue(b.wait_exists(opener("docs/README.md")))
         self.assertEqual(self.listed(), ["docs/README.md", "docs/設計 メモ.md", "big.txt", "data.bin", "huge.txt"])
@@ -125,7 +125,7 @@ class StoredFiles(FilesCase):
         b.click(f"{section('docs/README.md')} [data-diffnote-add=file]")
         b.set_value(".diffnote-compose textarea", "このファイル全体について")
         b.click(".diffnote-compose button[type=submit]")
-        self.assertTrue(b.wait_count(f"{section('docs/README.md')} [data-diffnote-cards] .diffnote-thread", 1))
+        self.assertTrue(b.wait_count(f"{section('docs/README.md')} > details > .diffnote-thread", 1))
         out = show(self.review)
         self.assertIn("docs/README.md:3", out)
         self.assertIn("ファイル全体: docs/README.md", out)

@@ -556,9 +556,129 @@ fn tree_file_item(path: &str, label: &str) -> String {
     )
 }
 
-/// The list of stored files for the "other files" section of the page: the
-/// entries of directory `dir` (sub-directories fold and are listed when
-/// opened), or, with a `query`, the files whose path contains it.
+/// One entry of the list of other files.
+pub enum TreeItem {
+    /// A directory (its own entries are listed when it is opened), and how
+    /// many files are under it.
+    Dir {
+        path: String,
+        name: String,
+        count: usize,
+    },
+    File {
+        path: String,
+        label: String,
+    },
+}
+
+/// What the list of other files says: entries, or why there are none, and a
+/// note about the repository.
+pub struct TreeData {
+    pub items: Vec<TreeItem>,
+    pub message: Option<&'static str>,
+    pub note: Option<&'static str>,
+    /// How many more there are than are listed.
+    pub more: usize,
+}
+
+const NOTE_NO_REPOSITORY: &str =
+    "このバンドルの git リポジトリが見つからないため、保存済みのファイルだけを表示しています";
+
+/// The files for the "other files" section of the page: the entries of
+/// directory `dir` (sub-directories are listed when opened), or, with a
+/// `query`, the files whose path contains it.
+pub fn tree_data(
+    loaded: &crate::bundle::Loaded,
+    revision: usize,
+    dir: &str,
+    query: &str,
+    git: Option<&dyn CommitFiles>,
+) -> Option<TreeData> {
+    let files = other_files(loaded, revision, git)?;
+    // A review made from git, with its repository out of reach.
+    let note = {
+        let shown = shown_revisions(loaded).ok()?;
+        let rev = shown.get(revision)?.revision;
+        match head_commit(rev) {
+            Some(c) if git.and_then(|g| g.tree(c)).is_none() => Some(NOTE_NO_REPOSITORY),
+            _ => None,
+        }
+    };
+    let message = |m| TreeData {
+        items: Vec::new(),
+        message: Some(m),
+        note: None,
+        more: 0,
+    };
+    if files.is_empty() {
+        return Some(TreeData {
+            note,
+            ..message("ほかに開けるファイルはありません")
+        });
+    }
+    let mut items = Vec::new();
+    let query = query.trim().to_lowercase();
+    if !query.is_empty() {
+        let matching: Vec<&String> = files
+            .iter()
+            .filter(|f| f.to_lowercase().contains(&query))
+            .collect();
+        if matching.is_empty() {
+            return Some(message("見つかりません"));
+        }
+        let more = matching.len().saturating_sub(TREE_LIMIT);
+        for f in matching.into_iter().take(TREE_LIMIT) {
+            items.push(TreeItem::File {
+                path: f.clone(),
+                label: f.clone(),
+            });
+        }
+        return Some(TreeData {
+            items,
+            message: None,
+            note: None,
+            more,
+        });
+    }
+    let prefix = if dir.is_empty() {
+        String::new()
+    } else {
+        format!("{dir}/")
+    };
+    let mut dirs: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut here: Vec<(&str, &str)> = Vec::new();
+    for f in &files {
+        let Some(rest) = f.strip_prefix(prefix.as_str()) else {
+            continue;
+        };
+        match rest.split_once('/') {
+            Some((name, _)) => *dirs.entry(name).or_default() += 1,
+            None => here.push((rest, f.as_str())),
+        }
+    }
+    let mut entries: Vec<TreeItem> = dirs
+        .into_iter()
+        .map(|(name, count)| TreeItem::Dir {
+            path: format!("{prefix}{name}"),
+            name: name.to_string(),
+            count,
+        })
+        .collect();
+    entries.extend(here.into_iter().map(|(name, path)| TreeItem::File {
+        path: path.to_string(),
+        label: name.to_string(),
+    }));
+    let more = entries.len().saturating_sub(TREE_LIMIT);
+    entries.truncate(TREE_LIMIT);
+    Some(TreeData {
+        items: entries,
+        message: None,
+        note: if dir.is_empty() { note } else { None },
+        more,
+    })
+}
+
+/// [`tree_data`] as HTML, for the older page.
 pub fn tree_listing(
     loaded: &crate::bundle::Loaded,
     revision: usize,
@@ -566,79 +686,35 @@ pub fn tree_listing(
     query: &str,
     git: Option<&dyn CommitFiles>,
 ) -> Option<String> {
-    let files = other_files(loaded, revision, git)?;
-    // A review made from git, with its repository out of reach.
-    let note = {
-        let shown = shown_revisions(loaded).ok()?;
-        let rev = shown.get(revision)?.revision;
-        match head_commit(rev) {
-            Some(c) if git.and_then(|g| g.tree(c)).is_none() => {
-                r#"<p class="diffnote-tree__empty">このバンドルの git リポジトリが見つからないため、保存済みのファイルだけを表示しています</p>"#
-            }
-            _ => "",
-        }
+    let data = tree_data(loaded, revision, dir, query, git)?;
+    let note = |n: Option<&str>| {
+        n.map(|n| format!(r#"<p class="diffnote-tree__empty">{n}</p>"#))
+            .unwrap_or_default()
     };
-    if files.is_empty() {
+    if let Some(m) = data.message {
         return Some(format!(
-            r#"<p class="diffnote-tree__empty">ほかに開けるファイルはありません</p>{note}"#
+            r#"<p class="diffnote-tree__empty">{m}</p>{}"#,
+            note(data.note)
         ));
     }
-    let mut items = Vec::new();
-    let more;
-    let query = query.trim().to_lowercase();
-    if !query.is_empty() {
-        let matching: Vec<&String> = files
-            .iter()
-            .filter(|f| f.to_lowercase().contains(&query))
-            .collect();
-        more = matching.len().saturating_sub(TREE_LIMIT);
-        for f in matching.into_iter().take(TREE_LIMIT) {
-            items.push(tree_file_item(f, f));
-        }
-        if items.is_empty() {
-            return Some(r#"<p class="diffnote-tree__empty">見つかりません</p>"#.to_string());
-        }
-    } else {
-        let prefix = if dir.is_empty() {
-            String::new()
-        } else {
-            format!("{dir}/")
-        };
-        let mut dirs: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
-        let mut here: Vec<(&str, &str)> = Vec::new();
-        for f in &files {
-            let Some(rest) = f.strip_prefix(prefix.as_str()) else {
-                continue;
-            };
-            match rest.split_once('/') {
-                Some((name, _)) => *dirs.entry(name).or_default() += 1,
-                None => here.push((rest, f.as_str())),
-            }
-        }
-        let mut entries: Vec<String> = dirs
-            .into_iter()
-            .map(|(name, count)| {
-                format!(
-                    r#"<li><details class="diffnote-tree__dir" data-diffnote-dir="{p}"><summary>{n}/ <span class="diffnote-tree__count">{count}</span></summary><div data-diffnote-children></div></details></li>"#,
-                    p = escape_html(&format!("{prefix}{name}")),
-                    n = escape_html(name),
-                )
-            })
-            .collect();
-        entries.extend(
-            here.into_iter()
-                .map(|(name, path)| tree_file_item(path, name)),
-        );
-        more = entries.len().saturating_sub(TREE_LIMIT);
-        items = entries.into_iter().take(TREE_LIMIT).collect();
-    }
-    let mut out = format!(r#"<ul class="diffnote-tree__list">{}</ul>"#, items.concat());
-    if dir.is_empty() && query.is_empty() {
-        out.push_str(note);
-    }
-    if more > 0 {
+    let items: String = data
+        .items
+        .iter()
+        .map(|item| match item {
+            TreeItem::Dir { path, name, count } => format!(
+                r#"<li><details class="diffnote-tree__dir" data-diffnote-dir="{p}"><summary>{n}/ <span class="diffnote-tree__count">{count}</span></summary><div data-diffnote-children></div></details></li>"#,
+                p = escape_html(path),
+                n = escape_html(name),
+            ),
+            TreeItem::File { path, label } => tree_file_item(path, label),
+        })
+        .collect();
+    let mut out = format!(r#"<ul class="diffnote-tree__list">{items}</ul>"#);
+    out.push_str(&note(data.note));
+    if data.more > 0 {
         out.push_str(&format!(
-            r#"<p class="diffnote-tree__empty">ほか {more} 件(検索で絞り込んでください)</p>"#
+            r#"<p class="diffnote-tree__empty">ほか {} 件(検索で絞り込んでください)</p>"#,
+            data.more
         ));
     }
     Some(out)
@@ -1784,7 +1860,8 @@ const SCRIPT: &str = include_str!("../ui/app.js");
 
 pub(crate) mod viewmodel;
 pub use viewmodel::{
-    ViewModel, served_model_json, thread_json, view_model, view_model_for, view_model_json,
+    OpenedData, ViewModel, chunk_data, opened_data, served_model_json, thread_json, tree_json,
+    view_model, view_model_for, view_model_json,
 };
 
 #[cfg(test)]

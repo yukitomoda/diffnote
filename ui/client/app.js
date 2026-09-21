@@ -24,6 +24,9 @@
   // Choosing lines and writing a new thread (`null` on an exported page).
   var ComposeContext = preact.createContext(null);
 
+  // Files opened to look at (`null` on an exported page).
+  var OpenedContext = preact.createContext(null);
+
   var DEFAULT_TITLE = 'diffnote レビュー';
 
   // What is kept between visits, where the browser lets us.
@@ -192,7 +195,7 @@
     var flatIndex = 0;
     var out = [];
     file.hunks.forEach(function (hunk, hi) {
-      out.push(html`<tr class="diffnote-hunk-header" key=${'h' + hi}><td colspan="3">${hunk.header}</td></tr>`);
+      if (!file.opened) out.push(html`<tr class="diffnote-hunk-header" key=${'h' + hi}><td colspan="3">${hunk.header}</td></tr>`);
       hunk.rows.forEach(function (row, ri) {
         var idx = flatIndex++;
         var picked = idx >= lo && idx <= hi_;
@@ -307,7 +310,8 @@
     var mine = lib.threadsOfFile(ctx.order, ctx.placements, file.path);
     var fileThreads = mine.filter(function (id) { return ctx.placements[id].kind === 'file'; });
     var unplaced = mine.filter(function (id) { return ctx.placements[id].kind === 'unplaced'; });
-    var startsOpen = mine.length > 0;
+    var startsOpen = mine.length > 0 || !!file.opened;
+    var files = useContext(OpenedContext);
     var _ = useState(startsOpen);
     var opened = _[0];
     var setOpened = _[1];
@@ -320,7 +324,15 @@
         <summary>
           <h2>${file.path}${file.status === 'binary' ? ' (バイナリ)' : ''}${file.status === 'renamed' ? ' (名前変更)' : ''}</h2>
           <button type="button" class="diffnote-copy" data-diffnote-copy=${file.path} title="パスをコピー">コピー</button>
-          ${compose && file.status !== 'context' && html`<button type="button" class="diffnote-mini" data-diffnote-add="file" title="このファイルにコメントする"
+          ${file.opened && files && html`<button type="button" class="diffnote-mini" data-diffnote-close title="この表示を閉じる(記録には残りません)"
+            onClick=${function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (compose && compose.scope && compose.scope.path === file.path) compose.close();
+              if (compose && compose.sel && compose.sel.path === file.path) compose.close();
+              files.close(ctx.rev, file.path);
+            }}>閉じる</button>`}
+          ${compose && (file.opened || file.status !== 'context') && html`<button type="button" class="diffnote-mini" data-diffnote-add="file" title="このファイルにコメントする"
             onClick=${function (e) {
               e.preventDefault();
               e.stopPropagation();
@@ -333,6 +345,8 @@
         ${fileThreads.map(function (id) { return html`<${Card} key=${id} rev=${ctx.rev} thread=${ctx.byId[id]} placement=${ctx.placements[id]} />`; })}
         ${missing && html`<p class="diffnote-file__missing">このファイルは指定したdiffに含まれていません(コメント作成時点と異なるdiffを指定している可能性があります)。</p>`}
         ${opened && file.hunks.length > 0 && (ctx.layout === 'split' ? html`<${SplitTable} file=${file} ctx=${ctx} />` : html`<${DiffTable} file=${file} ctx=${ctx} />`)}
+        ${opened && file.opened && file.next && html`<div class="diffnote-more-row"><button type="button" class="diffnote-button" data-diffnote-more
+          onClick=${function (e) { e.target.disabled = true; files.more(ctx.rev, file.path).then(function () { e.target.disabled = false; }); }}>続きを表示(${file.next}〜 / 全 ${file.total} 行)</button></div>`}
         ${unplaced.length > 0 && html`<section class="diffnote-outdated">
           <h3>未配置のコメント</h3>
           ${unplaced.map(function (id) {
@@ -380,6 +394,83 @@
     </details>`;
   }
 
+  // The entries of a directory of the files that could be opened (read from
+  // the server when shown: a directory of thousands costs nothing until then).
+  function TreeList(props) {
+    var _ = useState(null);
+    var data = _[0];
+    var setData = _[1];
+    useEffect(function () {
+      var stale = false;
+      setData(null);
+      D.api.get('/api/files/' + props.rev + '/tree?json=1&dir=' + encodeURIComponent(props.dir) + '&q=' + encodeURIComponent(props.query)).then(function (res) {
+        if (!stale) setData(res);
+      });
+      return function () { stale = true; };
+    }, [props.rev, props.dir, props.query]);
+    if (!data) return html`<p class="diffnote-tree__empty">読み込み中…</p>`;
+    if (!data.ok) return html`<p class="diffnote-tree__empty">${data.error || '読み込めませんでした'}</p>`;
+    return html`<${preact.Fragment}>
+      ${data.message && html`<p class="diffnote-tree__empty">${data.message}</p>`}
+      ${data.entries.length > 0 && html`<ul class="diffnote-tree__list">
+        ${data.entries.map(function (e) {
+          return e.kind === 'dir'
+            ? html`<li key=${e.path}><${TreeDir} rev=${props.rev} entry=${e} onOpen=${props.onOpen} /></li>`
+            : html`<li key=${e.path}><button type="button" class="diffnote-tree__file" data-diffnote-open=${e.path} title=${e.path}
+                onClick=${function () { props.onOpen(e.path); }}>${e.name}</button></li>`;
+        })}
+      </ul>`}
+      ${data.note && html`<p class="diffnote-tree__empty">${data.note}</p>`}
+      ${data.more > 0 && html`<p class="diffnote-tree__empty">ほか ${data.more} 件(検索で絞り込んでください)</p>`}
+    <//>`;
+  }
+
+  function TreeDir(props) {
+    var _ = useState(false);
+    var shown = _[0];
+    var setShown = _[1];
+    var e = props.entry;
+    return html`<details class="diffnote-tree__dir" data-diffnote-dir=${e.path} onToggle=${function (ev) { if (ev.target.open) setShown(true); }}>
+      <summary>${e.name}/ <span class="diffnote-tree__count">${e.count}</span></summary>
+      ${shown && html`<${TreeList} rev=${props.rev} dir=${e.path} query="" onOpen=${props.onOpen} />`}
+    </details>`;
+  }
+
+  // "Other files": what the review has (or, next to the repository, the commit
+  // has) that the diff doesn't show. Opening one shows it, records nothing.
+  function Tree(props) {
+    var files = useContext(OpenedContext);
+    var _s = useState(false);
+    var shown = _s[0];
+    var setShown = _s[1];
+    var _q = useState('');
+    var typed = _q[0];
+    var setTyped = _q[1];
+    var _d = useState('');
+    var query = _d[0];
+    var setQuery = _d[1];
+    var _e = useState('');
+    var error = _e[0];
+    var setError = _e[1];
+    useEffect(function () {
+      var t = setTimeout(function () { setQuery(typed); }, 250);
+      return function () { clearTimeout(t); };
+    }, [typed]);
+    var open = function (path) {
+      setError('');
+      files.open(props.rev, path).then(function (res) { if (!res.ok) setError(res.error || '開けませんでした'); });
+    };
+    return html`<details class="diffnote-side diffnote-side--quiet" data-diffnote-tree onToggle=${function (e) { if (e.target === e.currentTarget && e.target.open) setShown(true); }}>
+      <summary>その他のファイル</summary>
+      <div class="diffnote-tree">
+        <input type="search" class="diffnote-tree__search" placeholder="ファイルを検索" aria-label="ファイルを検索" value=${typed}
+          onInput=${function (e) { setTyped(e.target.value); }} />
+        <div data-diffnote-tree-list>${shown && html`<${TreeList} rev=${props.rev} dir="" query=${query} onOpen=${open} />`}</div>
+        ${error && html`<p class="diffnote-error">${error}</p>`}
+      </div>
+    </details>`;
+  }
+
   // One revision: the side lists and the files.
   function Revision(props) {
     var model = props.model;
@@ -392,12 +483,29 @@
     }, [model]);
     // The threads in the order they were written (their ids sort by time).
     var order = useMemo(function () { return model.threads.map(function (t) { return t.id; }); }, [model]);
+    // The files opened to look at come after the diff's; one that a thread has
+    // since brought in keeps the lines that were opened.
+    var opened = useContext(OpenedContext);
+    var files = useMemo(function () {
+      var mine = (opened && opened.byRev[rev]) || [];
+      var seen = {};
+      var merged = revision.files.map(function (f) {
+        var o = mine.filter(function (x) { return x.path === f.path; })[0];
+        if (!o) return f;
+        seen[f.path] = true;
+        return Object.assign({}, f, { hunks: o.hunks, opened: true, next: o.next, total: o.total });
+      });
+      mine.forEach(function (o) {
+        if (!seen[o.path]) merged.push({ path: o.path, old_path: null, status: 'context', hunks: o.hunks, opened: true, next: o.next, total: o.total });
+      });
+      return merged;
+    }, [revision, opened && opened.byRev[rev]]);
     var ctx = {
       model: model, rev: rev, revision: revision, byId: byId, order: order,
       placements: revision.placements, hideResolved: props.hideResolved, layout: props.layout,
     };
     var globals = order.filter(function (id) { return revision.placements[id].kind === 'global'; });
-    var listOrder = { model: model, rev: rev, revision: revision, byId: byId, order: revision.order, placements: revision.placements };
+    var listOrder = { model: model, rev: rev, revision: Object.assign({}, revision, { files: files }), byId: byId, order: revision.order, placements: revision.placements };
 
     // The file list marks the files that are on screen.
     useEffect(function () {
@@ -421,6 +529,7 @@
       <aside class="diffnote-sidebar">
         <${FileList} ctx=${listOrder} />
         ${model.threads.length > 0 && html`<${ThreadList} ctx=${listOrder} />`}
+        ${opened && html`<${Tree} rev=${rev} />`}
       </aside>
       ${(globals.length > 0 || props.compose) && html`<section class="diffnote-global-comments" data-diffnote-global>
         ${props.compose && html`<div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global"
@@ -428,7 +537,7 @@
         ${props.compose && props.compose.scope && props.compose.scope.kind === 'global' && props.compose.scope.rev === rev && html`<div class="diffnote-compose-wrap"><${Composer} scope="global" where="レビュー全体へのコメント" request=${{ scope: 'global', revision: rev }} /></div>`}
         ${globals.map(function (id) { return html`<${Card} key=${id} rev=${rev} thread=${byId[id]} placement=${revision.placements[id]} />`; })}
       </section>`}
-      ${revision.files.map(function (f) { return html`<${File} key=${rev + ':' + f.path} file=${f} ctx=${ctx} />`; })}
+      ${files.map(function (f) { return html`<${File} key=${rev + ':' + f.path} file=${f} ctx=${ctx} />`; })}
     </section>`;
   }
 
@@ -634,8 +743,69 @@
     }, [actions, sel, selecting, scope, draft, pending, error]);
   }
 
+  // The files opened to look at, per revision, and the lines of each read so
+  // far. Kept here, not in the model: nothing is recorded by opening one.
+  function useOpened(interactive) {
+    var _ = useState({});
+    var byRev = _[0];
+    var setByRev = _[1];
+    var ref = useRef(byRev);
+    ref.current = byRev;
+    return useMemo(function () {
+      if (!interactive) return null;
+      var update = function (rev, fn) {
+        setByRev(function (cur) {
+          var next = Object.assign({}, cur);
+          next[rev] = fn(cur[rev] || []);
+          return next;
+        });
+      };
+      var show = function (rev, path) {
+        var el = document.getElementById('r' + rev + '-file-' + htmlId(path));
+        if (!el) return;
+        var d = el.querySelector('details');
+        if (d) d.open = true;
+        el.scrollIntoView({ block: 'start' });
+      };
+      return {
+        byRev: byRev,
+        open: function (rev, path) {
+          var here = (ref.current[rev] || []).some(function (f) { return f.path === path; });
+          if (here || document.getElementById('r' + rev + '-file-' + htmlId(path))) {
+            show(rev, path);
+            return Promise.resolve({ ok: true });
+          }
+          return D.api.get('/api/files/' + rev + '/open?json=1&path=' + encodeURIComponent(path)).then(function (res) {
+            if (!res.ok) return res;
+            update(rev, function (list) { return list.concat([res.file]); });
+            setTimeout(function () { show(rev, path); }, 0);
+            return res;
+          });
+        },
+        close: function (rev, path) {
+          update(rev, function (list) { return list.filter(function (f) { return f.path !== path; }); });
+        },
+        more: function (rev, path) {
+          var file = (ref.current[rev] || []).filter(function (f) { return f.path === path; })[0];
+          if (!file || !file.next) return Promise.resolve({ ok: true });
+          return D.api.get('/api/files/' + rev + '/more?json=1&path=' + encodeURIComponent(path) + '&from=' + file.next).then(function (res) {
+            if (res.ok) {
+              update(rev, function (list) {
+                return list.map(function (f) {
+                  return f.path === path ? Object.assign({}, f, { hunks: f.hunks.concat([res.hunk]), next: res.next }) : f;
+                });
+              });
+            }
+            return res;
+          });
+        },
+      };
+    }, [interactive, byRev]);
+  }
+
   function App(props) {
     var review = useReview(props.model);
+    var openedFiles = useOpened(props.model.interactive);
     var model = review.model;
     var _c = useState(revisionFromHash(model));
     var current = _c[0];
@@ -687,7 +857,9 @@
       </div>
       <${ActionsContext.Provider} value=${review.actions}>
         <${ComposeContext.Provider} value=${compose}>
-          <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} compose=${compose} />
+          <${OpenedContext.Provider} value=${openedFiles}>
+            <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} compose=${compose} />
+          <//>
         <//>
       <//>
     </article>`;
