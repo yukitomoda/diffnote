@@ -199,3 +199,10 @@ test('lines chosen on one side of a side by side view are that side\'s, and the 
   assert.deepEqual(lib.counters(flat, 3, 3, 'old'), lib.counters(flat, 3, 3));
   assert.deepEqual(lib.counters(flat, 3, 3, 'new'), { base: { start: 12, len: 1 }, head: { start: 12, len: 1 } });
 });
+
+test('of the threads on a line only the shown ones count while resolved ones are hidden', () => {
+  const byId = { a: { resolved: true }, b: { resolved: false }, c: { resolved: true } };
+  assert.deepEqual(lib.shownIds(['a', 'b'], byId, true), ['b']);
+  assert.deepEqual(lib.shownIds(['a', 'b'], byId, false), ['a', 'b']);
+  assert.deepEqual(lib.shownIds(['a', 'c'], byId, true), []);
+});

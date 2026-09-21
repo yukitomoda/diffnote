@@ -37,6 +37,16 @@
     return name;
   };
 
+  // Of the threads on a line, those that are shown: not the resolved ones while
+  // they are hidden. What is drawn for a line (its bars) is of these only.
+  lib.shownIds = function (ids, byId, hideResolved) {
+    return hideResolved
+      ? ids.filter(function (id) {
+          return !byId[id].resolved;
+        })
+      : ids;
+  };
+
   // The stacked color bars at a line's left edge, one per thread on it.
   lib.bars = function (colors) {
     return colors

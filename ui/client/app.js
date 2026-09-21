@@ -264,7 +264,8 @@
           (ids.length ? ' diffnote-line--commented' : '') +
           (resolvedOnly ? ' diffnote-line--resolved-only' : '') +
           (picked ? ' diffnote-select' + (idx === lo ? ' diffnote-select-first' : '') + (idx === hi_ ? ' diffnote-select-last' : '') : '');
-        var colors = ids.map(function (id) { return ctx.placements[id].color; });
+        // The bars are of the threads that are shown (not those hidden as resolved).
+        var colors = lib.shownIds(ids, ctx.byId, ctx.hideResolved).map(function (id) { return ctx.placements[id].color; });
         var begin = compose && function (e) {
           if (e.button !== 0) return;
           e.preventDefault();
@@ -363,7 +364,7 @@
         var shownL = idsL.length > 0 && !hidden(idsL);
         var shownR = idsR.length > 0 && !hidden(idsR);
         var bars = function (side) {
-          return '--diffnote-bars: ' + lib.bars(side.map(function (id) { return ctx.placements[id].color; }));
+          return '--diffnote-bars: ' + lib.bars(lib.shownIds(side, ctx.byId, ctx.hideResolved).map(function (id) { return ctx.placements[id].color; }));
         };
         var kl = cellKind(l, 'old');
         var kr = cellKind(r, 'new');
