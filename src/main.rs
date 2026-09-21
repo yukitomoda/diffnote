@@ -93,9 +93,12 @@ enum Cmd {
         /// 比較対象。git のレビュー: ベース(`init` で決めたコミット)と比べるコミット(HEAD、ブランチ名、タグ、コミット ID など。省略時は HEAD)。範囲(`A..B`)は指定できません。バンドルがなく `--base` もないときは、そのコミットの第一親をベースにします(そのコミット自身の変更のレビュー)。ディレクトリのレビュー(`init` で作ったバンドル): ベースのスナップショットと比べるディレクトリ(省略時はカレント)。
         #[arg(value_name = "REV|DIR")]
         target: Option<String>,
-        /// ベース(比較の起点)。まだバンドルがないときだけ指定でき、`init BASE` してから `edit` するのと同じ意味になります。バンドルがあるときは、そのベースと同じものしか指定できません。
-        #[arg(long, value_name = "REV")]
+        /// ベース(比較の起点): git のレビューではコミット、ディレクトリのレビューではディレクトリ。まだバンドルがないときに指定でき、`init BASE` してから `edit` するのと同じ意味になります。バンドルがあるときは、そのベースと同じものしか指定できません。
+        #[arg(long, value_name = "REV|DIR")]
         base: Option<String>,
+        /// git のリポジトリの中でも、ディレクトリのレビューにする(まだバンドルがないときだけ意味があります)。
+        #[arg(long)]
+        files: bool,
         /// 新しい差分を初めて見て、かつこの回で何かを追加したときに、バンドルへ保存する内容。`changed`(差分が触れた全ファイルの両側と、コメントが参照する全ファイル)か、`full`(それに加えて head 全体のツリー)。省略時は、バンドルにすでに決まっているモード、なければ git のレビューでは `changed`(残りは git が持っている)。ディレクトリのレビューは常に全体を保存するので、そこで `--snapshot changed` を指定するとエラーになる。
         #[arg(long, value_enum, hide_possible_values = true)]
         snapshot: Option<diffnote::bundle::SnapshotMode>,
@@ -134,9 +137,12 @@ enum Cmd {
         /// レビューに加える比較対象。`edit` と同じ指定です。git のレビュー: ベースと比べるコミット(省略時は HEAD)。ディレクトリのレビュー: ベースのスナップショットと比べるディレクトリ(省略時は何も加えません)。すでに記録された差分や、空の差分は加えません。
         #[arg(value_name = "REV|DIR")]
         target: Option<String>,
-        /// ベース(比較の起点)。まだバンドルがないときだけ指定できます(`edit --base` と同じ)。
-        #[arg(long, value_name = "REV")]
+        /// ベース(比較の起点)。まだバンドルがないときに指定できます(`edit --base` と同じ)。
+        #[arg(long, value_name = "REV|DIR")]
         base: Option<String>,
+        /// git のリポジトリの中でも、ディレクトリのレビューにする(まだバンドルがないときだけ意味があります)。
+        #[arg(long)]
+        files: bool,
     },
     /// レビューバンドルに保存されたスレッドと返信を表示する。
     Show {
@@ -189,11 +195,23 @@ fn main() -> Result<()> {
             review,
             target,
             base,
+            files,
             snapshot,
             show,
             title,
             author,
-        } => cmd_edit(review, target, base, snapshot, show, title, author),
+        } => cmd_edit(
+            review,
+            Compare {
+                target,
+                base,
+                files,
+            },
+            snapshot,
+            show,
+            title,
+            author,
+        ),
         Cmd::Show { review } => cmd_show(review),
         Cmd::Serve {
             review,
@@ -203,7 +221,19 @@ fn main() -> Result<()> {
             repo,
             target,
             base,
-        } => cmd_serve(review, port, no_open, author, repo, target, base),
+            files,
+        } => cmd_serve(
+            review,
+            port,
+            no_open,
+            author,
+            repo,
+            Compare {
+                target,
+                base,
+                files,
+            },
+        ),
         Cmd::Export {
             review,
             output,
@@ -242,35 +272,51 @@ fn add_revision(
     repo: &diffnote::git::Repo,
     base: Option<&str>,
     target: Option<&str>,
+    files: bool,
 ) -> Result<()> {
-    let loaded = bundle::load(review_path)?;
+    let mut loaded = bundle::load(review_path)?;
     let explicit = base.is_some() || target.is_some();
-    let input = match loaded.source() {
-        Some(diffnote::model::Source::Files { .. }) => {
-            let Some(dir) = target else {
-                return Ok(());
+    let mut fresh = FreshBundle(None);
+    let exclude = [review_path.to_path_buf(), draft_path_for(review_path)];
+    let directory_review = match loaded.source() {
+        Some(diffnote::model::Source::Files { .. }) => true,
+        Some(diffnote::model::Source::Git(_)) => false,
+        None => explicit && files_mode(repo, files),
+    };
+    let input = if directory_review {
+        if loaded.source().is_none() {
+            let Some(base_dir) = base else {
+                anyhow::bail!("{NEEDS_A_BASE}");
             };
-            files_input(
-                &loaded,
-                Path::new(dir),
-                &[review_path.to_path_buf(), draft_path_for(review_path)],
-            )?
+            init_files(review_path, Path::new(base_dir), None, None, false)?;
+            fresh = FreshBundle(Some(review_path.to_path_buf()));
+            loaded = bundle::load(review_path)?;
+        } else if let Some(base_dir) = base {
+            check_files_base(&loaded, Path::new(base_dir), &exclude)?;
         }
-        Some(diffnote::model::Source::Git(_)) => {
-            if !explicit && !repo.exists() {
-                return Ok(());
+        // The directory is only taken when it is named: `.` may be anywhere.
+        let dir = match target {
+            Some(dir) => dir,
+            None if fresh.0.is_some() => ".",
+            None => return Ok(()),
+        };
+        files_input(&loaded, Path::new(dir), &exclude)?
+    } else {
+        match loaded.source() {
+            Some(_) => {
+                if !explicit && !repo.exists() {
+                    return Ok(());
+                }
             }
-            git_input(repo.clone(), git_range(repo, &loaded, base, target)?)?
-        }
-        None => {
-            if !explicit {
+            None if !explicit => {
                 anyhow::bail!(
                     "{} がありません。先に `diffnote init` でレビューを作るか、レビューするコミットを指定してください(例: `diffnote serve HEAD`)",
                     review_path.display()
                 );
             }
-            git_input(repo.clone(), git_range(repo, &loaded, base, target)?)?
+            None => {}
         }
+        git_input(repo.clone(), git_range(repo, &loaded, base, target)?)?
     };
     if input.diff_text.trim().is_empty() || loaded.revisions().any(|r| r.digest == input.digest) {
         return Ok(());
@@ -322,8 +368,17 @@ fn add_revision(
     let mut events = loaded.events.clone();
     events.extend(new_events);
     bundle::save(review_path, &loaded, &events, &additions)?;
+    fresh.keep();
     println!("{said}");
     Ok(())
+}
+
+/// What `edit` and `serve` are told to compare: the target, and (if there is no
+/// bundle yet) the base to start from; `files` makes it a directory review.
+struct Compare {
+    target: Option<String>,
+    base: Option<String>,
+    files: bool,
 }
 
 fn cmd_serve(
@@ -332,9 +387,13 @@ fn cmd_serve(
     no_open: bool,
     author: Option<String>,
     repo: Option<PathBuf>,
-    target: Option<String>,
-    base: Option<String>,
+    compare: Compare,
 ) -> Result<()> {
+    let Compare {
+        target,
+        base,
+        files,
+    } = compare;
     let explicit = target.is_some() || base.is_some();
     if !review.exists() && !explicit {
         anyhow::bail!(
@@ -347,10 +406,13 @@ fn cmd_serve(
     let git = repo
         .clone()
         .map_or_else(diffnote::git::Repo::current, diffnote::git::Repo::at);
-    match add_revision(&review, &git, base.as_deref(), target.as_deref()) {
+    match add_revision(&review, &git, base.as_deref(), target.as_deref(), files) {
         Ok(()) => {}
         Err(e) if explicit => return Err(e),
         Err(e) => println!("注意: 最新の差分を記録できませんでした: {e}"),
+    }
+    if !review.exists() {
+        anyhow::bail!("レビューする差分がありません(バンドルは作りませんでした)");
     }
     if bundle::load(&review)
         .ok()
@@ -560,30 +622,33 @@ fn git_input(repo: diffnote::git::Repo, range: diffnote::model::GitSource) -> Re
     })
 }
 
-/// Compares `dir` with the bundle's last recorded snapshot.
+/// Compares `dir` with the bundle's base (its first snapshot).
 fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Result<Input> {
-    let previous = loaded
+    let first = loaded
         .revisions()
-        .last()
-        .map(|r| loaded.tree_of(r))
+        .next()
         .context("バンドルに、比べる対象のスナップショットがありません")?;
+    let previous = loaded.tree_of(first);
     let current = diffnote::files::read_tree(dir, exclude)?;
     let digest = diffnote::files::tree_digest(&current);
-    // Unchanged since the last recorded snapshot: reopen the diff that
-    // revision was reviewed with (so replies/resolves can still be added),
-    // rather than the empty diff against itself.
-    let latest = loaded.latest_revision();
-    let (diff_text, files, base) = match latest {
-        Some((rev, text)) if rev.digest == digest => {
+    // The same as a revision already recorded: reopen the diff that revision
+    // was reviewed with (so replies/resolves can still be added), rather than
+    // compare it with the base again.
+    let (diff_text, files, base) = match loaded.revisions().filter(|r| r.digest == digest).last() {
+        Some(rev) => {
             let base = match &rev.source {
                 diffnote::model::Source::Files { base } => base.clone(),
                 diffnote::model::Source::Git(_) => None,
             };
-            (text, rev.files.clone(), base)
+            (
+                loaded.revision_diff(rev).unwrap_or_default(),
+                rev.files.clone(),
+                base,
+            )
         }
-        _ => {
+        None => {
             let (text, files) = diffnote::files::diff_trees(&previous, &current);
-            (text, files, latest.map(|(rev, _)| rev.digest.clone()))
+            (text, files, Some(first.digest.clone()))
         }
     };
     let (some_tree, all_tree) = (current.clone(), current.clone());
@@ -604,6 +669,48 @@ fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Resu
         diff_text,
     })
 }
+
+/// `--base DIR` for a bundle that has a base already: it is fine if it is the
+/// same content (the bundle's base can't change), an error if not.
+fn check_files_base(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Result<()> {
+    let Some(first) = loaded.revisions().next() else {
+        return Ok(());
+    };
+    let asked = diffnote::files::tree_digest(&diffnote::files::read_tree(dir, exclude)?);
+    if asked != first.digest {
+        anyhow::bail!(
+            "{} の内容は、このバンドルのベースと違います。ベースは変えられません(別のベースでレビューするときは、新しいバンドルを作ってください)",
+            dir.display()
+        );
+    }
+    Ok(())
+}
+
+/// A bundle made by this run: removed again if the run leaves nothing worth
+/// keeping in it (no comment, no diff), so that looking doesn't leave one.
+struct FreshBundle(Option<PathBuf>);
+
+impl FreshBundle {
+    fn keep(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for FreshBundle {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// Whether a review that has no bundle yet is one of directories: when asked
+/// for (`--files`), or when there is no git repository to make one from.
+fn files_mode(repo: &diffnote::git::Repo, files: bool) -> bool {
+    files || !repo.exists()
+}
+
+const NEEDS_A_BASE: &str = "ディレクトリのレビューを始めるには、`diffnote init` でベースを決めるか、`--base DIR` でベースのディレクトリを指定してください";
 
 fn cmd_init(
     review_path: PathBuf,
@@ -626,7 +733,7 @@ fn cmd_init(
         );
     }
     let dir = PathBuf::from(target.as_deref().unwrap_or("."));
-    init_files(&review_path, &dir, title, author)
+    init_files(&review_path, &dir, title, author, true)
 }
 
 /// The events every new bundle starts with: what it was made by, and a title.
@@ -697,6 +804,7 @@ fn init_files(
     dir: &Path,
     title: Option<String>,
     author: Option<String>,
+    say: bool,
 ) -> Result<()> {
     let tree = diffnote::files::read_tree(dir, &[review_path.to_path_buf()])?;
     let digest = diffnote::files::tree_digest(&tree);
@@ -726,52 +834,68 @@ fn init_files(
         &events,
         &additions,
     )?;
-    println!(
-        "{count} 個のファイルを {} に保存しました",
-        review_path.display()
-    );
+    if say {
+        println!(
+            "{count} 個のファイルを {} に保存しました",
+            review_path.display()
+        );
+    }
     Ok(())
 }
 
 fn cmd_edit(
     review_path: PathBuf,
-    target: Option<String>,
-    base: Option<String>,
+    compare: Compare,
     snapshot_override: Option<bundle::SnapshotMode>,
     show_specs: Vec<String>,
     title: Option<String>,
     author: Option<String>,
 ) -> Result<()> {
+    let Compare {
+        target,
+        base,
+        files,
+    } = compare;
     let shows: Vec<diffnote::show::Show> = show_specs
         .iter()
         .map(|spec| diffnote::show::parse(spec).map_err(|e| anyhow::anyhow!("--show {spec}: {e}")))
         .collect::<Result<_>>()?;
-    let loaded = bundle::load(&review_path)?;
-    let input = match loaded.source() {
-        Some(diffnote::model::Source::Files { .. }) => {
-            if snapshot_override == Some(bundle::SnapshotMode::Changed) {
-                anyhow::bail!(
-                    "ディレクトリのレビューでは `--snapshot changed` は指定できません。git のように\
-                    残りを読み出す手段がなく、次の edit で比べるためにツリー全体が必要なので、\
-                    常に全体を保存します。レビューに不要なものは `.diffnoteignore` で除外して\
-                    ください。"
-                );
-            }
-            if base.is_some() {
-                anyhow::bail!("ディレクトリのレビューの `--base` には、まだ対応していません");
-            }
-            let dir = PathBuf::from(target.as_deref().unwrap_or("."));
-            files_input(
-                &loaded,
-                &dir,
-                &[review_path.clone(), draft_path_for(&review_path)],
-            )?
+    let mut loaded = bundle::load(&review_path)?;
+    let repo = diffnote::git::Repo::current();
+    let mut fresh = FreshBundle(None);
+    // A directory review: the bundle says so, or (with no bundle) --files or
+    // the lack of a repository does.
+    let directory_review = match loaded.source() {
+        Some(diffnote::model::Source::Files { .. }) => true,
+        Some(diffnote::model::Source::Git(_)) => false,
+        None => files_mode(&repo, files),
+    };
+    let input = if directory_review {
+        if snapshot_override == Some(bundle::SnapshotMode::Changed) {
+            anyhow::bail!(
+                "ディレクトリのレビューでは `--snapshot changed` は指定できません。git のように\
+                残りを読み出す手段がなく、次の edit で比べるためにツリー全体が必要なので、\
+                常に全体を保存します。レビューに不要なものは `.diffnoteignore` で除外して\
+                ください。"
+            );
         }
-        Some(diffnote::model::Source::Git(_)) | None => {
-            let repo = diffnote::git::Repo::current();
-            let range = git_range(&repo, &loaded, base.as_deref(), target.as_deref())?;
-            git_input(repo, range)?
+        let exclude = [review_path.clone(), draft_path_for(&review_path)];
+        if loaded.source().is_none() {
+            // No bundle: the base directory starts it, as `init` would.
+            let Some(base_dir) = base.as_deref() else {
+                anyhow::bail!("{NEEDS_A_BASE}");
+            };
+            init_files(&review_path, Path::new(base_dir), None, None, false)?;
+            fresh = FreshBundle(Some(review_path.clone()));
+            loaded = bundle::load(&review_path)?;
+        } else if let Some(base_dir) = base.as_deref() {
+            check_files_base(&loaded, Path::new(base_dir), &exclude)?;
         }
+        let dir = PathBuf::from(target.as_deref().unwrap_or("."));
+        files_input(&loaded, &dir, &exclude)?
+    } else {
+        let range = git_range(&repo, &loaded, base.as_deref(), target.as_deref())?;
+        git_input(repo, range)?
     };
     let Input {
         diff_text,
@@ -800,6 +924,7 @@ fn cmd_edit(
                 blobs: Vec::new(),
             };
             bundle::save(&review_path, &loaded, &all_events, &none)?;
+            fresh.keep();
             println!("タイトルを設定しました");
             return Ok(());
         }
@@ -1074,6 +1199,7 @@ fn cmd_edit(
     let mut all_events = loaded.events.clone();
     all_events.extend(new_events.iter().cloned());
     bundle::save(&review_path, &loaded, &all_events, &additions)?;
+    fresh.keep();
     if title_set {
         println!("タイトルを設定しました");
     }

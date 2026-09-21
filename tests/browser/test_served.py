@@ -620,6 +620,29 @@ class ServeAddsTheLatestDiff(ServedCase):
         self.assertEqual(entries(review), 3)
         self.assertTrue(self.b.wait_exists("section.diffnote-file[data-diffnote-file='a.txt']"))
 
+    def test_two_directories_can_be_reviewed_in_one_step(self):
+        old, new = self.fresh("old"), self.fresh("new")
+        with open(os.path.join(old, "a.txt"), "w") as f:
+            f.write("one\ntwo\nthree\n")
+        with open(os.path.join(new, "a.txt"), "w") as f:
+            f.write("one\nTWO\nthree\n")
+        review = os.path.join(self.fresh("review"), "dirs.diffnote")
+        server = Served(review, cwd=new, extra=["--files", "--base", old, "."])
+        self.open_page(server)
+        self.assertTrue(any("ディレクトリの変更を記録しました" in l for l in server.said), server.said)
+        self.assertEqual(entries(review), 3, "meta, the base, and the directory compared with it")
+        self.assertTrue(self.b.wait_exists("section.diffnote-file[data-diffnote-file='a.txt']"))
+        # Nothing to compare: no bundle is left behind.
+        same = self.fresh("same")
+        with open(os.path.join(same, "a.txt"), "w") as f:
+            f.write("one\ntwo\nthree\n")
+        lone = os.path.join(self.fresh("review"), "none.diffnote")
+        out = subprocess.run([harness.BIN, "serve", "-f", lone, "--no-open", "--files", "--base", old, "."],
+                             cwd=same, capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("差分がありません", out.stderr)
+        self.assertFalse(os.path.exists(lone))
+
     def test_serving_again_with_nothing_new_adds_nothing(self):
         self.start()
         self.server.stop()

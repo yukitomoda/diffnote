@@ -200,8 +200,8 @@ fn a_directory_review_over_several_sessions() {
     // b.txt is unchanged, so it is stored once: 2 (init) + 1 new a.txt.
     assert_eq!(count_blobs(&review), 3);
 
-    // Session 2: only b.txt changes. The comparison base must be session 1's
-    // tree (read back from the bundle), not the original.
+    // Session 2: b.txt changes too. It is compared with the base (the tree
+    // `init` took), so a.txt is in it as well.
     std::fs::write(dir.join("b.txt"), "x\ny\n").unwrap();
     let out = env.ok(
         &dir,
@@ -212,12 +212,13 @@ fn a_directory_review_over_several_sessions() {
     let loaded = bundle::load(&review).unwrap();
     let revisions: Vec<_> = loaded.revisions().collect();
     assert_eq!(revisions.len(), 3);
-    let touched: Vec<_> = revisions[2]
+    let mut touched: Vec<_> = revisions[2]
         .files
         .iter()
         .filter_map(|f| f.new_path.as_deref())
         .collect();
-    assert_eq!(touched, ["b.txt"], "a.txt did not change since session 1");
+    touched.sort();
+    assert_eq!(touched, ["a.txt", "b.txt"], "both differ from the base");
     assert_eq!(
         comment_bodies(&loaded),
         ["overall remark", "why uppercase?", "new line"]
@@ -1702,4 +1703,162 @@ fn edit_with_a_base_makes_the_bundle_as_init_and_edit_would() {
         (sources[1].base.as_str(), sources[1].spec.as_str()),
         (sources[0].base.as_str(), "c1..HEAD")
     );
+}
+
+/// Two directories, before and after.
+fn two_directories(env: &Env) -> (PathBuf, PathBuf) {
+    let (old, new) = (env.path("old"), env.path("new"));
+    for d in [&old, &new] {
+        std::fs::create_dir(d).unwrap();
+    }
+    std::fs::write(old.join("a.txt"), "one\ntwo\n").unwrap();
+    std::fs::write(old.join("gone.txt"), "bye\n").unwrap();
+    std::fs::write(new.join("a.txt"), "one\nTWO\n").unwrap();
+    std::fs::write(new.join("added.txt"), "hello\n").unwrap();
+    (old, new)
+}
+
+#[test]
+fn edit_with_a_base_directory_compares_two_directories_in_one_step() {
+    let env = Env::new();
+    let (old, new) = two_directories(&env);
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    // No bundle: the base directory starts it, as `init OLD` would.
+    env.ok(
+        &new,
+        &[("+TWO", "why?")],
+        &[
+            "edit",
+            "-f",
+            review_arg,
+            "--base",
+            old.to_str().unwrap(),
+            ".",
+        ],
+    );
+    let loaded = bundle::load(&review).unwrap();
+    let revisions: Vec<_> = loaded.revisions().collect();
+    assert_eq!(
+        revisions.len(),
+        2,
+        "the base, then the directory compared with it"
+    );
+    assert_eq!(loaded.tree_of(revisions[0])["a.txt"], b"one\ntwo\n");
+    assert!(loaded.tree_of(revisions[0]).contains_key("gone.txt"));
+    let mut touched: Vec<_> = revisions[1]
+        .files
+        .iter()
+        .flat_map(|f| [f.old_path.clone(), f.new_path.clone()])
+        .flatten()
+        .collect();
+    touched.sort();
+    touched.dedup();
+    assert_eq!(touched, ["a.txt", "added.txt", "gone.txt"]);
+    assert_eq!(comment_bodies(&loaded), ["why?"]);
+    // The same base said again is fine; a different one is not.
+    env.ok(
+        &new,
+        &[],
+        &[
+            "edit",
+            "-f",
+            review_arg,
+            "--base",
+            old.to_str().unwrap(),
+            ".",
+        ],
+    );
+    let before = std::fs::read(&review).unwrap();
+    let other = env.run(
+        &new,
+        &[("+x", "x")],
+        &[
+            "edit",
+            "-f",
+            review_arg,
+            "--base",
+            new.to_str().unwrap(),
+            ".",
+        ],
+    );
+    assert!(!other.status.success());
+    assert!(String::from_utf8_lossy(&other.stderr).contains("ベース"));
+    assert_eq!(std::fs::read(&review).unwrap(), before);
+}
+
+#[test]
+fn edit_with_a_base_directory_leaves_no_bundle_when_nothing_comes_of_it() {
+    let env = Env::new();
+    let (old, new) = two_directories(&env);
+    let review = env.path("review.diffnote");
+    // Opened and closed with no comment.
+    let out = env.ok(
+        &new,
+        &[],
+        &[
+            "edit",
+            "-f",
+            review.to_str().unwrap(),
+            "--base",
+            old.to_str().unwrap(),
+            ".",
+        ],
+    );
+    assert!(
+        out.contains("追加されません") || out.contains("変更はありません"),
+        "{out}"
+    );
+    assert!(!review.exists(), "the base alone is not kept");
+    // Two equal directories: nothing to review either.
+    let same = env.path("same");
+    std::fs::create_dir(&same).unwrap();
+    std::fs::write(same.join("a.txt"), "one\ntwo\n").unwrap();
+    std::fs::write(same.join("gone.txt"), "bye\n").unwrap();
+    let out = env.ok(
+        &same,
+        &[],
+        &[
+            "edit",
+            "-f",
+            review.to_str().unwrap(),
+            "--base",
+            old.to_str().unwrap(),
+            ".",
+        ],
+    );
+    assert!(out.contains("変更がありません"), "{out}");
+    assert!(!review.exists());
+    // A directory review with no base at all says what to do.
+    let bad = env.run(
+        &new,
+        &[],
+        &["edit", "-f", review.to_str().unwrap(), "--files", "."],
+    );
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("--base"));
+}
+
+#[test]
+fn a_directory_bundle_compares_every_session_with_the_first_snapshot() {
+    let env = Env::new();
+    let dir = env.path("project");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    env.ok(&dir, &[], &["init", "-f", review_arg]);
+    std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+    env.ok(&dir, &[("+two", "first")], &["edit", "-f", review_arg]);
+    std::fs::write(dir.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    // The second session's diff has both new lines: it starts from the base.
+    env.ok(&dir, &[("+three", "second")], &["edit", "-f", review_arg]);
+    let loaded = bundle::load(&review).unwrap();
+    let latest = loaded.revisions().last().unwrap();
+    let text = loaded.revision_diff(latest).unwrap();
+    assert!(text.contains("+two") && text.contains("+three"), "{text}");
+    // Back to what an earlier session saw: that diff is reopened, not a new one.
+    std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+    env.ok(&dir, &[], &["edit", "-f", review_arg]);
+    assert_eq!(bundle::load(&review).unwrap().revisions().count(), 3);
 }
