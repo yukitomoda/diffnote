@@ -235,6 +235,57 @@
   // with no rows) between them; a hunk whose place is shown whole, or shown up to it,
   // gives up its `@@` row (`quiet`). The added blocks have headers, so the rows can be told
   // their line numbers as those of a hunk.
+  // The text of a row's pieces.
+  var rowText = function (row) {
+    return row.t.map(function (p) { return typeof p === 'string' ? p : p[1]; }).join('');
+  };
+
+  // The file with the lines of its change that differ only in white space shown
+  // as unchanged: in a run of removed lines followed by added ones, a removed
+  // line and the added line in its place (in order, as the words are paired)
+  // that read the same without white space become one unchanged row, with both
+  // line numbers. Nothing is renumbered, so what refers to a line (a thread,
+  // the left-out places) still does.
+  lib.withoutSpaceChanges = function (file) {
+    var bare = function (row) { return rowText(row).replace(/\s+/g, ''); };
+    var changed = false;
+    var hunks = file.hunks.map(function (hunk) {
+      var rows = [];
+      var i = 0;
+      while (i < hunk.rows.length) {
+        if (hunk.rows[i].k !== 'd') { rows.push(hunk.rows[i]); i++; continue; }
+        var removed = [];
+        var added = [];
+        while (i < hunk.rows.length && hunk.rows[i].k === 'd') removed.push(hunk.rows[i++]);
+        while (i < hunk.rows.length && hunk.rows[i].k === 'a') added.push(hunk.rows[i++]);
+        var pendingRemoved = [];
+        var pendingAdded = [];
+        var flush = function () {
+          pendingRemoved.forEach(function (r) { rows.push(r); });
+          pendingAdded.forEach(function (r) { rows.push(r); });
+          pendingRemoved = [];
+          pendingAdded = [];
+        };
+        var pairs = Math.min(removed.length, added.length);
+        for (var k = 0; k < pairs; k++) {
+          if (bare(removed[k]) === bare(added[k])) {
+            flush();
+            rows.push({ k: 'c', o: removed[k].o, n: added[k].n, t: added[k].t });
+            changed = true;
+          } else {
+            pendingRemoved.push(removed[k]);
+            pendingAdded.push(added[k]);
+          }
+        }
+        removed.slice(pairs).forEach(function (r) { pendingRemoved.push(r); });
+        added.slice(pairs).forEach(function (r) { pendingAdded.push(r); });
+        flush();
+      }
+      return Object.assign({}, hunk, { rows: rows });
+    });
+    return changed ? Object.assign({}, file, { hunks: hunks }) : file;
+  };
+
   lib.withGaps = function (file, shown) {
     var gaps = file.gaps;
     if (!gaps || gaps.length === 0) return file;

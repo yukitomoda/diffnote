@@ -144,6 +144,7 @@ struct Stats {
     edited: u32,
     deleted: u32,
     titled: u32,
+    settings: u32,
 }
 
 impl Stats {
@@ -166,6 +167,7 @@ impl Stats {
             (self.edited, "編集"),
             (self.deleted, "削除"),
             (self.titled, "タイトル変更"),
+            (self.settings, "設定変更"),
         ] {
             if n > 0 {
                 parts.push(format!("{what} {n} 件"));
@@ -754,6 +756,7 @@ impl Server {
             }
             ["api", "author"] => self.set_author(request.body),
             ["api", "title"] => self.set_title(request.body),
+            ["api", "whitespace"] => self.set_ignore_whitespace(request.body),
             ["api", "refresh"] => self.refresh(),
             ["api", "comments", id, "edit"] => self.edit_comment(id, request.body),
             ["api", "comments", id, "delete"] => self.delete_comment(id),
@@ -829,6 +832,28 @@ impl Server {
             &before,
             serde_json::json!({ "message": message, "added": added }),
         )
+    }
+
+    /// Whether differences that are only in white space are hidden: kept in the
+    /// review, so that it is so for whoever reads it.
+    fn set_ignore_whitespace(&self, body: &[u8]) -> Result<Reply, Failure> {
+        let value: serde_json::Value = serde_json::from_slice(body)
+            .map_err(|_| Failure(400, "送られた内容を読めません".into()))?;
+        let wanted = value
+            .get("ignore")
+            .and_then(|v| v.as_bool())
+            .ok_or_else(|| Failure(400, "設定が指定されていません".into()))?;
+        let loaded = bundle::load(&self.review).map_err(internal)?;
+        let before = html::stamp(&loaded);
+        if let Some(event) =
+            review::ignore_whitespace_change(&loaded.events, wanted, &self.author())
+        {
+            let mut events = loaded.events.clone();
+            events.push(event);
+            self.save(&loaded, &events)?;
+            self.count(|s| s.settings += 1);
+        }
+        self.model_answer(&before, serde_json::json!({}))
     }
 
     /// Sets the review's title (an empty one takes it away), as `edit --title`.

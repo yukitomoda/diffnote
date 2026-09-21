@@ -40,6 +40,9 @@ pub struct ViewModel {
     pub refreshable: bool,
     /// What every revision is compared with: the review's first snapshot.
     pub base: Option<BaseData>,
+    /// Whether differences that are only in white space are hidden.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub ignore_whitespace: bool,
     /// Whether the page can change the review (the served one).
     pub interactive: bool,
     pub title: Option<String>,
@@ -262,6 +265,7 @@ pub fn view_model_with(
                 at: rfc3339(r.created_at),
             },
         }),
+        ignore_whitespace: crate::review::ignore_whitespace(&loaded.events),
         interactive,
         title: crate::review::title(&loaded.events).map(str::to_string),
         threads: {

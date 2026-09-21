@@ -63,6 +63,31 @@ pub fn title_change(events: &[Event], wanted: &str, author: &str) -> Option<Even
     })
 }
 
+/// Whether differences that are only in white space are hidden (the last word
+/// of the log; not hidden if nothing was said).
+pub fn ignore_whitespace(events: &[Event]) -> bool {
+    events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            Event::IgnoreWhitespace { value, .. } => Some(*value),
+            _ => None,
+        })
+        .unwrap_or(false)
+}
+
+/// The event that makes hiding them `wanted`, if it isn't so already.
+pub fn ignore_whitespace_change(events: &[Event], wanted: bool, author: &str) -> Option<Event> {
+    if ignore_whitespace(events) == wanted {
+        return None;
+    }
+    Some(Event::IgnoreWhitespace {
+        value: wanted,
+        author: author.to_string(),
+        created_at: time::OffsetDateTime::now_utc(),
+    })
+}
+
 /// Groups a flat event stream into threads, in the order their root
 /// comment first appeared. Replies/resolve/reopen/reanchor events for a
 /// thread that was never actually created (a malformed file) are silently
@@ -262,5 +287,17 @@ mod tests {
         assert!(line.contains(r#""kind":"title""#), "{line}");
         let back: Event = serde_json::from_str(&line).unwrap();
         assert_eq!(title(&[back]), Some("ログイン改修"));
+    }
+
+    #[test]
+    fn whitespace_differences_are_shown_unless_the_last_word_of_the_log_hides_them() {
+        assert!(!ignore_whitespace(&[]));
+        // Saying what is already so writes nothing.
+        assert!(ignore_whitespace_change(&[], false, "me").is_none());
+        let on = ignore_whitespace_change(&[], true, "me").unwrap();
+        assert!(ignore_whitespace(std::slice::from_ref(&on)));
+        assert!(ignore_whitespace_change(std::slice::from_ref(&on), true, "me").is_none());
+        let off = ignore_whitespace_change(std::slice::from_ref(&on), false, "me").unwrap();
+        assert!(!ignore_whitespace(&[on, off]));
     }
 }

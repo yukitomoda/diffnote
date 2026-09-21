@@ -345,3 +345,35 @@ test('the location of a thread on removed lines has L, and so has the choice of 
   assert.equal(lib.chosenLocation('a.ts', { base: { start: 4, len: 2 }, head: { start: 4, len: 0 } }), 'a.ts:L4-5');
   assert.equal(lib.chosenLocation('a.ts', { base: { start: 4, len: 2 }, head: { start: 4, len: 3 } }), 'a.ts:4-6');
 });
+
+test('lines changed only in white space read as unchanged, keeping both line numbers', () => {
+  const row = (k, o, n, text) => ({ k, o, n, t: [text] });
+  const file = {
+    path: 'a.py',
+    hunks: [{
+      header: '@@',
+      rows: [
+        row('c', 1, 1, 'def f():'),
+        row('d', 2, undefined, '  a = 1'),
+        row('d', 3, undefined, '  b = 2'),
+        row('d', 4, undefined, '  c = 3'),
+        row('a', undefined, 2, '    a = 1'),
+        row('a', undefined, 3, '    b = 3'),
+        row('a', undefined, 4, '    c   =   3'),
+        row('a', undefined, 5, '    d = 4'),
+      ],
+    }],
+  };
+  const out = lib.withoutSpaceChanges(file).hunks[0].rows;
+  const shape = out.map((r) => `${r.k}${r.o || ''}:${r.n || ''}`);
+  // a and c are unchanged; b is a change; d only added. Numbers only go up.
+  assert.deepEqual(shape, ['c1:1', 'c2:2', 'd3:', 'a:3', 'c4:4', 'a:5']);
+  // The unchanged row shows the new text.
+  assert.deepEqual(out[1].t, ['    a = 1']);
+  // Nothing to hide: the same file back.
+  const plain = { path: 'b', hunks: [{ header: '@@', rows: [row('d', 1, undefined, 'x'), row('a', undefined, 1, 'y')] }] };
+  assert.equal(lib.withoutSpaceChanges(plain), plain);
+  // Pieces with kinds count by their text.
+  const kinds = { hunks: [{ header: '@@', rows: [{ k: 'd', o: 1, t: [['kw', 'let'], ' x']}, { k: 'a', n: 1, t: [['kw', 'let'], '  x']}] }] };
+  assert.deepEqual(lib.withoutSpaceChanges(kinds).hunks[0].rows.map((r) => r.k), ['c']);
+});

@@ -363,6 +363,26 @@ def make_gaps_review(root, name="gaps"):
     return review, repo
 
 
+def make_indent_review(root):
+    """A git review of a file whose lines a and b were only re-indented, and c changed."""
+    repo = os.path.join(root, "indent")
+    os.makedirs(repo)
+    git(repo, "init", "-q", "-b", "main")
+    write(repo, "x.py", "def f():\n  a = 1\n  b = 2\n  c = 3\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "c1")
+    git(repo, "tag", "c1")
+    write(repo, "x.py", "def f():\n    a = 1\n    b = 2\n    c = 4\n")
+    git(repo, "commit", "-q", "-am", "c2")
+    git(repo, "tag", "c2")
+    review = os.path.join(root, "indent.diffnote")
+    out = diffnote("edit", "-f", review, "--author", "reviewer", "--base", "c1", "c2", cwd=repo, comments=[
+        ("+    c = 4", "c を変えました。"),
+    ])
+    assert out.returncode == 0, out.stdout + out.stderr
+    return review, repo
+
+
 def make_calc_review(root):
     """A git review with two revisions of the same base (c1..c2, then c1..c3),
     a review-wide thread, threads on `return None` (resolved) and on `mul`, and

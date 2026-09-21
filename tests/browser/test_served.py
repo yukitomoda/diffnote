@@ -6,7 +6,7 @@ import json
 import time
 
 import harness
-from harness import BrowserCase, Served, entries, make_calc_review, make_gaps_review, make_login_review, show
+from harness import BrowserCase, Served, entries, make_calc_review, make_gaps_review, make_indent_review, make_login_review, show
 import os
 import shutil
 import subprocess
@@ -461,6 +461,34 @@ class NewThreadsOnLines(ServedCase):
         where = b.js("""(function(){var t=Array.from(document.querySelectorAll('#rev-0 .diffnote-thread')).find(function(t){return t.textContent.includes('mul の戻り値を確認')}); return t.querySelector('.diffnote-thread__where').textContent})()""")
         self.assertEqual(where, "calc.py:12", "line 14 of the new revision is line 12 of the old one")
         self.assertGreater(b.count("#rev-0 .diffnote-reply"), 0, "still interactive")
+
+
+class IgnoreWhitespaceStored(ServedCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.indent, _ = make_indent_review(cls.root)
+
+    def test_hiding_white_space_differences_is_kept_in_the_review(self):
+        self.serve(self.indent)
+        b = self.b
+        before = entries(self.review)
+        b.click("[data-diffnote-ignore-space]")
+        self.assertTrue(b.wait("document.querySelectorAll('tr.diffnote-line--removed').length === 1"))
+        self.assertEqual(entries(self.review), before + 1, "it is in the log")
+        # Asking again for what is already so writes nothing.
+        b.js("fetch('/api/whitespace',{method:'POST',headers:{'X-Diffnote':'1','Content-Type':'application/json'},body:JSON.stringify({ignore:true})})")
+        time.sleep(0.3)
+        self.assertEqual(entries(self.review), before + 1)
+        # A page opened later has it on.
+        b.reload(ready="!!document.querySelector('.diffnote-file')")
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-ignore-space]').checked"))
+        self.assertEqual(b.count("tr.diffnote-line--removed"), 1)
+        b.click("[data-diffnote-ignore-space]")
+        self.assertTrue(b.wait("document.querySelectorAll('tr.diffnote-line--removed').length === 3"))
+        b.js("document.querySelector('[data-diffnote-shutdown]').click()")
+        self.assertTrue(b.wait("!document.getElementById('app')"))
+        self.assertIn("設定変更 2 件", b.js("document.body.textContent"))
 
 
 class ThreadsOnFilesAndTheReview(ServedCase):

@@ -205,6 +205,16 @@ pub enum Event {
         #[serde(with = "time::serde::rfc3339")]
         created_at: OffsetDateTime,
     },
+    /// Whether the page hides the differences that are only in white space (the
+    /// lines of a change that read the same without it). The last one wins;
+    /// nothing said means they are shown. It only changes what is shown: the
+    /// diff, and where threads are, stay as they are.
+    IgnoreWhitespace {
+        value: bool,
+        author: String,
+        #[serde(with = "time::serde::rfc3339")]
+        created_at: OffsetDateTime,
+    },
     /// A version of the reviewed content that some edit session was made
     /// against. Appended the first time a session that adds anything sees a
     /// diff (by `digest`) the bundle hasn't recorded yet.

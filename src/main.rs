@@ -1318,6 +1318,12 @@ fn cmd_show(review_path: PathBuf) -> Result<()> {
             Event::Title { title, author, .. } => {
                 println!("[タイトル] {title} -- {author}");
             }
+            Event::IgnoreWhitespace { value, author, .. } => {
+                println!(
+                    "[設定] 空白だけの違いを{} -- {author}",
+                    if *value { "隠す" } else { "隠さない" }
+                );
+            }
             Event::Pin { revision, files } => {
                 println!("[固定] リビジョン {revision}: {} 個のファイル", files.len());
             }

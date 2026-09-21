@@ -648,7 +648,7 @@
     var revealed = _g[0];
     var setRevealed = _g[1];
     var shown = useMemo(function () { return lib.shownFrom(file.gaps, revealed); }, [file.gaps, revealed]);
-    var view = useMemo(function () { return lib.withGaps(file, shown); }, [file, shown]);
+    var view = useMemo(function () { return lib.withGaps(ctx.ignoreSpace ? lib.withoutSpaceChanges(file) : file, shown); }, [file, shown, ctx.ignoreSpace]);
     var expand = function (gap, where) {
       var g = file.gaps[gap];
       var req = lib.expandRequest(g, shown[gap] || { top: [], bottom: [] }, where);
@@ -892,7 +892,7 @@
     }, [revision, opened && opened.byRev[rev]]);
     var ctx = {
       model: model, rev: rev, revision: revision, byId: byId, order: order,
-      placements: revision.placements, hideResolved: props.hideResolved, layout: props.layout,
+      placements: revision.placements, hideResolved: props.hideResolved, layout: props.layout, ignoreSpace: props.ignoreSpace,
     };
     var globals = order.filter(function (id) { return revision.placements[id].kind === 'global'; });
     var viewed = useContext(ViewedContext);
@@ -1042,6 +1042,11 @@
             }
             return res;
           });
+        },
+        // Whether differences that are only in white space are hidden: kept in the
+        // review (the answer is the whole model).
+        setIgnoreWhitespace: function (ignore) {
+          return D.api.post('/api/whitespace', { ignore: ignore }).then(whole);
         },
         setAuthor: function (name) {
           return D.api.post('/api/author', { author: name }).then(function (res) {
@@ -1304,6 +1309,16 @@
       };
     }, [model, viewed, current]);
     var seenCount = here.filter(viewed.is).length;
+    // Differences that are only in white space hidden: what the review says (and
+    // a page that only shows it can change for itself).
+    var _w = useState(!!model.ignore_whitespace);
+    var localIgnore = _w[0];
+    var setLocalIgnore = _w[1];
+    var ignoreSpace = review.actions ? !!model.ignore_whitespace : localIgnore;
+    var toggleSpace = function (on) {
+      if (review.actions) review.actions.setIgnoreWhitespace(on);
+      else setLocalIgnore(on);
+    };
     // What pressing 「最新を取り込む」 did, said next to it.
     var _n = useState(null);
     var note = _n[0];
@@ -1359,6 +1374,10 @@
               onClick=${function () { keep('diffnote-layout', o[0]); setChosen(o[0]); }}>${o[1]}</button>`;
           })}
         </div>`}
+        <label class="diffnote-toggle" title="行の中の空白だけが違う変更を、変更なしとして表示します">
+          <input type="checkbox" data-diffnote-ignore-space checked=${ignoreSpace} onChange=${function (e) { toggleSpace(e.target.checked); }} />
+          空白の違いを隠す
+        </label>
         ${(counts.resolved > 0 || model.interactive) && html`<label class="diffnote-toggle">
           <input type="checkbox" data-diffnote-hide-resolved checked=${hide}
             onChange=${function (e) { keep('diffnote-hide-resolved', e.target.checked ? '1' : '0'); setHide(e.target.checked); }} />
@@ -1380,7 +1399,7 @@
       <${ActionsContext.Provider} value=${review.actions}>
         <${ComposeContext.Provider} value=${compose}>
           <${OpenedContext.Provider} value=${openedFiles}>
-            <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} compose=${compose} />
+            <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} ignoreSpace=${ignoreSpace} compose=${compose} />
           <//>
         <//>
       <//>

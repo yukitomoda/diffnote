@@ -7,7 +7,7 @@ import unittest
 
 import harness
 import harness
-from harness import BrowserCase, diffnote, git, make_calc_review, make_gaps_review, make_login_review, write
+from harness import BrowserCase, diffnote, git, make_calc_review, make_indent_review, make_gaps_review, make_login_review, write
 
 CUR = ".diffnote-revision.is-current"
 
@@ -596,3 +596,44 @@ class LineLinks(BrowserCase):
     def test_the_copy_buttons_of_a_thread_carry_the_revision(self):
         b = self.b
         self.assertEqual(b.js("document.querySelector(`${'%s'} .diffnote-thread .diffnote-copy`).getAttribute('data-diffnote-copy')" % CUR).endswith("@2"), True)
+
+
+class IgnoreWhitespace(BrowserCase):
+    """Lines that differ only in white space, shown as unchanged when asked."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.review, _ = make_indent_review(cls.root)
+        html = os.path.join(cls.root, "indent.html")
+        assert diffnote("export", "-f", cls.review, html).returncode == 0
+        cls.url = pathlib.Path(html).as_uri()
+
+    def rows(self):
+        b = self.b
+        return (b.count("tr.diffnote-line--removed"), b.count("tr.diffnote-line--added"))
+
+    def setUp(self):
+        self.b = self.browser
+        self.b.open(self.url)
+        self.b.js("localStorage.clear(); localStorage.setItem('diffnote-layout','unified')")
+        self.b.reload()
+
+    def test_the_lines_changed_only_in_white_space_are_shown_as_unchanged_when_asked(self):
+        b = self.b
+        self.assertEqual(self.rows(), (3, 3))
+        b.click("[data-diffnote-ignore-space]")
+        self.assertTrue(b.wait("document.querySelectorAll('tr.diffnote-line--removed').length === 1"))
+        self.assertEqual(self.rows(), (1, 1), "only c is a change")
+        self.assertEqual(b.count("tr.diffnote-line--context"), 3, "def, a and b")
+        # The thread is still on its line.
+        self.assertTrue(b.js("document.querySelector('tr.diffnote-line--added').nextElementSibling.classList.contains('diffnote-thread-row')"))
+        b.click("[data-diffnote-ignore-space]")
+        self.assertTrue(b.wait("document.querySelectorAll('tr.diffnote-line--removed').length === 3"))
+
+    def test_it_works_side_by_side_too(self):
+        b = self.b
+        b.click("[data-diffnote-layout='split']")
+        self.assertTrue(b.wait_exists("table.diffnote-diff--split"))
+        b.click("[data-diffnote-ignore-space]")
+        self.assertTrue(b.wait("document.querySelectorAll('td.diffnote-cell--removed.diffnote-line__content').length === 1"))
