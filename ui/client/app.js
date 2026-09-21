@@ -29,6 +29,9 @@
   // The files marked as looked at: `is(file)` and `toggle(file)` (a file that has
   // become another one since is not marked any more).
   var ViewedContext = preact.createContext(null);
+  // Places in a comment's text that name lines of a file: `has(path)` and
+  // `go(path, start, end)`.
+  var LinksContext = preact.createContext(null);
 
   var DEFAULT_TITLE = 'diffnote レビュー';
   var BINARY_CHANGES = { added: '追加', deleted: '削除', renamed: '名前変更', modified: '変更' };
@@ -167,6 +170,7 @@
   function Comment(props) {
     var c = props.comment;
     var actions = props.actions;
+    var links = useContext(LinksContext);
     var mine = !!actions && actions.editable.has(c.id);
     var _e = useState(false);
     var editing = _e[0];
@@ -219,7 +223,7 @@
             </div>
             ${error && html`<p class="diffnote-error">${error}</p>`}
           </form>`
-        : html`<div class="diffnote-comment__body">${markdown(c.doc)}</div>${error && html`<p class="diffnote-error">${error}</p>`}`}
+        : html`<div class="diffnote-comment__body">${markdown(c.doc, links)}</div>${error && html`<p class="diffnote-error">${error}</p>`}`}
     </article>`;
   }
 
@@ -363,10 +367,18 @@
   // elements. Only what is known is drawn, so nothing a comment says can be
   // anything but text; a link goes only to http, https or mailto.
   var SAFE_LINK = /^(https?:|mailto:)/i;
-  function markdown(nodes) {
+  function markdown(nodes, links) {
     return (nodes || []).map(function (n, i) {
-      if (typeof n === 'string') return n;
-      var kids = markdown(n.c);
+      if (typeof n === 'string') {
+        if (!links) return n;
+        // `src/a.ts:10-13` in the text goes to those lines.
+        return lib.lineRefs(n, links.has).map(function (piece, j) {
+          if (typeof piece === 'string') return piece;
+          return html`<a key=${j} href="#" class="diffnote-lineref" data-diffnote-lineref=${piece.path + ':' + piece.start + '-' + piece.end} title="この行へ移ります"
+            onClick=${function (e) { e.preventDefault(); links.go(piece.path, piece.start, piece.end); }}>${piece.text}</a>`;
+        });
+      }
+      var kids = markdown(n.c, n.t === 'a' ? null : links);
       switch (n.t) {
         case 'p': return h('p', { key: i }, kids);
         case 'h': return h('h' + Math.min(Math.max(n.l || 1, 1), 6), { key: i }, kids);
@@ -383,7 +395,7 @@
           var head = row.t === 'thead';
           return h(head ? 'thead' : 'tbody', { key: r }, h('tr', null, (row.c || []).map(function (cell, j) {
             var al = { l: 'left', c: 'center', r: 'right' }[(n.al || [])[j]];
-            return h(head ? 'th' : 'td', { key: j, style: al ? 'text-align:' + al : undefined }, markdown(cell.c));
+            return h(head ? 'th' : 'td', { key: j, style: al ? 'text-align:' + al : undefined }, markdown(cell.c, links));
           })));
         })));
         case 'code': return h('code', { key: i }, n.s || '');
@@ -1271,6 +1283,18 @@
       };
     }, [seen]);
     var here = model.revisions[current] ? model.revisions[current].files : [];
+    var links = useMemo(function () {
+      var paths = {};
+      here.forEach(function (f) { paths[f.path] = f; });
+      return {
+        has: function (path) { return Object.prototype.hasOwnProperty.call(paths, path); },
+        go: function (path, start, end) {
+          // A file that was looked at is brought back to be shown.
+          if (viewed.is(paths[path])) viewed.toggle(paths[path]);
+          D.interact.showLines(current, path, start, end);
+        },
+      };
+    }, [here, viewed, current]);
     var seenCount = here.filter(viewed.is).length;
     // What pressing 「最新を取り込む」 did, said next to it.
     var _n = useState(null);
@@ -1344,12 +1368,14 @@
         ${model.interactive && html`<${QuitButton} />`}
       </div>
       <${ViewedContext.Provider} value=${viewed}>
+      <${LinksContext.Provider} value=${links}>
       <${ActionsContext.Provider} value=${review.actions}>
         <${ComposeContext.Provider} value=${compose}>
           <${OpenedContext.Provider} value=${openedFiles}>
             <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} compose=${compose} />
           <//>
         <//>
+      <//>
       <//>
       <//>
     </article>`;

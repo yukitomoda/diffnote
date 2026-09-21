@@ -366,5 +366,38 @@
     return path + ':' + (end > part.start ? part.start + '-' + end : part.start);
   };
 
+  // The places in a text that say lines of a file of the review, as `a/b.ts:10`
+  // or `a/b.ts:10-20` (what a thread's location looks like): the text as pieces,
+  // a piece being a string, or `{ text, path, start, end }` for such a place.
+  // `has(path)` says whether a path is a file of the review (a `12:30` or a
+  // `http://…:8080` is not a place).
+  lib.lineRefs = function (text, has) {
+    var pieces = [];
+    var from = 0;
+    var re = /:(\d+)(?:-(\d+))?/g;
+    var m;
+    while ((m = re.exec(text))) {
+      // The path is what comes before, up to a space: the longest end of it that
+      // is a file (it may have something in front, such as a quote).
+      var tokenStart = m.index;
+      while (tokenStart > from && !/\s/.test(text.charAt(tokenStart - 1))) tokenStart--;
+      var path = null;
+      var pathStart = tokenStart;
+      for (var i = tokenStart; i < m.index; i++) {
+        var candidate = text.slice(i, m.index);
+        if (has(candidate)) { path = candidate; pathStart = i; break; }
+      }
+      if (path === null) continue;
+      var start = +m[1];
+      var end = m[2] != null ? +m[2] : start;
+      if (start < 1 || end < start) continue;
+      if (pathStart > from) pieces.push(text.slice(from, pathStart));
+      pieces.push({ text: text.slice(pathStart, m.index + m[0].length), path: path, start: start, end: end });
+      from = m.index + m[0].length;
+    }
+    if (from < text.length) pieces.push(text.slice(from));
+    return pieces;
+  };
+
   if (typeof module !== 'undefined' && module.exports) module.exports = lib;
 })(typeof window !== 'undefined' ? (window.Diffnote = window.Diffnote || {}) : (globalThis.Diffnote = globalThis.Diffnote || {}));

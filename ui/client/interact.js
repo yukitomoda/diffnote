@@ -254,6 +254,48 @@
       pinned = null;
       clear();
     },
+    // Show lines of a file (as the new side numbers them): open the file, scroll
+    // to them and mark them for a moment. Lines the diff leaves out are not on
+    // the page: the nearest that are shown stand for them.
+    showLines: function (rev, path, start, end) {
+      var tries = 0;
+      var look = function () {
+        var section = Array.prototype.filter.call(
+          document.querySelectorAll('#rev-' + rev + ' section.diffnote-file'),
+          function (e) { return e.getAttribute('data-diffnote-file') === path; }
+        )[0];
+        var cells = section ? section.querySelectorAll('[data-diffnote-new]') : [];
+        if (section && cells.length === 0) {
+          // Not drawn until opened.
+          for (var n = section.querySelector('details'); n && !n.open; ) {
+            n.open = true;
+            n.dispatchEvent(new Event('toggle'));
+            break;
+          }
+        }
+        if (!section || cells.length === 0) {
+          if (++tries < 40) requestAnimationFrame(look);
+          else if (section) section.scrollIntoView({ block: 'start' });
+          return;
+        }
+        for (var d = section.querySelector('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true;
+        var inside = [];
+        var before = null;
+        var after = null;
+        Array.prototype.forEach.call(cells, function (c) {
+          var v = +c.getAttribute('data-diffnote-new');
+          if (v >= start && v <= end) inside.push(c);
+          else if (v < start) before = c;
+          else if (!after) after = c;
+        });
+        var marked = inside.length ? inside : [after || before];
+        var rows = marked.map(function (c) { return c.closest('tr'); });
+        rows.forEach(function (r) { r.classList.add('diffnote-linked'); });
+        setTimeout(function () { rows.forEach(function (r) { r.classList.remove('diffnote-linked'); }); }, 2600);
+        rows[0].scrollIntoView({ block: 'center' });
+      };
+      requestAnimationFrame(look);
+    },
     // Go to the element with this id once the page has drawn it (it is being
     // brought back), looking for it for a moment.
     jumpWhenShown: function (id) {

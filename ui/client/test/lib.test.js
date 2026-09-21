@@ -310,3 +310,26 @@ test('what was shown is kept by line number, so it holds when the places change'
   shown = lib.shownFrom([null, { n: 53, o: 24, w: 24 }], all);
   assert.equal(shown[1].top.length + shown[1].bottom.length, 53);
 });
+
+test('a place in a text is a file of the review with its lines, and nothing else is', () => {
+  const has = (p) => p === 'src/a.ts' || p === 'docs/記事.md';
+  assert.deepEqual(lib.lineRefs('see src/a.ts:10-13 here', has), [
+    'see ',
+    { text: 'src/a.ts:10-13', path: 'src/a.ts', start: 10, end: 13 },
+    ' here',
+  ]);
+  assert.deepEqual(lib.lineRefs('src/a.ts:7', has), [{ text: 'src/a.ts:7', path: 'src/a.ts', start: 7, end: 7 }]);
+  // Something in front of the path (a quote, a bracket) stays outside.
+  assert.deepEqual(lib.lineRefs('「src/a.ts:3」を見て', has), [
+    '「',
+    { text: 'src/a.ts:3', path: 'src/a.ts', start: 3, end: 3 },
+    '」を見て',
+  ]);
+  assert.deepEqual(lib.lineRefs('docs/記事.md:2-3。', has), [{ text: 'docs/記事.md:2-3', path: 'docs/記事.md', start: 2, end: 3 }, '。']);
+  // Not files of the review, or not lines.
+  assert.deepEqual(lib.lineRefs('at 12:30 on http://x.y:8080/a and other.ts:4', has), ['at 12:30 on http://x.y:8080/a and other.ts:4']);
+  assert.deepEqual(lib.lineRefs('src/a.ts:0 src/a.ts:9-3', has), ['src/a.ts:0 src/a.ts:9-3']);
+  // Two in a text.
+  assert.equal(lib.lineRefs('src/a.ts:1 and src/a.ts:2', has).filter((p) => typeof p !== 'string').length, 2);
+  assert.deepEqual(lib.lineRefs('', has), []);
+});

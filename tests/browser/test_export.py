@@ -520,3 +520,58 @@ class BinaryFiles(BrowserCase):
         self.assertEqual(tint("gone.bin"), "rgb(255, 235, 233)", "deleted: reddish")
         self.assertNotIn(tint("same.bin"), (tint("new.bin"), tint("gone.bin")), "changed: as usual")
 
+
+
+class LineLinks(BrowserCase):
+    """Places in a comment that name lines of a file go to those lines."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        repo = os.path.join(cls.root, "links")
+        os.makedirs(repo)
+        git(repo, "init", "-q", "-b", "main")
+        text = lambda a, b: "".join({5: a + "\n", 40: b + "\n"}.get(n, f"row {n}\n") for n in range(1, 61))
+        write(repo, "long.txt", text("five", "forty"))
+        write(repo, "other.txt", "x\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "c1")
+        git(repo, "tag", "c1")
+        write(repo, "long.txt", text("FIVE", "FORTY"))
+        write(repo, "other.txt", "y\n")
+        git(repo, "commit", "-q", "-am", "c2")
+        git(repo, "tag", "c2")
+        review = os.path.join(cls.root, "links.diffnote")
+        assert diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo, comments=[
+            ("+FIVE", "ここは long.txt:40-41 と other.txt:1 と対で、time 12:30 や none.txt:4 は対象外です。"),
+        ]).returncode == 0
+        html = os.path.join(cls.root, "links.html")
+        assert diffnote("export", "-f", review, html).returncode == 0
+        cls.url = pathlib.Path(html).as_uri()
+
+    def setUp(self):
+        self.b = self.browser
+        self.b.open(self.url)
+        self.b.js("localStorage.clear(); localStorage.setItem('diffnote-layout','unified')")
+        self.b.reload()
+
+    def test_only_the_places_that_are_files_of_the_review_are_links(self):
+        b = self.b
+        self.assertEqual(b.js("[...document.querySelectorAll('[data-diffnote-lineref]')].map(a => a.textContent).join('|')"), "long.txt:40-41|other.txt:1")
+
+    def test_pressing_one_goes_to_the_lines_and_marks_them(self):
+        b = self.b
+        b.click("[data-diffnote-lineref]")
+        self.assertTrue(b.wait_exists("tr.diffnote-linked"))
+        self.assertEqual(b.js("document.querySelector('tr.diffnote-linked').getAttribute('data-diffnote-new')"), "40")
+        self.assertTrue(b.wait("!document.querySelector('tr.diffnote-linked')"), "the mark goes away")
+
+    def test_it_brings_back_a_file_that_was_looked_at_and_shows_it(self):
+        b = self.b
+        section = f"{CUR} section.diffnote-file[data-diffnote-file='other.txt']"
+        b.click(f"{section} [data-diffnote-viewed]")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(section)})"))
+        b.click("[data-diffnote-lineref='other.txt:1-1']")
+        self.assertTrue(b.wait_exists(section), "the file is back")
+        self.assertTrue(b.wait_exists("tr.diffnote-linked"))
+        self.assertFalse(b.exists("[data-diffnote-check='other.txt'][aria-pressed='true']"))
