@@ -902,7 +902,7 @@
             onChange=${function (e) { keep('diffnote-hide-resolved', e.target.checked ? '1' : '0'); setHide(e.target.checked); }} />
           解決済みを隠す<span class="diffnote-toggle__count" data-diffnote-resolved-count>${'(' + counts.resolved + ')'}</span>
         </label>`}
-        ${model.interactive && html`<a class="diffnote-button" data-diffnote-export href="/export" download title="今の内容を、誰でも開ける HTML として保存します">エクスポート</a>`}
+        ${model.interactive && html`<a class="diffnote-button" data-diffnote-export href="/export" title="今の内容を、誰でも開ける HTML として保存します">エクスポート</a>`}
         ${model.interactive && html`<button type="button" class="diffnote-button diffnote-topbar__quit" data-diffnote-shutdown title="サーバーを止めます"
           onClick=${function () { D.api.post('/api/shutdown').then(function () { document.body.innerHTML = '<p style="padding:24px;font:14px sans-serif">終了しました。このタブは閉じてかまいません。</p>'; }); }}>終了</button>`}
       </div>

@@ -110,7 +110,10 @@ class ClientServed(BrowserCase):
         self.serve()
         b = self.b
         self.assertEqual(b.js("document.querySelector('[data-diffnote-export]').getAttribute('href')"), "/export")
-        self.assertTrue(b.js("document.querySelector('[data-diffnote-export]').hasAttribute('download')"))
+        # No `download` attribute: with a bare one the page (Preact) made it
+        # `download="true"` and the browser saved the file as "true". The
+        # name comes from the server's Content-Disposition.
+        self.assertFalse(b.js("document.querySelector('[data-diffnote-export]').hasAttribute('download')"))
         # What the link fetches: an attachment named after the bundle, with the
         # comments in it and nothing that talks to the server.
         b.js("fetch('/export',{credentials:'same-origin'}).then(function(r){return r.text().then(function(t){window.__export={disposition:r.headers.get('content-disposition'),text:t}})})")
