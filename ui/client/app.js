@@ -230,12 +230,18 @@
   }
 
   // What the tab shows once the server has stopped.
-  function stopped() {
+  function stopped(farewell) {
     preact.render(null, document.getElementById('app'));
-    var p = document.createElement('p');
-    p.style.cssText = 'padding:24px;font:14px sans-serif';
-    p.textContent = '終了しました。このタブは閉じてかまいません。';
-    document.body.replaceChildren(p);
+    var box = document.createElement('div');
+    box.style.cssText = 'padding:24px;font:14px/1.7 sans-serif';
+    var lines = ['終了しました。'].concat(farewell ? String(farewell).split('\n') : [], ['このタブは閉じてかまいません。']);
+    lines.forEach(function (line) {
+      var p = document.createElement('p');
+      p.style.margin = '0 0 6px';
+      p.textContent = line;
+      box.appendChild(p);
+    });
+    document.body.replaceChildren(box);
   }
 
   // A comment: the nodes of its Markdown (see `src/html/markdown.rs`) as
@@ -1106,7 +1112,7 @@
         </label>`}
         ${model.interactive && html`<a class="diffnote-button" data-diffnote-export href="/export" title="今の内容を、誰でも開ける HTML として保存します">エクスポート</a>`}
         ${model.interactive && html`<button type="button" class="diffnote-button diffnote-topbar__quit" data-diffnote-shutdown title="サーバーを止めます"
-          onClick=${function () { D.api.post('/api/shutdown').then(function () { stopped(); }); }}>終了</button>`}
+          onClick=${function () { D.api.post('/api/shutdown').then(function (res) { stopped(res.farewell); }); }}>終了</button>`}
       </div>
       <${ActionsContext.Provider} value=${review.actions}>
         <${ComposeContext.Provider} value=${compose}>

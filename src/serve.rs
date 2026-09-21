@@ -108,6 +108,51 @@ pub struct Server {
     /// The comments added since this server started: the ones the page may
     /// still edit or delete. Once the server stops, they are settled.
     session: std::sync::Mutex<std::collections::HashSet<Ulid>>,
+    /// What was done since the server started, to say so when it stops.
+    stats: std::sync::Mutex<Stats>,
+}
+
+/// A rough account of what a session changed.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+struct Stats {
+    threads: u32,
+    replies: u32,
+    resolved: u32,
+    reopened: u32,
+    edited: u32,
+    deleted: u32,
+}
+
+impl Stats {
+    /// In words, roughly: "スレッド 2 件・返信 1 件を追加、解決 1 件".
+    fn describe(&self) -> String {
+        let mut added = Vec::new();
+        if self.threads > 0 {
+            added.push(format!("スレッド {} 件", self.threads));
+        }
+        if self.replies > 0 {
+            added.push(format!("返信 {} 件", self.replies));
+        }
+        let mut parts = Vec::new();
+        if !added.is_empty() {
+            parts.push(format!("{}を追加", added.join("・")));
+        }
+        for (n, what) in [
+            (self.resolved, "解決"),
+            (self.reopened, "再開"),
+            (self.edited, "編集"),
+            (self.deleted, "削除"),
+        ] {
+            if n > 0 {
+                parts.push(format!("{what} {n} 件"));
+            }
+        }
+        if parts.is_empty() {
+            "変更はありませんでした".to_string()
+        } else {
+            parts.join("、")
+        }
+    }
 }
 
 /// The commits' files, read from the repository (a tree is read once).
@@ -157,7 +202,33 @@ impl Server {
                 trees: Default::default(),
             },
             session: Default::default(),
+            stats: Default::default(),
         }
+    }
+
+    fn count(&self, change: impl FnOnce(&mut Stats)) {
+        change(&mut self.stats.lock().unwrap_or_else(|e| e.into_inner()));
+    }
+
+    /// What is said when the server stops: what this session did, and where it
+    /// is kept.
+    pub fn farewell(&self) -> String {
+        let stats = *self.stats.lock().unwrap_or_else(|e| e.into_inner());
+        let totals = bundle::load(&self.review).ok().map(|l| {
+            let threads = review::build_threads(&l.events);
+            (
+                threads.len(),
+                threads.iter().map(|t| 1 + t.replies.len()).sum::<usize>(),
+            )
+        });
+        let kept = match totals {
+            Some((threads, comments)) => format!(
+                "{} に保存しました(スレッド {threads} 件・コメント {comments} 件)",
+                self.review.display()
+            ),
+            None => format!("{}", self.review.display()),
+        };
+        format!("今回の変更: {}\n{kept}", stats.describe())
     }
 
     /// The comments of this session that are still in the review, as the page
@@ -534,6 +605,7 @@ impl Server {
         let before = html::stamp(&loaded);
         self.append_all(events, blobs)?;
         self.remember(id);
+        self.count(|s| s.threads += 1);
         self.model_answer(&before, serde_json::json!({ "thread": id.to_string() }))
     }
 
@@ -553,7 +625,10 @@ impl Server {
             return Reply::error(413, "送られた内容が大きすぎます");
         }
         if path == "/api/shutdown" {
-            let mut reply = Reply::json(200, &serde_json::json!({ "ok": true }));
+            let mut reply = Reply::json(
+                200,
+                &serde_json::json!({ "ok": true, "farewell": self.farewell() }),
+            );
             reply.shutdown = true;
             return reply;
         }
@@ -647,6 +722,7 @@ impl Server {
             .ok_or_else(|| Failure(404, "そのコメントはありません".into()))?;
         *target = text.to_string();
         self.save(&loaded, &events)?;
+        self.count(|s| s.edited += 1);
         self.model_answer(&before, serde_json::json!({}))
     }
 
@@ -700,10 +776,19 @@ impl Server {
         let events: Vec<Event> = loaded.events.iter().filter(|e| !gone(e)).cloned().collect();
         self.save(&loaded, &events)?;
         let mut session = self.session.lock().unwrap_or_else(|e| e.into_inner());
-        for id in removed {
-            session.remove(&id);
+        for id in &removed {
+            session.remove(id);
         }
         drop(session);
+        // What was added and is now taken out no longer counts as added.
+        let replies = removed.len().saturating_sub(usize::from(is_root)) as u32;
+        self.count(|s| {
+            if is_root {
+                s.threads = s.threads.saturating_sub(1);
+            }
+            s.replies = s.replies.saturating_sub(replies);
+            s.deleted += 1;
+        });
         self.model_answer(&before, serde_json::json!({}))
     }
 
@@ -742,6 +827,7 @@ impl Server {
             body: text.to_string(),
         })?;
         self.remember(id);
+        self.count(|s| s.replies += 1);
         Ok(())
     }
 
@@ -767,7 +853,15 @@ impl Server {
                 author,
                 created_at,
             }
-        })
+        })?;
+        self.count(|s| {
+            if resolved {
+                s.resolved += 1;
+            } else {
+                s.reopened += 1;
+            }
+        });
+        Ok(())
     }
 
     fn host_is_ours(&self, request: &Request) -> bool {
@@ -903,6 +997,7 @@ pub fn run(options: &Options, on_ready: impl FnOnce(&str, &[String])) -> Result<
         response = response.with_header(header("Cache-Control", "no-store"));
         let _ = request.respond(response);
         if shutdown {
+            println!("{}", server.farewell());
             break;
         }
     }
@@ -1383,6 +1478,59 @@ mod tests {
             body: b"{}",
         });
         assert_eq!(refused.status, 403);
+    }
+
+    #[test]
+    fn what_a_session_did_is_told_roughly_when_it_stops() {
+        let f = fixture();
+        // Nothing yet.
+        let quiet = json(&f.post("/api/shutdown", "{}"))["farewell"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(quiet.contains("変更はありませんでした"), "{quiet}");
+        assert!(quiet.contains("保存しました"), "{quiet}");
+
+        let f = fixture();
+        new_thread(&f, r#"{"scope":"global","revision":0,"body":"overall"}"#);
+        f.post(
+            &format!("/api/threads/{}/replies", f.thread),
+            r#"{"body":"one"}"#,
+        );
+        f.post(
+            &format!("/api/threads/{}/replies", f.thread),
+            r#"{"body":"two"}"#,
+        );
+        f.post(&format!("/api/threads/{}/resolve", f.thread), "{}");
+        let mine = last_comment_id_of_reply(&f);
+        f.post(&format!("/api/comments/{mine}/edit"), r#"{"body":"two!"}"#);
+        f.post(&format!("/api/comments/{mine}/delete"), "{}");
+        let told = json(&f.post("/api/shutdown", "{}"))["farewell"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        // One thread, one reply left (the other was taken out again), resolved,
+        // edited and deleted once each; and where it is kept, with the totals.
+        assert!(
+            told.contains("スレッド 1 件・返信 1 件を追加、解決 1 件、編集 1 件、削除 1 件"),
+            "{told}"
+        );
+        assert!(told.contains("スレッド 2 件・コメント 3 件"), "{told}");
+    }
+
+    fn last_comment_id_of_reply(f: &Fixture) -> String {
+        f.events()
+            .into_iter()
+            .rev()
+            .find_map(|e| match e {
+                Event::Comment {
+                    id,
+                    parent: Some(_),
+                    ..
+                } => Some(id.to_string()),
+                _ => None,
+            })
+            .unwrap()
     }
 
     #[test]

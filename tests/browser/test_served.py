@@ -231,10 +231,22 @@ class Replies(ServedCase):
         self.assertNotEqual(self.counts(), threads)
         self.assertNotIn("やっぱり要らない全体コメント", show(self.review))
 
-    def test_the_shutdown_button_stops_the_server(self):
+    def test_the_shutdown_button_stops_the_server_and_says_roughly_what_was_saved(self):
         self.serve()
-        self.b.js("document.querySelector('[data-diffnote-shutdown]').click()")
-        self.assertTrue(self.b.wait("document.body.textContent.includes('終了しました')"))
+        b = self.b
+        card = self.card("mul の型")
+        self.reply_to(card, "終了前の返信")
+        b.js(f"document.getElementById({card!r}).querySelector('[data-diffnote-action]').click()")
+        deadline = time.time() + 8
+        while "解決" not in show(self.review) and time.time() < deadline:
+            time.sleep(0.05)
+        b.js("document.querySelector('[data-diffnote-shutdown]').click()")
+        self.assertTrue(b.wait("document.body.textContent.includes('終了しました')"))
+        told = b.js("document.body.textContent")
+        self.assertIn("返信 1 件を追加", told)
+        self.assertIn("解決 1 件", told)
+        self.assertIn("に保存しました", told)
+        self.assertIn(os.path.basename(self.review), told)
 
 
 LOGIN = "table[data-diffnote-file='src/auth/login.ts']"
