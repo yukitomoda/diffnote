@@ -136,7 +136,8 @@
     if (installed) return;
     installed = true;
     document.addEventListener('mouseover', function (e) {
-      if (pinned) return;
+      // While lines are being chosen, no comment's range is shown.
+      if (pinned || document.body.classList.contains('is-selecting')) return;
       var el = target(e.target);
       if (!el) return;
       var id = pick(scopeOf(el), el);
@@ -172,6 +173,13 @@
         jump(link);
         return;
       }
+      // A line number on the served page starts a choice of lines, not a pin.
+      if (
+        document.body.hasAttribute('data-diffnote-api') &&
+        e.target.closest &&
+        e.target.closest('.diffnote-line__gutter-old, .diffnote-line__gutter-new')
+      )
+        return;
       var el = target(e.target);
       if (!el) {
         pinned = null;

@@ -176,5 +176,45 @@
     };
   };
 
+  // --- Choosing lines to comment on --------------------------------------
+
+  // All the rows of a file's diff in one list (across its hunks), each with
+  // the line counters on each side as they stand before it: the old and the
+  // new line number the next line would have.
+  lib.flatRows = function (file) {
+    var out = [];
+    file.hunks.forEach(function (hunk, hi) {
+      var m = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(hunk.header);
+      var o = m ? +m[1] : 1;
+      var n = m ? +m[2] : 1;
+      hunk.rows.forEach(function (row, ri) {
+        out.push({ hi: hi, ri: ri, row: row, oldNext: o, newNext: n });
+        if (row.o != null) o += 1;
+        if (row.n != null) n += 1;
+      });
+    });
+    return out;
+  };
+
+  // The lines the rows from `a` to `b` (either way round) cover, on each side:
+  // where the counters stand before the first, and after the last.
+  lib.counters = function (flat, a, b) {
+    var first = flat[Math.min(a, b)];
+    var last = flat[Math.max(a, b)];
+    var span = function (next, has) {
+      var start = first[next];
+      return { start: start, len: last[next] + (has ? 1 : 0) - start };
+    };
+    return { base: span('oldNext', last.row.o != null), head: span('newNext', last.row.n != null) };
+  };
+
+  // `src/a.rs:10-13`: the lines of the choice, as the new side has them (the old
+  // side, for lines that were only removed).
+  lib.chosenLocation = function (path, counters) {
+    var part = counters.head.len > 0 ? counters.head : counters.base;
+    var end = part.start + part.len - 1;
+    return path + ':' + (end > part.start ? part.start + '-' + end : part.start);
+  };
+
   if (typeof module !== 'undefined' && module.exports) module.exports = lib;
 })(typeof window !== 'undefined' ? (window.Diffnote = window.Diffnote || {}) : (globalThis.Diffnote = globalThis.Diffnote || {}));

@@ -466,10 +466,25 @@ impl Server {
             anchor: Some(anchor),
             body: text.to_string(),
         });
+        let events_added = events.len();
         self.append_all(events, blobs)?;
 
         let loaded = bundle::load(&self.review).map_err(internal)?;
         let threads = review::build_threads(&loaded.events);
+        // The client page takes the whole model, with the thread placed in it.
+        if value.get("model").and_then(|m| m.as_bool()) == Some(true) {
+            let model = html::view_model_for(&loaded, true).map_err(internal)?;
+            return Ok(Reply::json(
+                200,
+                &serde_json::json!({
+                    "ok": true,
+                    "thread": id.to_string(),
+                    "appended": events_added,
+                    "events": loaded.events.len(),
+                    "model": model,
+                }),
+            ));
+        }
         let mut answer = serde_json::json!({
             "ok": true,
             "thread": id.to_string(),
@@ -1558,6 +1573,29 @@ mod tests {
             patch["list_before"].as_str(),
             Some(f.thread.to_string().as_str())
         );
+    }
+
+    #[test]
+    fn the_client_page_gets_the_whole_model_with_the_new_thread_in_it() {
+        let f = fixture();
+        let reply = new_thread(
+            &f,
+            r#"{"scope":"global","revision":0,"body":"overall","model":true}"#,
+        );
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        let answer = json(&reply);
+        assert_eq!(answer["appended"], 1);
+        let model = &answer["model"];
+        assert_eq!(model["events"], answer["events"]);
+        let id = answer["thread"].as_str().unwrap();
+        assert!(
+            model["threads"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|t| t["id"] == id)
+        );
+        assert_eq!(model["revisions"][0]["placements"][id]["kind"], "global");
     }
 
     #[test]

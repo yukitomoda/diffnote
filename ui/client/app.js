@@ -21,6 +21,9 @@
   // a thread, resolve or reopen it. Set by the App, read by the cards.
   var ActionsContext = preact.createContext(null);
 
+  // Choosing lines and writing a new thread (`null` on an exported page).
+  var ComposeContext = preact.createContext(null);
+
   var DEFAULT_TITLE = 'diffnote レビュー';
 
   // What is kept between visits, where the browser lets us.
@@ -138,6 +141,33 @@
     </details>`;
   }
 
+  // The box a new thread is written in: on chosen lines, on a file, or on the
+  // whole review. What is written is kept while the choice changes.
+  function Composer(props) {
+    var c = useContext(ComposeContext);
+    var box = useRef(null);
+    useEffect(function () { box.current.focus(); }, []);
+    var send = function () { c.send(props.request); };
+    return html`<div>
+      <form class="diffnote-compose" data-diffnote-scope=${props.scope} style=${c.pending ? 'display:none' : undefined}
+        onSubmit=${function (e) { e.preventDefault(); send(); }}>
+        <div class="diffnote-compose__where">${props.where}</div>
+        <textarea ref=${box} rows="3" placeholder="コメントを書く(Ctrl+Enter で送信)" value=${c.draft}
+          onInput=${function (e) { c.setDraft(e.target.value); }}
+          onKeyDown=${function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }}></textarea>
+        <div class="diffnote-reply__buttons">
+          <button type="submit" class="diffnote-button diffnote-button--primary">コメントする</button>
+          <button type="button" class="diffnote-button" data-diffnote-cancel onClick=${c.close}>キャンセル</button>
+        </div>
+        ${c.error && html`<p class="diffnote-error">${c.error}</p>`}
+      </form>
+      ${c.pending && html`<article class="diffnote-comment is-pending">
+        <p class="diffnote-comment__author">保存中…</p>
+        <div class="diffnote-comment__body">${c.draft}</div>
+      </article>`}
+    </div>`;
+  }
+
   // The rows of one file's diff, with the cards of the threads on them.
   function DiffTable(props) {
     var file = props.file;
@@ -154,33 +184,57 @@
       },
       [ctx.order, ctx.placements, file.path]
     );
+    var compose = useContext(ComposeContext);
+    var flat = useMemo(function () { return lib.flatRows(file); }, [file]);
+    var sel = compose && compose.sel && compose.sel.rev === ctx.rev && compose.sel.path === file.path ? compose.sel : null;
+    var lo = sel ? Math.min(sel.anchor, sel.to) : -1;
+    var hi_ = sel ? Math.max(sel.anchor, sel.to) : -1;
+    var flatIndex = 0;
     var out = [];
     file.hunks.forEach(function (hunk, hi) {
       out.push(html`<tr class="diffnote-hunk-header" key=${'h' + hi}><td colspan="3">${hunk.header}</td></tr>`);
       hunk.rows.forEach(function (row, ri) {
+        var idx = flatIndex++;
+        var picked = idx >= lo && idx <= hi_;
         var ids = lib.covering(cover, row);
         var resolvedOnly = ctx.hideResolved && ids.length > 0 && ids.every(function (id) { return ctx.byId[id].resolved; });
         var cls =
           'diffnote-line--' + (row.k === 'c' ? 'context' : row.k === 'a' ? 'added' : 'removed') +
           (ids.length ? ' diffnote-line--commented' : '') +
-          (resolvedOnly ? ' diffnote-line--resolved-only' : '');
+          (resolvedOnly ? ' diffnote-line--resolved-only' : '') +
+          (picked ? ' diffnote-select' + (idx === lo ? ' diffnote-select-first' : '') + (idx === hi_ ? ' diffnote-select-last' : '') : '');
         var colors = ids.map(function (id) { return ctx.placements[id].color; });
+        var begin = compose && function (e) {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          compose.begin(ctx.rev, file.path, idx, e.shiftKey);
+        };
         out.push(html`<tr
           class=${cls}
           key=${hi + ':' + ri}
+          data-diffnote-old=${row.o != null ? row.o : undefined}
+          data-diffnote-new=${row.n != null ? row.n : undefined}
+          onMouseOver=${compose ? function () { compose.extend(idx); } : undefined}
           data-diffnote-threads=${ids.length ? ids.join(' ') : undefined}
           style=${ids.length ? '--diffnote-bars: ' + lib.bars(colors) : undefined}
         >
-          <td class="diffnote-line__gutter-old">${row.o != null ? row.o : ''}</td>
-          <td class="diffnote-line__gutter-new">${row.n != null ? row.n : ''}</td>
+          <td class="diffnote-line__gutter-old" onMouseDown=${begin}>${row.o != null ? row.o : ''}</td>
+          <td class="diffnote-line__gutter-new" onMouseDown=${begin}>${row.n != null ? row.n : ''}</td>
           <td class="diffnote-line__content"><code dangerouslySetInnerHTML=${{ __html: row.h }}></code></td>
         </tr>`);
+        if (sel && !compose.selecting && idx === hi_) {
+          var c = lib.counters(flat, sel.anchor, sel.to);
+          out.push(html`<tr class="diffnote-composer-row" key="compose"><td colspan="3">
+            <${Composer} scope="lines" where=${lib.chosenLocation(file.path, c)}
+              request=${{ revision: ctx.rev, file: file.path, base: c.base, head: c.head }} />
+          </td></tr>`);
+        }
         lib.cardsOfRow(after, row).forEach(function (id) {
           out.push(html`<tr class="diffnote-thread-row" key=${'c' + id}><td colspan="3"><${Card} rev=${ctx.rev} thread=${ctx.byId[id]} placement=${ctx.placements[id]} /></td></tr>`);
         });
       });
     });
-    return html`<div class="diffnote-diff-scroll"><table class="diffnote-diff"><tbody>${out}</tbody></table></div>`;
+    return html`<div class="diffnote-diff-scroll"><table class="diffnote-diff" data-diffnote-file=${file.path}><tbody>${out}</tbody></table></div>`;
   }
 
   // The same rows side by side: what a file was on the left, what it is on the
@@ -258,12 +312,24 @@
     var opened = _[0];
     var setOpened = _[1];
     var missing = file.status === 'context' && file.hunks.length === 0;
-    return html`<section class="diffnote-file" id=${'r' + ctx.rev + '-file-' + htmlId(file.path)}>
-      <details open=${startsOpen} onToggle=${function (e) { if (e.target.open && !opened) setOpened(true); }}>
+    var compose = useContext(ComposeContext);
+    var details = useRef(null);
+    var composing = compose && compose.scope && compose.scope.kind === 'file' && compose.scope.rev === ctx.rev && compose.scope.path === file.path;
+    return html`<section class="diffnote-file" id=${'r' + ctx.rev + '-file-' + htmlId(file.path)} data-diffnote-file=${file.path}>
+      <details ref=${details} open=${startsOpen} onToggle=${function (e) { if (e.target.open && !opened) setOpened(true); }}>
         <summary>
           <h2>${file.path}${file.status === 'binary' ? ' (バイナリ)' : ''}${file.status === 'renamed' ? ' (名前変更)' : ''}</h2>
           <button type="button" class="diffnote-copy" data-diffnote-copy=${file.path} title="パスをコピー">コピー</button>
+          ${compose && file.status !== 'context' && html`<button type="button" class="diffnote-mini" data-diffnote-add="file" title="このファイルにコメントする"
+            onClick=${function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              details.current.open = true;
+              setOpened(true);
+              compose.openScope('file', ctx.rev, file.path);
+            }}>コメント</button>`}
         </summary>
+        ${composing && html`<div class="diffnote-compose-wrap"><${Composer} scope="file" where=${file.path + ' へのコメント'} request=${{ scope: 'file', revision: ctx.rev, file: file.path }} /></div>`}
         ${fileThreads.map(function (id) { return html`<${Card} key=${id} rev=${ctx.rev} thread=${ctx.byId[id]} placement=${ctx.placements[id]} />`; })}
         ${missing && html`<p class="diffnote-file__missing">このファイルは指定したdiffに含まれていません(コメント作成時点と異なるdiffを指定している可能性があります)。</p>`}
         ${opened && file.hunks.length > 0 && (ctx.layout === 'split' ? html`<${SplitTable} file=${file} ctx=${ctx} />` : html`<${DiffTable} file=${file} ctx=${ctx} />`)}
@@ -356,7 +422,10 @@
         <${FileList} ctx=${listOrder} />
         ${model.threads.length > 0 && html`<${ThreadList} ctx=${listOrder} />`}
       </aside>
-      ${globals.length > 0 && html`<section class="diffnote-global-comments">
+      ${(globals.length > 0 || props.compose) && html`<section class="diffnote-global-comments" data-diffnote-global>
+        ${props.compose && html`<div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global"
+          onClick=${function () { props.compose.openScope('global', rev); }}>レビュー全体にコメントする</button></div>`}
+        ${props.compose && props.compose.scope && props.compose.scope.kind === 'global' && props.compose.scope.rev === rev && html`<div class="diffnote-compose-wrap"><${Composer} scope="global" where="レビュー全体へのコメント" request=${{ scope: 'global', revision: rev }} /></div>`}
         ${globals.map(function (id) { return html`<${Card} key=${id} rev=${rev} thread=${byId[id]} placement=${revision.placements[id]} />`; })}
       </section>`}
       ${revision.files.map(function (f) { return html`<${File} key=${rev + ':' + f.path} file=${f} ctx=${ctx} />`; })}
@@ -434,6 +503,13 @@
             return res;
           });
         },
+        // A new thread: the answer has the whole model, with it placed.
+        create: function (request) {
+          return D.api.post('/api/threads', Object.assign({ model: true }, request)).then(function (res) {
+            if (res.ok) setModel(res.model);
+            return res;
+          });
+        },
         setResolved: function (id, resolved) {
           var before = ref.current.threads.filter(function (t) { return t.id === id; })[0];
           setModel(replace(Object.assign({}, before, { resolved: resolved })));
@@ -465,12 +541,106 @@
     return { model: model, actions: actions };
   }
 
+  // Lines being chosen (pressing a line number, dragging, Shift+click), or a
+  // box open for a file or the review, and what is written in it. `null` when
+  // the page can't change the review.
+  function useCompose(actions, current) {
+    var _s = useState(null);
+    var sel = _s[0];
+    var setSel = _s[1];
+    var _g = useState(false);
+    var selecting = _g[0];
+    var setSelecting = _g[1];
+    var _o = useState(null);
+    var scope = _o[0];
+    var setScope = _o[1];
+    var _d = useState('');
+    var draft = _d[0];
+    var setDraft = _d[1];
+    var _p = useState(false);
+    var pending = _p[0];
+    var setPending = _p[1];
+    var _e = useState('');
+    var error = _e[0];
+    var setError = _e[1];
+    var dragging = useRef(false);
+
+    var close = function () {
+      setSel(null);
+      setScope(null);
+      setDraft('');
+      setError('');
+    };
+    useEffect(function () {
+      var up = function () {
+        if (!dragging.current) return;
+        dragging.current = false;
+        document.body.classList.remove('is-selecting');
+        setSelecting(false);
+      };
+      var key = function (e) {
+        if (e.key === 'Escape') close();
+      };
+      document.addEventListener('mouseup', up);
+      document.addEventListener('keydown', key);
+      return function () {
+        document.removeEventListener('mouseup', up);
+        document.removeEventListener('keydown', key);
+      };
+    }, []);
+    // Another revision: what was open belonged to the one left.
+    useEffect(close, [current]);
+
+    return useMemo(function () {
+      if (!actions) return null;
+      return {
+        sel: sel, selecting: selecting, scope: scope, draft: draft, pending: pending, error: error,
+        setDraft: setDraft, close: close,
+        begin: function (rev, path, idx, shift) {
+          // Whatever comment's range was shown gives way to the choice.
+          D.interact.reset();
+          setScope(null);
+          setError('');
+          setSel(function (cur) {
+            return shift && cur && cur.rev === rev && cur.path === path
+              ? { rev: rev, path: path, anchor: cur.anchor, to: idx }
+              : { rev: rev, path: path, anchor: idx, to: idx };
+          });
+          dragging.current = true;
+          document.body.classList.add('is-selecting');
+          setSelecting(true);
+        },
+        extend: function (idx) {
+          if (!dragging.current) return;
+          setSel(function (cur) { return cur && cur.to !== idx ? Object.assign({}, cur, { to: idx }) : cur; });
+        },
+        openScope: function (kind, rev, path) {
+          setSel(null);
+          setError('');
+          setScope({ kind: kind, rev: rev, path: path });
+        },
+        send: function (request) {
+          var text = draft.trim();
+          if (!text || pending) return;
+          setPending(true);
+          setError('');
+          actions.create(Object.assign({}, request, { body: text })).then(function (res) {
+            setPending(false);
+            if (res.ok) close();
+            else setError(res.error || '保存できませんでした');
+          });
+        },
+      };
+    }, [actions, sel, selecting, scope, draft, pending, error]);
+  }
+
   function App(props) {
     var review = useReview(props.model);
     var model = review.model;
     var _c = useState(revisionFromHash(model));
     var current = _c[0];
     var setCurrent = _c[1];
+    var compose = useCompose(review.actions, current);
     // Resolved threads are hidden unless that was turned off before.
     var _h = useState(kept('diffnote-hide-resolved', '1') !== '0');
     var hide = _h[0];
@@ -516,7 +686,9 @@
           onClick=${function () { D.api.post('/api/shutdown').then(function () { document.body.innerHTML = '<p style="padding:24px;font:14px sans-serif">終了しました。このタブは閉じてかまいません。</p>'; }); }}>終了</button>`}
       </div>
       <${ActionsContext.Provider} value=${review.actions}>
-        <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} />
+        <${ComposeContext.Provider} value=${compose}>
+          <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} compose=${compose} />
+        <//>
       <//>
     </article>`;
   }

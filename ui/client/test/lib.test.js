@@ -148,3 +148,29 @@ test('counts say how many threads there are and how many are resolved', () => {
   assert.deepEqual(lib.counts([{ resolved: true }, { resolved: false }, { resolved: true }]), { all: 3, resolved: 2 });
   assert.deepEqual(lib.counts([]), { all: 0, resolved: 0 });
 });
+
+test('the lines chosen are counted on each side from the counters before the first row and after the last', () => {
+  const file = {
+    hunks: [{
+      header: '@@ -10,4 +10,4 @@ fn',
+      rows: [
+        { k: 'c', o: 10, n: 10 },
+        { k: 'd', o: 11 },
+        { k: 'a', n: 11 },
+        { k: 'c', o: 12, n: 12 },
+      ],
+    }, {
+      header: '@@ -40,0 +41,1 @@',
+      rows: [{ k: 'a', n: 41 }],
+    }],
+  };
+  const flat = lib.flatRows(file);
+  assert.deepEqual(flat.map((r) => [r.oldNext, r.newNext]), [[10, 10], [11, 11], [12, 11], [12, 12], [40, 41]]);
+  // One added line: nothing on the old side.
+  assert.deepEqual(lib.counters(flat, 2, 2), { base: { start: 12, len: 0 }, head: { start: 11, len: 1 } });
+  // The removed and the added line (the drag may go either way).
+  assert.deepEqual(lib.counters(flat, 2, 1), { base: { start: 11, len: 1 }, head: { start: 11, len: 1 } });
+  assert.equal(lib.chosenLocation('a.rs', lib.counters(flat, 0, 3)), 'a.rs:10-12');
+  assert.equal(lib.chosenLocation('a.rs', lib.counters(flat, 1, 1)), 'a.rs:11'.replace('11', '11'));
+  assert.equal(lib.chosenLocation('a.rs', lib.counters(flat, 4, 4)), 'a.rs:41');
+});
