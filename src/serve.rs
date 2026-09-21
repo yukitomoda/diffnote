@@ -27,6 +27,9 @@ use ulid::Ulid;
 /// Bigger bodies (a comment is text) are refused.
 const MAX_BODY: usize = 1024 * 1024;
 
+/// The cookie that carries the token. Its name has the port in it: cookies are
+/// kept per host, not per port, so two servers on this machine (each with its
+/// own token) would otherwise overwrite each other's.
 const COOKIE: &str = "diffnote_token";
 
 pub struct Options {
@@ -351,7 +354,11 @@ impl Server {
             reply.headers.push(("Location".into(), "/".into()));
             reply.headers.push((
                 "Set-Cookie".into(),
-                format!("{COOKIE}={}; HttpOnly; SameSite=Strict; Path=/", self.token),
+                format!(
+                    "{}={}; HttpOnly; SameSite=Strict; Path=/",
+                    self.cookie_name(),
+                    self.token
+                ),
             ));
             return reply;
         }
@@ -954,13 +961,17 @@ impl Server {
             .is_none_or(|o| ours.iter().any(|x| x == o))
     }
 
+    pub fn cookie_name(&self) -> String {
+        format!("{COOKIE}_{}", self.port)
+    }
+
     fn has_token(&self, request: &Request) -> bool {
         request
             .header("cookie")
             .into_iter()
             .flat_map(|c| c.split(';'))
             .filter_map(|p| p.trim().split_once('='))
-            .any(|(name, value)| name == COOKIE && value == self.token)
+            .any(|(name, value)| name == self.cookie_name() && value == self.token)
     }
 }
 
@@ -1172,7 +1183,7 @@ mod tests {
 
     impl Fixture {
         fn cookie(&self) -> String {
-            format!("{COOKIE}={}", self.server.token())
+            format!("{}={}", self.server.cookie_name(), self.server.token())
         }
 
         /// A request as the page makes it: our host, the cookie, the header.
@@ -1541,7 +1552,10 @@ mod tests {
             target: &format!("/api/comments/{mine}/delete"),
             headers: vec![
                 ("host".into(), "127.0.0.1:4242".into()),
-                ("cookie".into(), format!("{COOKIE}={}", later.token())),
+                (
+                    "cookie".into(),
+                    format!("{}={}", later.cookie_name(), later.token()),
+                ),
                 ("x-diffnote".into(), "1".into()),
                 ("origin".into(), "http://127.0.0.1:4242".into()),
             ],
@@ -1655,6 +1669,45 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(told.contains("タイトル変更 2 件"), "{told}");
+    }
+
+    #[test]
+    fn two_servers_on_one_machine_do_not_take_each_others_cookie() {
+        let one = fixture();
+        let other = Server::new(
+            &Options {
+                review: one.path.clone(),
+                port: 0,
+                author: None,
+                repo: None,
+            },
+            4243,
+        );
+        assert_ne!(one.server.cookie_name(), other.cookie_name());
+        let ask = |server: &Server, port: u16, cookie: String| {
+            server
+                .handle(&Request {
+                    method: "GET",
+                    target: "/api/version",
+                    headers: vec![
+                        ("host".into(), format!("127.0.0.1:{port}")),
+                        ("cookie".into(), cookie),
+                    ],
+                    body: b"",
+                })
+                .status
+        };
+        let mine = format!("{}={}", one.server.cookie_name(), one.server.token());
+        let theirs = format!("{}={}", other.cookie_name(), other.token());
+        // Each takes its own; neither takes the other's.
+        assert_eq!(ask(&one.server, 4242, mine.clone()), 200);
+        assert_eq!(ask(&other, 4243, theirs.clone()), 200);
+        assert_eq!(ask(&one.server, 4242, theirs.clone()), 403);
+        assert_eq!(ask(&other, 4243, mine.clone()), 403);
+        // A browser that has visited both sends both, and both work.
+        let both = format!("{mine}; {theirs}");
+        assert_eq!(ask(&one.server, 4242, both.clone()), 200);
+        assert_eq!(ask(&other, 4243, both), 200);
     }
 
     #[test]
@@ -2646,7 +2699,10 @@ mod tests {
             target: "/api/model",
             headers: vec![
                 ("host".into(), "127.0.0.1:4242".into()),
-                ("cookie".into(), format!("{COOKIE}={}", alone.token())),
+                (
+                    "cookie".into(),
+                    format!("{}={}", alone.cookie_name(), alone.token()),
+                ),
             ],
             body: b"",
         });

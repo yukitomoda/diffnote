@@ -244,6 +244,27 @@ class Replies(ServedCase):
         self.assertIn("起動時のタイトル", self.b.text(".diffnote-summary h1"))
         self.assertIn("起動時のタイトル", show(self.review))
 
+    def test_two_servers_at_once_keep_working_in_the_same_browser(self):
+        self.serve()
+        first = self.server
+        other_review = os.path.join(self.fresh("review"), "other.diffnote")
+        shutil.copy(self.calc, other_review)
+        second = Served(other_review, author="二つ目")
+        self.addCleanup(second.stop)
+        b = self.b
+        # Visiting the second server would, with one shared cookie, log the first out.
+        b.open(second.url)
+        b.open(first.url.split("/?")[0] + "/")
+        self.assertTrue(b.exists(".diffnote-diff"), "the first server still answers")
+        b.open(second.url.split("/?")[0] + "/")
+        self.assertTrue(b.exists(".diffnote-diff"), "and so does the second")
+        # A reply to the first is still accepted.
+        card = self.card("mul の型")
+        b.open(first.url.split("/?")[0] + "/")
+        card = self.card("mul の型")
+        self.reply_to(card, "二つのサーバーの間で")
+        self.assertIn("二つのサーバーの間で", show(self.review))
+
     def test_the_title_can_be_changed_on_the_page_and_is_kept_in_the_review(self):
         self.serve()
         b = self.b
