@@ -234,3 +234,7 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .tok-emphasis { font-style: italic; }
 .tok-raw { color: #a31515; }
 .tok-link { color: #0000ee; text-decoration: underline; }
+
+/* The words that changed, in a removed line and the added line that replaces it. */
+.diffnote-line--removed .diffnote-word, .diffnote-cell--removed .diffnote-word { background: rgba(255, 129, 130, 0.4); }
+.diffnote-line--added .diffnote-word, .diffnote-cell--added .diffnote-word { background: rgba(46, 160, 67, 0.4); }

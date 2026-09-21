@@ -215,3 +215,31 @@ test('a thread that covers both the old and the new line of a row is one of the 
   assert.deepEqual(lib.covering(cover, { o: 38, n: 46 }), ['a', 'b', 'c']);
   assert.deepEqual(lib.covering({ new: { 1: ['a', 'b'] }, old: { 1: ['b', 'c'] } }, { o: 1, n: 1 }), ['a', 'b', 'c']);
 });
+
+test('pieces are cut where the changed words begin and end, across pieces and kinds', () => {
+  const pieces = [['keyword', 'let'], ' x = ', ['string', '"abc"']];
+  // Nothing changed: the pieces as they are.
+  assert.deepEqual(lib.markPieces(pieces, []), [['keyword', 'let', false], [null, ' x = ', false], ['string', '"abc"', false]]);
+  // A word in the plain piece, and the inside of the string.
+  assert.deepEqual(lib.markPieces(pieces, [[4, 5], [9, 12]]), [
+    ['keyword', 'let', false],
+    [null, ' ', false],
+    [null, 'x', true],
+    [null, ' = ', false],
+    ['string', '"', false],
+    ['string', 'abc', true],
+    ['string', '"', false],
+  ]);
+  // A range over several pieces marks each part.
+  assert.deepEqual(lib.markPieces(pieces, [[2, 5]]), [
+    ['keyword', 'le', false],
+    ['keyword', 't', true],
+    [null, ' x', true],
+    [null, ' = ', false],
+    ['string', '"abc"', false],
+  ]);
+  assert.deepEqual(lib.markPieces([], [[0, 3]]), []);
+  // The text is kept whole whatever the ranges.
+  const whole = lib.markPieces(pieces, [[1, 2], [3, 4], [10, 20]]).map((p) => p[1]).join('');
+  assert.equal(whole, 'let x = "abc"');
+});

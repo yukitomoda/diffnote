@@ -224,6 +224,23 @@ class SideBySide(BrowserCase):
         self.assertEqual(by_new["1"], ["1", "context", "1", "context"])
         self.assertLess(len(rows), unified, "a removed line shares a row with an added one")
 
+    def test_the_words_that_changed_are_emphasized_in_both_layouts(self):
+        b = self.b
+        # (A word that spans pieces of code of different kinds is several spans.)
+        words = lambda scope: ["".join(b.js("Array.from(document.querySelectorAll('%s .diffnote-word')).map(function(e){return e.textContent})" % scope))]
+        self.assertEqual(words(".diffnote-line--removed"), [".pass === pass"])
+        self.assertEqual(words(".diffnote-line--added"), ["!"])
+        # Its background is stronger than the line's own.
+        self.assertNotEqual(
+            b.js("getComputedStyle(document.querySelector('.diffnote-line--removed .diffnote-word')).backgroundColor"),
+            b.js("getComputedStyle(document.querySelector('.diffnote-line--removed')).backgroundColor"))
+        b.js("localStorage.setItem('diffnote-layout','split')")
+        b.reload()
+        self.assertEqual(words(".diffnote-cell--removed"), [".pass === pass"])
+        self.assertEqual(words(".diffnote-cell--added"), ["!"])
+        # The text is whole: the words are only wrapped.
+        self.assertIn("if (account.pass === pass) {", b.text(".diffnote-cell--removed.diffnote-line__content"))
+
     def copy_after_dragging(self, side, first, last):
         b = self.b
         cell = lambda n: "document.querySelector(\"td.diffnote-line__gutter-%s[data-diffnote-%s='%d']\").nextElementSibling" % (side, side, n)

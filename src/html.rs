@@ -738,6 +738,7 @@ const STYLE: &str = include_str!("../ui/style.css");
 mod markdown;
 pub(crate) mod tokens;
 mod viewmodel;
+mod words;
 pub use viewmodel::{
     OpenedData, ViewModel, chunk_data, opened_data, served_model_json, stamp, thread_json,
     tree_json, view_model, view_model_for, view_model_json,
@@ -941,7 +942,7 @@ mod tests {
     #[test]
     fn the_model_has_the_threads_their_comments_and_a_revision_per_view() {
         let (m, [t1, ..], _dir, _loaded) = model_of_scenario();
-        assert_eq!(m.version, 3);
+        assert_eq!(m.version, 4);
         assert_eq!(m.title, None);
         assert_eq!(m.revisions.len(), 2);
         assert_eq!(m.threads.len(), 5);

@@ -18,7 +18,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 /// The version of this format, for the page to check.
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 
 #[derive(Serialize)]
 pub struct ViewModel {
@@ -100,6 +100,10 @@ pub struct RowData {
     pub n: Option<u32>,
     /// The text, as pieces with their kinds (see `tokens`).
     pub t: Vec<Token>,
+    /// The words that changed, as `[start, end)` in UTF-16 units of the text
+    /// (a removed line and the added line that replaces it; see `words`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub w: Vec<[u32; 2]>,
 }
 
 /// Where a thread is in one revision.
@@ -351,7 +355,7 @@ pub(super) fn file_status(file: Option<&FileDiff>, in_diff: bool) -> &'static st
 fn hunk_data(hunk: &Hunk, syntax: &SyntaxReference, syntax_set: &SyntaxSet) -> HunkData {
     // Each hunk is read from its start.
     let mut tokenizer = Tokenizer::new(syntax, syntax_set);
-    let rows = hunk
+    let mut rows: Vec<RowData> = hunk
         .lines
         .iter()
         .map(|line| RowData {
@@ -363,8 +367,10 @@ fn hunk_data(hunk: &Hunk, syntax: &SyntaxReference, syntax_set: &SyntaxSet) -> H
             o: line.old_line,
             n: line.new_line,
             t: tokenizer.line(&line.content),
+            w: Vec::new(),
         })
         .collect();
+    mark_words(hunk, &mut rows);
     HunkData {
         header: format!(
             "@@ -{},{} +{},{} @@ {}",
@@ -375,6 +381,36 @@ fn hunk_data(hunk: &Hunk, syntax: &SyntaxReference, syntax_set: &SyntaxSet) -> H
             hunk.section_heading.as_deref().unwrap_or("")
         ),
         rows,
+    }
+}
+
+/// Marks the words that changed in each removed line and the added line that
+/// takes its place: a run of removed lines is paired, in order, with the run of
+/// added lines after it (as the side by side layout puts them next to each
+/// other).
+fn mark_words(hunk: &Hunk, rows: &mut [RowData]) {
+    let lines = &hunk.lines;
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].kind != LineKind::Removed {
+            i += 1;
+            continue;
+        }
+        let removed_start = i;
+        while i < lines.len() && lines[i].kind == LineKind::Removed {
+            i += 1;
+        }
+        let added_start = i;
+        while i < lines.len() && lines[i].kind == LineKind::Added {
+            i += 1;
+        }
+        for k in 0..(added_start - removed_start).min(i - added_start) {
+            let (r, a) = (removed_start + k, added_start + k);
+            if let Some((old, new)) = super::words::changed(&lines[r].content, &lines[a].content) {
+                rows[r].w = old;
+                rows[a].w = new;
+            }
+        }
     }
 }
 
@@ -498,4 +534,69 @@ pub fn chunk_data(
 ) -> Result<(HunkData, Option<usize>), String> {
     let text = stored_text(loaded, revision, path, git)?;
     Ok(context_hunk_data(path, &text, from))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diff::DiffLine;
+
+    fn line(kind: LineKind, content: &str, old: Option<u32>, new: Option<u32>) -> DiffLine {
+        DiffLine {
+            kind,
+            content: content.into(),
+            old_line: old,
+            new_line: new,
+            no_newline_at_eof: false,
+        }
+    }
+
+    fn hunk(lines: Vec<DiffLine>) -> Hunk {
+        Hunk {
+            old_start: 1,
+            old_lines: 0,
+            new_start: 1,
+            new_lines: 0,
+            section_heading: None,
+            lines,
+        }
+    }
+
+    fn data(h: &Hunk) -> HunkData {
+        let syntax_set = &*SYNTAXES;
+        hunk_data(h, guess_syntax("a.txt", syntax_set), syntax_set)
+    }
+
+    #[test]
+    fn a_removed_line_and_the_added_line_after_it_say_which_words_changed() {
+        let h = hunk(vec![
+            line(LineKind::Context, "same", Some(1), Some(1)),
+            line(LineKind::Removed, "type=sha,format=long", Some(2), None),
+            line(LineKind::Added, "type=sha,format=short", None, Some(2)),
+            line(LineKind::Context, "same", Some(3), Some(3)),
+        ]);
+        let d = data(&h);
+        assert!(d.rows[0].w.is_empty() && d.rows[3].w.is_empty());
+        assert_eq!(d.rows[1].w, vec![[16, 20]]);
+        assert_eq!(d.rows[2].w, vec![[16, 21]]);
+    }
+
+    #[test]
+    fn runs_are_paired_in_order_and_an_unpaired_line_has_no_words() {
+        let h = hunk(vec![
+            line(LineKind::Removed, "call(alpha, one)", Some(1), None),
+            line(LineKind::Removed, "call(beta, two)", Some(2), None),
+            line(LineKind::Removed, "gone entirely", Some(3), None),
+            line(LineKind::Added, "call(alpha, uno)", None, Some(1)),
+            line(LineKind::Added, "call(beta, dos)", None, Some(2)),
+        ]);
+        let d = data(&h);
+        assert_eq!(d.rows[0].w, vec![[12, 15]]);
+        assert_eq!(d.rows[3].w, vec![[12, 15]]);
+        assert_eq!(d.rows[1].w, vec![[11, 14]]);
+        assert!(d.rows[2].w.is_empty(), "no line to compare with");
+        // Lines that are only added, or only removed, have nothing to compare.
+        let h = hunk(vec![line(LineKind::Added, "new", None, Some(1))]);
+        assert!(data(&h).rows[0].w.is_empty());
+    }
 }

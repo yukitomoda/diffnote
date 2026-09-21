@@ -47,6 +47,33 @@
       : ids;
   };
 
+  // A line's pieces (text, or `[kind, text]`) cut where the words that changed
+  // begin and end (`ranges`: `[start, end)` in UTF-16 units, sorted), as
+  // `[kind or null, text, changed]`. What isn't in a range is not changed.
+  lib.markPieces = function (pieces, ranges) {
+    var out = [];
+    var at = 0;
+    var r = 0;
+    (pieces || []).forEach(function (p) {
+      var kind = typeof p === 'string' ? null : p[0];
+      var text = typeof p === 'string' ? p : p[1];
+      var start = 0;
+      while (start < text.length) {
+        var pos = at + start;
+        while (r < (ranges || []).length && ranges[r][1] <= pos) r++;
+        var range = ranges && r < ranges.length ? ranges[r] : null;
+        var inside = range !== null && range[0] <= pos;
+        // Up to where the state changes: the end of this range or the start of the next.
+        var stop = inside ? range[1] : range ? range[0] : Infinity;
+        var end = Math.min(text.length, stop - at);
+        out.push([kind, text.slice(start, end), inside]);
+        start = end;
+      }
+      at += text.length;
+    });
+    return out;
+  };
+
   // The stacked color bars at a line's left edge, one per thread on it.
   lib.bars = function (colors) {
     return colors
