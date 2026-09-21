@@ -1862,3 +1862,60 @@ fn a_directory_bundle_compares_every_session_with_the_first_snapshot() {
     env.ok(&dir, &[], &["edit", "-f", review_arg]);
     assert_eq!(bundle::load(&review).unwrap().revisions().count(), 3);
 }
+
+#[test]
+fn init_and_edit_work_on_the_repository_named_from_anywhere() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    // Run from a directory that is not in a repository.
+    let elsewhere = env.path("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+    let repo_arg = repo.to_str().unwrap();
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    env.ok(
+        &elsewhere,
+        &[],
+        &["init", "-f", review_arg, "--repo", repo_arg, "c1"],
+    );
+    assert_eq!(git_sources(&review)[0].head, commit_id(&repo, "c1"));
+    env.ok(
+        &elsewhere,
+        &[("+B", "from far away")],
+        &["edit", "-f", review_arg, "--repo", repo_arg, "c2"],
+    );
+    let sources = git_sources(&review);
+    assert_eq!(sources.len(), 2);
+    assert_eq!(
+        (sources[1].base.clone(), sources[1].head.clone()),
+        (commit_id(&repo, "c1"), commit_id(&repo, "c2"))
+    );
+    assert_eq!(
+        comment_bodies(&bundle::load(&review).unwrap()),
+        ["from far away"]
+    );
+    // Without it, this directory is not a repository: nothing to compare with.
+    let lost = env.run(
+        &elsewhere,
+        &[("+B", "x")],
+        &["edit", "-f", review_arg, "c3"],
+    );
+    assert!(!lost.status.success());
+    // A directory that is not a repository is refused, with its name.
+    let plain = env.path("plain");
+    std::fs::create_dir(&plain).unwrap();
+    let bad = env.run(
+        &elsewhere,
+        &[],
+        &[
+            "edit",
+            "-f",
+            review_arg,
+            "--repo",
+            plain.to_str().unwrap(),
+            "c3",
+        ],
+    );
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("git リポジトリではありません"));
+}

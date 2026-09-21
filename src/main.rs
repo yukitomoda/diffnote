@@ -73,6 +73,9 @@ enum Cmd {
         /// git のリポジトリの中でも、ファイルのスナップショット(ディレクトリのレビュー)を作る。
         #[arg(long)]
         files: bool,
+        /// 基準のコミットを探すリポジトリ。省略時は、実行したディレクトリのリポジトリ。
+        #[arg(long, value_name = "DIR")]
+        repo: Option<PathBuf>,
         /// レビューのタイトル。エクスポートの見出しに使われる(省略できる)。
         #[arg(long, value_name = "TITLE")]
         title: Option<String>,
@@ -99,6 +102,9 @@ enum Cmd {
         /// git のリポジトリの中でも、ディレクトリのレビューにする(まだバンドルがないときだけ意味があります)。
         #[arg(long)]
         files: bool,
+        /// git のレビューの対象のリポジトリ。コミットの解決と、ファイルの読み出しに使う。省略時は、実行したディレクトリのリポジトリ。
+        #[arg(long, value_name = "DIR")]
+        repo: Option<PathBuf>,
         /// 新しい差分を初めて見て、かつこの回で何かを追加したときに、バンドルへ保存する内容。`changed`(差分が触れた全ファイルの両側と、コメントが参照する全ファイル)か、`full`(それに加えて head 全体のツリー)。省略時は、バンドルにすでに決まっているモード、なければ git のレビューでは `changed`(残りは git が持っている)。ディレクトリのレビューは常に全体を保存するので、そこで `--snapshot changed` を指定するとエラーになる。
         #[arg(long, value_enum, hide_possible_values = true)]
         snapshot: Option<diffnote::bundle::SnapshotMode>,
@@ -188,14 +194,16 @@ fn main() -> Result<()> {
             review,
             target,
             files,
+            repo,
             title,
             author,
-        } => cmd_init(review, target, files, title, author),
+        } => cmd_init(review, target, files, repo, title, author),
         Cmd::Edit {
             review,
             target,
             base,
             files,
+            repo,
             snapshot,
             show,
             title,
@@ -207,6 +215,7 @@ fn main() -> Result<()> {
                 base,
                 files,
             },
+            repo,
             snapshot,
             show,
             title,
@@ -373,6 +382,21 @@ fn add_revision(
     Ok(())
 }
 
+/// The repository to work in: the one named by `--repo`, else the one the
+/// current directory is in (not checked until it is used).
+fn repo_of(dir: Option<PathBuf>) -> Result<diffnote::git::Repo> {
+    match dir {
+        Some(dir) => {
+            let repo = diffnote::git::Repo::at(&dir);
+            if !repo.exists() {
+                anyhow::bail!("{} は git リポジトリではありません", dir.display());
+            }
+            Ok(repo)
+        }
+        None => Ok(diffnote::git::Repo::current()),
+    }
+}
+
 /// What `edit` and `serve` are told to compare: the target, and (if there is no
 /// bundle yet) the base to start from; `files` makes it a directory review.
 struct Compare {
@@ -403,9 +427,7 @@ fn cmd_serve(
     }
     // What was asked for is added to the review, so it can be reviewed here (a
     // failure to do what was asked stops; one to do what was not, only says so).
-    let git = repo
-        .clone()
-        .map_or_else(diffnote::git::Repo::current, diffnote::git::Repo::at);
+    let git = repo_of(repo.clone())?;
     match add_revision(&review, &git, base.as_deref(), target.as_deref(), files) {
         Ok(()) => {}
         Err(e) if explicit => return Err(e),
@@ -716,13 +738,14 @@ fn cmd_init(
     review_path: PathBuf,
     target: Option<String>,
     files: bool,
+    repo: Option<PathBuf>,
     title: Option<String>,
     author: Option<String>,
 ) -> Result<()> {
     if review_path.exists() {
         anyhow::bail!("{} はすでに存在します", review_path.display());
     }
-    let repo = diffnote::git::Repo::current();
+    let repo = repo_of(repo)?;
     if !files && repo.exists() {
         return init_git(
             &review_path,
@@ -846,6 +869,7 @@ fn init_files(
 fn cmd_edit(
     review_path: PathBuf,
     compare: Compare,
+    repo: Option<PathBuf>,
     snapshot_override: Option<bundle::SnapshotMode>,
     show_specs: Vec<String>,
     title: Option<String>,
@@ -861,7 +885,7 @@ fn cmd_edit(
         .map(|spec| diffnote::show::parse(spec).map_err(|e| anyhow::anyhow!("--show {spec}: {e}")))
         .collect::<Result<_>>()?;
     let mut loaded = bundle::load(&review_path)?;
-    let repo = diffnote::git::Repo::current();
+    let repo = repo_of(repo)?;
     let mut fresh = FreshBundle(None);
     // A directory review: the bundle says so, or (with no bundle) --files or
     // the lack of a repository does.
