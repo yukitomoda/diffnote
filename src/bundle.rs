@@ -8,6 +8,8 @@
 //! Layout inside the zip:
 //! ```text
 //! review.jsonl
+//! reactions.json            the reactions to comments as they are now (left out if
+//!                          there are none)
 //! settings.json             the review's settings as they are now (left out if all
 //!                          are their defaults)
 //! diffs/<digest>.diff      one per recorded revision (its unified diff)
@@ -28,7 +30,7 @@
 //! an in-place edit), at the cost of not scaling to huge bundles.
 
 pub use crate::model::SnapshotMode;
-use crate::model::{Event, Revision, Settings, Source, TreeFile};
+use crate::model::{Event, Reactions, Revision, Settings, Source, TreeFile};
 use anyhow::{Context, Result};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -40,6 +42,9 @@ pub struct Loaded {
     /// The review's settings (see [`Settings`]); a change is made here and
     /// saved with the bundle.
     pub settings: Settings,
+    /// The reactions to comments (state, see [`Reactions`]); a change is made
+    /// here and saved with the bundle.
+    pub reactions: Reactions,
     /// Existing `diffs/`/`blobs/` entries, carried through unchanged into
     /// the rewritten archive.
     carried_entries: Vec<(String, Vec<u8>)>,
@@ -167,6 +172,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
         return Ok(Loaded {
             events: Vec::new(),
             settings: Settings::default(),
+            reactions: Reactions::new(),
             carried_entries: Vec::new(),
         });
     }
@@ -183,6 +189,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
     let mut events = Vec::new();
     let mut settings = Settings::default();
     let mut from_file: Option<serde_json::Map<String, serde_json::Value>> = None;
+    let mut reactions = Reactions::new();
     let mut carried_entries = Vec::new();
 
     for i in 0..archive.len() {
@@ -201,6 +208,10 @@ pub fn load(path: &Path) -> Result<Loaded> {
             })?;
             events =
                 crate::review::parse_jsonl(&text, &format!("{} の review.jsonl", path.display()))?;
+        } else if name == "reactions.json" {
+            reactions = serde_json::from_slice(&bytes).with_context(|| {
+                format!("{} の reactions.json を読めませんでした", path.display())
+            })?;
         } else if name == "settings.json" {
             from_file = Some(serde_json::from_slice(&bytes).with_context(|| {
                 format!("{} の settings.json を読めませんでした", path.display())
@@ -214,6 +225,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
     Ok(Loaded {
         events,
         settings,
+        reactions,
         carried_entries,
     })
 }
@@ -381,6 +393,15 @@ pub fn save_with(
             writer.write_all(
                 serde_json::to_string_pretty(&loaded.settings)
                     .context("設定を JSON にできませんでした")?
+                    .as_bytes(),
+            )?;
+        }
+
+        if !loaded.reactions.is_empty() {
+            writer.start_file("reactions.json", options)?;
+            writer.write_all(
+                serde_json::to_string_pretty(&loaded.reactions)
+                    .context("リアクションを JSON にできませんでした")?
                     .as_bytes(),
             )?;
         }
@@ -882,5 +903,45 @@ mod tests {
         let read = load(&path).unwrap();
         assert_eq!(read.settings.title.as_deref(), Some("newer"));
         assert!(read.settings.ignore_whitespace);
+    }
+
+    #[test]
+    fn reactions_are_state_kept_in_reactions_json_only_while_there_are_some() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.diffnote");
+        let events = vec![sample_event()];
+        let mut loaded = load(&path).unwrap();
+        assert!(loaded.reactions.is_empty());
+        let names = |p: &Path| -> Vec<String> {
+            let mut a = ZipArchive::new(std::fs::File::open(p).unwrap()).unwrap();
+            (0..a.len())
+                .map(|i| a.by_index(i).unwrap().name().to_string())
+                .collect()
+        };
+        save(&path, &loaded, &events, &Additions::default()).unwrap();
+        assert!(!names(&path).contains(&"reactions.json".to_string()));
+        loaded = load(&path).unwrap();
+        crate::review::toggle_reaction(&mut loaded.reactions, "c1", "👍", "a");
+        save(&path, &loaded, &events, &Additions::default()).unwrap();
+        assert!(names(&path).contains(&"reactions.json".to_string()));
+        let mut again = load(&path).unwrap();
+        assert_eq!(again.reactions["c1"][0].emoji, "👍");
+        assert_eq!(again.reactions["c1"][0].authors, ["a"]);
+        assert!(
+            !entry_names(&again).contains(&"reactions.json"),
+            "not carried as an entry"
+        );
+        // Kept through a save that doesn't touch it (once), and gone when the last is taken back.
+        save(&path, &again, &events, &Additions::default()).unwrap();
+        assert_eq!(
+            names(&path)
+                .iter()
+                .filter(|n| *n == "reactions.json")
+                .count(),
+            1
+        );
+        crate::review::toggle_reaction(&mut again.reactions, "c1", "👍", "a");
+        save(&path, &again, &events, &Additions::default()).unwrap();
+        assert!(!names(&path).contains(&"reactions.json".to_string()));
     }
 }

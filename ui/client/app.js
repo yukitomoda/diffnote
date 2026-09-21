@@ -170,6 +170,30 @@
     }, []);
   }
 
+  // The reactions to a comment: what people reacted with and how many (the
+  // ones of the name signed in are marked, and pressing one takes it back or
+  // adds one's own), and a button for another. A page that only shows the review
+  // has only the marks.
+  function Reactions(props) {
+    var c = props.comment;
+    var actions = props.actions;
+    var list = c.reactions || [];
+    if (!actions && list.length === 0) return null;
+    var me = actions ? actions.author : null;
+    return html`<div class="diffnote-reactions" data-diffnote-reactions>
+      ${list.map(function (r) {
+        var mine = me != null && r.authors.indexOf(me) >= 0;
+        var tip = r.authors.join('、') + ' が ' + r.emoji + ' で反応しました';
+        return actions
+          ? html`<button type="button" key=${r.emoji} class=${'diffnote-reaction' + (mine ? ' is-mine' : '')} data-diffnote-reaction=${r.emoji}
+              aria-pressed=${mine} title=${tip} onClick=${function () { actions.react(c.id, r.emoji); }}>${r.emoji}<span>${r.authors.length}</span></button>`
+          : html`<span key=${r.emoji} class="diffnote-reaction" data-diffnote-reaction=${r.emoji} title=${tip}>${r.emoji}<span>${r.authors.length}</span></span>`;
+      })}
+      ${actions && html`<${EmojiButton} side="left" name="react" label="＋" title="リアクションを付けます" buttonClass="diffnote-reaction diffnote-reaction--add"
+        onPick=${function (emoji) { actions.react(c.id, emoji); }} />`}
+    </div>`;
+  }
+
   // The button that opens the table of emoji, and the table: a search box and the
   // emoji that fit it; one chosen goes to `onPick`.
   function EmojiButton(props) {
@@ -195,9 +219,9 @@
     }, [open]);
     var found = lib.findEmoji(D.emoji || [], query);
     var pick = function (ch) { setOpen(false); setQuery(''); props.onPick(ch); };
-    return html`<span class="diffnote-emoji" ref=${box}>
-      <button type="button" class="diffnote-attach diffnote-emoji__open" data-diffnote-emoji-button aria-haspopup="true" aria-expanded=${open}
-        title="絵文字を入れます" onClick=${function () { setOpen(!open); }}>😀</button>
+    return html`<span class=${'diffnote-emoji' + (props.side === 'left' ? ' diffnote-emoji--left' : '')} ref=${box}>
+      <button type="button" class=${props.buttonClass || 'diffnote-attach diffnote-emoji__open'} data-diffnote-emoji-button=${props.name || ''} aria-haspopup="true" aria-expanded=${open}
+        title=${props.title || '絵文字を入れます'} onClick=${function () { setOpen(!open); }}>${props.label || '😀'}</button>
       ${open && html`<div class="diffnote-emoji__panel" data-diffnote-emoji-panel>
         <input ref=${input} type="search" class="diffnote-emoji__search" data-diffnote-emoji-search placeholder="絵文字を探す(例: ok、バグ)" value=${query}
           onInput=${function (e) { setQuery(e.target.value); }}
@@ -476,7 +500,7 @@
           </form>`
         : c.deleted
           ? html`<p class="diffnote-comment__deleted" data-diffnote-deleted>このコメントは削除されました</p>`
-          : html`<div class="diffnote-comment__body" ref=${body} onMouseUp=${function () { setTimeout(look, 0); }} onKeyUp=${look}>${markdown(c.doc, links)}</div>${error && html`<p class="diffnote-error">${error}</p>`}`}
+          : html`<div class="diffnote-comment__body" ref=${body} onMouseUp=${function () { setTimeout(look, 0); }} onKeyUp=${look}>${markdown(c.doc, links)}</div>${error && html`<p class="diffnote-error">${error}</p>`}<${Reactions} comment=${c} actions=${actions} />`}
       ${quote && html`<button type="button" class="diffnote-quote-button" data-diffnote-quote-selection style=${'top:' + quote.top + 'px;left:' + quote.left + 'px'}
         onMouseDown=${function (e) { e.preventDefault(); }} onClick=${function () { quoteIt(quote.text); }}>❝ 引用して返信</button>`}
     </article>`;
@@ -1495,6 +1519,10 @@
         },
         remove: function (id) {
           return D.api.post('/api/comments/' + id + '/delete').then(whole);
+        },
+        // The signed-in name reacting to a comment with an emoji (or taking it back).
+        react: function (id, emoji) {
+          return D.api.post('/api/comments/' + id + '/react', { emoji: emoji }).then(whole);
         },
         // The review's settings (the ones given; the answer is the whole model),
         // and, below, the name comments are written under for this session.

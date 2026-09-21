@@ -397,3 +397,14 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
 .diffnote-emoji__item { font-size: 18px; line-height: 1; padding: 4px 0; background: none; border: 0; border-radius: 6px; cursor: pointer; }
 .diffnote-emoji__item:hover, .diffnote-emoji__item:focus-visible { background: var(--diffnote-color-gutter); }
 .diffnote-emoji__none { margin: 6px 0 2px; font-size: 12.5px; color: var(--diffnote-color-muted); }
+.diffnote-emoji--left .diffnote-emoji__panel { right: auto; left: 0; }
+
+/* The reactions under a comment. */
+.diffnote-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 2px; }
+.diffnote-reaction { display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 13px; line-height: 1.4; padding: 1px 9px; color: var(--diffnote-color-fg); background: var(--diffnote-color-gutter); border: 1px solid var(--diffnote-color-border); border-radius: 999px; }
+button.diffnote-reaction { cursor: pointer; }
+button.diffnote-reaction:hover { border-color: var(--diffnote-color-muted); }
+.diffnote-reaction > span { font-size: 12px; font-weight: 600; color: var(--diffnote-color-muted); }
+.diffnote-reaction.is-mine { background: var(--diffnote-color-hunk-bg); border-color: var(--diffnote-color-accent); }
+.diffnote-reaction.is-mine > span { color: var(--diffnote-color-accent); }
+.diffnote-reaction--add { color: var(--diffnote-color-muted); background: none; border-style: dashed; }

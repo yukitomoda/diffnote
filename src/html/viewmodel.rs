@@ -93,6 +93,9 @@ pub struct CommentData {
     /// the log while replies stand on it: it is kept with no text).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+    /// What people reacted with (see `Reactions`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<crate::model::Reaction>,
 }
 
 /// What a bundle holds, for the page that shows the settings.
@@ -324,7 +327,7 @@ pub fn view_model_with(
             let ids = comment_ids(&loaded.events);
             threads
                 .iter()
-                .map(|t| thread_data(t, &ids, interactive))
+                .map(|t| thread_data(t, &ids, &loaded.reactions, interactive))
                 .collect()
         },
         revisions,
@@ -365,6 +368,9 @@ pub fn stamp(loaded: &crate::bundle::Loaded) -> String {
     if loaded.settings != crate::model::Settings::default() {
         bytes.extend(serde_json::to_vec(&loaded.settings).unwrap_or_default());
     }
+    if !loaded.reactions.is_empty() {
+        bytes.extend(serde_json::to_vec(&loaded.reactions).unwrap_or_default());
+    }
     crate::digest::digest(bytes)
 }
 
@@ -396,12 +402,13 @@ pub fn thread_json(loaded: &crate::bundle::Loaded, id: Ulid) -> Option<ThreadDat
     build_threads(&loaded.events)
         .iter()
         .find(|t| t.root_id == id)
-        .map(|t| thread_data(t, &ids, true))
+        .map(|t| thread_data(t, &ids, &loaded.reactions, true))
 }
 
 fn thread_data(
     thread: &Thread,
     reply_ids: &BTreeMap<Ulid, Vec<Ulid>>,
+    reactions: &crate::model::Reactions,
     with_body: bool,
 ) -> ThreadData {
     let comment = |id: Ulid, author: &str, at: time::OffsetDateTime, body: &str| CommentData {
@@ -410,6 +417,7 @@ fn thread_data(
         at: rfc3339(at),
         doc: super::markdown::tree(body),
         deleted: body.is_empty(),
+        reactions: reactions.get(&id.to_string()).cloned().unwrap_or_default(),
         body: if with_body {
             body.to_string()
         } else {

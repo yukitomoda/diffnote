@@ -38,6 +38,13 @@ class ServedCase(BrowserCase):
         self.b.js("var t=document.querySelector(%r); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,%r); t.dispatchEvent(new Event('input',{bubbles:true}))" % (selector, text))
         time.sleep(0.1)
 
+    def reply_to(self, card, text, shows=None):
+        b = self.b
+        b.js(f"var t=document.getElementById({card!r}).querySelector('textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,{text!r}); t.dispatchEvent(new Event('input',{{bubbles:true}}))")
+        time.sleep(0.1)
+        b.js(f"document.getElementById({card!r}).querySelector('form.diffnote-reply').requestSubmit()")
+        self.assertTrue(b.wait(f"document.getElementById({card!r}).textContent.includes({(shows or text)!r}) && !document.querySelector('.is-pending')"))
+
     def same_page(self):
         return self.b.js("window.__marker==='same-page' && window.__table===document.querySelector('.diffnote-diff')")
 
@@ -151,13 +158,6 @@ class Replies(ServedCase):
         self.assertTrue(b.wait("!!window.__export"))
         self.assertIn('filename="r.html"', b.js("window.__export.disposition"))
         self.assertTrue(b.js("window.__export.text.includes('mul の型') && !window.__export.text.includes('D.api = ')"))
-
-    def reply_to(self, card, text, shows=None):
-        b = self.b
-        b.js(f"var t=document.getElementById({card!r}).querySelector('textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,{text!r}); t.dispatchEvent(new Event('input',{{bubbles:true}}))")
-        time.sleep(0.1)
-        b.js(f"document.getElementById({card!r}).querySelector('form.diffnote-reply').requestSubmit()")
-        self.assertTrue(b.wait(f"document.getElementById({card!r}).textContent.includes({(shows or text)!r}) && !document.querySelector('.is-pending')"))
 
     def test_what_a_comment_says_is_text_and_markdown_never_html_or_script(self):
         self.serve()
@@ -1175,6 +1175,88 @@ class EmojiTable(ServedCase):
     def write_search(self, text):
         self.b.js("var t=document.querySelector('[data-diffnote-emoji-search]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(t,%s); t.dispatchEvent(new Event('input',{bubbles:true}))" % json.dumps(text))
         time.sleep(0.1)
+
+
+class ReactionsToComments(ServedCase):
+    def first(self, card):
+        return f"#{card} [data-diffnote-comment]:not([data-diffnote-mine])"
+
+    def add_through_the_table(self, comment, code):
+        b = self.b
+        b.click(f"{comment} [data-diffnote-emoji-button=react]")
+        self.assertTrue(b.wait_exists("[data-diffnote-emoji-panel]"))
+        b.click(f"[data-diffnote-emoji-panel] [data-diffnote-emoji='{code}']")
+
+    def has_file(self):
+        return "reactions.json" in harness.zip_names(self.review)
+
+    def test_a_reaction_is_added_from_the_table_marked_as_mine_and_taken_back_by_pressing_it(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        comment = self.first(card)
+        self.assertFalse(b.exists(f"{comment} [data-diffnote-reaction]"))
+        self.add_through_the_table(comment, "tada")
+        chip = f"{comment} [data-diffnote-reaction='🎉']"
+        self.assertTrue(b.wait_exists(chip))
+        self.assertEqual(b.text(chip), "🎉1")
+        self.assertTrue(b.js(f"document.querySelector({json.dumps(chip)}).classList.contains('is-mine')"))
+        self.assertIn("検証者", b.js(f"document.querySelector({json.dumps(chip)}).title"), "who")
+        self.assertTrue(self.has_file(), "kept in the review")
+        self.assertFalse(b.exists("[data-diffnote-emoji-panel]"), "the table is shut")
+        # Pressed again: taken back, and nothing is kept.
+        b.click(chip)
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(chip)})"))
+        self.assertFalse(self.has_file())
+
+    def test_the_same_reaction_of_another_name_counts_and_the_names_are_in_the_tip(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        comment = self.first(card)
+        self.add_through_the_table(comment, "+1")
+        chip = f"{comment} [data-diffnote-reaction='👍']"
+        self.assertTrue(b.wait_exists(chip))
+        # Signed in as another name (as the page lets one be for the session).
+        b.click("[data-diffnote-inline=author]")
+        b.set_value("[data-diffnote-inline-input=author]", "別の人")
+        b.js("document.querySelector('[data-diffnote-inline-input=author]').form.requestSubmit()")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-author]') && document.querySelector('[data-diffnote-author]').textContent==='別の人'"))
+        self.assertFalse(b.js(f"document.querySelector({json.dumps(chip)}).classList.contains('is-mine')"), "not this name's")
+        b.click(chip)
+        self.assertTrue(b.wait(f"document.querySelector({json.dumps(chip)}).textContent === '👍2'"))
+        self.assertTrue(b.js(f"document.querySelector({json.dumps(chip)}).classList.contains('is-mine')"))
+        tip = b.js(f"document.querySelector({json.dumps(chip)}).title")
+        self.assertIn("検証者、別の人", tip)
+
+    def test_a_reaction_goes_with_its_comment_when_that_is_deleted(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        self.reply_to(card, "消す返信")
+        mine = f"#{card} [data-diffnote-mine]"
+        self.add_through_the_table(mine, "heart")
+        self.assertTrue(b.wait_exists(f"{mine} [data-diffnote-reaction='❤️']"))
+        self.assertTrue(self.has_file())
+        b.click(f"{mine} [data-diffnote-delete]")
+        b.click(f"{mine} [data-diffnote-warn-ok]")
+        self.assertTrue(b.wait("!document.body.textContent.includes('消す返信')"))
+        self.assertFalse(self.has_file(), "the reaction went with it")
+
+    def test_a_page_that_only_shows_the_review_shows_the_reactions_and_cannot_add(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        self.add_through_the_table(self.first(card), "rocket")
+        self.assertTrue(b.wait_exists(f"{self.first(card)} [data-diffnote-reaction='🚀']"))
+        exported = b.js("fetch('/export').then(r => r.text())")
+        path = os.path.join(self.fresh("export"), "reactions.html")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(exported)
+        b.open(pathlib.Path(path).as_uri(), ready="!!document.querySelector('[data-diffnote-reaction]')")
+        self.assertEqual(b.js("document.querySelector('[data-diffnote-reaction]').textContent"), "🚀1")
+        self.assertEqual(b.count("button[data-diffnote-reaction]"), 0, "only marks")
+        self.assertFalse(b.exists("[data-diffnote-emoji-button]"), "nothing to add with")
 
 
 class ThreadsOnFilesAndTheReview(ServedCase):

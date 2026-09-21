@@ -9,7 +9,7 @@
 //! plus its ordered replies, with `resolve`/`reopen`/`reanchor` folded in),
 //! which both the HTML exporter and round-trip annotation rendering need.
 
-use crate::model::{Anchor, Event, Settings};
+use crate::model::{Anchor, Event, Reaction, Reactions, Settings};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
@@ -64,6 +64,44 @@ pub fn set_ignore_whitespace(settings: &mut Settings, wanted: bool) -> bool {
     }
     settings.ignore_whitespace = wanted;
     true
+}
+
+/// `author` reacting to a comment with `emoji`: taken back if it was there,
+/// added if not. Whether the reaction is there now.
+pub fn toggle_reaction(
+    reactions: &mut Reactions,
+    comment: &str,
+    emoji: &str,
+    author: &str,
+) -> bool {
+    let list = reactions.entry(comment.to_string()).or_default();
+    let now;
+    match list.iter().position(|r| r.emoji == emoji) {
+        Some(i) => match list[i].authors.iter().position(|a| a == author) {
+            Some(at) => {
+                list[i].authors.remove(at);
+                if list[i].authors.is_empty() {
+                    list.remove(i);
+                }
+                now = false;
+            }
+            None => {
+                list[i].authors.push(author.to_string());
+                now = true;
+            }
+        },
+        None => {
+            list.push(Reaction {
+                emoji: emoji.to_string(),
+                authors: vec![author.to_string()],
+            });
+            now = true;
+        }
+    }
+    if list.is_empty() {
+        reactions.remove(comment);
+    }
+    now
 }
 
 /// Groups a flat event stream into threads, in the order their root
@@ -242,5 +280,23 @@ mod tests {
         assert!(settings.ignore_whitespace);
         assert!(!set_ignore_whitespace(&mut settings, true));
         assert!(set_ignore_whitespace(&mut settings, false));
+    }
+
+    #[test]
+    fn a_reaction_is_added_and_taken_back_by_the_same_person_and_nothing_empty_is_kept() {
+        let mut reactions = Reactions::new();
+        assert!(toggle_reaction(&mut reactions, "c1", "👍", "a"));
+        assert!(toggle_reaction(&mut reactions, "c1", "🎉", "a"));
+        assert!(toggle_reaction(&mut reactions, "c1", "👍", "b"));
+        let emoji: Vec<_> = reactions["c1"].iter().map(|r| r.emoji.as_str()).collect();
+        assert_eq!(emoji, ["👍", "🎉"], "in the order first used");
+        assert_eq!(reactions["c1"][0].authors, ["a", "b"]);
+        // Again: taken back; one person's doesn't take another's.
+        assert!(!toggle_reaction(&mut reactions, "c1", "👍", "a"));
+        assert_eq!(reactions["c1"][0].authors, ["b"]);
+        assert!(!toggle_reaction(&mut reactions, "c1", "👍", "b"));
+        assert_eq!(reactions["c1"].len(), 1, "an emoji nobody has is gone");
+        assert!(!toggle_reaction(&mut reactions, "c1", "🎉", "a"));
+        assert!(reactions.is_empty(), "so is a comment that has none");
     }
 }

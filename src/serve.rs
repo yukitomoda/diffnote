@@ -148,6 +148,17 @@ fn base_span_for(file: Option<&crate::diff::FileDiff>, head: LineSpan) -> LineSp
     }
 }
 
+/// Whether a text can be a reaction: short, not a word or a number, no blanks
+/// (a letter of the alphabet is not an emoji).
+fn is_emoji(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= 32
+        && text.chars().any(|c| !c.is_ascii())
+        && text
+            .chars()
+            .all(|c| !c.is_control() && !c.is_whitespace() && !c.is_ascii_alphanumeric())
+}
+
 /// A size as a person says it: `5 MB`, `830 KB`.
 fn size_words(bytes: u64) -> String {
     if bytes >= 1024 * 1024 {
@@ -205,6 +216,7 @@ struct Stats {
     deleted: u32,
     titled: u32,
     settings: u32,
+    reactions: u32,
     images: u32,
     files: u32,
 }
@@ -224,6 +236,9 @@ impl Stats {
         }
         if self.files > 0 {
             added.push(format!("ファイル {} 件", self.files));
+        }
+        if self.reactions > 0 {
+            added.push(format!("リアクション {} 件", self.reactions));
         }
         let mut parts = Vec::new();
         if !added.is_empty() {
@@ -1065,6 +1080,7 @@ impl Server {
             ["api", "refresh"] => self.refresh(),
             ["api", "comments", id, "edit"] => self.edit_comment(id, request.body),
             ["api", "comments", id, "delete"] => self.delete_comment(id),
+            ["api", "comments", id, "react"] => self.react(id, request.body),
             _ => return Reply::error(404, "見つかりません"),
         };
         match result {
@@ -1213,6 +1229,57 @@ impl Server {
         Ulid::from_string(id).map_err(|_| Failure(400, "コメントの ID が不正です".into()))
     }
 
+    /// The signed-in name reacting to a comment with an emoji: taken back if it
+    /// was there. Kept in the review.
+    fn react(&self, id: &str, body: &[u8]) -> Result<Reply, Failure> {
+        let id = Self::comment_id(id)?;
+        let value: serde_json::Value = serde_json::from_slice(body)
+            .map_err(|_| Failure(400, "送られた内容を読めません".into()))?;
+        let emoji = value
+            .get("emoji")
+            .and_then(|e| e.as_str())
+            .filter(|e| is_emoji(e))
+            .ok_or_else(|| Failure(400, "絵文字が正しくありません".into()))?;
+        let mut loaded = bundle::load(&self.review).map_err(internal)?;
+        let before = html::stamp(&loaded);
+        let deleted = loaded.events.iter().find_map(|e| match e {
+            Event::Comment { id: c, body, .. } if *c == id => Some(body.is_empty()),
+            _ => None,
+        });
+        match deleted {
+            None => return Err(Failure(404, "そのコメントはありません".into())),
+            Some(true) => {
+                return Err(Failure(
+                    409,
+                    "削除されたコメントには、付けられません".into(),
+                ));
+            }
+            Some(false) => {}
+        }
+        let key = id.to_string();
+        let new_kind = loaded
+            .reactions
+            .get(&key)
+            .is_none_or(|list| !list.iter().any(|r| r.emoji == emoji));
+        if new_kind && loaded.reactions.get(&key).is_some_and(|l| l.len() >= 30) {
+            return Err(Failure(
+                409,
+                "1 つのコメントに付けられる絵文字は、30 種類までです".into(),
+            ));
+        }
+        let now = review::toggle_reaction(&mut loaded.reactions, &key, emoji, &self.author());
+        let events = loaded.events.clone();
+        self.save(&loaded, &events)?;
+        self.count(|s| {
+            if now {
+                s.reactions += 1;
+            } else {
+                s.reactions = s.reactions.saturating_sub(1);
+            }
+        });
+        self.model_answer(&before, serde_json::json!({ "reacted": now }))
+    }
+
     /// Rewrites the text of a comment (whoever wrote it, and whenever).
     fn edit_comment(&self, id: &str, body: &[u8]) -> Result<Reply, Failure> {
         let id = Self::comment_id(id)?;
@@ -1251,7 +1318,7 @@ impl Server {
     /// last reply goes when its first comment was deleted before.
     fn delete_comment(&self, id: &str) -> Result<Reply, Failure> {
         let id = Self::comment_id(id)?;
-        let loaded = bundle::load(&self.review).map_err(internal)?;
+        let mut loaded = bundle::load(&self.review).map_err(internal)?;
         let before = html::stamp(&loaded);
         let found = loaded.events.iter().find_map(|e| match e {
             Event::Comment { id: c, parent, .. } if *c == id => Some(*parent),
@@ -1313,6 +1380,13 @@ impl Server {
         } else {
             loaded.events.iter().filter(|e| !gone(e)).cloned().collect()
         };
+        // What was reacted with goes with the comment, and with the text that a
+        // first comment was given, when it is deleted and kept as a mark.
+        for gone in removed.iter().chain(std::iter::once(&id)) {
+            if parent.is_none() && whole_thread.is_none() || removed.contains(gone) {
+                loaded.reactions.remove(&gone.to_string());
+            }
+        }
         self.save(&loaded, &events)?;
         // What this session added and is now taken out no longer counts as added
         // (what was there before is only counted as taken out).
@@ -2568,6 +2642,119 @@ mod tests {
         // (The served page asks the server instead.)
         let served = html::render_served_page(&loaded, Vec::new(), "a".into(), false, 0).unwrap();
         assert!(!served.contains("data:image/png"));
+    }
+
+    #[test]
+    fn a_reaction_is_added_and_taken_back_kept_in_the_review_and_goes_with_its_comment() {
+        let f = fixture();
+        let old = last_comment_id(&f);
+        let react = |f: &Fixture, id: &str, emoji: &str| {
+            json(&f.post(
+                &format!("/api/comments/{id}/react"),
+                &format!(r#"{{"emoji":"{emoji}"}}"#),
+            ))
+        };
+        let reactions = |f: &Fixture| bundle::load(&f.path).unwrap().reactions;
+        let before = f.events().len();
+        let answer = react(&f, &old, "👍");
+        assert_eq!(answer["ok"], true, "{answer}");
+        assert_eq!(answer["reacted"], true);
+        // The model has them with the comment: who, in the order they came.
+        let comment = |a: &serde_json::Value| a["model"]["threads"][0]["comments"][0].clone();
+        assert_eq!(comment(&answer)["reactions"][0]["emoji"], "👍");
+        assert_eq!(
+            comment(&answer)["reactions"][0]["authors"],
+            serde_json::json!(["tester"])
+        );
+        assert_eq!(f.events().len(), before, "state, not an event");
+        // Another name adds to it; the same again takes it back.
+        f.post("/api/author", r#"{"author":"別の人"}"#);
+        let both = react(&f, &old, "👍");
+        assert_eq!(
+            comment(&both)["reactions"][0]["authors"],
+            serde_json::json!(["tester", "別の人"])
+        );
+        react(&f, &old, "🎉");
+        let back = react(&f, &old, "👍");
+        assert_eq!(back["reacted"], false);
+        assert_eq!(comment(&back)["reactions"].as_array().unwrap().len(), 2);
+        assert_eq!(reactions(&f)[&old][0].authors, ["tester"]);
+        // The stamp says the review changed.
+        let stamp = json(&f.request("GET", "/api/version", &[], ""))["stamp"].clone();
+        react(&f, &old, "🚀");
+        assert_ne!(
+            json(&f.request("GET", "/api/version", &[], ""))["stamp"],
+            stamp
+        );
+        // Refused: not an emoji, no such comment, a deleted one.
+        for bad in ["a", "ok", "", " ", "1", "👍 "] {
+            assert_eq!(
+                f.post(
+                    &format!("/api/comments/{old}/react"),
+                    &format!(r#"{{"emoji":"{bad}"}}"#)
+                )
+                .status,
+                400,
+                "{bad:?}"
+            );
+        }
+        assert_eq!(
+            f.post(&format!("/api/comments/{old}/react"), "{}").status,
+            400
+        );
+        let nobody = Ulid::new();
+        assert_eq!(
+            f.post(
+                &format!("/api/comments/{nobody}/react"),
+                r#"{"emoji":"👍"}"#
+            )
+            .status,
+            404
+        );
+        // A reply of its own; deleting it takes its reactions with it.
+        f.post(
+            &format!("/api/threads/{}/replies", f.thread),
+            r#"{"body":"mine"}"#,
+        );
+        let mine = last_comment_id(&f);
+        react(&f, &mine, "❤️");
+        assert!(reactions(&f).contains_key(&mine));
+        f.post(&format!("/api/comments/{mine}/delete"), "{}");
+        assert!(!reactions(&f).contains_key(&mine), "gone with the comment");
+        // The first comment deleted and kept as a mark: nothing more to react to, and no reactions kept.
+        f.post(
+            &format!("/api/threads/{}/replies", f.thread),
+            r#"{"body":"another"}"#,
+        );
+        let other = last_comment_id(&f);
+        f.post(&format!("/api/comments/{old}/delete"), "{}");
+        assert!(!reactions(&f).contains_key(&old));
+        assert_eq!(
+            f.post(&format!("/api/comments/{old}/react"), r#"{"emoji":"👍"}"#)
+                .status,
+            409
+        );
+        assert_ne!(other, old);
+        // What was added counts in what is said when the server stops.
+        react(&f, &other, "🎉");
+        let told = json(&f.post("/api/shutdown", "{}"))["farewell"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(told.contains("リアクション"), "{told}");
+    }
+
+    #[test]
+    fn a_page_that_only_shows_the_review_has_the_reactions_in_it() {
+        let f = fixture();
+        let old = last_comment_id(&f);
+        f.post(&format!("/api/comments/{old}/react"), r#"{"emoji":"🎉"}"#);
+        let loaded = bundle::load(&f.path).unwrap();
+        let page = html::render_export_with(&loaded, html::ExpandLimit::Lines(0)).unwrap();
+        assert!(
+            page.contains(r#""reactions":[{"emoji":"🎉","authors":["tester"]}]"#),
+            "in the page"
+        );
     }
 
     #[test]

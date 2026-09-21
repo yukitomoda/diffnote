@@ -34,6 +34,18 @@ pub enum SnapshotMode {
 
 /// The commits a git-backed review was made against, resolved to full ids
 /// at edit time (so a moving ref such as `HEAD~4` is pinned).
+/// One emoji that people reacted to a comment with, and who (in the order the
+/// emoji was first used, and each person's reaction).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reaction {
+    pub emoji: String,
+    pub authors: Vec<String>,
+}
+
+/// The reactions to the comments, by comment id: state, not history (a reaction
+/// taken back is gone), kept in the bundle's `reactions.json`.
+pub type Reactions = std::collections::BTreeMap<String, Vec<Reaction>>;
+
 /// What an attached file may weigh unless the review says otherwise (5 MB).
 pub const DEFAULT_ATTACHMENT_LIMIT: u64 = 5 * 1024 * 1024;
 
