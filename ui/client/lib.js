@@ -237,6 +237,35 @@
   // with no rows) between them; a hunk whose place is shown whole, or shown up to it,
   // gives up its `@@` row (`quiet`). The added blocks have headers, so the rows can be told
   // their line numbers as those of a hunk.
+  // How many lines a file's diff adds and removes (as the page shows it).
+  lib.diffStat = function (file) {
+    var added = 0;
+    var removed = 0;
+    (file.hunks || []).forEach(function (hunk) {
+      (hunk.rows || []).forEach(function (row) {
+        if (row.k === 'a') added++;
+        else if (row.k === 'd') removed++;
+      });
+    });
+    return { added: added, removed: removed };
+  };
+
+  // Five blocks for a file's change, in the proportion of added to removed lines
+  // (`a`, `d`), or all neutral (`n`) if there is no change; each side that has
+  // any lines has at least one block.
+  lib.diffBlocks = function (added, removed) {
+    var total = added + removed;
+    if (total === 0) return ['n', 'n', 'n', 'n', 'n'];
+    var green = Math.round((5 * added) / total);
+    var red = 5 - green;
+    if (added > 0 && green === 0) { green = 1; red = 4; }
+    if (removed > 0 && red === 0) { red = 1; green = 4; }
+    var blocks = [];
+    for (var i = 0; i < green; i++) blocks.push('a');
+    for (var j = 0; j < red; j++) blocks.push('d');
+    return blocks;
+  };
+
   // The text of a row's pieces.
   var rowText = function (row) {
     return row.t.map(function (p) { return typeof p === 'string' ? p : p[1]; }).join('');

@@ -538,6 +538,7 @@ class BinaryFiles(BrowserCase):
         self.assertIn("new.bin (バイナリ・追加)", titles)
         self.assertIn("same.bin (バイナリ・変更)", titles)
         self.assertEqual(b.count("[data-diffnote-binary]"), 3, "each binary file says why nothing is shown")
+        self.assertEqual(b.count("[data-diffnote-stat]"), 0, "no lines to count")
         self.assertIn("バイナリ", b.js("document.querySelector('[data-diffnote-binary]').textContent"))
         tint = lambda name: b.js("getComputedStyle(document.querySelector('section.diffnote-file[data-diffnote-file=\"%s\"] summary')).backgroundColor" % name)
         self.assertEqual(tint("new.bin"), "rgb(230, 255, 236)", "added: greenish")
@@ -660,6 +661,21 @@ class IgnoreWhitespace(BrowserCase):
         self.b.open(self.url)
         self.b.js("localStorage.clear(); localStorage.setItem('diffnote-layout','unified')")
         self.b.reload()
+
+    def test_the_file_says_how_many_lines_it_adds_and_removes_as_they_are_shown(self):
+        b = self.b
+        stat = lambda: b.js("document.querySelector('[data-diffnote-stat]').textContent.replace(/\\s+/g, ' ').trim()")
+        self.assertEqual(stat(), "+3 −3")
+        self.assertEqual(b.count("[data-diffnote-stat] .diffnote-stat__blocks i"), 5)
+        self.assertEqual(b.count("[data-diffnote-stat] i.is-a"), 3)
+        self.assertEqual(b.count("[data-diffnote-stat] i.is-d"), 2)
+        self.assertEqual(b.js("document.querySelector('[data-diffnote-stat]').title"), "追加 3 行、削除 3 行")
+        # At the right of the header, before the button that says the file was looked at.
+        pos = b.js("(() => { const s = document.querySelector('[data-diffnote-stat]').getBoundingClientRect(); const h = document.querySelector('section.diffnote-file summary').getBoundingClientRect(); return h.right - s.right; })()")
+        self.assertLess(pos, 200)
+        # With white space ignored, only what really changed is counted.
+        b.click("[data-diffnote-ignore-space]")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-stat]').textContent.replace(/\\s+/g, ' ').trim() === '+1 −1'"))
 
     def test_the_lines_changed_only_in_white_space_are_shown_as_unchanged_when_asked(self):
         b = self.b

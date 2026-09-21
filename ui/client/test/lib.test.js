@@ -448,3 +448,19 @@ test('a shortcode is written as its emoji and what is not one is left as it is',
   assert.equal(lib.withShortcodes(EMOJI, ':BUG:'), ':BUG:', 'codes are lower case');
   assert.equal(lib.withShortcodes(EMOJI, ':constructor:'), ':constructor:', 'nothing from the object itself');
 });
+
+test('a file says how many lines its diff adds and removes, and shows five blocks in that proportion', () => {
+  const rows = (kinds) => kinds.split('').map((k) => ({ k }));
+  const file = { hunks: [{ rows: rows('ccaadc') }, { rows: rows('dd') }] };
+  assert.deepEqual(lib.diffStat(file), { added: 2, removed: 3 });
+  assert.deepEqual(lib.diffStat({ hunks: [] }), { added: 0, removed: 0 });
+  assert.deepEqual(lib.diffStat({}), { added: 0, removed: 0 });
+  assert.deepEqual(lib.diffBlocks(17, 11), ['a', 'a', 'a', 'd', 'd']);
+  assert.deepEqual(lib.diffBlocks(10, 0), ['a', 'a', 'a', 'a', 'a']);
+  assert.deepEqual(lib.diffBlocks(0, 4), ['d', 'd', 'd', 'd', 'd']);
+  assert.deepEqual(lib.diffBlocks(0, 0), ['n', 'n', 'n', 'n', 'n']);
+  // A side with a few lines still shows.
+  assert.deepEqual(lib.diffBlocks(100, 1), ['a', 'a', 'a', 'a', 'd']);
+  assert.deepEqual(lib.diffBlocks(1, 100), ['a', 'd', 'd', 'd', 'd']);
+  for (const [a, r] of [[1, 1], [3, 7], [50, 50], [2, 1]]) assert.equal(lib.diffBlocks(a, r).length, 5);
+});

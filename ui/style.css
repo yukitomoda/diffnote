@@ -409,3 +409,12 @@ button.diffnote-reaction:hover { border-color: var(--diffnote-color-muted); }
 .diffnote-reaction.is-mine { background: var(--diffnote-color-hunk-bg); border-color: var(--diffnote-color-accent); }
 .diffnote-reaction.is-mine > span { color: var(--diffnote-color-accent); }
 .diffnote-reaction--add { color: var(--diffnote-color-muted); background: none; border-style: dashed; }
+
+/* How much a file's diff adds and removes, beside its name. */
+.diffnote-stat { float: right; display: inline-flex; align-items: center; gap: 4px; margin: 0 10px; font-size: 12px; font-weight: 600; font-family: var(--diffnote-font-mono); line-height: 20px; }
+.diffnote-stat__add { color: #1a7f37; }
+.diffnote-stat__del { color: #cf222e; }
+.diffnote-stat__blocks { display: inline-flex; gap: 2px; margin-left: 4px; }
+.diffnote-stat__blocks i { display: block; width: 9px; height: 9px; border-radius: 2px; background: #d0d7de; }
+.diffnote-stat__blocks i.is-a { background: #2da44e; }
+.diffnote-stat__blocks i.is-d { background: #cf222e; }

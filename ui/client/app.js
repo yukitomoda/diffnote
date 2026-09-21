@@ -1122,6 +1122,9 @@
     var setRevealed = _g[1];
     var shown = useMemo(function () { return lib.shownFrom(file.gaps, revealed); }, [file.gaps, revealed]);
     var view = useMemo(function () { return lib.withGaps(ctx.ignoreSpace ? lib.withoutSpaceChanges(file) : file, shown); }, [file, shown, ctx.ignoreSpace]);
+    // What the diff of the file adds and removes, as it is shown (so, with white
+    // space ignored if it is).
+    var stat = lib.diffStat(ctx.ignoreSpace ? lib.withoutSpaceChanges(file) : file);
     var expand = function (gap, where) {
       var g = file.gaps[gap];
       var req = lib.expandRequest(g, shown[gap] || { top: [], bottom: [] }, where);
@@ -1160,6 +1163,10 @@
         <summary>
           ${viewed && html`<button type="button" class="diffnote-mini diffnote-mini--check" data-diffnote-viewed=${file.path} title="確認済みにして、表示をたたみます(左の一覧から戻せます)"
             onClick=${function (e) { e.preventDefault(); e.stopPropagation(); viewed.toggle(file); }}>✓ 確認済み</button>`}
+          ${file.status !== 'binary' && stat.added + stat.removed > 0 && html`<span class="diffnote-stat" data-diffnote-stat title=${'追加 ' + stat.added + ' 行、削除 ' + stat.removed + ' 行'}>
+            <span class="diffnote-stat__add">+${stat.added}</span> <span class="diffnote-stat__del">−${stat.removed}</span>
+            <span class="diffnote-stat__blocks" aria-hidden="true">${lib.diffBlocks(stat.added, stat.removed).map(function (k, i) { return html`<i key=${i} class=${'is-' + k}></i>`; })}</span>
+          </span>`}
           <h2>${file.path}${file.status === 'binary' ? ' (バイナリ' + (BINARY_CHANGES[file.change] ? '・' + BINARY_CHANGES[file.change] : '') + ')' : ''}${file.status === 'renamed' ? ' (名前変更)' : ''}</h2>
           <button type="button" class="diffnote-copy" data-diffnote-copy=${file.path} title="パスをコピー">コピー</button>
           ${file.opened && files && html`<button type="button" class="diffnote-mini" data-diffnote-close title="この表示を閉じる(記録には残りません)"
