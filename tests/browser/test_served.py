@@ -587,6 +587,38 @@ class CompareWithAnEarlierRevision(ServedCase):
         self.card("比べた画面で書きました")
         self.assertEqual(b.js("[...document.querySelectorAll('%s .diffnote-thread')].find(t => t.textContent.includes('比べた画面で書きました')).querySelector('.diffnote-thread__where').textContent" % CUR), "calc.py:9")
 
+    def test_a_file_that_is_only_shown_for_its_thread_can_be_commented_on_too(self):
+        repo = os.path.join(self.root, "onlythread")
+        os.makedirs(repo)
+        harness.git(repo, "init", "-q", "-b", "main")
+        harness.write(repo, "a.txt", "a1\n")
+        harness.write(repo, "b.txt", "b1\n")
+        harness.git(repo, "add", "-A")
+        harness.git(repo, "commit", "-q", "-m", "c1")
+        harness.git(repo, "tag", "c1")
+        harness.write(repo, "a.txt", "a2\n")
+        harness.git(repo, "commit", "-q", "-am", "c2")
+        harness.git(repo, "tag", "c2")
+        master = os.path.join(self.root, "onlythread.diffnote")
+        assert harness.diffnote("edit", "-f", master, "--base", "c1", "c2", cwd=repo, comments=[("+a2", "a への指摘")]).returncode == 0
+        harness.write(repo, "b.txt", "b2\n")
+        harness.git(repo, "commit", "-q", "-am", "c3")
+        harness.git(repo, "tag", "c3")
+        out = harness.diffnote("edit", "-f", master, "--base", "c1", "c3", cwd=repo, comments=[("GLOBAL", "二つ目")])
+        assert out.returncode == 0, out.stdout + out.stderr
+        self.serve(master)
+        b = self.b
+        self.choose("0")
+        self.assertTrue(b.wait_exists("[data-diffnote-compare-note]"))
+        section = f"{CUR} section.diffnote-file[data-diffnote-file='a.txt']"
+        self.assertTrue(b.wait_exists(section), "a.txt is only here for its thread")
+        self.assertEqual(b.count(f"{section} tr.diffnote-line--added"), 0, "it is not in what changed between the two")
+        b.click(f"{section} [data-diffnote-add=file]")
+        self.write(".diffnote-compose textarea", "a.txt 全体について")
+        b.js("document.querySelector('.diffnote-compose').requestSubmit()")
+        self.assertTrue(b.wait("!document.querySelector('.diffnote-compose-wrap')"), b.js("[...document.querySelectorAll('.diffnote-error')].map(e=>e.textContent).join('|')"))
+        self.assertTrue(any("ファイル全体: a.txt" in l for l in show(self.review).splitlines()), show(self.review))
+
     def test_a_file_marked_as_looked_at_stays_so_in_the_other_view(self):
         self.serve()
         b = self.b

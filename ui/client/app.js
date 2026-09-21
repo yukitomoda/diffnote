@@ -756,7 +756,7 @@
               if (compose && compose.sel && compose.sel.path === file.path) compose.close();
               files.close(ctx.rev, file.path);
             }}>閉じる</button>`}
-          ${compose && (file.opened || file.status !== 'context') && html`<button type="button" class="diffnote-mini" data-diffnote-add="file" title="このファイルにコメントする"
+          ${compose && (file.opened || file.status !== 'context' || mine.length > 0) && html`<button type="button" class="diffnote-mini" data-diffnote-add="file" title="このファイルにコメントする"
             onClick=${function (e) {
               e.preventDefault();
               e.stopPropagation();
