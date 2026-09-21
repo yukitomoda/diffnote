@@ -237,17 +237,16 @@ fn a_directory_review_over_several_sessions() {
         ],
     );
     let html = std::fs::read_to_string(&html_path).unwrap();
-    assert_eq!(
-        html.matches(r#"<section class="diffnote-revision"#).count(),
-        2
-    );
+    let model = model_of(&html);
+    assert_eq!(model["revisions"].as_array().unwrap().len(), 2);
     for body in ["why uppercase?", "overall remark", "new line"] {
-        // The thread card itself (the list only has a short preview).
-        assert_eq!(
-            html.matches(&format!("<p>{body}</p>")).count(),
-            2,
-            "{body} once per view"
-        );
+        // One thread, which every revision's view has (placed in each).
+        let id = thread_saying(&model, &format!("<p>{body}</p>"))["id"]
+            .as_str()
+            .unwrap();
+        for rev in model["revisions"].as_array().unwrap() {
+            assert!(rev["placements"].get(id).is_some(), "{body} in every view");
+        }
     }
 }
 
@@ -503,11 +502,22 @@ fn threads_on_a_file_a_later_diff_leaves_alone_are_shown_and_can_be_added_to() {
         ],
     );
     let html = std::fs::read_to_string(&html_path).unwrap();
-    assert!(!html.contains(r#"<section class="diffnote-outdated">"#));
-    let second_view = &html[html.find(r#"id="rev-1""#).unwrap()..];
-    assert!(second_view.contains(r#"id="r1-file-README-md""#));
+    let model = model_of(&html);
+    let second = &model["revisions"][1];
+    // README.md is a file of the second view (as context: the diff leaves it
+    // alone), and both threads on it are placed on lines there.
+    let readme = second["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["path"] == "README.md")
+        .expect("README.md is in the second view");
+    assert_eq!(readme["status"], "context");
     for body in ["why edit this?", "and what about this line?"] {
-        assert!(second_view.contains(body), "{body}");
+        let id = thread_saying(&model, body)["id"].as_str().unwrap();
+        let placement = &second["placements"][id];
+        assert_eq!(placement["kind"], "line", "{body}: {placement}");
+        assert_eq!(placement["file"], "README.md");
     }
 }
 
@@ -921,19 +931,37 @@ fn a_thread_survives_a_second_review_from_the_same_base_with_a_longer_range() {
         ],
     );
     let html = std::fs::read_to_string(&html_path).unwrap();
-    let second_view = &html[html.find(r#"id="rev-1""#).unwrap()..];
-    let (before, _) = second_view
-        .split_once("why mul?")
-        .expect("the mul thread is in the view");
-    let summary = &before[before.rfind("<summary>").unwrap()..];
+    let model = model_of(&html);
     // Placed at its line in this view (the header pushed it from 3 to 4), not
     // as a line that was deleted or is not there.
-    assert!(summary.contains(">calc.txt:4</span>"), "{summary}");
-    assert!(!summary.contains("削除された行"), "{summary}");
-    assert!(
-        !summary.contains("まだない行") && !summary.contains("この版にない行"),
-        "{summary}"
+    let id = thread_saying(&model, "why mul?")["id"].as_str().unwrap();
+    let placement = &model["revisions"][1]["placements"][id];
+    assert_eq!(placement["kind"], "line", "{placement}");
+    assert_eq!(placement["file"], "calc.txt");
+    assert_eq!(
+        (placement["start"].as_u64(), placement["end"].as_u64()),
+        (Some(4), Some(4))
     );
+}
+
+/// The data an exported page is drawn from (its `#diffnote-data` script).
+fn model_of(html: &str) -> serde_json::Value {
+    let start = html
+        .find(r#"id="diffnote-data">"#)
+        .expect("the page has its data")
+        + r#"id="diffnote-data">"#.len();
+    let end = start + html[start..].find("</script>").unwrap();
+    serde_json::from_str(&html[start..end]).expect("the data is JSON")
+}
+
+/// The thread whose first comment says `text`.
+fn thread_saying<'a>(model: &'a serde_json::Value, text: &str) -> &'a serde_json::Value {
+    model["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["comments"][0]["html"].as_str().unwrap().contains(text))
+        .unwrap_or_else(|| panic!("no thread says {text:?}"))
 }
 
 fn titles(review: &Path) -> Vec<String> {
@@ -980,7 +1008,7 @@ fn a_title_given_with_the_first_comment_names_the_export_and_show() {
     let shown = env.ok(&repo, &[], &["show", "-f", arg]);
     assert!(shown.contains("[タイトル] ログイン改修 <v2>"), "{shown}");
     let html = exported(&env, &repo, &review);
-    assert!(html.contains("<h1>ログイン改修 &lt;v2&gt;</h1>"), "{html}");
+    assert_eq!(model_of(&html)["title"], "ログイン改修 <v2>");
     assert!(html.contains("<title>ログイン改修 &lt;v2&gt;</title>"));
 }
 
@@ -995,7 +1023,7 @@ fn without_a_title_the_export_keeps_the_default_heading() {
         &["edit", "-f", review.to_str().unwrap(), "c1..c2"],
     );
     assert!(titles(&review).is_empty());
-    assert!(exported(&env, &repo, &review).contains("<h1>diffnote レビュー</h1>"));
+    assert!(model_of(&exported(&env, &repo, &review))["title"].is_null());
 }
 
 #[test]
@@ -1024,11 +1052,11 @@ fn a_title_can_be_changed_kept_and_cleared_later() {
     );
     assert!(!out.contains("タイトルを設定しました"), "{out}");
     assert_eq!(titles(&review), ["first", "second"]);
-    assert!(exported(&env, &repo, &review).contains("<h1>second</h1>"));
+    assert_eq!(model_of(&exported(&env, &repo, &review))["title"], "second");
     // An empty title takes it away.
     env.ok(&repo, &[], &["edit", "-f", arg, "--title", "", "c1..c2"]);
     assert_eq!(titles(&review), ["first", "second", ""]);
-    assert!(exported(&env, &repo, &review).contains("<h1>diffnote レビュー</h1>"));
+    assert!(model_of(&exported(&env, &repo, &review))["title"].is_null());
 }
 
 #[test]
@@ -1077,7 +1105,10 @@ fn a_directory_review_takes_a_title_at_init() {
         ],
     );
     assert_eq!(titles(&review), ["設計レビュー"]);
-    assert!(exported_dir(&env, &dir, &review).contains("<h1>設計レビュー</h1>"));
+    assert_eq!(
+        model_of(&exported_dir(&env, &dir, &review))["title"],
+        "設計レビュー"
+    );
 }
 
 /// Like `exported`, for a review with no comment yet: give it one first.

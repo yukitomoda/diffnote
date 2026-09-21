@@ -1,0 +1,180 @@
+// Pure helpers of the page: nothing here touches the document, so they can be
+// tested with Node (`node --test ui/client/test`). The page is a plain script
+// (it is opened from a file: no modules), so this file adds to `Diffnote.lib`
+// and, under Node, also exports it.
+(function (D) {
+  'use strict';
+  var lib = (D.lib = D.lib || {});
+
+  // The colors of threads (a placement carries the number of its color).
+  lib.PALETTE = ['#1f77b4', '#ff7f0e', '#9467bd', '#8c564b', '#e377c2', '#17becf', '#bcbd22', '#7f7f7f'];
+
+  lib.color = function (n) {
+    return lib.PALETTE[n % lib.PALETTE.length];
+  };
+
+  // The last part of a path.
+  lib.baseName = function (path) {
+    var i = path.lastIndexOf('/');
+    return i < 0 ? path : path.slice(i + 1);
+  };
+
+  // Where a thread is, as `path`, `path:LINE` or `path:FIRST-LAST` (the form
+  // `diffnote edit --show` reads); null for a thread about the whole review.
+  lib.location = function (p) {
+    if (!p || p.kind === 'global') return null;
+    if (p.kind === 'line') {
+      return p.file + ':' + (p.end > p.start ? p.start + '-' + p.end : p.start);
+    }
+    return p.file;
+  };
+
+  // The same with only the file's name, for the narrow thread list.
+  lib.shortLocation = function (p) {
+    if (!p || p.kind === 'global') return '全体';
+    var name = lib.baseName(p.file);
+    if (p.kind === 'line') return name + ':' + (p.end > p.start ? p.start + '-' + p.end : p.start);
+    return name;
+  };
+
+  // The stacked color bars at a line's left edge, one per thread on it.
+  lib.bars = function (colors) {
+    return colors
+      .map(function (c, i) {
+        return 'inset ' + (3 + i * 4) + 'px 0 0 0 ' + lib.color(c);
+      })
+      .join(', ');
+  };
+
+  // Which threads are on which lines of one file: `{ new: {line: [ids]}, old: {...} }`,
+  // from the placements of a revision. Threads are taken in the order given.
+  lib.coverage = function (threadIds, placements, file) {
+    var cover = { new: {}, old: {} };
+    var add = function (side, a, b, id) {
+      for (var n = a; n <= b; n++) {
+        (cover[side][n] = cover[side][n] || []).push(id);
+      }
+    };
+    threadIds.forEach(function (id) {
+      var p = placements[id];
+      if (!p || p.kind !== 'line' || p.file !== file) return;
+      add(p.side, p.start, p.end, id);
+      if (p.side === 'new' && p.old_range) add('old', p.old_range[0], p.old_range[1], id);
+    });
+    return cover;
+  };
+
+  // The threads that cover a row (a row has its line number on either side or
+  // both), each once in a row.
+  lib.covering = function (cover, row) {
+    var ids = [];
+    if (row.n != null && cover.new[row.n]) ids = ids.concat(cover.new[row.n]);
+    if (row.o != null && cover.old[row.o]) ids = ids.concat(cover.old[row.o]);
+    return ids.filter(function (id, i) {
+      return i === 0 || ids[i - 1] !== id;
+    });
+  };
+
+  // Where the cards of a file's threads go: after the row that has a line
+  // number on a side (`new:LINE` / `old:LINE`), the ids in the order of the
+  // threads. A thread on lines goes after its last line; one whose lines are
+  // not here, after the line before the point where they are.
+  lib.cardsAfter = function (threadIds, placements, file) {
+    var after = {};
+    var put = function (key, id) {
+      (after[key] = after[key] || []).push(id);
+    };
+    threadIds.forEach(function (id) {
+      var p = placements[id];
+      if (!p || p.file !== file) return;
+      if (p.kind === 'line') put(p.side + ':' + p.end, id);
+      else if (p.kind === 'point') put('new:' + Math.max(p.before - 1, 1), id);
+    });
+    return after;
+  };
+
+  // A row's cards: those after its new-side line, then those after its
+  // old-side line.
+  lib.cardsOfRow = function (after, row) {
+    var ids = [];
+    if (row.n != null && after['new:' + row.n]) ids = ids.concat(after['new:' + row.n]);
+    if (row.o != null && after['old:' + row.o]) ids = ids.concat(after['old:' + row.o]);
+    return ids;
+  };
+
+  // The rows of a hunk side by side: an unchanged row is on both sides; a run
+  // of removed rows is put beside the run of added rows that follows it, top
+  // to bottom, and the shorter side is left empty.
+  lib.pairRows = function (rows) {
+    var out = [];
+    var i = 0;
+    while (i < rows.length) {
+      var row = rows[i];
+      if (row.k === 'c') {
+        out.push({ left: row, right: row });
+        i++;
+        continue;
+      }
+      var removed = [];
+      var added = [];
+      while (i < rows.length && rows[i].k === 'd') removed.push(rows[i++]);
+      while (i < rows.length && rows[i].k === 'a') added.push(rows[i++]);
+      for (var j = 0; j < Math.max(removed.length, added.length); j++) {
+        out.push({ left: removed[j] || null, right: added[j] || null });
+      }
+    }
+    return out;
+  };
+
+  var entities = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&nbsp;': ' ' };
+
+  // The first line of a comment's HTML as plain text, short, to tell threads
+  // apart in the list.
+  lib.preview = function (html) {
+    var text = String(html)
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|li|h[1-6]|pre|blockquote|div|tr)>/gi, '\n')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&(amp|lt|gt|quot|#39|nbsp);/g, function (m) {
+        return entities[m];
+      });
+    var line = '';
+    text.split('\n').some(function (l) {
+      line = l.trim();
+      return line !== '';
+    });
+    var chars = Array.from(line);
+    return chars.length > 48 ? chars.slice(0, 48).join('') + '…' : line;
+  };
+
+  // A time as `YYYY-MM-DD HH:MM` in the viewer's time zone.
+  lib.formatTime = function (iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    var two = function (n) {
+      return (n < 10 ? '0' : '') + n;
+    };
+    return d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate()) + ' ' + two(d.getHours()) + ':' + two(d.getMinutes());
+  };
+
+  // The threads of a revision that are on a file (lines, the file, a point,
+  // or listed with it because they can't be placed): for the count beside it.
+  lib.threadsOfFile = function (threadIds, placements, file) {
+    return threadIds.filter(function (id) {
+      var p = placements[id];
+      return p && p.kind !== 'global' && p.file === file;
+    });
+  };
+
+  // How many threads there are, and how many are resolved.
+  lib.counts = function (threads) {
+    return {
+      all: threads.length,
+      resolved: threads.filter(function (t) {
+        return t.resolved;
+      }).length,
+    };
+  };
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = lib;
+})(typeof window !== 'undefined' ? (window.Diffnote = window.Diffnote || {}) : (globalThis.Diffnote = globalThis.Diffnote || {}));

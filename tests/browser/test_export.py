@@ -37,12 +37,12 @@ class StaticExport(BrowserCase):
 
     def test_the_latest_revision_is_shown_and_the_tabs_switch(self):
         b = self.b
-        self.assertEqual(b.js("document.querySelectorAll('.diffnote-revision').length"), 2)
+        self.assertEqual(b.count("[data-diffnote-revision-link]"), 2)
         self.assertEqual(b.js("document.querySelector('.diffnote-revision.is-current').id"), "rev-1")
-        self.assertEqual(b.visible(".diffnote-revision"), 1)
+        self.assertEqual(b.count(".diffnote-revision"), 1, "only the one being looked at is drawn")
         b.click("[data-diffnote-revision-link='0']")
         self.assertEqual(b.js("document.querySelector('.diffnote-revision.is-current').id"), "rev-0")
-        self.assertEqual(b.visible(".diffnote-revision"), 1)
+        self.assertEqual(b.count(".diffnote-revision"), 1)
         self.assertTrue(b.js("document.querySelector('[data-diffnote-revision-link=\"0\"]').classList.contains('is-current')"))
 
     def test_hovering_a_thread_shows_its_whole_range_and_leaving_hides_it(self):

@@ -257,7 +257,7 @@ fn open_in_browser(url: &str) -> bool {
 
 fn cmd_export(review_path: PathBuf, output_path: PathBuf) -> Result<()> {
     let loaded = bundle::load(&review_path)?;
-    let html = diffnote::html::render_bundle(&loaded).with_context(|| {
+    let html = diffnote::html::render_export(&loaded).with_context(|| {
         format!(
             "{} にはまだ記録された差分がありません。先に `diffnote edit` を実行してください",
             review_path.display()

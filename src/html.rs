@@ -122,6 +122,53 @@ pub fn render_bundle(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
     Ok(render(&loaded.events, &views, &loaded.blobs()))
 }
 
+/// The scripts of the client-side page, in the order they are put in it: the
+/// libraries (plain-script builds, so the page works from a file), then the
+/// page's own. Each adds to `window.Diffnote`.
+const CLIENT_SCRIPTS: [&str; 6] = [
+    include_str!("../ui/vendor/preact.min.js"),
+    include_str!("../ui/vendor/hooks.umd.js"),
+    include_str!("../ui/vendor/htm.js"),
+    include_str!("../ui/client/lib.js"),
+    include_str!("../ui/client/interact.js"),
+    include_str!("../ui/client/app.js"),
+];
+
+/// The page `diffnote export` writes: one self-contained HTML file, drawn in
+/// the browser by a client-side app from the data of [`view_model`] embedded in
+/// it. It needs JavaScript, and nothing else: no requests, no modules, so it
+/// opens from a file.
+pub fn render_export(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
+    let data = view_model_json(loaded)?;
+    let title = crate::review::title(&loaded.events).unwrap_or(DEFAULT_TITLE);
+    let scripts: String = CLIENT_SCRIPTS
+        .iter()
+        .map(|s| format!("<script>\n{s}\n</script>\n"))
+        .collect();
+    Ok(format!(
+        r#"<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>
+
+{css}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script type="application/json" id="diffnote-data">{data}</script>
+{scripts}<script>Diffnote.start();</script>
+</body>
+</html>
+"#,
+        title = escape_html(title),
+        css = STYLE,
+    ))
+}
+
 /// Like [`render_bundle`], for a page whose threads can be changed from the
 /// browser: each card has buttons and a reply box, and the page's script talks
 /// to the server that serves it.
@@ -873,6 +920,8 @@ pub fn render_with(
 /// Where every thread goes in one revision's view, worked out from its
 /// anchor and the texts (never from what the diff shows).
 struct Placed<'a> {
+    /// Where each thread is, in the order of the threads.
+    placements: Vec<Placement>,
     /// The view's diff plus context around threads it doesn't show.
     diff: UnifiedDiff,
     /// The files that context adds (files the diff doesn't touch), as
@@ -925,6 +974,8 @@ fn place<'a>(
         ..Marks::default()
     };
     let mut outdated: HashMap<String, Vec<&Thread>> = HashMap::new();
+    // Where each thread ended up (what the page is drawn from), in thread order.
+    let mut placed_at: Vec<Placement> = Vec::new();
 
     for (thread, placement) in threads.iter().zip(placements) {
         // A card is drawn after a row of the diff; without one (the text to
@@ -933,6 +984,7 @@ fn place<'a>(
             Some(w) if !expand::has_row(diff, &w) => Placement::Unplaced { file: w.file },
             _ => placement,
         };
+        placed_at.push(placement.clone());
         match placement {
             Placement::Global => global.push(thread),
             Placement::File(file) => {
@@ -1031,6 +1083,7 @@ fn place<'a>(
         })
         .collect();
     Placed {
+        placements: placed_at,
         synthetic_files,
         diff: expanded,
         global,
@@ -1052,6 +1105,7 @@ fn render_view(
     interactive: bool,
 ) -> String {
     let Placed {
+        placements: _,
         diff,
         synthetic_files: _,
         global,
@@ -1706,8 +1760,12 @@ const STYLE: &str = include_str!("../ui/style.css");
 /// which files are on screen in the file list.
 const SCRIPT: &str = include_str!("../ui/app.js");
 
+pub(crate) mod viewmodel;
+pub use viewmodel::{ViewModel, view_model, view_model_json};
+
 #[cfg(test)]
 mod tests {
+    use super::viewmodel::{PlacementData, RevisionData};
     use super::*;
     use crate::bundle::{self, Additions};
     use crate::digest::digest;
@@ -1849,7 +1907,8 @@ mod tests {
     }
 
     /// Two revisions of one file, and threads made on each of them.
-    fn scenario() -> Scenario {
+    /// The scenario's review, and the ids of its threads (`t1`, `t2`, `t3`, `t4`, `global`).
+    fn scenario_parts() -> (tempfile::TempDir, bundle::Loaded, [Ulid; 5]) {
         let (t1, t2, t3, t4, global) = (
             Ulid::new(),
             Ulid::new(),
@@ -1926,6 +1985,11 @@ mod tests {
             ],
             events,
         );
+        (dir, loaded, [t1, t2, t3, t4, global])
+    }
+
+    fn scenario() -> Scenario {
+        let (dir, loaded, [t1, t2, t3, t4, global]) = scenario_parts();
         Scenario {
             html: render_bundle(&loaded).unwrap(),
             t1,
@@ -2351,6 +2415,322 @@ mod tests {
         ] {
             assert!(STYLE.contains(rule), "{rule}");
         }
+    }
+
+    // ---- the view model ---------------------------------------------------
+
+    fn model_of_scenario() -> (ViewModel, [Ulid; 5], tempfile::TempDir, bundle::Loaded) {
+        let (dir, loaded, ids) = scenario_parts();
+        (view_model(&loaded).unwrap(), ids, dir, loaded)
+    }
+
+    fn placement_of(rev: &RevisionData, id: Ulid) -> &PlacementData {
+        &rev.placements[&id.to_string()]
+    }
+
+    #[test]
+    fn the_model_has_the_threads_their_comments_and_a_revision_per_view() {
+        let (m, [t1, ..], _dir, _loaded) = model_of_scenario();
+        assert_eq!(m.version, 1);
+        assert_eq!(m.title, None);
+        assert_eq!(m.revisions.len(), 2);
+        assert_eq!(m.threads.len(), 5);
+        let thread = m.threads.iter().find(|t| t.id == t1.to_string()).unwrap();
+        // The first comment, then its reply; text as HTML; times in UTC.
+        assert_eq!(thread.comments.len(), 2);
+        assert_eq!(thread.comments[0].html, "<p>about B</p>\n");
+        assert_eq!(thread.comments[1].html, "<p>a reply</p>\n");
+        assert_eq!(thread.comments[0].author, "r@example.com");
+        assert_eq!(thread.comments[0].at, "1970-01-01T00:00:00Z");
+        assert!(!thread.resolved);
+        let file_thread = m
+            .threads
+            .iter()
+            .find(|t| t.comments[0].html.contains("file thread"))
+            .unwrap();
+        assert!(file_thread.resolved);
+        assert!(
+            m.revisions[1].label.starts_with("#2 "),
+            "{}",
+            m.revisions[1].label
+        );
+    }
+
+    #[test]
+    fn a_title_is_carried() {
+        let (_dir, loaded) = bundle_of(
+            &[(R1_BASE, R1_HEAD, files_source(None))],
+            vec![title_event("ログイン改修")],
+        );
+        assert_eq!(
+            view_model(&loaded).unwrap().title.as_deref(),
+            Some("ログイン改修")
+        );
+    }
+
+    #[test]
+    fn rows_have_a_kind_line_numbers_and_colored_text() {
+        let (m, _, _dir, _loaded) = model_of_scenario();
+        let file = &m.revisions[0].files[0];
+        assert_eq!((file.path.as_str(), file.status), ("f.txt", "modified"));
+        assert_eq!(file.old_path, None);
+        assert_eq!(file.hunks.len(), 1);
+        let rows: Vec<(&str, Option<u32>, Option<u32>)> =
+            file.hunks[0].rows.iter().map(|r| (r.k, r.o, r.n)).collect();
+        // `b` became `B`: a removed row, an added row, unchanged around them.
+        assert_eq!(
+            rows,
+            [
+                ("c", Some(1), Some(1)),
+                ("d", Some(2), None),
+                ("a", None, Some(2)),
+                ("c", Some(3), Some(3)),
+                ("c", Some(4), Some(4)),
+            ]
+        );
+        assert!(file.hunks[0].rows[1].h.contains('b') && file.hunks[0].rows[2].h.contains('B'));
+        assert!(
+            file.hunks[0].header.starts_with("@@ -1,4 +1,4 @@"),
+            "{}",
+            file.hunks[0].header
+        );
+    }
+
+    #[test]
+    fn placements_are_where_the_page_draws_each_thread_in_each_revision() {
+        let (m, [t1, t2, t3, t4, global], _dir, loaded) = model_of_scenario();
+        let (r0, r1) = (&m.revisions[0], &m.revisions[1]);
+        // A thread on lines follows them: `B` is line 2 in revision 1, line 3 in 2.
+        let PlacementData::Line {
+            file,
+            side,
+            start,
+            end,
+            color,
+            ..
+        } = placement_of(r0, t1)
+        else {
+            panic!("a line");
+        };
+        assert_eq!((file.as_str(), *side, *start, *end), ("f.txt", "new", 2, 2));
+        let _ = color;
+        let PlacementData::Line { start, end, .. } = placement_of(r1, t1) else {
+            panic!("a line");
+        };
+        assert_eq!((*start, *end), (3, 3));
+        // The whole-file and the review-wide threads.
+        assert!(matches!(placement_of(r1, t3), PlacementData::File { file } if file == "f.txt"));
+        assert!(matches!(placement_of(r1, global), PlacementData::Global));
+        // A thread about lines an earlier view doesn't have yet.
+        let PlacementData::Point { absence, was, .. } = placement_of(r0, t4) else {
+            panic!("a point");
+        };
+        assert_eq!(*absence, "not-yet");
+        assert_eq!(was, &vec!["top".to_string()]);
+        // Where the page's own rows say it is: the model and the page agree.
+        let html = render_bundle(&loaded).unwrap();
+        let rows = rows_of(view(&html, 1), t2);
+        let PlacementData::Line { start, end, .. } = placement_of(r1, t2) else {
+            panic!("a line");
+        };
+        assert_eq!(rows.last().unwrap().1, end.to_string());
+        assert!(rows.iter().any(|(_, n)| *n == start.to_string()));
+    }
+
+    #[test]
+    fn the_order_is_the_order_of_the_pages_thread_list() {
+        let (m, ids, _dir, loaded) = model_of_scenario();
+        let html = render_bundle(&loaded).unwrap();
+        for (i, rev) in m.revisions.iter().enumerate() {
+            let in_page: Vec<String> = thread_list(view(&html, i))
+                .iter()
+                .map(|item| {
+                    ids.iter()
+                        .find(|id| item.contains(&id.to_string()))
+                        .unwrap()
+                        .to_string()
+                })
+                .collect();
+            assert_eq!(rev.order, in_page, "revision {i}");
+            assert_eq!(rev.order.len(), 5);
+        }
+        assert_eq!(
+            m.revisions[1].order[0],
+            ids[4].to_string(),
+            "review-wide first"
+        );
+    }
+
+    #[test]
+    fn a_file_the_diff_never_touches_comes_in_as_context_with_its_lines() {
+        let readme = "# title\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\n";
+        let id = Ulid::new();
+        let (_dir, loaded) = bundle_with_readme(
+            readme,
+            vec![comment(
+                id,
+                Anchor::Span {
+                    base: None,
+                    head: Some(range_of("README.md", readme, 4, 1)),
+                },
+                "about line 4",
+            )],
+        );
+        let m = view_model(&loaded).unwrap();
+        let files = &m.revisions[0].files;
+        assert_eq!(
+            files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+            ["f.txt", "README.md"]
+        );
+        let readme_file = &files[1];
+        assert_eq!(readme_file.status, "context");
+        let rows: Vec<(&str, Option<u32>, Option<u32>)> = readme_file
+            .hunks
+            .iter()
+            .flat_map(|h| &h.rows)
+            .map(|r| (r.k, r.o, r.n))
+            .collect();
+        // Line 4 with three lines around it, all unchanged.
+        assert_eq!(
+            rows.iter().map(|r| r.2.unwrap()).collect::<Vec<_>>(),
+            (1..=7).collect::<Vec<_>>()
+        );
+        assert!(rows.iter().all(|r| r.0 == "c" && r.1 == r.2));
+        let PlacementData::Line {
+            file, start, end, ..
+        } = &m.revisions[0].placements[&id.to_string()]
+        else {
+            panic!("a line");
+        };
+        assert_eq!((file.as_str(), *start, *end), ("README.md", 4, 4));
+    }
+
+    #[test]
+    fn a_thread_whose_versions_are_not_held_is_unplaced_with_its_file() {
+        let id = Ulid::new();
+        let (_dir, loaded) = bundle_with_readme(
+            "# x\n",
+            vec![comment(
+                id,
+                Anchor::Span {
+                    base: None,
+                    head: Some(range_of("README.md", "held nowhere\n", 1, 1)),
+                },
+                "lost text",
+            )],
+        );
+        let m = view_model(&loaded).unwrap();
+        assert!(matches!(&m.revisions[0].placements[&id.to_string()],
+            PlacementData::Unplaced { file, .. } if file == "README.md"));
+        assert!(m.revisions[0].order.contains(&id.to_string()));
+    }
+
+    #[test]
+    fn the_json_has_no_less_than_sign_so_it_can_sit_in_a_script_element() {
+        let id = Ulid::new();
+        let (_dir, loaded) = bundle_of(
+            &[(R1_BASE, R1_HEAD, files_source(None))],
+            vec![comment(
+                id,
+                Anchor::Span {
+                    base: Some(range(2, 1, R1_BASE)),
+                    head: Some(range(2, 1, R1_HEAD)),
+                },
+                "</script><!-- <b>bold</b> -->",
+            )],
+        );
+        let json = view_model_json(&loaded).unwrap();
+        assert!(!json.contains('<'), "{json}");
+        // It is still the same data.
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let html = back["threads"][0]["comments"][0]["html"].as_str().unwrap();
+        assert!(
+            html.contains("<b>bold</b>") || html.contains("&lt;b&gt;"),
+            "{html}"
+        );
+        assert!(html.contains("script"), "{html}");
+    }
+
+    #[test]
+    fn the_status_of_a_file_says_what_happened_to_it() {
+        let file = |old: Option<&str>, new: Option<&str>, rename: bool, binary: bool| FileDiff {
+            old_path: old.map(str::to_string),
+            new_path: new.map(str::to_string),
+            is_rename: rename,
+            is_binary: binary,
+            hunks: Vec::new(),
+        };
+        use viewmodel::file_status;
+        assert_eq!(
+            file_status(Some(&file(Some("a"), Some("a"), false, false)), true),
+            "modified"
+        );
+        assert_eq!(
+            file_status(Some(&file(None, Some("a"), false, false)), true),
+            "added"
+        );
+        assert_eq!(
+            file_status(Some(&file(Some("a"), None, false, false)), true),
+            "deleted"
+        );
+        assert_eq!(
+            file_status(Some(&file(Some("a"), Some("b"), true, false)), true),
+            "renamed"
+        );
+        assert_eq!(
+            file_status(Some(&file(Some("a"), Some("a"), false, true)), true),
+            "binary"
+        );
+        assert_eq!(
+            file_status(Some(&file(Some("a"), Some("a"), false, false)), false),
+            "context"
+        );
+        assert_eq!(file_status(None, false), "context");
+    }
+
+    #[test]
+    fn the_export_is_one_page_with_its_data_and_scripts_and_nothing_to_fetch() {
+        let (_dir, loaded, _ids) = scenario_parts();
+        let page = render_export(&loaded).unwrap();
+        assert!(page.contains(r#"<script type="application/json" id="diffnote-data">"#));
+        assert!(page.contains("Diffnote.start();"));
+        assert!(page.contains(r#"<div id="app"></div>"#));
+        // Nothing that would need a request, a module or a worker (which a
+        // page opened from a file can't have).
+        for s in CLIENT_SCRIPTS {
+            assert!(
+                !s.contains("</script"),
+                "a script that would end its element"
+            );
+            assert!(!s.contains("import("), "dynamic import");
+            assert!(!s.contains("fetch("), "fetch");
+            assert!(!s.contains("XMLHttpRequest"), "XMLHttpRequest");
+            assert!(!s.contains("new Worker"), "workers");
+            assert!(!s.contains("serviceWorker"), "service workers");
+        }
+        assert!(!page.contains(r#"type="module""#));
+        assert!(!page.contains("src="), "no external file");
+        assert!(!page.contains("<link"), "no external style");
+    }
+
+    #[test]
+    fn the_export_page_carries_the_title() {
+        let (_dir, loaded) = bundle_of(
+            &[(R1_BASE, R1_HEAD, files_source(None))],
+            vec![title_event("ログイン改修 <v2> & co")],
+        );
+        let page = render_export(&loaded).unwrap();
+        assert!(
+            page.contains("<title>ログイン改修 &lt;v2&gt; &amp; co</title>"),
+            "{}",
+            &page[..400]
+        );
+        let (_dir, loaded) = bundle_of(&[(R1_BASE, R1_HEAD, files_source(None))], Vec::new());
+        assert!(
+            render_export(&loaded)
+                .unwrap()
+                .contains("<title>diffnote レビュー</title>")
+        );
     }
 
     #[test]
