@@ -230,18 +230,32 @@
   }
 
   // What the tab shows once the server has stopped.
-  function stopped(farewell) {
+  function stopped(summary) {
     preact.render(null, document.getElementById('app'));
-    var box = document.createElement('div');
-    box.style.cssText = 'padding:24px;font:14px/1.7 sans-serif';
-    var lines = ['終了しました。'].concat(farewell ? String(farewell).split('\n') : [], ['このタブは閉じてかまいません。']);
-    lines.forEach(function (line) {
-      var p = document.createElement('p');
-      p.style.margin = '0 0 6px';
-      p.textContent = line;
-      box.appendChild(p);
-    });
-    document.body.replaceChildren(box);
+    var make = function (tag, cls, text) {
+      var e = document.createElement(tag);
+      e.className = cls;
+      if (text != null) e.textContent = text;
+      return e;
+    };
+    var card = make('div', 'diffnote-farewell__card');
+    card.appendChild(make('div', 'diffnote-farewell__mark', '✓'));
+    card.appendChild(make('h1', 'diffnote-farewell__title', '終了しました'));
+    if (summary) {
+      var list = make('dl', 'diffnote-farewell__list');
+      var row = function (label, value) {
+        list.appendChild(make('dt', '', label));
+        list.appendChild(make('dd', '', value));
+      };
+      row('今回の変更', summary.changes);
+      row('保存先', summary.path);
+      if (summary.threads != null) row('いまの内容', 'スレッド ' + summary.threads + ' 件・コメント ' + summary.comments + ' 件');
+      card.appendChild(list);
+    }
+    card.appendChild(make('p', 'diffnote-farewell__note', 'このタブは閉じてかまいません。'));
+    var page = make('div', 'diffnote-farewell');
+    page.appendChild(card);
+    document.body.replaceChildren(page);
   }
 
   // A comment: the nodes of its Markdown (see `src/html/markdown.rs`) as
@@ -1112,7 +1126,7 @@
         </label>`}
         ${model.interactive && html`<a class="diffnote-button" data-diffnote-export href="/export" title="今の内容を、誰でも開ける HTML として保存します">エクスポート</a>`}
         ${model.interactive && html`<button type="button" class="diffnote-button diffnote-topbar__quit" data-diffnote-shutdown title="サーバーを止めます"
-          onClick=${function () { D.api.post('/api/shutdown').then(function (res) { stopped(res.farewell); }); }}>終了</button>`}
+          onClick=${function () { D.api.post('/api/shutdown').then(function (res) { stopped(res.summary); }); }}>終了</button>`}
       </div>
       <${ActionsContext.Provider} value=${review.actions}>
         <${ComposeContext.Provider} value=${compose}>

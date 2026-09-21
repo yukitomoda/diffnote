@@ -210,9 +210,9 @@ impl Server {
         change(&mut self.stats.lock().unwrap_or_else(|e| e.into_inner()));
     }
 
-    /// What is said when the server stops: what this session did, and where it
-    /// is kept.
-    pub fn farewell(&self) -> String {
+    /// What this session did, roughly, and where the review is kept: the words
+    /// for the terminal, and the parts for the page to lay out.
+    fn farewell_parts(&self) -> serde_json::Value {
         let stats = *self.stats.lock().unwrap_or_else(|e| e.into_inner());
         let totals = bundle::load(&self.review).ok().map(|l| {
             let threads = review::build_threads(&l.events);
@@ -221,14 +221,28 @@ impl Server {
                 threads.iter().map(|t| 1 + t.replies.len()).sum::<usize>(),
             )
         });
-        let kept = match totals {
-            Some((threads, comments)) => format!(
-                "{} に保存しました(スレッド {threads} 件・コメント {comments} 件)",
-                self.review.display()
+        serde_json::json!({
+            "changes": stats.describe(),
+            "path": self.review.display().to_string(),
+            "threads": totals.map(|t| t.0),
+            "comments": totals.map(|t| t.1),
+        })
+    }
+
+    /// What is said when the server stops.
+    pub fn farewell(&self) -> String {
+        let parts = self.farewell_parts();
+        let kept = match (parts["threads"].as_u64(), parts["comments"].as_u64()) {
+            (Some(t), Some(c)) => format!(
+                "{} に保存しました(スレッド {t} 件・コメント {c} 件)",
+                parts["path"].as_str().unwrap_or("")
             ),
-            None => format!("{}", self.review.display()),
+            _ => parts["path"].as_str().unwrap_or("").to_string(),
         };
-        format!("今回の変更: {}\n{kept}", stats.describe())
+        format!(
+            "今回の変更: {}\n{kept}",
+            parts["changes"].as_str().unwrap_or("")
+        )
     }
 
     /// The comments of this session that are still in the review, as the page
@@ -627,7 +641,7 @@ impl Server {
         if path == "/api/shutdown" {
             let mut reply = Reply::json(
                 200,
-                &serde_json::json!({ "ok": true, "farewell": self.farewell() }),
+                &serde_json::json!({ "ok": true, "farewell": self.farewell(), "summary": self.farewell_parts() }),
             );
             reply.shutdown = true;
             return reply;

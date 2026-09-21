@@ -247,3 +247,13 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-expand__button { font: inherit; font-size: 12px; padding: 1px 10px; color: var(--diffnote-color-hunk-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; cursor: pointer; }
 .diffnote-expand__button:hover { background: var(--diffnote-color-gutter); }
 .diffnote-expand__button:disabled { opacity: 0.6; cursor: default; }
+
+/* The screen shown after "終了". */
+.diffnote-farewell { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; background: var(--diffnote-color-gutter); }
+.diffnote-farewell__card { max-width: 560px; width: 100%; padding: 28px 32px; text-align: center; background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 12px; }
+.diffnote-farewell__mark { width: 44px; height: 44px; margin: 0 auto 10px; line-height: 44px; font-size: 24px; color: #fff; background: #1a7f37; border-radius: 50%; }
+.diffnote-farewell__title { margin: 0 0 16px; font-size: 20px; }
+.diffnote-farewell__list { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 18px; text-align: left; font-size: 14px; }
+.diffnote-farewell__list dt { color: var(--diffnote-color-muted); }
+.diffnote-farewell__list dd { margin: 0; word-break: break-all; }
+.diffnote-farewell__note { margin: 0; color: var(--diffnote-color-muted); font-size: 13px; }
