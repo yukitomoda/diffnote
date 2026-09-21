@@ -106,6 +106,18 @@ class ClientServed(BrowserCase):
         b.js("var c=document.getElementById(window.__other); c.querySelector('[data-diffnote-action]').click()")
         self.assertTrue(b.wait(f"document.getElementById({card!r}).textContent.includes('別のタブから')"))
 
+    def test_the_export_button_gives_the_page_the_export_command_writes(self):
+        self.serve()
+        b = self.b
+        self.assertEqual(b.js("document.querySelector('[data-diffnote-export]').getAttribute('href')"), "/export")
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-export]').hasAttribute('download')"))
+        # What the link fetches: an attachment named after the bundle, with the
+        # comments in it and nothing that talks to the server.
+        b.js("fetch('/export',{credentials:'same-origin'}).then(function(r){return r.text().then(function(t){window.__export={disposition:r.headers.get('content-disposition'),text:t}})})")
+        self.assertTrue(b.wait("!!window.__export"))
+        self.assertIn('filename="r.html"', b.js("window.__export.disposition"))
+        self.assertTrue(b.js("window.__export.text.includes('mul の型') && !window.__export.text.includes('D.api = ')"))
+
     def test_the_shutdown_button_stops_the_server(self):
         self.serve()
         self.b.js("document.querySelector('[data-diffnote-shutdown]').click()")

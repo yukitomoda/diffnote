@@ -236,6 +236,7 @@ impl Server {
 
         match (request.method, path) {
             ("GET", "/") => self.page(),
+            ("GET", "/export") => self.export(),
             ("GET", "/api/model") => self.model(),
             ("GET", "/api/version") => self.version(),
             ("GET", p) if p.starts_with("/api/files/") => {
@@ -268,6 +269,50 @@ impl Server {
                 ),
             ),
         }
+    }
+
+    /// The review as the file `diffnote export` writes, to be saved by the
+    /// browser (named after the bundle: `review.diffnote` -> `review.html`).
+    fn export(&self) -> Reply {
+        let page = bundle::load(&self.review).and_then(|l| html::render_export(&l));
+        let page = match page {
+            Ok(page) => page,
+            Err(e) => return Reply::error(500, &format!("書き出せませんでした: {e}")),
+        };
+        let stem = self
+            .review
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "diffnote".into());
+        let name = format!("{stem}.html");
+        // A plain name for old browsers, and the real one (UTF-8, %-encoded).
+        let ascii: String = name
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || "._-".contains(c) {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let encoded: String = name
+            .bytes()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() || b"._-".contains(&b) {
+                    (b as char).to_string()
+                } else {
+                    format!("%{b:02X}")
+                }
+            })
+            .collect();
+        let mut reply = Reply::html(200, page);
+        reply.headers.push((
+            "Content-Disposition".into(),
+            format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{encoded}"),
+        ));
+        reply
     }
 
     /// The whole model, for a page that finds the review has changed under it.
@@ -973,6 +1018,36 @@ mod tests {
         assert!(page.contains("why B?"), "the data has the comments");
         assert!(page.contains("D.api = "));
         assert!(page.contains(r#""interactive":true"#));
+    }
+
+    #[test]
+    fn the_review_can_be_downloaded_as_the_export_page() {
+        let f = fixture();
+        let reply = f.request("GET", "/export", &[], "");
+        assert_eq!(reply.status, 200);
+        let disposition = reply
+            .headers
+            .iter()
+            .find(|(n, _)| n == "Content-Disposition")
+            .map(|(_, v)| v.clone())
+            .unwrap();
+        assert!(
+            disposition.starts_with("attachment; filename=\""),
+            "{disposition}"
+        );
+        assert!(disposition.contains(".html"), "{disposition}");
+        let page = text(&reply);
+        // What the export writes: the data, and nothing that talks to a server.
+        assert!(page.contains(r#"id="diffnote-data""#) && page.contains("why B?"));
+        assert!(!page.contains("D.api = ") && page.contains(r#""interactive":false"#));
+        // Not without the token, like the rest.
+        let bare = f.server.handle(&Request {
+            method: "GET",
+            target: "/export",
+            headers: vec![("host".into(), "127.0.0.1:4242".into())],
+            body: b"",
+        });
+        assert_eq!(bare.status, 403);
     }
 
     #[test]
