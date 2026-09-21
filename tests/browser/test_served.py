@@ -376,6 +376,20 @@ class Replies(ServedCase):
         self.assertTrue(box["above"] and box["top"] >= 0, box)
         b.escape()
 
+    def test_a_line_break_in_a_comment_stays_one_without_a_blank_line(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        self.write(box, "一行目\n二行目\n\n別の段落")
+        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
+        body = f"#{card} .diffnote-comment__body"
+        # (Until it is saved, what is shown is the draft as it was typed.)
+        self.assertTrue(b.wait(f"!document.querySelector('.is-pending') && [...document.querySelectorAll({json.dumps(body)})].some(e => e.textContent.includes('別の段落'))"))
+        html = b.js(f"[...document.querySelectorAll({json.dumps(body)})].find(e => e.textContent.includes('別の段落')).innerHTML")
+        self.assertIn("一行目<br>二行目", html)
+        self.assertEqual(html.count("<p>"), 2, "a blank line is still a new paragraph")
+
     def test_the_shutdown_button_stops_the_server_and_says_roughly_what_was_saved(self):
         self.serve()
         b = self.b

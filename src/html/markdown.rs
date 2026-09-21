@@ -92,8 +92,9 @@ pub fn tree(body: &str) -> Vec<Value> {
                 None => push(&mut stack, Value::String(text.to_string())),
             },
             Event::Code(text) => push(&mut stack, json!({ "t": "code", "s": text.as_ref() })),
-            Event::SoftBreak => push(&mut stack, Value::String(" ".into())),
-            Event::HardBreak => push(&mut stack, json!({ "t": "br" })),
+            // A line break stays one (as in a comment on GitHub), with or without
+            // the two spaces or the backslash that Markdown asks for.
+            Event::SoftBreak | Event::HardBreak => push(&mut stack, json!({ "t": "br" })),
             Event::Rule => push(&mut stack, json!({ "t": "hr" })),
             _ => {}
         }
@@ -309,8 +310,19 @@ mod tests {
     }
 
     #[test]
-    fn a_soft_break_is_a_space_and_an_empty_body_is_nothing() {
-        assert_eq!(json_of("one\ntwo"), r#"[{"c":["one two"],"t":"p"}]"#);
+    fn a_line_break_stays_one_and_an_empty_body_is_nothing() {
+        assert_eq!(
+            json_of("one\ntwo"),
+            r#"[{"c":["one",{"t":"br"},"two"],"t":"p"}]"#
+        );
+        // (A hard break, with the two spaces or the backslash, is the same.)
+        assert_eq!(json_of("one  \ntwo"), json_of("one\ntwo"));
+        assert_eq!(json_of("one\\\ntwo"), json_of("one\ntwo"));
+        // A blank line still starts a paragraph.
+        assert_eq!(
+            json_of("one\n\ntwo"),
+            r#"[{"c":["one"],"t":"p"},{"c":["two"],"t":"p"}]"#
+        );
         assert_eq!(json_of(""), "[]");
     }
 }
