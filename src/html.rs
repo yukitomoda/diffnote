@@ -22,7 +22,6 @@ use crate::diff::{FileDiff, Hunk, LineKind, UnifiedDiff};
 use crate::expand;
 use crate::model::Side;
 use crate::review::{Thread, build_threads};
-use pulldown_cmark::{Parser as MdParser, html::push_html as md_push_html};
 use std::collections::HashMap;
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 use ulid::Ulid;
@@ -703,12 +702,6 @@ fn ordered_threads<'a>(
     items.into_iter().map(|(_, _, t)| t).collect()
 }
 
-fn markdown_to_html(body: &str) -> String {
-    let mut out = String::new();
-    md_push_html(&mut out, MdParser::new(body));
-    out
-}
-
 fn guess_syntax<'a>(file: &str, syntax_set: &'a SyntaxSet) -> &'a SyntaxReference {
     let path = std::path::Path::new(file);
     // By the whole name first (`Dockerfile`, `Makefile`), then by extension.
@@ -742,6 +735,7 @@ const DEFAULT_TITLE: &str = "diffnote レビュー";
 
 const STYLE: &str = include_str!("../ui/style.css");
 
+mod markdown;
 pub(crate) mod tokens;
 mod viewmodel;
 pub use viewmodel::{
@@ -947,22 +941,27 @@ mod tests {
     #[test]
     fn the_model_has_the_threads_their_comments_and_a_revision_per_view() {
         let (m, [t1, ..], _dir, _loaded) = model_of_scenario();
-        assert_eq!(m.version, 2);
+        assert_eq!(m.version, 3);
         assert_eq!(m.title, None);
         assert_eq!(m.revisions.len(), 2);
         assert_eq!(m.threads.len(), 5);
         let thread = m.threads.iter().find(|t| t.id == t1.to_string()).unwrap();
-        // The first comment, then its reply; text as HTML; times in UTC.
+        // The first comment, then its reply; text as a tree; times in UTC.
         assert_eq!(thread.comments.len(), 2);
-        assert_eq!(thread.comments[0].html, "<p>about B</p>\n");
-        assert_eq!(thread.comments[1].html, "<p>a reply</p>\n");
+        let doc = |i: usize| serde_json::to_string(&thread.comments[i].doc).unwrap();
+        assert_eq!(doc(0), r#"[{"c":["about B"],"t":"p"}]"#);
+        assert_eq!(doc(1), r#"[{"c":["a reply"],"t":"p"}]"#);
         assert_eq!(thread.comments[0].author, "r@example.com");
         assert_eq!(thread.comments[0].at, "1970-01-01T00:00:00Z");
         assert!(!thread.resolved);
         let file_thread = m
             .threads
             .iter()
-            .find(|t| t.comments[0].html.contains("file thread"))
+            .find(|t| {
+                serde_json::to_string(&t.comments[0].doc)
+                    .unwrap()
+                    .contains("file thread")
+            })
             .unwrap();
         assert!(file_thread.resolved);
         assert!(
@@ -1096,12 +1095,10 @@ mod tests {
         assert!(!json.contains('<'), "{json}");
         // It is still the same data.
         let back: serde_json::Value = serde_json::from_str(&json).unwrap();
-        let html = back["threads"][0]["comments"][0]["html"].as_str().unwrap();
-        assert!(
-            html.contains("<b>bold</b>") || html.contains("&lt;b&gt;"),
-            "{html}"
-        );
-        assert!(html.contains("script"), "{html}");
+        let doc = back["threads"][0]["comments"][0]["doc"].to_string();
+        // The comment's own `<b>`, `</script>` and `<!--` are text in the tree.
+        assert!(doc.contains("<b>bold</b>"), "{doc}");
+        assert!(doc.contains("script"), "{doc}");
     }
 
     #[test]
@@ -1160,6 +1157,19 @@ mod tests {
             assert!(!s.contains("XMLHttpRequest"), "XMLHttpRequest");
             assert!(!s.contains("new Worker"), "workers");
             assert!(!s.contains("serviceWorker"), "service workers");
+        }
+        // What the page shows is made of elements, never of HTML text (a comment
+        // or a line of code can't become markup): true of the page's own
+        // scripts (the libraries are theirs).
+        for own in [CLIENT_LIBS[3], CLIENT_LIBS[4], CLIENT_APP, CLIENT_API] {
+            for banned in [
+                "innerHTML",
+                "dangerouslySetInnerHTML",
+                "insertAdjacentHTML",
+                "document.write",
+            ] {
+                assert!(!own.contains(banned), "{banned}");
+            }
         }
         assert!(!page.contains(r#"type="module""#));
         // Only the served page has what talks to the server.

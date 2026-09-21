@@ -136,20 +136,30 @@
     return out;
   };
 
-  var entities = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&nbsp;': ' ' };
+  // The text of a comment's nodes (see `src/html/markdown.rs`), a line for each
+  // block and each break.
+  lib.plainText = function (nodes) {
+    var out = '';
+    (nodes || []).forEach(function (n) {
+      if (typeof n === 'string') {
+        out += n;
+      } else if (n.t === 'br') {
+        out += '\n';
+      } else if (n.t === 'code' || n.t === 'pre') {
+        out += (n.s || '') + (n.t === 'pre' ? '\n' : '');
+      } else {
+        out += lib.plainText(n.c);
+        if (['p', 'h', 'li', 'quote', 'ul', 'ol', 'hr'].indexOf(n.t) >= 0) out += '\n';
+      }
+    });
+    return out;
+  };
 
-  // The first line of a comment's HTML as plain text, short, to tell threads
-  // apart in the list.
-  lib.preview = function (html) {
-    var text = String(html)
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<\/(p|li|h[1-6]|pre|blockquote|div|tr)>/gi, '\n')
-      .replace(/<[^>]*>/g, '')
-      .replace(/&(amp|lt|gt|quot|#39|nbsp);/g, function (m) {
-        return entities[m];
-      });
+  // The first line of a comment as plain text, short, to tell threads apart in
+  // the list.
+  lib.preview = function (nodes) {
     var line = '';
-    text.split('\n').some(function (l) {
+    lib.plainText(nodes).split('\n').some(function (l) {
       line = l.trim();
       return line !== '';
     });

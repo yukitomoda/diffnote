@@ -171,7 +171,7 @@
             </div>
             ${error && html`<p class="diffnote-error">${error}</p>`}
           </form>`
-        : html`<div class="diffnote-comment__body" dangerouslySetInnerHTML=${{ __html: c.html }}></div>${error && html`<p class="diffnote-error">${error}</p>`}`}
+        : html`<div class="diffnote-comment__body">${markdown(c.doc)}</div>${error && html`<p class="diffnote-error">${error}</p>`}`}
     </article>`;
   }
 
@@ -227,6 +227,45 @@
         <div class="diffnote-comment__body">${c.draft}</div>
       </article>`}
     </div>`;
+  }
+
+  // What the tab shows once the server has stopped.
+  function stopped() {
+    preact.render(null, document.getElementById('app'));
+    var p = document.createElement('p');
+    p.style.cssText = 'padding:24px;font:14px sans-serif';
+    p.textContent = '終了しました。このタブは閉じてかまいません。';
+    document.body.replaceChildren(p);
+  }
+
+  // A comment: the nodes of its Markdown (see `src/html/markdown.rs`) as
+  // elements. Only what is known is drawn, so nothing a comment says can be
+  // anything but text; a link goes only to http, https or mailto.
+  var SAFE_LINK = /^(https?:|mailto:)/i;
+  function markdown(nodes) {
+    return (nodes || []).map(function (n, i) {
+      if (typeof n === 'string') return n;
+      var kids = markdown(n.c);
+      switch (n.t) {
+        case 'p': return h('p', { key: i }, kids);
+        case 'h': return h('h' + Math.min(Math.max(n.l || 1, 1), 6), { key: i }, kids);
+        case 'quote': return h('blockquote', { key: i }, kids);
+        case 'ul': return h('ul', { key: i }, kids);
+        case 'ol': return h('ol', { key: i, start: n.start }, kids);
+        case 'li': return h('li', { key: i }, kids);
+        case 'pre': return h('pre', { key: i }, h('code', null, n.s || ''));
+        case 'hr': return h('hr', { key: i });
+        case 'em': return h('em', { key: i }, kids);
+        case 'strong': return h('strong', { key: i }, kids);
+        case 'code': return h('code', { key: i }, n.s || '');
+        case 'br': return h('br', { key: i });
+        case 'a':
+          return n.href && SAFE_LINK.test(n.href)
+            ? h('a', { key: i, href: n.href, target: '_blank', rel: 'noopener noreferrer' }, kids)
+            : h('span', { key: i }, kids);
+        default: return h('span', { key: i }, kids);
+      }
+    });
   }
 
   // A line of code: its pieces of text, each with the kind of thing it is (a
@@ -497,7 +536,7 @@
           var color = p && p.kind === 'line' ? lib.color(p.color) : '#8b949e';
           return html`<li key=${id} class=${t.resolved ? 'is-resolved' : ''}>
             <a href=${'#r' + ctx.rev + '-thread-' + id} data-diffnote-jump=${id} title=${lib.location(p) || '差分全体'}>
-              <span class="diffnote-thread__swatch" style=${'background:' + color}></span><span class="diffnote-threadlist__where">${lib.shortLocation(p)}</span>${t.resolved && html`<span class="diffnote-threadlist__state">解決済み</span>`}<span class="diffnote-threadlist__preview">${lib.preview(t.comments[0].html)}</span>
+              <span class="diffnote-thread__swatch" style=${'background:' + color}></span><span class="diffnote-threadlist__where">${lib.shortLocation(p)}</span>${t.resolved && html`<span class="diffnote-threadlist__state">解決済み</span>`}<span class="diffnote-threadlist__preview">${lib.preview(t.comments[0].doc)}</span>
             </a>
           </li>`;
         })}
@@ -994,7 +1033,7 @@
         </label>`}
         ${model.interactive && html`<a class="diffnote-button" data-diffnote-export href="/export" title="今の内容を、誰でも開ける HTML として保存します">エクスポート</a>`}
         ${model.interactive && html`<button type="button" class="diffnote-button diffnote-topbar__quit" data-diffnote-shutdown title="サーバーを止めます"
-          onClick=${function () { D.api.post('/api/shutdown').then(function () { document.body.innerHTML = '<p style="padding:24px;font:14px sans-serif">終了しました。このタブは閉じてかまいません。</p>'; }); }}>終了</button>`}
+          onClick=${function () { D.api.post('/api/shutdown').then(function () { stopped(); }); }}>終了</button>`}
       </div>
       <${ActionsContext.Provider} value=${review.actions}>
         <${ComposeContext.Provider} value=${compose}>

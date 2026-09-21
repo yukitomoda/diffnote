@@ -143,12 +143,29 @@ class Replies(ServedCase):
         self.assertIn('filename="r.html"', b.js("window.__export.disposition"))
         self.assertTrue(b.js("window.__export.text.includes('mul の型') && !window.__export.text.includes('D.api = ')"))
 
-    def reply_to(self, card, text):
+    def reply_to(self, card, text, shows=None):
         b = self.b
         b.js(f"var t=document.getElementById({card!r}).querySelector('textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,{text!r}); t.dispatchEvent(new Event('input',{{bubbles:true}}))")
         time.sleep(0.1)
         b.js(f"document.getElementById({card!r}).querySelector('form.diffnote-reply').requestSubmit()")
-        self.assertTrue(b.wait(f"document.getElementById({card!r}).textContent.includes({text!r}) && !document.querySelector('.is-pending')"))
+        self.assertTrue(b.wait(f"document.getElementById({card!r}).textContent.includes({(shows or text)!r}) && !document.querySelector('.is-pending')"))
+
+    def test_what_a_comment_says_is_text_and_markdown_never_html_or_script(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        body = '<img src=x onerror="window.__ran=1"> **強調** [悪い](javascript:window.__ran=2) [良い](https://example.com/a) `code`'
+        self.reply_to(card, body, shows="良い")
+        mine = f"[data-diffnote-comment]:has([data-diffnote-edit]) .diffnote-comment__body"
+        self.assertEqual(b.count(f"{mine} img, {mine} script"), 0, "no element from raw HTML")
+        self.assertIn('<img src=x onerror="window.__ran=1">', b.text(mine), "it is shown as the text it is")
+        self.assertEqual(b.count(f"{mine} strong"), 1)
+        self.assertEqual(b.count(f"{mine} code"), 1)
+        self.assertEqual(b.count(f"{mine} a"), 1, "only the safe link is a link")
+        self.assertEqual(b.js(f"document.querySelector('{mine} a').getAttribute('href')"), "https://example.com/a")
+        self.assertIn("悪い", b.text(mine))
+        time.sleep(0.3)
+        self.assertFalse(b.js("'__ran' in window"))
 
     def test_only_comments_added_in_this_session_have_edit_and_delete(self):
         self.serve()

@@ -10,7 +10,7 @@
 //! (`c` unchanged, `a` added, `d` removed), `o`/`n` the line number on the old
 //! and new side (absent where the line isn't there), `t` the text as pieces
 //! (`"text"`, or `[kind, "text"]` for a piece of a kind: see `tokens`). The
-//! page draws the pieces; there is no HTML in the data but the comments'.
+//! page draws the pieces; there is no HTML in the data.
 
 use super::tokens::{Token, Tokenizer};
 use super::*;
@@ -18,7 +18,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 /// The version of this format, for the page to check.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 #[derive(Serialize)]
 pub struct ViewModel {
@@ -53,8 +53,8 @@ pub struct CommentData {
     pub author: String,
     /// When it was written (RFC 3339, UTC).
     pub at: String,
-    /// The text, as HTML.
-    pub html: String,
+    /// The text as a tree (see `markdown`), not HTML.
+    pub doc: Vec<serde_json::Value>,
     /// The text as written (served page only: to edit it).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub body: String,
@@ -238,7 +238,7 @@ fn thread_data(
         id: id.to_string(),
         author: author.to_string(),
         at: rfc3339(at),
-        html: markdown_to_html(body),
+        doc: super::markdown::tree(body),
         body: if with_body {
             body.to_string()
         } else {

@@ -116,14 +116,17 @@ test('side by side: every row appears once on the side it is on', () => {
 });
 
 test('a preview is the first line of the comment as plain text, short', () => {
-  assert.equal(lib.preview('<p>hello <code>world</code></p>\n<p>second</p>'), 'hello world');
-  assert.equal(lib.preview('<p></p><p>  second </p>'), 'second');
-  assert.equal(lib.preview('<p>a &amp; b &lt;c&gt; &quot;d&quot;</p>'), 'a & b <c> "d"');
-  assert.equal(lib.preview('<h2>Title</h2><p>x</p>'), 'Title');
-  assert.equal(lib.preview('line one<br>line two'), 'line one');
-  assert.equal(lib.preview(''), '');
-  assert.equal(lib.preview('<p>' + 'あ'.repeat(60) + '</p>'), 'あ'.repeat(48) + '…');
-  assert.equal(lib.preview('<p>' + 'あ'.repeat(48) + '</p>'), 'あ'.repeat(48));
+  const p = (...c) => ({ t: 'p', c });
+  assert.equal(lib.preview([p('hello ', { t: 'code', s: 'world' }), p('second')]), 'hello world');
+  assert.equal(lib.preview([{ t: 'p' }, p('  second ')]), 'second');
+  assert.equal(lib.preview([p('a & b <c> "d"')]), 'a & b <c> "d"', 'text is text, not HTML');
+  assert.equal(lib.preview([{ t: 'h', l: 2, c: ['Title'] }, p('x')]), 'Title');
+  assert.equal(lib.preview([p('line one', { t: 'br' }, 'line two')]), 'line one');
+  assert.equal(lib.preview([{ t: 'ul', c: [{ t: 'li', c: ['item ', { t: 'em', c: ['one'] }] }] }]), 'item one');
+  assert.equal(lib.preview([{ t: 'pre', s: 'let a = 1;\n' }]), 'let a = 1;');
+  assert.equal(lib.preview([]), '');
+  assert.equal(lib.preview([p('あ'.repeat(60))]), 'あ'.repeat(48) + '…');
+  assert.equal(lib.preview([p('あ'.repeat(48))]), 'あ'.repeat(48));
 });
 
 test('a time is shown as date and minutes in the local zone', () => {

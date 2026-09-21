@@ -1411,7 +1411,7 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .map(|c| c["html"].as_str().unwrap().to_string())
+            .map(|c| c["doc"].to_string())
             .collect();
         assert_eq!(bodies.len(), 2);
         assert!(bodies[1].contains("because it was wrong"), "{bodies:?}");
