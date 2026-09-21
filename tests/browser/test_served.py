@@ -656,6 +656,9 @@ class ServeAddsTheLatestDiff(ServedCase):
         b.click("[data-diffnote-pull]")
         self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-revision-link]').length === 2"))
         self.assertIn("差分を記録しました", b.js("document.querySelector('[data-diffnote-pull-note]').textContent"))
+        labels = b.js("[...document.querySelectorAll('[data-diffnote-revision-link]')].map(a => a.textContent).join('|')")
+        self.assertRegex(labels, r"^#1 [0-9a-f]{7}\.\.[0-9a-f]{7} \(.*\)\|#2 [0-9a-f]{7}\.\.[0-9a-f]{7} \(.*\)$",
+                         "the revisions are named by their commits")
         self.assertGreater(entries(review), before)
         self.assertEqual(b.js("document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink"), "1",
                          "what was taken in is shown")
