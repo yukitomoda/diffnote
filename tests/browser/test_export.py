@@ -1,13 +1,14 @@
 """The exported page (opened from a file, no server)."""
 import json
 import os
+import shutil
 import pathlib
 import time
 import unittest
 
 import harness
 import harness
-from harness import BrowserCase, diffnote, git, make_calc_review, make_indent_review, make_gaps_review, make_login_review, write
+from harness import BrowserCase, add_settings, diffnote, git, make_calc_review, make_indent_review, make_gaps_review, make_login_review, write
 
 CUR = ".diffnote-revision.is-current"
 
@@ -664,6 +665,21 @@ class IgnoreWhitespace(BrowserCase):
         self.assertEqual(b.count("tr.diffnote-line--context"), 3, "def, a and b")
         # The thread is still on its line.
         self.assertTrue(b.js("document.querySelector('tr.diffnote-line--added').nextElementSibling.classList.contains('diffnote-thread-row')"))
+        b.click("[data-diffnote-ignore-space]")
+        self.assertTrue(b.wait("document.querySelectorAll('tr.diffnote-line--removed').length === 3"))
+
+    def test_a_review_that_says_to_ignore_it_is_exported_so_and_can_still_be_switched(self):
+        review = os.path.join(self.root, "indent-default.diffnote")
+        shutil.copy(self.review, review)
+        add_settings(review, {"ignore_whitespace": True})
+        html = os.path.join(self.root, "indent-default.html")
+        assert diffnote("export", "-f", review, html).returncode == 0
+        b = self.b
+        b.open(pathlib.Path(html).as_uri())
+        b.js("localStorage.setItem('diffnote-layout','unified')")
+        b.reload()
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-ignore-space]').checked"))
+        self.assertEqual(self.rows(), (1, 1))
         b.click("[data-diffnote-ignore-space]")
         self.assertTrue(b.wait("document.querySelectorAll('tr.diffnote-line--removed').length === 3"))
 

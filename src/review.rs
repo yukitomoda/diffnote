@@ -9,7 +9,7 @@
 //! plus its ordered replies, with `resolve`/`reopen`/`reanchor` folded in),
 //! which both the HTML exporter and round-trip annotation rendering need.
 
-use crate::model::{Anchor, Event};
+use crate::model::{Anchor, Event, Settings};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
@@ -37,55 +37,33 @@ pub struct Reply {
     pub body: String,
 }
 
-/// The review's title: that of the last `Title` event, if it isn't empty.
-pub fn title(events: &[Event]) -> Option<&str> {
-    events
-        .iter()
-        .rev()
-        .find_map(|e| match e {
-            Event::Title { title, .. } => Some(title.trim()),
-            _ => None,
-        })
+/// The review's title, if it has one.
+pub fn title(settings: &Settings) -> Option<&str> {
+    settings
+        .title
+        .as_deref()
+        .map(str::trim)
         .filter(|t| !t.is_empty())
 }
 
-/// The `Title` event that makes `wanted` the title, if it isn't already.
-/// An empty `wanted` takes the title away.
-pub fn title_change(events: &[Event], wanted: &str, author: &str) -> Option<Event> {
+/// Makes `wanted` the title (an empty one takes the title away); whether that
+/// changed anything.
+pub fn set_title(settings: &mut Settings, wanted: &str) -> bool {
     let wanted = wanted.trim();
-    if title(events).unwrap_or("") == wanted {
-        return None;
+    if title(settings).unwrap_or("") == wanted {
+        return false;
     }
-    Some(Event::Title {
-        title: wanted.to_string(),
-        author: author.to_string(),
-        created_at: time::OffsetDateTime::now_utc(),
-    })
+    settings.title = (!wanted.is_empty()).then(|| wanted.to_string());
+    true
 }
 
-/// Whether differences that are only in white space are hidden (the last word
-/// of the log; not hidden if nothing was said).
-pub fn ignore_whitespace(events: &[Event]) -> bool {
-    events
-        .iter()
-        .rev()
-        .find_map(|e| match e {
-            Event::IgnoreWhitespace { value, .. } => Some(*value),
-            _ => None,
-        })
-        .unwrap_or(false)
-}
-
-/// The event that makes hiding them `wanted`, if it isn't so already.
-pub fn ignore_whitespace_change(events: &[Event], wanted: bool, author: &str) -> Option<Event> {
-    if ignore_whitespace(events) == wanted {
-        return None;
+/// Makes ignoring white space `wanted`; whether that changed anything.
+pub fn set_ignore_whitespace(settings: &mut Settings, wanted: bool) -> bool {
+    if settings.ignore_whitespace == wanted {
+        return false;
     }
-    Some(Event::IgnoreWhitespace {
-        value: wanted,
-        author: author.to_string(),
-        created_at: time::OffsetDateTime::now_utc(),
-    })
+    settings.ignore_whitespace = wanted;
+    true
 }
 
 /// Groups a flat event stream into threads, in the order their root
@@ -240,64 +218,29 @@ mod tests {
         assert!(err.to_string().contains(":2:"));
     }
 
-    fn title_event(title: &str) -> Event {
-        Event::Title {
-            title: title.to_string(),
-            author: "a@example.com".to_string(),
-            created_at: OffsetDateTime::UNIX_EPOCH,
-        }
+    #[test]
+    fn the_title_is_a_setting_that_changes_only_when_it_would_be_another() {
+        let mut settings = Settings::default();
+        assert_eq!(title(&settings), None);
+        assert!(!set_title(&mut settings, ""), "nothing to clear");
+        assert!(!set_title(&mut settings, "  "));
+        assert!(set_title(&mut settings, " new "));
+        assert_eq!(title(&settings), Some("new"), "trimmed");
+        assert!(!set_title(&mut settings, "new"), "the same title");
+        assert!(set_title(&mut settings, "other"));
+        assert!(set_title(&mut settings, ""), "clearing changes it");
+        assert_eq!(title(&settings), None);
+        assert_eq!(settings.title, None, "no empty string is kept");
     }
 
     #[test]
-    fn the_title_is_the_last_non_empty_one() {
-        assert_eq!(title(&[]), None);
-        assert_eq!(title(&[title_event("a")]), Some("a"));
-        assert_eq!(title(&[title_event("a"), title_event(" b ")]), Some("b"));
-        assert_eq!(title(&[title_event("a"), title_event("")]), None, "cleared");
-        assert_eq!(
-            title(&[title_event("a"), title_event(""), title_event("c")]),
-            Some("c")
-        );
-    }
-
-    #[test]
-    fn a_title_event_is_only_made_when_the_title_would_change() {
-        let none: Vec<Event> = Vec::new();
-        assert!(title_change(&none, "", "me").is_none(), "nothing to clear");
-        assert!(title_change(&none, "  ", "me").is_none());
-        let Some(Event::Title {
-            title: t, author, ..
-        }) = title_change(&none, " new ", "me")
-        else {
-            panic!("a title should be set");
-        };
-        assert_eq!((t.as_str(), author.as_str()), ("new", "me"));
-        let has = [title_event("new")];
-        assert!(title_change(&has, "new", "me").is_none(), "same title");
-        assert!(title_change(&has, "other", "me").is_some());
-        let Some(Event::Title { title: t, .. }) = title_change(&has, "", "me") else {
-            panic!("clearing is an event too");
-        };
-        assert_eq!(t, "");
-    }
-
-    #[test]
-    fn a_title_event_round_trips_as_jsonl() {
-        let line = serde_json::to_string(&title_event("ログイン改修")).unwrap();
-        assert!(line.contains(r#""kind":"title""#), "{line}");
-        let back: Event = serde_json::from_str(&line).unwrap();
-        assert_eq!(title(&[back]), Some("ログイン改修"));
-    }
-
-    #[test]
-    fn whitespace_differences_are_shown_unless_the_last_word_of_the_log_hides_them() {
-        assert!(!ignore_whitespace(&[]));
-        // Saying what is already so writes nothing.
-        assert!(ignore_whitespace_change(&[], false, "me").is_none());
-        let on = ignore_whitespace_change(&[], true, "me").unwrap();
-        assert!(ignore_whitespace(std::slice::from_ref(&on)));
-        assert!(ignore_whitespace_change(std::slice::from_ref(&on), true, "me").is_none());
-        let off = ignore_whitespace_change(std::slice::from_ref(&on), false, "me").unwrap();
-        assert!(!ignore_whitespace(&[on, off]));
+    fn ignoring_white_space_is_a_setting_that_changes_only_when_it_would_be_another() {
+        let mut settings = Settings::default();
+        assert!(!settings.ignore_whitespace);
+        assert!(!set_ignore_whitespace(&mut settings, false));
+        assert!(set_ignore_whitespace(&mut settings, true));
+        assert!(settings.ignore_whitespace);
+        assert!(!set_ignore_whitespace(&mut settings, true));
+        assert!(set_ignore_whitespace(&mut settings, false));
     }
 }

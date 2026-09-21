@@ -204,7 +204,6 @@ struct Stats {
     edited: u32,
     deleted: u32,
     titled: u32,
-    settings: u32,
     images: u32,
     files: u32,
 }
@@ -235,7 +234,6 @@ impl Stats {
             (self.edited, "編集"),
             (self.deleted, "削除"),
             (self.titled, "タイトル変更"),
-            (self.settings, "設定変更"),
         ] {
             if n > 0 {
                 parts.push(format!("{what} {n} 件"));
@@ -1047,7 +1045,6 @@ impl Server {
             }
             ["api", "author"] => self.set_author(request.body),
             ["api", "title"] => self.set_title(request.body),
-            ["api", "whitespace"] => self.set_ignore_whitespace(request.body),
             ["api", "images"] => self.add_image(request.body),
             ["api", "attachments"] => self.add_attachment(request.target, request.body),
             ["api", "refresh"] => self.refresh(),
@@ -1127,28 +1124,6 @@ impl Server {
         )
     }
 
-    /// Whether differences that are only in white space are hidden: kept in the
-    /// review, so that it is so for whoever reads it.
-    fn set_ignore_whitespace(&self, body: &[u8]) -> Result<Reply, Failure> {
-        let value: serde_json::Value = serde_json::from_slice(body)
-            .map_err(|_| Failure(400, "送られた内容を読めません".into()))?;
-        let wanted = value
-            .get("ignore")
-            .and_then(|v| v.as_bool())
-            .ok_or_else(|| Failure(400, "設定が指定されていません".into()))?;
-        let loaded = bundle::load(&self.review).map_err(internal)?;
-        let before = html::stamp(&loaded);
-        if let Some(event) =
-            review::ignore_whitespace_change(&loaded.events, wanted, &self.author())
-        {
-            let mut events = loaded.events.clone();
-            events.push(event);
-            self.save(&loaded, &events)?;
-            self.count(|s| s.settings += 1);
-        }
-        self.model_answer(&before, serde_json::json!({}))
-    }
-
     /// Sets the review's title (an empty one takes it away), as `edit --title`.
     fn set_title(&self, body: &[u8]) -> Result<Reply, Failure> {
         let value: serde_json::Value = serde_json::from_slice(body)
@@ -1163,11 +1138,10 @@ impl Server {
         if title.chars().count() > 200 {
             return Err(Failure(400, "タイトルが長すぎます(200 文字まで)".into()));
         }
-        let loaded = bundle::load(&self.review).map_err(internal)?;
+        let mut loaded = bundle::load(&self.review).map_err(internal)?;
         let before = html::stamp(&loaded);
-        if let Some(event) = review::title_change(&loaded.events, &title, &self.author()) {
-            let mut events = loaded.events.clone();
-            events.push(event);
+        if review::set_title(&mut loaded.settings, &title) {
+            let events = loaded.events.clone();
             self.save(&loaded, &events)?;
             self.count(|s| s.titled += 1);
         }
@@ -2139,22 +2113,20 @@ mod tests {
     }
 
     #[test]
-    fn the_title_is_written_to_the_review_and_an_empty_one_takes_it_away() {
+    fn the_title_is_kept_in_the_settings_and_an_empty_one_takes_it_away() {
         let f = fixture();
         let before = f.events().len();
+        let title = |f: &Fixture| bundle::load(&f.path).unwrap().settings.title;
         let set = json(&f.post("/api/title", r#"{"title":" ログイン  改修 "}"#));
         assert_eq!(set["ok"], true, "{set}");
         assert_eq!(set["model"]["title"], "ログイン 改修");
-        assert_eq!(f.events().len(), before + 1);
-        assert!(matches!(
-            f.events().last(),
-            Some(Event::Title { title, author, .. }) if title == "ログイン 改修" && author == "tester"
-        ));
-        // The same title again writes nothing; an empty one clears it.
+        assert_eq!(title(&f).as_deref(), Some("ログイン 改修"));
+        assert_eq!(f.events().len(), before, "state, not an event");
+        // The same title again changes nothing (and isn't counted); an empty one clears it.
         f.post("/api/title", r#"{"title":"ログイン 改修"}"#);
-        assert_eq!(f.events().len(), before + 1);
         let cleared = json(&f.post("/api/title", r#"{"title":""}"#));
         assert!(cleared["model"]["title"].is_null());
+        assert_eq!(title(&f), None);
         assert_eq!(f.post("/api/title", "{}").status, 400);
         let long = format!(r#"{{"title":"{}"}}"#, "あ".repeat(201));
         assert_eq!(f.post("/api/title", &long).status, 400);

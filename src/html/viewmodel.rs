@@ -40,7 +40,8 @@ pub struct ViewModel {
     pub refreshable: bool,
     /// What every revision is compared with: the review's first snapshot.
     pub base: Option<BaseData>,
-    /// Whether differences that are only in white space are hidden.
+    /// Whether the page starts with differences that are only in white space
+    /// ignored (the review's default; the page can change it for itself).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub ignore_whitespace: bool,
     /// The images the comments show, by id, as `data:` addresses (a page that
@@ -280,7 +281,7 @@ pub fn view_model_with(
                 at: rfc3339(r.created_at),
             },
         }),
-        ignore_whitespace: crate::review::ignore_whitespace(&loaded.events),
+        ignore_whitespace: loaded.settings.ignore_whitespace,
         images: if interactive {
             BTreeMap::new()
         } else {
@@ -293,7 +294,7 @@ pub fn view_model_with(
         },
         attachment_limit: loaded.settings.attachment_limit,
         interactive,
-        title: crate::review::title(&loaded.events).map(str::to_string),
+        title: crate::review::title(&loaded.settings).map(str::to_string),
         threads: {
             let ids = comment_ids(&loaded.events);
             threads
@@ -331,7 +332,12 @@ pub fn served_model_json(
 /// A stamp of the review's log: it differs whenever the log does (a comment
 /// added, edited or deleted).
 pub fn stamp(loaded: &crate::bundle::Loaded) -> String {
-    crate::digest::digest(serde_json::to_vec(&loaded.events).unwrap_or_default())
+    let mut bytes = serde_json::to_vec(&loaded.events).unwrap_or_default();
+    // (What the settings are counts too: another tab that changed one is a change.)
+    if loaded.settings != crate::model::Settings::default() {
+        bytes.extend(serde_json::to_vec(&loaded.settings).unwrap_or_default());
+    }
+    crate::digest::digest(bytes)
 }
 
 /// The ids of each thread's replies, in order (a thread's replies have no id

@@ -169,7 +169,7 @@ fn client_page(
     } else {
         view_model_json(loaded, limit)?
     };
-    let title = crate::review::title(&loaded.events).unwrap_or(DEFAULT_TITLE);
+    let title = crate::review::title(&loaded.settings).unwrap_or(DEFAULT_TITLE);
     let mut scripts: Vec<&str> = CLIENT_LIBS.to_vec();
     if interactive {
         scripts.push(CLIENT_API);

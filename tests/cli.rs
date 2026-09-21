@@ -1039,15 +1039,13 @@ fn thread_saying<'a>(model: &'a serde_json::Value, text: &str) -> &'a serde_json
         .unwrap_or_else(|| panic!("no thread says {text:?}"))
 }
 
+/// The review's title: a setting (state, not a history of them).
 fn titles(review: &Path) -> Vec<String> {
     bundle::load(review)
         .unwrap()
-        .events
-        .iter()
-        .filter_map(|e| match e {
-            Event::Title { title, .. } => Some(title.clone()),
-            _ => None,
-        })
+        .settings
+        .title
+        .into_iter()
         .collect()
 }
 
@@ -1090,7 +1088,10 @@ fn a_title_given_with_the_first_comment_names_the_export_and_show() {
     assert!(out.contains("タイトルを設定しました"), "{out}");
     assert_eq!(titles(&review), ["ログイン改修 <v2>"]);
     let shown = env.ok(&repo, &[], &["show", "-f", arg]);
-    assert!(shown.contains("[タイトル] ログイン改修 <v2>"), "{shown}");
+    assert!(
+        shown.contains("[設定] タイトル=ログイン改修 <v2>"),
+        "{shown}"
+    );
     let html = exported(&env, &repo, &review);
     assert_eq!(model_of(&html)["title"], "ログイン改修 <v2>");
     assert!(html.contains("<title>ログイン改修 &lt;v2&gt;</title>"));
@@ -1127,7 +1128,11 @@ fn a_title_can_be_changed_kept_and_cleared_later() {
         &[(" a", "and here")],
         &["edit", "-f", arg, "--title", "second", "--base", "c1", "c2"],
     );
-    assert_eq!(titles(&review), ["first", "second"]);
+    assert_eq!(
+        titles(&review),
+        ["second"],
+        "the title as it is, not a history"
+    );
     // The same title again records nothing new.
     let out = env.ok(
         &repo,
@@ -1135,7 +1140,7 @@ fn a_title_can_be_changed_kept_and_cleared_later() {
         &["edit", "-f", arg, "--title", "second", "--base", "c1", "c2"],
     );
     assert!(!out.contains("タイトルを設定しました"), "{out}");
-    assert_eq!(titles(&review), ["first", "second"]);
+    assert_eq!(titles(&review), ["second"]);
     assert_eq!(model_of(&exported(&env, &repo, &review))["title"], "second");
     // An empty title takes it away.
     env.ok(
@@ -1143,7 +1148,7 @@ fn a_title_can_be_changed_kept_and_cleared_later() {
         &[],
         &["edit", "-f", arg, "--title", "", "--base", "c1", "c2"],
     );
-    assert_eq!(titles(&review), ["first", "second", ""]);
+    assert!(titles(&review).is_empty());
     assert!(model_of(&exported(&env, &repo, &review))["title"].is_null());
 }
 
@@ -1178,7 +1183,7 @@ fn a_title_alone_is_enough_to_save_a_session() {
             "edit", "-f", arg, "--title", "renamed", "--base", "c1", "c2",
         ],
     );
-    assert_eq!(titles(&review), ["only a title", "renamed"]);
+    assert_eq!(titles(&review), ["renamed"]);
     // Without a title and without comments nothing is saved, as before.
     let before = std::fs::read(&review).unwrap();
     env.ok(&repo, &[], &["edit", "-f", arg, "--base", "c1", "c2"]);
@@ -1318,34 +1323,6 @@ fn a_blank_author_is_ignored() {
         ],
     );
     assert_eq!(authors(&review), ["山田 太郎"]);
-}
-
-#[test]
-fn init_takes_an_author_for_its_title() {
-    let env = Env::new();
-    let dir = env.path("proj");
-    std::fs::create_dir(&dir).unwrap();
-    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
-    let review = env.path("d.diffnote");
-    env.ok(
-        &dir,
-        &[],
-        &[
-            "init",
-            "-f",
-            review.to_str().unwrap(),
-            "--title",
-            "T",
-            "--author",
-            "作成者",
-        ],
-    );
-    let loaded = bundle::load(&review).unwrap();
-    let author = loaded.events.iter().find_map(|e| match e {
-        Event::Title { author, .. } => Some(author.as_str()),
-        _ => None,
-    });
-    assert_eq!(author, Some("作成者"));
 }
 
 #[test]

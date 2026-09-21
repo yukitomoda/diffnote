@@ -1285,11 +1285,6 @@
             return res;
           });
         },
-        // Whether differences that are only in white space are hidden: kept in the
-        // review (the answer is the whole model).
-        setIgnoreWhitespace: function (ignore) {
-          return D.api.post('/api/whitespace', { ignore: ignore }).then(whole);
-        },
         setAuthor: function (name) {
           return D.api.post('/api/author', { author: name }).then(function (res) {
             if (res.ok) setModel(function (cur) { return Object.assign({}, cur, { author: res.author }); });
@@ -1602,16 +1597,12 @@
         },
       };
     }, [model, viewed, current]);
-    // Differences that are only in white space hidden: what the review says (and
-    // a page that only shows it can change for itself).
+    // Differences that are only in white space ignored: the review says how the page
+    // starts (a default kept in it), and changing it here is for this page only.
     var _w = useState(!!model.ignore_whitespace);
-    var localIgnore = _w[0];
-    var setLocalIgnore = _w[1];
-    var ignoreSpace = review.actions ? !!model.ignore_whitespace : localIgnore;
-    var toggleSpace = function (on) {
-      if (review.actions) review.actions.setIgnoreWhitespace(on);
-      else setLocalIgnore(on);
-    };
+    var ignoreSpace = _w[0];
+    var setIgnoreSpace = _w[1];
+    var toggleSpace = function (on) { setIgnoreSpace(on); };
     // What pressing 「最新を取り込む」 did, said next to it.
     var _n = useState(null);
     var note = _n[0];

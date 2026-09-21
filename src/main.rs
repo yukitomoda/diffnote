@@ -469,15 +469,10 @@ fn cmd_serve(
         anyhow::bail!("レビューする差分がありません(バンドルは作りませんでした)");
     }
     if let Some(title) = title.as_deref() {
-        let loaded = bundle::load(&review)?;
-        let by = diffnote::author::resolve(author.as_deref());
-        if let Some(event) = review::title_change(&loaded.events, title, &by) {
-            let mut events = loaded.events.clone();
-            events.push(event);
-            let none = bundle::Additions {
-                diff: None,
-                blobs: Vec::new(),
-            };
+        let mut loaded = bundle::load(&review)?;
+        if review::set_title(&mut loaded.settings, title) {
+            let events = loaded.events.clone();
+            let none = bundle::Additions::default();
             bundle::save(&review, &loaded, &events, &none)?;
             println!("タイトルを設定しました");
         }
@@ -815,22 +810,23 @@ fn cmd_init(
     init_files(&review_path, &dir, title, author, true)
 }
 
-/// The events every new bundle starts with: what it was made by, and a title.
-fn first_events(title: Option<&str>, author: Option<&str>) -> Vec<Event> {
-    let mut events = vec![Event::Meta {
+/// The events every new bundle starts with: what it was made by.
+fn first_events() -> Vec<Event> {
+    vec![Event::Meta {
         version: 1,
         created_at: OffsetDateTime::now_utc(),
         description: None,
         context_lines: 3,
-    }];
+    }]
+}
+
+/// A new bundle (not on disk yet) with its title, if one is given.
+fn fresh_bundle(review_path: &Path, title: Option<&str>) -> Result<bundle::Loaded> {
+    let mut loaded = bundle::load(review_path)?;
     if let Some(title) = title {
-        events.extend(review::title_change(
-            &events,
-            title,
-            &diffnote::author::resolve(author),
-        ));
+        review::set_title(&mut loaded.settings, title);
     }
-    events
+    Ok(loaded)
 }
 
 /// A git review that starts at a commit: the commit is the base, so that the
@@ -841,10 +837,10 @@ fn init_git(
     repo: &diffnote::git::Repo,
     rev: &str,
     title: Option<String>,
-    author: Option<String>,
+    _author: Option<String>,
 ) -> Result<()> {
     let commit = repo.commit_id(rev)?;
-    let mut events = first_events(title.as_deref(), author.as_deref());
+    let mut events = first_events();
     let empty_diff = String::new();
     let digest = digest(&empty_diff);
     events.push(Event::Revision(diffnote::model::Revision {
@@ -866,7 +862,7 @@ fn init_git(
     };
     bundle::save(
         review_path,
-        &bundle::load(review_path)?,
+        &fresh_bundle(review_path, title.as_deref())?,
         &events,
         &additions,
     )?;
@@ -882,14 +878,14 @@ fn init_files(
     review_path: &Path,
     dir: &Path,
     title: Option<String>,
-    author: Option<String>,
+    _author: Option<String>,
     say: bool,
 ) -> Result<()> {
     let tree = diffnote::files::read_tree(dir, &[review_path.to_path_buf()])?;
     let digest = diffnote::files::tree_digest(&tree);
     let size: u64 = tree.values().map(|b| b.len() as u64).sum();
     confirm_snapshot_size(bundle::SnapshotMode::Full, false, size);
-    let mut events = first_events(title.as_deref(), author.as_deref());
+    let mut events = first_events();
     events.push(Event::Revision(diffnote::model::Revision {
         id: Ulid::new(),
         created_at: OffsetDateTime::now_utc(),
@@ -909,7 +905,7 @@ fn init_files(
     };
     bundle::save(
         review_path,
-        &bundle::load(review_path)?,
+        &fresh_bundle(review_path, title.as_deref())?,
         &events,
         &additions,
     )?;
@@ -989,21 +985,15 @@ fn cmd_edit(
         head_all,
     } = input;
     let author = diffnote::author::resolve(author.as_deref());
-    let title_event = title
+    let title_set = title
         .as_deref()
-        .and_then(|t| review::title_change(&loaded.events, t, &author));
+        .is_some_and(|t| review::set_title(&mut loaded.settings, t));
     if diff_text.trim().is_empty() {
         // Nothing to review, but a title can still be given to a review that exists.
-        if let Some(event) = title_event
-            && !loaded.events.is_empty()
-        {
-            let mut all_events = loaded.events.clone();
-            all_events.push(event);
-            let none = bundle::Additions {
-                diff: None,
-                blobs: Vec::new(),
-            };
-            bundle::save(&review_path, &loaded, &all_events, &none)?;
+        if title_set && !loaded.events.is_empty() {
+            let events = loaded.events.clone();
+            let none = bundle::Additions::default();
+            bundle::save(&review_path, &loaded, &events, &none)?;
             fresh.keep();
             println!("タイトルを設定しました");
             return Ok(());
@@ -1143,7 +1133,7 @@ fn cmd_edit(
     // any draft from an earlier failed attempt is now stale.
     let _ = std::fs::remove_file(&draft_path);
 
-    if existing_events.is_empty() && parsed.items.is_empty() && title_event.is_none() {
+    if existing_events.is_empty() && parsed.items.is_empty() && !title_set {
         println!("コメントは追加されませんでした");
         return Ok(());
     }
@@ -1157,8 +1147,6 @@ fn cmd_edit(
             context_lines: 3,
         });
     }
-    let title_set = title_event.is_some();
-    new_events.extend(title_event);
 
     let mut thread_ids: Vec<Ulid> = Vec::new();
     for item in &parsed.items {
@@ -1244,7 +1232,8 @@ fn cmd_edit(
         }
     }
 
-    if new_events.is_empty() {
+    // (A title given is something, as a comment is.)
+    if new_events.is_empty() && !title_set {
         println!("変更はありません");
         return Ok(());
     }
@@ -1300,7 +1289,14 @@ fn cmd_show(review_path: PathBuf) -> Result<()> {
         return Ok(());
     }
     // The settings that are not what they would be anyway.
-    if settings != diffnote::model::Settings::default() {
+    let default = diffnote::model::Settings::default();
+    if let Some(title) = review::title(&settings) {
+        println!("[設定] タイトル={title}");
+    }
+    if settings.ignore_whitespace {
+        println!("[設定] 空白の違いを無視(初期表示)");
+    }
+    if settings.attachment_limit != default.attachment_limit {
         println!(
             "[設定] 添付ファイルの上限={} バイト",
             settings.attachment_limit

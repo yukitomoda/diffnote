@@ -182,6 +182,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
 
     let mut events = Vec::new();
     let mut settings = Settings::default();
+    let mut from_file: Option<serde_json::Map<String, serde_json::Value>> = None;
     let mut carried_entries = Vec::new();
 
     for i in 0..archive.len() {
@@ -201,19 +202,53 @@ pub fn load(path: &Path) -> Result<Loaded> {
             events =
                 crate::review::parse_jsonl(&text, &format!("{} の review.jsonl", path.display()))?;
         } else if name == "settings.json" {
-            settings = serde_json::from_slice(&bytes).with_context(|| {
+            from_file = Some(serde_json::from_slice(&bytes).with_context(|| {
                 format!("{} の settings.json を読めませんでした", path.display())
-            })?;
+            })?);
         } else {
             carried_entries.push((name, bytes));
         }
     }
 
+    fold_old_settings(&mut events, &mut settings, from_file);
     Ok(Loaded {
         events,
         settings,
         carried_entries,
     })
+}
+
+/// A bundle made before the settings were state has the title, and whether to
+/// ignore white space, as events (the last of each says how it is). They are
+/// folded into the settings, and are not kept as events any more: a setting
+/// that `settings.json` has itself is the newer word and stays.
+fn fold_old_settings(
+    events: &mut Vec<Event>,
+    settings: &mut Settings,
+    from_file: Option<serde_json::Map<String, serde_json::Value>>,
+) {
+    let mut old = Settings::default();
+    for event in events.iter() {
+        match event {
+            Event::Title { title, .. } => {
+                let title = title.trim();
+                old.title = (!title.is_empty()).then(|| title.to_string());
+            }
+            Event::IgnoreWhitespace { value, .. } => old.ignore_whitespace = *value,
+            _ => {}
+        }
+    }
+    events.retain(|e| !matches!(e, Event::Title { .. } | Event::IgnoreWhitespace { .. }));
+    // What the events said, then what the file says over it.
+    let mut merged = serde_json::to_value(&old).unwrap_or_default();
+    if let (Some(map), Some(file)) = (merged.as_object_mut(), from_file) {
+        for (key, value) in file {
+            map.insert(key, value);
+        }
+    }
+    if let Ok(now) = serde_json::from_value::<Settings>(merged) {
+        *settings = now;
+    }
 }
 
 /// What a save adds to the bundle beyond the events.
@@ -773,5 +808,62 @@ mod tests {
             serde_json::from_str::<Settings>("{}").unwrap(),
             Settings::default()
         );
+    }
+
+    #[test]
+    fn a_bundle_with_the_old_title_and_white_space_events_reads_them_as_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.diffnote");
+        let title = |t: &str| Event::Title {
+            title: t.to_string(),
+            author: "a".into(),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+        };
+        let whitespace = |on: bool| Event::IgnoreWhitespace {
+            value: on,
+            author: "a".into(),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+        };
+        // As it was written then: the last of each is how it is.
+        let old = vec![
+            sample_event(),
+            title("first"),
+            whitespace(true),
+            title("second"),
+            whitespace(false),
+            whitespace(true),
+        ];
+        save(&path, &load(&path).unwrap(), &old, &Additions::default()).unwrap();
+        let loaded = load(&path).unwrap();
+        assert_eq!(loaded.settings.title.as_deref(), Some("second"));
+        assert!(loaded.settings.ignore_whitespace);
+        assert_eq!(loaded.events.len(), 1, "no longer events");
+        // Kept as settings from the next save on, and not as events.
+        save(&path, &loaded, &loaded.events, &Additions::default()).unwrap();
+        let again = load(&path).unwrap();
+        assert_eq!(again.settings.title.as_deref(), Some("second"));
+        assert!(again.settings.ignore_whitespace);
+        let text = {
+            let mut a = ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+            let mut s = String::new();
+            a.by_name("review.jsonl")
+                .unwrap()
+                .read_to_string(&mut s)
+                .unwrap();
+            s
+        };
+        assert!(
+            !text.contains("\"kind\":\"title\"") && !text.contains("ignorewhitespace"),
+            "{text}"
+        );
+        // A title that `settings.json` has itself is the newer word, and what it does
+        // not say is what the events said.
+        let mut both = again;
+        both.settings.title = Some("newer".into());
+        let with_old = vec![sample_event(), whitespace(true)];
+        save(&path, &both, &with_old, &Additions::default()).unwrap();
+        let read = load(&path).unwrap();
+        assert_eq!(read.settings.title.as_deref(), Some("newer"));
+        assert!(read.settings.ignore_whitespace);
     }
 }

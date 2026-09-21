@@ -47,6 +47,15 @@ pub struct Settings {
     /// weigh, in bytes.
     #[serde(default = "default_attachment_limit")]
     pub attachment_limit: u64,
+    /// The review's title, shown where the export names the review. `None`: none
+    /// (the page has its own heading).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Whether the page shows lines that differ only in white space as
+    /// unchanged. It only changes what is shown: the diff, and where threads
+    /// are, stay as they are.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ignore_whitespace: bool,
 }
 
 fn default_attachment_limit() -> u64 {
@@ -57,6 +66,8 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             attachment_limit: DEFAULT_ATTACHMENT_LIMIT,
+            title: None,
+            ignore_whitespace: false,
         }
     }
 }
@@ -224,18 +235,16 @@ pub enum Event {
         description: Option<String>,
         context_lines: u32,
     },
-    /// The review's title, shown where the export names the review. The last
-    /// one wins; an empty title takes the title away again.
+    /// The review's title (the OLD way of keeping it: no longer written; a
+    /// bundle that has them is read as if the last one were in its settings).
     Title {
         title: String,
         author: String,
         #[serde(with = "time::serde::rfc3339")]
         created_at: OffsetDateTime,
     },
-    /// Whether the page hides the differences that are only in white space (the
-    /// lines of a change that read the same without it). The last one wins;
-    /// nothing said means they are shown. It only changes what is shown: the
-    /// diff, and where threads are, stay as they are.
+    /// Whether the page ignores white space in a diff (the OLD way of keeping
+    /// it: no longer written; read as the last one being in the settings).
     IgnoreWhitespace {
         value: bool,
         author: String,

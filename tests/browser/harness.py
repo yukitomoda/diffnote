@@ -363,6 +363,13 @@ def make_gaps_review(root, name="gaps"):
     return review, repo
 
 
+def add_settings(review, settings):
+    """Puts a settings.json (the review's settings as state) into a bundle."""
+    import zipfile
+    with zipfile.ZipFile(review, "a", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("settings.json", json.dumps(settings))
+
+
 def make_indent_review(root):
     """A git review of a file whose lines a and b were only re-indented, and c changed."""
     repo = os.path.join(root, "indent")

@@ -6,7 +6,7 @@ import json
 import time
 
 import harness
-from harness import BrowserCase, Served, entries, make_calc_review, make_gaps_review, make_indent_review, make_login_review, show
+from harness import BrowserCase, Served, add_settings, entries, make_calc_review, make_gaps_review, make_indent_review, make_login_review, show
 import os
 import pathlib
 import shutil
@@ -593,32 +593,46 @@ class NewThreadsOnLines(ServedCase):
         self.assertGreater(b.count("#rev-0 .diffnote-reply"), 0, "still interactive")
 
 
-class IgnoreWhitespaceStored(ServedCase):
+class IgnoreWhitespaceDefault(ServedCase):
+    """The review says how the page starts; changing it on the page is for that page only."""
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         cls.indent, _ = make_indent_review(cls.root)
 
-    def test_hiding_white_space_differences_is_kept_in_the_review(self):
+    def test_switching_it_on_the_page_is_not_kept_in_the_review(self):
         self.serve(self.indent)
         b = self.b
-        before = entries(self.review)
+        read = lambda: pathlib.Path(self.review).read_bytes()
+        before = read()
+        self.assertFalse(b.js("document.querySelector('[data-diffnote-ignore-space]').checked"), "the default is to show them")
         b.click("[data-diffnote-ignore-space]")
         self.assertTrue(b.wait("document.querySelectorAll('tr.diffnote-line--removed').length === 1"))
-        self.assertEqual(entries(self.review), before + 1, "it is in the log")
-        # Asking again for what is already so writes nothing.
-        b.js("fetch('/api/whitespace',{method:'POST',headers:{'X-Diffnote':'1','Content-Type':'application/json'},body:JSON.stringify({ignore:true})})")
         time.sleep(0.3)
-        self.assertEqual(entries(self.review), before + 1)
-        # A page opened later has it on.
+        self.assertEqual(read(), before, "nothing was written")
+        self.assertEqual(b.js("fetch('/api/whitespace', {method: 'POST', headers: {'X-Diffnote': '1'}, body: '{}'}).then(r => r.status)"), 404, "and nothing to ask the server to keep")
+        # A page opened again starts as the review says: not ignoring.
+        b.reload(ready="!!document.querySelector('.diffnote-file')")
+        self.assertFalse(b.js("document.querySelector('[data-diffnote-ignore-space]').checked"))
+        self.assertEqual(b.count("tr.diffnote-line--removed"), 3)
+
+    def test_a_review_that_says_to_ignore_it_starts_so_and_the_page_can_still_show_them(self):
+        review = os.path.join(self.fresh("review"), "ws.diffnote")
+        shutil.copy(self.indent, review)
+        add_settings(review, {"ignore_whitespace": True})
+        self.review = review
+        self.server = Served(review, author="検証者")
+        self.addCleanup(self.server.stop)
+        b = self.b = self.browser
+        b.open(self.server.url, ready="!!document.querySelector('.diffnote-file')")
+        b.js("localStorage.setItem('diffnote-layout','unified')")
         b.reload(ready="!!document.querySelector('.diffnote-file')")
         self.assertTrue(b.js("document.querySelector('[data-diffnote-ignore-space]').checked"))
         self.assertEqual(b.count("tr.diffnote-line--removed"), 1)
         b.click("[data-diffnote-ignore-space]")
         self.assertTrue(b.wait("document.querySelectorAll('tr.diffnote-line--removed').length === 3"))
-        b.js("document.querySelector('[data-diffnote-shutdown]').click()")
-        self.assertTrue(b.wait("!document.getElementById('app')"))
-        self.assertIn("設定変更 2 件", b.js("document.body.textContent"))
+        self.assertIn("空白", show(review), "the setting is what `show` says")
 
 
 class CompareWithAnEarlierRevision(ServedCase):
