@@ -54,7 +54,7 @@ jobs:
         # The page's script is a plain file (see ui/README.md); Node is on
         # the runner.
         if: matrix.toolchain == 'stable' && runner.os == 'Linux'
-        run: node --check ui/app.js && node --check ui/client/lib.js && node --check ui/client/interact.js && node --check ui/client/app.js
+        run: node --check ui/client/lib.js && node --check ui/client/interact.js && node --check ui/client/api.js && node --check ui/client/app.js
 
       - name: JavaScript tests
         # Pure functions of the page (ui/client/lib.js), with Node's own runner.

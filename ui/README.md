@@ -15,7 +15,7 @@ is opened from a file:
 - what is kept in the browser (`localStorage`) or copied (`navigator.clipboard`)
   is wrapped so that it works without them.
 
-Files, in the order they are put in the page (`CLIENT_SCRIPTS` in `src/html.rs`):
+Files, in the order they are put in the page (`CLIENT_LIBS`, `CLIENT_API`, `CLIENT_APP` in `src/html.rs`):
 
 - `vendor/` — Preact, its hooks and htm (plain-script builds, no build step;
   see `vendor/README.md` for versions and licenses).
@@ -32,10 +32,23 @@ Files, in the order they are put in the page (`CLIENT_SCRIPTS` in `src/html.rs`)
 Placement of threads (re-anchoring), the order of the thread list, colors, and
 comment HTML stay in Rust; the client only lays them out.
 
-## The served page (`app.js`)
+## The served page
 
-`diffnote serve` still serves a page drawn by Rust (`src/html.rs`) with `app.js`
-on top, which talks to the server. It is to be moved to the client app too.
+`diffnote serve` serves the same app with one more script, `client/api.js`,
+which talks to the server (`fetch`; only the served page has it, and a test
+checks that the exported one doesn't). The model then has `interactive: true`
+and `events` (how long the review's log was). The app changes the model in
+its state: a change is shown at once and put right by the server's answer,
+which says how many events the review has and how many the change added; if
+they don't add up (the review changed under the page), or the window is looked
+at again and the log has grown, the whole model is fetched again.
+
+- Choosing lines (press, drag, Shift+click a line number) and the boxes for
+  new threads: `useCompose` in `client/app.js`; the counters of the chosen
+  lines are worked out by `lib.flatRows` / `lib.counters`.
+- Other files: the tree and opened files are read as data
+  (`/api/files/{rev}/tree|open|more`); opened files are held by the page
+  (`useOpened`), not in the model.
 
 Check syntax with `node --check` (CI does). The page is tested in a real
 browser by `tests/browser` (see its README).

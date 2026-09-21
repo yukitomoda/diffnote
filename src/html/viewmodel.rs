@@ -215,7 +215,7 @@ fn revision_data(
     label: &str,
     blobs: &crate::digest::Blobs,
 ) -> RevisionData {
-    let placed = place(threads, view, blobs, false);
+    let placed = place(threads, view, blobs);
     let in_diff: std::collections::HashSet<String> = view.diff.files.iter().map(file_key).collect();
     let syntax_set = &*SYNTAXES;
     let theme = &THEMES.themes["InspiredGitHub"];

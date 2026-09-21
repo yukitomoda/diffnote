@@ -29,7 +29,6 @@ class FilesCase(BrowserCase):
         self.addCleanup(self.server.stop)
         self.b = self.browser
         self.b.open(self.server.url)
-        self.b.open(self.server.url.split("/?")[0] + "/next")
         self.b.js("window.__marker='same-page'; window.__table=document.querySelector('.diffnote-diff')")
 
     def open_tree(self):
