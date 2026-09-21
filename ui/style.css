@@ -206,3 +206,8 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-diff--split td.is-picked-last { --dn-b: inset 0 -3px 0 0 var(--diffnote-color-accent); }
 .diffnote-diff--split td.diffnote-gutter--commented { --dn-l: var(--diffnote-bars); color: var(--diffnote-color-fg); font-weight: 600; }
 .diffnote-diff--split .diffnote-thread-row > td, .diffnote-diff--split .diffnote-composer-row > td { padding-left: 16px !important; }
+
+/* Text to copy: not the line numbers, and, side by side, only the side pressed on. */
+.diffnote-line__gutter-old, .diffnote-line__gutter-new { user-select: none; }
+.diffnote-diff--split[data-diffnote-copy-side="old"] .diffnote-split-row > td:nth-child(n+3) { user-select: none; }
+.diffnote-diff--split[data-diffnote-copy-side="new"] .diffnote-split-row > td:nth-child(-n+2) { user-select: none; }

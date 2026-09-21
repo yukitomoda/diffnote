@@ -196,6 +196,45 @@
       pinned = id;
       activate(scope, id);
     });
+    // Side by side, text is selected (to copy) on the side the press was on: the
+    // other side's cells (and the line numbers, which style.css never lets be
+    // selected) are left out. Kept until the next press, since the copy comes
+    // after the drag.
+    document.addEventListener('mousedown', function (e) {
+      var tables = document.querySelectorAll('[data-diffnote-copy-side]');
+      for (var i = 0; i < tables.length; i++) tables[i].removeAttribute('data-diffnote-copy-side');
+      var cell = e.target.closest ? e.target.closest('.diffnote-diff--split .diffnote-split-row > td.diffnote-line__content') : null;
+      if (!cell) return;
+      var index = Array.prototype.indexOf.call(cell.parentNode.children, cell);
+      cell.closest('table').setAttribute('data-diffnote-copy-side', index === 1 ? 'old' : 'new');
+    });
+    // The text copied is of that side only, worked out here rather than left to
+    // the browser (which is not consistent about text that can't be selected):
+    // the chosen part of the side's cells, a line each.
+    document.addEventListener('copy', function (e) {
+      var sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !e.clipboardData) return;
+      var table = document.querySelector('.diffnote-diff--split[data-diffnote-copy-side]');
+      if (!table) return;
+      var column = table.getAttribute('data-diffnote-copy-side') === 'old' ? 1 : 3;
+      var range = sel.getRangeAt(0);
+      if (!range.intersectsNode(table)) return;
+      var lines = [];
+      var rows = table.querySelectorAll('.diffnote-split-row');
+      for (var i = 0; i < rows.length; i++) {
+        var cell = rows[i].children[column];
+        if (!cell || !range.intersectsNode(cell)) continue;
+        var part = document.createRange();
+        part.selectNodeContents(cell);
+        if (cell.contains(range.startContainer)) part.setStart(range.startContainer, range.startOffset);
+        if (cell.contains(range.endContainer)) part.setEnd(range.endContainer, range.endOffset);
+        // A row the choice only touches at its edge has nothing of this side.
+        if (cell.textContent === '' && !cell.querySelector('code')) continue;
+        lines.push(part.toString().replace(/\n$/, ''));
+      }
+      e.clipboardData.setData('text/plain', lines.join('\n'));
+      e.preventDefault();
+    });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') {
         pinned = null;

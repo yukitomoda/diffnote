@@ -216,6 +216,28 @@ class SideBySide(BrowserCase):
         self.assertEqual(by_new["1"], ["1", "context", "1", "context"])
         self.assertLess(len(rows), unified, "a removed line shares a row with an added one")
 
+    def copy_after_dragging(self, side, first, last):
+        b = self.b
+        cell = lambda n: "document.querySelector(\"td.diffnote-line__gutter-%s[data-diffnote-%s='%d']\").nextElementSibling" % (side, side, n)
+        b.js("%s.setAttribute('data-t','from'); %s.setAttribute('data-t','to')" % (cell(first), cell(last)))
+        b.drag("[data-t=from]", "[data-t=to]")
+        return b.js("(function(){var dt=new DataTransfer(); document.dispatchEvent(new ClipboardEvent('copy',{clipboardData:dt,bubbles:true,cancelable:true})); return dt.getData('text/plain')})()")
+
+    def test_copying_after_a_drag_takes_only_the_side_it_started_on(self):
+        b = self.b
+        b.js("localStorage.setItem('diffnote-layout','split')")
+        b.reload()
+        # The new side, from the line before the change to the last added one.
+        copied = self.copy_after_dragging("new", 8, 12)
+        self.assertIn("  if (!account) {\n    return res.status(401).end()\n  }\n  const ok = await compare(pass, ", copied)
+        self.assertNotIn("account.pass === pass", copied, "the old side is not taken along")
+        self.assertNotRegex(copied, r"^\d+\t", "nor are the line numbers")
+        # From the old side: its own lines only.
+        copied = self.copy_after_dragging("old", 7, 11)
+        self.assertIn("if (account.pass === pass) {", copied)
+        self.assertNotIn("compare(pass, account.hash)", copied)
+        self.assertNotIn("if (!account)", copied)
+
     def test_cards_and_marks_follow_in_the_split_layout(self):
         b = self.b
         self.split()
