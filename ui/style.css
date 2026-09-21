@@ -323,3 +323,11 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 .diffnote-summary [data-diffnote-base].is-changed { color: var(--diffnote-color-accent); font-weight: 600; }
 .diffnote-compare-note { flex: 1; margin: 0; font-size: 12.5px; font-family: var(--diffnote-font-mono); color: var(--diffnote-color-accent); cursor: help; }
 .diffnote-compare-note__icon { margin-left: 6px; font-family: inherit; }
+
+/* Images in comments, and attaching them. */
+.diffnote-image { display: block; max-width: 100%; height: auto; margin: 6px 0; border: 1px solid var(--diffnote-color-border); border-radius: 6px; background: #fff; }
+.diffnote-attach { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; font-size: 12.5px; color: var(--diffnote-color-muted); border: 1px solid var(--diffnote-color-border); border-radius: 6px; background: var(--diffnote-color-bg); cursor: pointer; }
+.diffnote-attach:hover { color: var(--diffnote-color-fg); background: var(--diffnote-color-gutter); }
+.diffnote-attach input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.diffnote-attach__status { margin: 4px 0 0; font-size: 12px; color: var(--diffnote-color-muted); }
+.diffnote-attach__status.is-failed { color: #cf222e; }

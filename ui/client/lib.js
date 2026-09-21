@@ -172,6 +172,8 @@
         out += n;
       } else if (n.t === 'br') {
         out += '\n';
+      } else if (n.t === 'image') {
+        out += n.alt || '[画像]';
       } else if (n.t === 'code' || n.t === 'pre') {
         out += (n.s || '') + (n.t === 'pre' ? '\n' : '');
       } else {
@@ -454,6 +456,26 @@
     }
     if (from < text.length) pieces.push(text.slice(from));
     return pieces;
+  };
+
+  // A size in bytes, roughly: `830 KB`, `2.4 MB`.
+  lib.formatSize = function (bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
+    return (Math.round((bytes / (1024 * 1024)) * 10) / 10) + ' MB';
+  };
+
+  // What a comment says for an image of the review, to put in its text.
+  lib.imageMarkdown = function (id) {
+    return '![画像](diffnote-image:' + id + ')';
+  };
+
+  // The text with `insert` where the choice was (`from` to `to`), and where the
+  // cursor goes after it.
+  lib.insertAt = function (text, from, to, insert) {
+    var start = Math.min(Math.max(from, 0), text.length);
+    var end = Math.min(Math.max(to, start), text.length);
+    return { text: text.slice(0, start) + insert + text.slice(end), cursor: start + insert.length };
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = lib;

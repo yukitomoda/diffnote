@@ -10,6 +10,7 @@ pub mod expand;
 pub mod files;
 pub mod git;
 pub mod html;
+pub mod image;
 pub mod linediff;
 pub mod model;
 pub mod record;

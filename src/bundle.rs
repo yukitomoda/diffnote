@@ -11,6 +11,7 @@
 //! diffs/<digest>.diff      one per recorded revision (its unified diff)
 //! blobs/<sha256 hex>       one per distinct file version, however many
 //!                          revisions have it
+//! images/<sha256 hex>      one per distinct image attached to a comment
 //! ```
 //! `<digest>` is a revision's digest string (`sha256:...`) with the
 //! `sha256:` prefix stripped, so it's a plain hex string safe to use as a
@@ -212,6 +213,54 @@ pub struct Additions {
 }
 
 pub fn save(path: &Path, loaded: &Loaded, events: &[Event], additions: &Additions) -> Result<()> {
+    save_with(path, loaded, events, additions, &Images::default())
+}
+
+/// What a save does about the images (`images/`) beyond carrying them on.
+#[derive(Default)]
+pub struct Images<'a> {
+    /// Images to put in (those already there are skipped).
+    pub add: &'a [Vec<u8>],
+    /// If given, the ids of the images to keep: the others are left out.
+    pub keep: Option<&'a std::collections::HashSet<String>>,
+}
+
+/// The ids (hex digests) of the images a bundle holds.
+impl Loaded {
+    /// The bytes of an image of the bundle.
+    pub fn image(&self, id: &str) -> Option<&[u8]> {
+        let wanted = format!("images/{id}");
+        self.carried_entries
+            .iter()
+            .find(|(name, _)| *name == wanted)
+            .map(|(_, bytes)| bytes.as_slice())
+    }
+
+    pub fn image_ids(&self) -> Vec<String> {
+        self.carried_entries
+            .iter()
+            .filter_map(|(name, _)| name.strip_prefix("images/").map(str::to_string))
+            .collect()
+    }
+}
+
+/// One image of a bundle, read without reading the rest of it.
+pub fn read_image(path: &Path, id: &str) -> Option<Vec<u8>> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut archive = ZipArchive::new(file).ok()?;
+    let mut entry = archive.by_name(&format!("images/{id}")).ok()?;
+    let mut bytes = Vec::new();
+    entry.read_to_end(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+pub fn save_with(
+    path: &Path,
+    loaded: &Loaded,
+    events: &[Event],
+    additions: &Additions,
+    images: &Images,
+) -> Result<()> {
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
     if let Some(parent) = parent {
         std::fs::create_dir_all(parent)
@@ -235,6 +284,11 @@ pub fn save(path: &Path, loaded: &Loaded, events: &[Event], additions: &Addition
 
         let mut written: std::collections::HashSet<String> = std::collections::HashSet::new();
         for (name, bytes) in &loaded.carried_entries {
+            if let (Some(keep), Some(id)) = (images.keep, name.strip_prefix("images/"))
+                && !keep.contains(id)
+            {
+                continue;
+            }
             writer.start_file(name, options)?;
             writer.write_all(bytes)?;
             written.insert(name.clone());
@@ -250,6 +304,17 @@ pub fn save(path: &Path, loaded: &Loaded, events: &[Event], additions: &Addition
         for bytes in &additions.blobs {
             let name = format!(
                 "blobs/{}",
+                digest_path_component(&crate::digest::digest(bytes))
+            );
+            if written.insert(name.clone()) {
+                writer.start_file(name, options)?;
+                writer.write_all(bytes)?;
+            }
+        }
+
+        for bytes in images.add {
+            let name = format!(
+                "images/{}",
                 digest_path_component(&crate::digest::digest(bytes))
             );
             if written.insert(name.clone()) {

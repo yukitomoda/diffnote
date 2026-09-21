@@ -12,9 +12,11 @@
 //!   inline nodes directly), `pre` (`s` the code, `lang`), `hr`;
 //! - tables: `table` (`al` the columns' alignments: `l`, `c`, `r` or `""`) of
 //!   `thead` (its cells) and `tr`s (their cells), a cell being `td`;
-//! - inline: `em`, `strong`, `del`, `code` (`s`), `a` (`href`), `br`.
+//! - inline: `em`, `strong`, `del`, `code` (`s`), `a` (`href`), `br`, `image`
+//!   (`id` of an image of the bundle, `alt`: only a link that names one, see
+//!   `crate::image`).
 //!
-//! Others (images, footnotes, ...) are not drawn as such: their text is.
+//! Others (any other image, footnotes, ...) are not drawn as such: their text is.
 
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use serde_json::{Value, json};
@@ -60,6 +62,14 @@ pub fn tree(body: &str) -> Vec<Value> {
                         push(&mut stack, child);
                     }
                     continue;
+                } else if node["t"] == "image" {
+                    // The image of the bundle: its alt text is what is inside.
+                    let alt: String = children
+                        .iter()
+                        .filter_map(|c| c.as_str())
+                        .collect::<Vec<_>>()
+                        .join("");
+                    node["alt"] = Value::String(alt);
                 } else if matches!(node["t"].as_str(), Some("img" | "skip")) {
                     // Not drawn as such: what is inside stays.
                     for child in children {
@@ -134,7 +144,15 @@ fn open(tag: &Tag) -> Value {
                 json!({ "t": "a" })
             }
         }
-        Tag::Image { .. } => json!({ "t": "img" }),
+        Tag::Image { dest_url, .. } => {
+            match dest_url
+                .strip_prefix(crate::image::SCHEME)
+                .filter(|id| crate::image::is_id(id))
+            {
+                Some(id) => json!({ "t": "image", "id": id }),
+                None => json!({ "t": "img" }),
+            }
+        }
         _ => json!({ "t": "skip" }),
     }
 }
@@ -215,6 +233,28 @@ mod tests {
         let out = json_of("![alt words](https://x.y/a.png)");
         assert!(!out.contains("img") && !out.contains("x.y"), "{out}");
         assert!(out.contains("alt words"));
+    }
+
+    #[test]
+    fn an_image_of_the_bundle_is_a_node_and_any_other_is_its_alt_text() {
+        let id = "a".repeat(64);
+        assert_eq!(
+            json_of(&format!("![a shot](diffnote-image:{id})")),
+            format!(r#"[{{"c":[{{"alt":"a shot","id":"{id}","t":"image"}}],"t":"p"}}]"#)
+        );
+        // Not an id, or an address: only the text stays, nothing is loaded.
+        for other in [
+            "diffnote-image:xyz",
+            "https://x.y/a.png",
+            "javascript:alert(1)",
+        ] {
+            let out = json_of(&format!("![alt words]({other})"));
+            assert!(
+                !out.contains("image") && !out.contains("x.y"),
+                "{other}: {out}"
+            );
+            assert!(out.contains("alt words"), "{other}: {out}");
+        }
     }
 
     #[test]

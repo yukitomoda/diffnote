@@ -377,3 +377,17 @@ test('lines changed only in white space read as unchanged, keeping both line num
   const kinds = { hunks: [{ header: '@@', rows: [{ k: 'd', o: 1, t: [['kw', 'let'], ' x']}, { k: 'a', n: 1, t: [['kw', 'let'], '  x']}] }] };
   assert.deepEqual(lib.withoutSpaceChanges(kinds).hunks[0].rows.map((r) => r.k), ['c']);
 });
+
+test('a size is said roughly, and a picture is put in a text where the cursor was', () => {
+  assert.equal(lib.formatSize(512), '512 B');
+  assert.equal(lib.formatSize(2048), '2 KB');
+  assert.equal(lib.formatSize(3 * 1024 * 1024 + 300 * 1024), '3.3 MB');
+  const id = 'a'.repeat(64);
+  assert.equal(lib.imageMarkdown(id), `![画像](diffnote-image:${id})`);
+  assert.deepEqual(lib.insertAt('abcdef', 2, 4, 'XY'), { text: 'abXYef', cursor: 4 });
+  assert.deepEqual(lib.insertAt('abc', 3, 3, '!'), { text: 'abc!', cursor: 4 });
+  assert.deepEqual(lib.insertAt('abc', 9, 1, '!'), { text: 'abc!', cursor: 4 });
+  // An image in a comment is its alt text where only text is wanted.
+  assert.equal(lib.plainText([{ t: 'p', c: ['see ', { t: 'image', id, alt: 'a shot' }] }]).trim(), 'see a shot');
+  assert.equal(lib.preview([{ t: 'p', c: [{ t: 'image', id, alt: '' }] }]), '[画像]');
+});

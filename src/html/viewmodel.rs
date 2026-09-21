@@ -43,6 +43,11 @@ pub struct ViewModel {
     /// Whether differences that are only in white space are hidden.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub ignore_whitespace: bool,
+    /// The images the comments show, by id, as `data:` addresses (a page that
+    /// only shows the review has nowhere else to get them; the served one asks
+    /// the server).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub images: BTreeMap<String, String>,
     /// Whether the page can change the review (the served one).
     pub interactive: bool,
     pub title: Option<String>,
@@ -266,6 +271,11 @@ pub fn view_model_with(
             },
         }),
         ignore_whitespace: crate::review::ignore_whitespace(&loaded.events),
+        images: if interactive {
+            BTreeMap::new()
+        } else {
+            embedded_images(loaded)
+        },
         interactive,
         title: crate::review::title(&loaded.events).map(str::to_string),
         threads: {
@@ -450,6 +460,27 @@ fn revision_data(
         placements,
         order,
     }
+}
+
+/// The images the comments refer to, as `data:` addresses by id.
+fn embedded_images(loaded: &crate::bundle::Loaded) -> BTreeMap<String, String> {
+    let mut images = BTreeMap::new();
+    for event in &loaded.events {
+        let crate::model::Event::Comment { body, .. } = event else {
+            continue;
+        };
+        for id in crate::image::ids_in(body) {
+            if images.contains_key(&id) {
+                continue;
+            }
+            if let Some(bytes) = loaded.image(&id)
+                && let Ok(mime) = crate::image::kind(bytes)
+            {
+                images.insert(id, crate::image::data_uri(mime, bytes));
+            }
+        }
+    }
+    images
 }
 
 /// The digests of a file's two versions, as one string (`None` for a file that

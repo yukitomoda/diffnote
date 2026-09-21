@@ -28,6 +28,17 @@
         return unreachable;
       });
     },
+    // An image (a file or a pasted picture): its bytes, as they are.
+    upload: function (blob) {
+      return fetch('/api/images', {
+        method: 'POST',
+        headers: { 'Content-Type': blob.type || 'application/octet-stream', 'X-Diffnote': '1' },
+        credentials: 'same-origin',
+        body: blob,
+      }).then(read, function () {
+        return unreachable;
+      });
+    },
     get: function (path) {
       return fetch(path, { credentials: 'same-origin' }).then(read, function () {
         return unreachable;

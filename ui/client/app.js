@@ -86,6 +86,8 @@
     var _e = useState(null);
     var error = _e[0];
     var setError = _e[1];
+    var attach = useAttach(text, setText);
+    var field = useRef(null);
 
     function send() {
       var body = text.trim();
@@ -111,10 +113,13 @@
       </article>`}
       <div class="diffnote-thread__actions">
         <form class="diffnote-reply" data-diffnote-thread=${t.id} onSubmit=${function (e) { e.preventDefault(); send(); }}>
-          <textarea rows="2" placeholder="返信を書く(Ctrl+Enter で送信)" value=${text} disabled=${pending !== null}
+          <textarea ref=${field} rows="2" placeholder="返信を書く(Ctrl+Enter で送信)" value=${text} disabled=${pending !== null}
+            ...${attach.handlers}
             onInput=${function (e) { setText(e.target.value); }}
             onKeyDown=${function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }}></textarea>
+          ${attach.note}
           <div class="diffnote-reply__buttons">
+            ${attach.picker(function () { return field.current; })}
             <button type="submit" class="diffnote-button diffnote-button--primary">返信</button>
             <button type="button" class="diffnote-button" data-diffnote-action=${action} data-diffnote-thread=${t.id} onClick=${toggle}>${t.resolved ? '再開する' : '解決にする'}</button>
           </div>
@@ -125,6 +130,65 @@
 
   // A value that can be changed on the spot: its display (the children) and a
   // button to edit it, which turns into a box to write the new value in.
+  // Pictures for a box that a comment is written in: pasted (a screenshot),
+  // dropped, or chosen. Each goes to the server, and what stands for it in the
+  // text is put where the cursor was. Only on the served page.
+  function useAttach(text, setText) {
+    var _s = useState(null);
+    var status = _s[0];
+    var setStatus = _s[1];
+    var latest = useRef(text);
+    latest.current = text;
+    var send = function (files, field) {
+      var images = Array.prototype.filter.call(files || [], function (f) { return /^image\//.test(f.type); });
+      if (!D.api || images.length === 0) return false;
+      var from = field.selectionStart;
+      var to = field.selectionEnd;
+      setStatus({ busy: true, text: '画像を送っています…' });
+      var snippets = [];
+      var last = null;
+      var chain = images.reduce(function (p, file) {
+        return p.then(function () {
+          return D.api.upload(file).then(function (res) {
+            if (!res.ok) throw new Error(res.error || '画像を追加できませんでした');
+            snippets.push(lib.imageMarkdown(res.id));
+            last = res;
+          });
+        });
+      }, Promise.resolve());
+      chain.then(function () {
+        var put = lib.insertAt(latest.current, from, to, snippets.join('\n') + '\n');
+        setText(put.text);
+        setStatus({ text: '画像を追加しました(' + lib.formatSize(last.size) + ')。バンドルの大きさ: ' + lib.formatSize(last.bundle_size) + (last.size > 5 * 1024 * 1024 ? '。大きな画像です' : '') });
+      }, function (err) {
+        setStatus({ failed: true, text: err.message });
+      });
+      return true;
+    };
+    return {
+      status: status,
+      handlers: D.api ? {
+        onPaste: function (e) {
+          if (send(e.clipboardData && e.clipboardData.files, e.currentTarget)) e.preventDefault();
+        },
+        onDrop: function (e) {
+          if (send(e.dataTransfer && e.dataTransfer.files, e.currentTarget)) e.preventDefault();
+        },
+        onDragOver: function (e) {
+          if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0) e.preventDefault();
+        },
+      } : {},
+      // The button that opens the file chooser, and the note under the box.
+      picker: function (field) {
+        if (!D.api) return null;
+        return html`<label class="diffnote-attach" title="画像を添付します(貼り付けや、ドラッグ&ドロップでも追加できます)">🖼 画像
+          <input type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" multiple data-diffnote-attach
+            onChange=${function (e) { var f = field(); if (f) send(e.target.files, f); e.target.value = ''; }} /></label>`;
+      },
+      note: status && html`<p class=${'diffnote-attach__status' + (status.failed ? ' is-failed' : '')} data-diffnote-attach-status role="status">${status.text}</p>`,
+    };
+  }
+
   function InlineEdit(props) {
     var _e = useState(false);
     var editing = _e[0];
@@ -186,6 +250,8 @@
     var _r = useState('');
     var error = _r[0];
     var setError = _r[1];
+    var attach = useAttach(text, setText);
+    var field = useRef(null);
     var save = function () {
       if (!text.trim() || busy) return;
       setBusy(true);
@@ -214,12 +280,14 @@
       </span>`}</p>
       ${editing
         ? html`<form class="diffnote-compose" data-diffnote-edit-form onSubmit=${function (e) { e.preventDefault(); save(); }}>
-            <textarea rows="3" value=${text} onInput=${function (e) { setText(e.target.value); }}
+            <textarea ref=${field} rows="3" value=${text} ...${attach.handlers} onInput=${function (e) { setText(e.target.value); }}
               onKeyDown=${function (e) {
                 if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
                 if (e.key === 'Escape') { e.stopPropagation(); setEditing(false); }
               }}></textarea>
+            ${attach.note}
             <div class="diffnote-reply__buttons">
+              ${attach.picker(function () { return field.current; })}
               <button type="submit" class="diffnote-button diffnote-button--primary" disabled=${busy}>保存</button>
               <button type="button" class="diffnote-button" onClick=${function () { setEditing(false); }}>キャンセル</button>
             </div>
@@ -263,14 +331,17 @@
     var box = useRef(null);
     useEffect(function () { box.current.focus(); }, []);
     var send = function () { c.send(props.request); };
+    var attach = useAttach(c.draft, c.setDraft);
     return html`<div>
       <form class="diffnote-compose" data-diffnote-scope=${props.scope} style=${c.pending ? 'display:none' : undefined}
         onSubmit=${function (e) { e.preventDefault(); send(); }}>
         <div class="diffnote-compose__head"><div class="diffnote-compose__where">${props.where}</div>${props.copy && html`<button type="button" class="diffnote-copy" data-diffnote-copy=${props.copy} title="この範囲へのリンク(リビジョンつき)をコピー">コピー</button>`}</div>
-        <textarea ref=${box} rows="3" placeholder="コメントを書く(Ctrl+Enter で送信)" value=${c.draft}
+        <textarea ref=${box} rows="3" placeholder="コメントを書く(Ctrl+Enter で送信)" value=${c.draft} ...${attach.handlers}
           onInput=${function (e) { c.setDraft(e.target.value); }}
           onKeyDown=${function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }}></textarea>
+        ${attach.note}
         <div class="diffnote-reply__buttons">
+          ${attach.picker(function () { return box.current; })}
           <button type="submit" class="diffnote-button diffnote-button--primary">コメントする</button>
           <button type="button" class="diffnote-button" data-diffnote-cancel onClick=${c.close}>キャンセル</button>
         </div>
@@ -422,10 +493,10 @@
   // elements. Only what is known is drawn, so nothing a comment says can be
   // anything but text; a link goes only to http, https or mailto.
   var SAFE_LINK = /^(https?:|mailto:)/i;
-  function markdown(nodes, links) {
+  function markdown(nodes, links, inLink) {
     return (nodes || []).map(function (n, i) {
       if (typeof n === 'string') {
-        if (!links) return n;
+        if (!links || inLink) return n;
         // `src/a.ts:10-13` in the text goes to those lines.
         return lib.lineRefs(n, links.has, links.revisions).map(function (piece, j) {
           if (typeof piece === 'string') return piece;
@@ -435,7 +506,7 @@
             onClick=${function (e) { e.preventDefault(); links.go(piece); }}>${piece.text}</a>`;
         });
       }
-      var kids = markdown(n.c, n.t === 'a' ? null : links);
+      var kids = markdown(n.c, links, inLink || n.t === 'a');
       switch (n.t) {
         case 'p': return h('p', { key: i }, kids);
         case 'h': return h('h' + Math.min(Math.max(n.l || 1, 1), 6), { key: i }, kids);
@@ -452,9 +523,14 @@
           var head = row.t === 'thead';
           return h(head ? 'thead' : 'tbody', { key: r }, h('tr', null, (row.c || []).map(function (cell, j) {
             var al = { l: 'left', c: 'center', r: 'right' }[(n.al || [])[j]];
-            return h(head ? 'th' : 'td', { key: j, style: al ? 'text-align:' + al : undefined }, markdown(cell.c, links));
+            return h(head ? 'th' : 'td', { key: j, style: al ? 'text-align:' + al : undefined }, markdown(cell.c, links, inLink));
           })));
         })));
+        case 'image': {
+          // An image of the review, drawn only as an <img>: nothing else is loaded.
+          var src = links && links.image ? links.image(n.id) : '';
+          return src ? h('img', { key: i, class: 'diffnote-image', src: src, alt: n.alt || '' }) : h('span', { key: i }, n.alt || '[画像]');
+        }
         case 'code': return h('code', { key: i }, n.s || '');
         case 'br': return h('br', { key: i });
         case 'a':
@@ -1417,6 +1493,11 @@
         current: current,
         revisions: model.revisions.length,
         has: function (path) { return Object.prototype.hasOwnProperty.call(known, path); },
+        // Where an image is: in the page (an exported one), or at the server.
+        image: function (id) {
+          if (model.images && model.images[id]) return model.images[id];
+          return model.interactive ? '/api/images/' + id : '';
+        },
         go: function (ref) {
           var index = ref.rev == null ? current : ref.rev - 1;
           if (index !== current) setCurrent(index);

@@ -8,6 +8,7 @@ import time
 import harness
 from harness import BrowserCase, Served, entries, make_calc_review, make_gaps_review, make_indent_review, make_login_review, show
 import os
+import pathlib
 import shutil
 import subprocess
 
@@ -643,6 +644,76 @@ class CompareWithAnEarlierRevision(ServedCase):
         for query in ("rev=1&from=1", "rev=0&from=1", "rev=9&from=0", "rev=1"):
             status = b.js("fetch('/api/compare?%s').then(r => r.status)" % query)
             self.assertIn(status, (400,), query)
+
+
+PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+SVG_OK = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="blue"/></svg>'
+SVG_BAD = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)" width="8" height="8"></svg>'
+
+
+class Images(ServedCase):
+    def paste(self, selector, name, mime, content, base64=False):
+        """Pastes a file into a box, as a screenshot from the clipboard arrives."""
+        self.b.js("""(function(sel, name, mime, content, base64){
+          var bytes = base64 ? Uint8Array.from(atob(content), function (c) { return c.charCodeAt(0); }) : new TextEncoder().encode(content);
+          var dt = new DataTransfer(); dt.items.add(new File([bytes], name, {type: mime}));
+          var ta = document.querySelector(sel); ta.focus();
+          ta.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}));
+        })(%s, %s, %s, %s, %s)""" % (json.dumps(selector), json.dumps(name), json.dumps(mime), json.dumps(content), "true" if base64 else "false"))
+
+    def test_a_pasted_picture_is_put_in_the_review_and_shown_in_the_comment(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        self.write(box, "見てください")
+        self.paste(box, "shot.png", "image/png", PNG_1X1, base64=True)
+        self.assertTrue(b.wait("!!document.querySelector('[data-diffnote-attach-status]')"))
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-attach-status]').textContent.includes('画像を追加しました')"))
+        self.assertIn("バンドルの大きさ", b.text("[data-diffnote-attach-status]"))
+        text = b.js(f"document.querySelector({json.dumps(box)}).value")
+        self.assertRegex(text, r"!\[画像\]\(diffnote-image:[0-9a-f]{64}\)")
+        self.assertEqual(len([n for n in harness.zip_names(self.review) if n.startswith("images/")]), 1, "one image in the bundle")
+        # Sent: the picture is in the comment, drawn as an <img>.
+        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
+        img = f"#{card} .diffnote-comment__body img.diffnote-image"
+        self.assertTrue(b.wait_exists(img))
+        self.assertTrue(b.wait(f"document.querySelector({json.dumps(img)}).naturalWidth === 1"), "it loaded from the server")
+        # Kept in the review as it is, and put in an export as it is.
+        self.assertIn("diffnote-image:", show(self.review))
+        exported = b.js("fetch('/export').then(r => r.text())")
+        self.assertIn("data:image/png;base64,iVBORw0KGgo", exported)
+        # ... and that page, opened from a file, shows it (nothing to ask).
+        path = os.path.join(self.fresh("export"), "with-image.html")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(exported)
+        b.open(pathlib.Path(path).as_uri(), ready="!!document.querySelector('.diffnote-comment__body img.diffnote-image')")
+        self.assertTrue(b.wait("document.querySelector('.diffnote-comment__body img.diffnote-image').naturalWidth === 1"))
+
+    def test_an_svg_is_taken_only_if_nothing_in_it_runs(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        self.paste(box, "bad.svg", "image/svg+xml", SVG_BAD)
+        self.assertTrue(b.wait("!!document.querySelector('.is-failed[data-diffnote-attach-status]')"))
+        self.assertIn("SVG", b.text("[data-diffnote-attach-status]"))
+        self.assertNotIn("diffnote-image:", b.js(f"document.querySelector({json.dumps(box)}).value"))
+        self.paste(box, "ok.svg", "image/svg+xml", SVG_OK)
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-attach-status]').textContent.includes('画像を追加しました')"))
+        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
+        img = f"#{card} .diffnote-comment__body img.diffnote-image"
+        self.assertTrue(b.wait(f"!!document.querySelector({json.dumps(img)}) && document.querySelector({json.dumps(img)}).naturalWidth === 8"))
+
+    def test_a_link_to_an_image_elsewhere_is_only_its_text(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        self.write(box, "![外の画像](https://example.invalid/a.png) と ![](javascript:alert(1))")
+        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
+        self.assertTrue(b.wait(f"document.getElementById({card!r}).textContent.includes('外の画像')"))
+        self.assertEqual(b.count(f"#{card} img"), 0, "nothing is loaded from an address")
 
 
 class ThreadsOnFilesAndTheReview(ServedCase):

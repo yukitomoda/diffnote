@@ -181,6 +181,7 @@ struct Stats {
     deleted: u32,
     titled: u32,
     settings: u32,
+    images: u32,
 }
 
 impl Stats {
@@ -192,6 +193,9 @@ impl Stats {
         }
         if self.replies > 0 {
             added.push(format!("返信 {} 件", self.replies));
+        }
+        if self.images > 0 {
+            added.push(format!("画像 {} 件", self.images));
         }
         let mut parts = Vec::new();
         if !added.is_empty() {
@@ -475,6 +479,7 @@ impl Server {
             ("GET", "/api/model") => self.model(),
             ("GET", "/api/version") => self.version(),
             ("GET", "/api/compare") => self.compare(query),
+            ("GET", p) if p.starts_with("/api/images/") => self.image(&p["/api/images/".len()..]),
             ("GET", p) if p.starts_with("/api/files/") => {
                 self.files(&p["/api/files/".len()..], query)
             }
@@ -564,6 +569,89 @@ impl Server {
             Ok(model) => Reply::json(200, &serde_json::json!({ "ok": true, "model": model })),
             Err(Failure(status, message)) => Reply::error(status, &message),
         }
+    }
+
+    /// An image of the review, to show in an `<img>`. Sent so that it can do
+    /// nothing else if it is opened by itself (an SVG runs nothing).
+    fn image(&self, id: &str) -> Reply {
+        if !crate::image::is_id(id) {
+            return Reply::error(404, "見つかりません");
+        }
+        let Some(bytes) = bundle::read_image(&self.review, id) else {
+            return Reply::error(404, "その画像はありません");
+        };
+        let Ok(mime) = crate::image::kind(&bytes) else {
+            return Reply::error(404, "その画像は表示できません");
+        };
+        let mut reply = Reply::new(200, mime, bytes);
+        reply.headers = vec![
+            (
+                "Content-Security-Policy".into(),
+                "sandbox; default-src 'none'; style-src 'unsafe-inline'".into(),
+            ),
+            ("X-Content-Type-Options".into(), "nosniff".into()),
+            ("Cross-Origin-Resource-Policy".into(), "same-origin".into()),
+            (
+                "Cache-Control".into(),
+                "private, max-age=31536000, immutable".into(),
+            ),
+        ];
+        reply
+    }
+
+    /// Puts an image (the bytes sent) in the review, and says what it is called
+    /// there, how big it is, and how big the bundle now is.
+    fn add_image(&self, bytes: &[u8]) -> Result<Reply, Failure> {
+        let mime = crate::image::kind(bytes).map_err(|m| Failure(400, m))?;
+        let id = crate::image::id_of(bytes);
+        let loaded = bundle::load(&self.review).map_err(internal)?;
+        let new = loaded.image(&id).is_none();
+        if new {
+            let none = bundle::Additions::default();
+            let images = bundle::Images {
+                add: &[bytes.to_vec()],
+                keep: None,
+            };
+            bundle::save_with(&self.review, &loaded, &loaded.events, &none, &images)
+                .map_err(internal)?;
+            self.count(|s| s.images += 1);
+        }
+        let bundle_size = std::fs::metadata(&self.review)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        Ok(Reply::json(
+            200,
+            &serde_json::json!({
+                "ok": true,
+                "id": id,
+                "type": mime,
+                "size": bytes.len(),
+                "bundle_size": bundle_size,
+            }),
+        ))
+    }
+
+    /// At the end of the session: the images that no comment shows any more
+    /// (one was pasted and the comment given up, or taken out) are let go.
+    fn drop_unused_images(&self) {
+        let Ok(loaded) = bundle::load(&self.review) else {
+            return;
+        };
+        let mut used = std::collections::HashSet::new();
+        for event in &loaded.events {
+            if let Event::Comment { body, .. } = event {
+                used.extend(crate::image::ids_in(body));
+            }
+        }
+        if loaded.image_ids().iter().all(|id| used.contains(id)) {
+            return;
+        }
+        let none = bundle::Additions::default();
+        let images = bundle::Images {
+            add: &[],
+            keep: Some(&used),
+        };
+        let _ = bundle::save_with(&self.review, &loaded, &loaded.events, &none, &images);
     }
 
     /// A revision as it looks against an earlier one (`rev` and `from`, as the
@@ -795,7 +883,7 @@ impl Server {
     }
 
     fn post(&self, path: &str, request: &Request) -> Reply {
-        if request.body.len() > MAX_BODY {
+        if request.body.len() > MAX_BODY && path != "/api/images" {
             return Reply::error(413, "送られた内容が大きすぎます");
         }
         if path == "/api/shutdown" {
@@ -805,6 +893,9 @@ impl Server {
                 .unwrap_or(false);
             if discard && let Err(Failure(status, message)) = self.discard() {
                 return Reply::error(status, &message);
+            }
+            if !discard {
+                self.drop_unused_images();
             }
             let mut reply = Reply::json(
                 200,
@@ -828,6 +919,7 @@ impl Server {
             ["api", "author"] => self.set_author(request.body),
             ["api", "title"] => self.set_title(request.body),
             ["api", "whitespace"] => self.set_ignore_whitespace(request.body),
+            ["api", "images"] => self.add_image(request.body),
             ["api", "refresh"] => self.refresh(),
             ["api", "comments", id, "edit"] => self.edit_comment(id, request.body),
             ["api", "comments", id, "delete"] => self.delete_comment(id),
@@ -1232,9 +1324,14 @@ pub fn run(options: &Options, on_ready: impl FnOnce(&str, &[String])) -> Result<
         {
             use std::io::Read;
             // One byte more than allowed: enough to tell it is too big.
+            let limit = if request.url() == "/api/images" {
+                crate::image::MAX_BYTES
+            } else {
+                MAX_BODY
+            };
             let _ = request
                 .as_reader()
-                .take(MAX_BODY as u64 + 1)
+                .take(limit as u64 + 1)
                 .read_to_end(&mut body);
         }
         let headers: Vec<(String, String)> = request
@@ -1262,8 +1359,10 @@ pub fn run(options: &Options, on_ready: impl FnOnce(&str, &[String])) -> Result<
         for (name, value) in &reply.headers {
             response = response.with_header(header(name, value));
         }
-        // Not to be kept: the page changes with every request.
-        response = response.with_header(header("Cache-Control", "no-store"));
+        // Not to be kept: the page changes with every request (an image doesn't).
+        if !reply.headers.iter().any(|(n, _)| n == "Cache-Control") {
+            response = response.with_header(header("Cache-Control", "no-store"));
+        }
         let _ = request.respond(response);
         if shutdown {
             println!("{}", server.farewell());
@@ -1396,6 +1495,20 @@ mod tests {
                 target: path,
                 headers,
                 body: body.as_bytes(),
+            })
+        }
+
+        /// A request with bytes for a body, as an image is sent.
+        fn send_bytes(&self, path: &str, bytes: &[u8]) -> Reply {
+            self.server.handle(&Request {
+                method: "POST",
+                target: path,
+                headers: vec![
+                    ("host".to_string(), "127.0.0.1:4242".to_string()),
+                    ("cookie".to_string(), self.cookie()),
+                    ("x-diffnote".to_string(), "1".to_string()),
+                ],
+                body: bytes,
             })
         }
 
@@ -2006,6 +2119,83 @@ mod tests {
         assert_eq!(base(9, 1), span(8, 1));
         // A file the diff doesn't have is the same on both sides.
         assert_eq!(base_span_for(None, span(7, 2)), span(7, 2));
+    }
+
+    const PNG: &[u8] = &[
+        0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, b'I', b'H', b'D', b'R',
+    ];
+
+    #[test]
+    fn an_image_is_put_in_the_review_shown_to_the_page_and_let_go_of_if_no_comment_has_it() {
+        let f = fixture();
+        // Refused: not an image, an SVG that runs.
+        assert_eq!(f.send_bytes("/api/images", b"just text").status, 400);
+        assert_eq!(f.send_bytes("/api/images", b"").status, 400);
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" onload="x()"></svg>"#;
+        assert_eq!(f.send_bytes("/api/images", svg).status, 400);
+        // Taken; the same again is not a second.
+        let told = json(&f.send_bytes("/api/images", PNG));
+        assert_eq!(told["ok"], true);
+        assert_eq!(told["type"], "image/png");
+        assert_eq!(told["size"], PNG.len());
+        assert!(told["bundle_size"].as_u64().unwrap() > 0);
+        let id = told["id"].as_str().unwrap().to_string();
+        assert_eq!(json(&f.send_bytes("/api/images", PNG))["id"], id.as_str());
+        assert_eq!(bundle::load(&f.path).unwrap().image_ids(), vec![id.clone()]);
+        // Sent to an <img>: with the type, and a policy that lets it do nothing.
+        let got = f.request("GET", &format!("/api/images/{id}"), &[], "");
+        assert_eq!(got.status, 200);
+        assert_eq!(got.content_type, "image/png");
+        assert_eq!(got.body, PNG);
+        let header = |name: &str| {
+            got.headers
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, v)| v.as_str())
+        };
+        assert!(header("Content-Security-Policy").is_some_and(|v| v.starts_with("sandbox")));
+        assert_eq!(header("X-Content-Type-Options"), Some("nosniff"));
+        assert_eq!(f.request("GET", "/api/images/nope", &[], "").status, 404);
+        assert_eq!(
+            f.request("GET", &format!("/api/images/{}", "0".repeat(64)), &[], "")
+                .status,
+            404
+        );
+        // A comment that shows it makes it a node of the model.
+        let reply = format!(r#"{{"body":"see ![shot](diffnote-image:{id})"}}"#);
+        f.post(&format!("/api/threads/{}/replies", f.thread), &reply);
+        let model = json(&f.request("GET", "/api/model", &[], ""));
+        assert!(model.to_string().contains(r#""t":"image""#), "{model}");
+        // Another that nothing shows goes when the session ends.
+        let other = [PNG, &[1, 2, 3]].concat();
+        f.send_bytes("/api/images", &other);
+        assert_eq!(bundle::load(&f.path).unwrap().image_ids().len(), 2);
+        let told = json(&f.post("/api/shutdown", "{}"))["farewell"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(told.contains("画像 2 件"), "{told}");
+        assert_eq!(bundle::load(&f.path).unwrap().image_ids(), vec![id]);
+    }
+
+    #[test]
+    fn a_page_that_only_shows_the_review_has_the_images_in_it() {
+        let f = fixture();
+        let id = json(&f.send_bytes("/api/images", PNG))["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let reply = format!(r#"{{"body":"![shot](diffnote-image:{id})"}}"#);
+        f.post(&format!("/api/threads/{}/replies", f.thread), &reply);
+        let loaded = bundle::load(&f.path).unwrap();
+        let page = html::render_export_with(&loaded, html::ExpandLimit::Lines(0)).unwrap();
+        assert!(
+            page.contains("data:image/png;base64,iVBORw0KGgo"),
+            "embedded"
+        );
+        // (The served page asks the server instead.)
+        let served = html::render_served_page(&loaded, Vec::new(), "a".into(), false).unwrap();
+        assert!(!served.contains("data:image/png"));
     }
 
     #[test]
