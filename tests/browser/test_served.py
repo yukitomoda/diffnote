@@ -566,34 +566,40 @@ class ServeAddsTheLatestDiff(ServedCase):
         ready = "!!document.querySelector('.diffnote-file')"
         self.b.open(server.url, ready=ready)
 
-    def test_a_range_can_be_named_and_makes_the_bundle_if_there_is_none(self):
+    def test_a_base_and_a_target_make_the_bundle_if_there_is_none(self):
         review = os.path.join(self.fresh("review"), "named.diffnote")
-        server = Served(review, cwd=self.repo, extra=["c1..c2"])
+        server = Served(review, cwd=self.repo, extra=["--base", "c1", "c2"])
         self.open_page(server)
         self.assertTrue(any("差分を記録しました" in l for l in server.said), server.said)
         self.assertTrue(os.path.exists(review))
         self.assertTrue(self.b.wait_exists("section.diffnote-file[data-diffnote-file='long.txt']"))
         self.assertGreaterEqual(entries(review), 2)
 
-    def test_a_range_named_for_a_bundle_that_has_a_base_is_added_and_not_twice(self):
+    def test_a_target_is_compared_with_the_base_of_the_bundle_and_not_added_twice(self):
         review = os.path.join(self.fresh("review"), "based.diffnote")
-        assert harness.diffnote("init", "-f", review, "c2", cwd=self.repo).returncode == 0
-        server = Served(review, cwd=self.repo, extra=["c1..c2"])
+        assert harness.diffnote("init", "-f", review, "c1", cwd=self.repo).returncode == 0
+        server = Served(review, cwd=self.repo, extra=["c2"])
         self.open_page(server)
         added = entries(review)
-        self.assertEqual(added, 3, "meta, the base, and the range named")
+        self.assertEqual(added, 3, "meta, the base, and the target compared with it")
         server.stop()
-        again = Served(review, cwd=self.repo, extra=["c1..c2"])
+        again = Served(review, cwd=self.repo, extra=["c2"])
         self.addCleanup(again.stop)
         self.assertFalse(any("差分を記録しました" in l for l in again.said), again.said)
         self.assertEqual(entries(review), added)
 
-    def test_a_range_that_is_not_one_stops_serve_before_it_starts(self):
+    def test_a_different_base_or_a_range_stops_serve_before_it_starts(self):
         review = os.path.join(self.fresh("review"), "bad.diffnote")
-        out = subprocess.run([harness.BIN, "serve", "-f", review, "--no-open", "no-such-branch..c2"],
-                             cwd=self.repo, capture_output=True, text=True, encoding="utf-8", timeout=20)
-        self.assertNotEqual(out.returncode, 0)
-        self.assertFalse(os.path.exists(review))
+        assert harness.diffnote("init", "-f", review, "c1", cwd=self.repo).returncode == 0
+        run = lambda *args: subprocess.run([harness.BIN, "serve", "-f", review, "--no-open", *args],
+                                           cwd=self.repo, capture_output=True, text=True, encoding="utf-8", timeout=20)
+        other = run("--base", "c2", "HEAD")
+        self.assertNotEqual(other.returncode, 0)
+        self.assertIn("ベース", other.stderr)
+        ranged = run("c1..c2")
+        self.assertNotEqual(ranged.returncode, 0)
+        self.assertIn("範囲", ranged.stderr)
+        self.assertEqual(entries(review), 2, "nothing was added")
 
     def test_a_directory_bundle_takes_the_directory_named_and_nothing_when_none_is(self):
         root = self.fresh("plain")

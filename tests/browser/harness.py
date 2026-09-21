@@ -346,7 +346,7 @@ def make_gaps_review(root, name="gaps"):
     git(repo, "commit", "-q", "-am", "c2")
     git(repo, "tag", "c2")
     review = os.path.join(root, name + ".diffnote")
-    out = diffnote("edit", "-f", review, "--author", "reviewer", "c1..c2", cwd=repo, comments=[
+    out = diffnote("edit", "-f", review, "--author", "reviewer", "--base", "c1", "c2", cwd=repo, comments=[
         ("+TWENTY", "20 行目を変えました。"),
     ])
     assert out.returncode == 0, out.stdout + out.stderr
@@ -373,14 +373,14 @@ def make_calc_review(root):
     git(repo, "commit", "-q", "-am", "c3")
     git(repo, "tag", "c3")
     review = os.path.join(root, "calc.diffnote")
-    out = diffnote("edit", "-f", review, "--author", "reviewer", "c1..c2", cwd=repo, comments=[
+    out = diffnote("edit", "-f", review, "--author", "reviewer", "--base", "c1", "c2", cwd=repo, comments=[
         ("GLOBAL", "全体として、テストが追加されていないのが気になります。"),
         ("+        return None", "None を返すと呼び出し側が気づけません。"),
         ("@raw:+        return None", ">!resolve"),
         ("+    return a * b", "mul の型を確認してください。"),
     ])
     assert out.returncode == 0, out.stdout + out.stderr
-    out = diffnote("edit", "-f", review, "--author", "reviewer", "c1..c3", cwd=repo, comments=[
+    out = diffnote("edit", "-f", review, "--author", "reviewer", "--base", "c1", "c3", cwd=repo, comments=[
         ("+\"\"\"calc\"\"\"", "docstring は 1 行でよいです。"),
     ])
     assert out.returncode == 0, out.stdout + out.stderr
@@ -428,7 +428,7 @@ def make_login_review(root, snapshot=None, name="login"):
     git(repo, "tag", "c2")
     review = os.path.join(root, name + ".diffnote")
     extra = ["--snapshot", snapshot] if snapshot else []
-    out = diffnote("edit", "-f", review, "--author", "reviewer", *extra, "c1..c2", cwd=repo, comments=[
+    out = diffnote("edit", "-f", review, "--author", "reviewer", *extra, "--base", "c1", "c2", cwd=repo, comments=[
         ("+import { compare } from './crypto'", "`hash` は使っていません。"),
     ])
     assert out.returncode == 0, out.stdout + out.stderr

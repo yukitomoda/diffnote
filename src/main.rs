@@ -90,9 +90,12 @@ enum Cmd {
             hide_default_value = true
         )]
         review: PathBuf,
-        /// git のレビュー: git 自身が解決するコミット指定。`A..B` または `A B`(A → B)、`A...B`(A と B のマージベース → B)、単一のコミット(その第一親 → そのコミット)。省略すると、バンドルの最後のリビジョンの head から今の HEAD までの変更(`init` した直後なら、その基準から HEAD まで)をレビューする。コミット済みの内容だけをレビューする。ディレクトリのレビュー(`init` で作ったバンドル): 引数は多くても 1 つで、バンドルの最後のスナップショットと比べるディレクトリ(省略時はカレント)。
-        #[arg(value_name = "REV|DIR", num_args = 0..)]
-        targets: Vec<String>,
+        /// 比較対象。git のレビュー: ベース(`init` で決めたコミット)と比べるコミット(HEAD、ブランチ名、タグ、コミット ID など。省略時は HEAD)。範囲(`A..B`)は指定できません。バンドルがなく `--base` もないときは、そのコミットの第一親をベースにします(そのコミット自身の変更のレビュー)。ディレクトリのレビュー(`init` で作ったバンドル): ベースのスナップショットと比べるディレクトリ(省略時はカレント)。
+        #[arg(value_name = "REV|DIR")]
+        target: Option<String>,
+        /// ベース(比較の起点)。まだバンドルがないときだけ指定でき、`init BASE` してから `edit` するのと同じ意味になります。バンドルがあるときは、そのベースと同じものしか指定できません。
+        #[arg(long, value_name = "REV")]
+        base: Option<String>,
         /// 新しい差分を初めて見て、かつこの回で何かを追加したときに、バンドルへ保存する内容。`changed`(差分が触れた全ファイルの両側と、コメントが参照する全ファイル)か、`full`(それに加えて head 全体のツリー)。省略時は、バンドルにすでに決まっているモード、なければ git のレビューでは `changed`(残りは git が持っている)。ディレクトリのレビューは常に全体を保存するので、そこで `--snapshot changed` を指定するとエラーになる。
         #[arg(long, value_enum, hide_possible_values = true)]
         snapshot: Option<diffnote::bundle::SnapshotMode>,
@@ -128,9 +131,12 @@ enum Cmd {
         /// git のレビューを作ったリポジトリ。バンドルに保存されていないファイルを、コミットから開くために使う。省略時は、起動したディレクトリ。
         #[arg(long, value_name = "DIR")]
         repo: Option<PathBuf>,
-        /// レビューに加える差分。`edit` と同じ指定です。git のレビュー: `A..B`、`A B`、`A...B`、単一のコミット。省略すると、最後のリビジョンの head から今の HEAD まで。バンドルがなければ作ります。ディレクトリのレビュー: 最後のスナップショットと比べるディレクトリ(省略時は何も加えません)。すでに記録された差分や、空の差分は加えません。
-        #[arg(value_name = "REV|DIR", num_args = 0..)]
-        targets: Vec<String>,
+        /// レビューに加える比較対象。`edit` と同じ指定です。git のレビュー: ベースと比べるコミット(省略時は HEAD)。ディレクトリのレビュー: ベースのスナップショットと比べるディレクトリ(省略時は何も加えません)。すでに記録された差分や、空の差分は加えません。
+        #[arg(value_name = "REV|DIR")]
+        target: Option<String>,
+        /// ベース(比較の起点)。まだバンドルがないときだけ指定できます(`edit --base` と同じ)。
+        #[arg(long, value_name = "REV")]
+        base: Option<String>,
     },
     /// レビューバンドルに保存されたスレッドと返信を表示する。
     Show {
@@ -181,12 +187,13 @@ fn main() -> Result<()> {
         } => cmd_init(review, target, files, title, author),
         Cmd::Edit {
             review,
-            targets,
+            target,
+            base,
             snapshot,
             show,
             title,
             author,
-        } => cmd_edit(review, targets, snapshot, show, title, author),
+        } => cmd_edit(review, target, base, snapshot, show, title, author),
         Cmd::Show { review } => cmd_show(review),
         Cmd::Serve {
             review,
@@ -194,8 +201,9 @@ fn main() -> Result<()> {
             no_open,
             author,
             repo,
-            targets,
-        } => cmd_serve(review, port, no_open, author, repo, targets),
+            target,
+            base,
+        } => cmd_serve(review, port, no_open, author, repo, target, base),
         Cmd::Export {
             review,
             output,
@@ -219,25 +227,27 @@ fn main() -> Result<()> {
 }
 
 /// For `serve`, the counterpart of what `edit` does with what it is given: the
-/// diff it names is recorded as a revision of the bundle (made if there is
-/// none yet, for git), so that it can be reviewed in the browser.
+/// changes from the base to the target are recorded as a revision of the
+/// bundle (made if there is none yet, for git), so that they can be reviewed in
+/// the browser.
 ///
-/// - A git bundle: `targets` is a commit specification as for `edit`; with
-///   none, the changes from where the last revision stopped up to `HEAD`.
-/// - A directory bundle: the directory to compare with the last snapshot. With
-///   none nothing is added (the directory is unknown: `.` may be anywhere).
-/// - No bundle yet: `targets` names the commits, as `edit` does.
+/// - A git bundle: the target is a commit (`HEAD` if none is named).
+/// - A directory bundle: the target is the directory to compare with the base
+///   snapshot. With none, nothing is added (`.` may be anywhere).
+/// - No bundle yet: as for `edit`, `base` (or the target's parent) starts it.
 ///
 /// Nothing is written if the diff is empty or is already recorded.
-fn add_revision(review_path: &Path, repo: &diffnote::git::Repo, targets: &[String]) -> Result<()> {
+fn add_revision(
+    review_path: &Path,
+    repo: &diffnote::git::Repo,
+    base: Option<&str>,
+    target: Option<&str>,
+) -> Result<()> {
     let loaded = bundle::load(review_path)?;
-    let explicit = !targets.is_empty();
+    let explicit = base.is_some() || target.is_some();
     let input = match loaded.source() {
         Some(diffnote::model::Source::Files { .. }) => {
-            if targets.len() > 1 {
-                anyhow::bail!("ディレクトリのレビューが受け取る引数は、ディレクトリ 1 つまでです");
-            }
-            let Some(dir) = targets.first() else {
+            let Some(dir) = target else {
                 return Ok(());
             };
             files_input(
@@ -250,16 +260,16 @@ fn add_revision(review_path: &Path, repo: &diffnote::git::Repo, targets: &[Strin
             if !explicit && !repo.exists() {
                 return Ok(());
             }
-            git_input(repo.clone(), &git_targets(repo, &loaded, targets.to_vec())?)?
+            git_input(repo.clone(), git_range(repo, &loaded, base, target)?)?
         }
         None => {
             if !explicit {
                 anyhow::bail!(
-                    "{} がありません。先に `diffnote init` でレビューを作るか、レビューするコミットを指定してください(例: `diffnote serve HEAD~3..HEAD`)",
+                    "{} がありません。先に `diffnote init` でレビューを作るか、レビューするコミットを指定してください(例: `diffnote serve HEAD`)",
                     review_path.display()
                 );
             }
-            git_input(repo.clone(), targets)?
+            git_input(repo.clone(), git_range(repo, &loaded, base, target)?)?
         }
     };
     if input.diff_text.trim().is_empty() || loaded.revisions().any(|r| r.digest == input.digest) {
@@ -322,11 +332,13 @@ fn cmd_serve(
     no_open: bool,
     author: Option<String>,
     repo: Option<PathBuf>,
-    targets: Vec<String>,
+    target: Option<String>,
+    base: Option<String>,
 ) -> Result<()> {
-    if !review.exists() && targets.is_empty() {
+    let explicit = target.is_some() || base.is_some();
+    if !review.exists() && !explicit {
         anyhow::bail!(
-            "{} がありません。先に `diffnote init` か `diffnote edit` でレビューを作るか、レビューするコミットを指定してください(例: `diffnote serve HEAD~3..HEAD`)",
+            "{} がありません。先に `diffnote init` か `diffnote edit` でレビューを作るか、レビューするコミットを指定してください(例: `diffnote serve HEAD`)",
             review.display()
         );
     }
@@ -335,9 +347,9 @@ fn cmd_serve(
     let git = repo
         .clone()
         .map_or_else(diffnote::git::Repo::current, diffnote::git::Repo::at);
-    match add_revision(&review, &git, &targets) {
+    match add_revision(&review, &git, base.as_deref(), target.as_deref()) {
         Ok(()) => {}
-        Err(e) if !targets.is_empty() => return Err(e),
+        Err(e) if explicit => return Err(e),
         Err(e) => println!("注意: 最新の差分を記録できませんでした: {e}"),
     }
     if bundle::load(&review)
@@ -345,7 +357,7 @@ fn cmd_serve(
         .is_some_and(|l| diffnote::html::view_model(&l).is_err())
     {
         println!(
-            "注意: レビューする差分がまだありません。基準のあとにコミットを重ねてから、もう一度 `diffnote serve` を起動してください(`diffnote edit A..B` で範囲を指定して追加することもできます)"
+            "注意: レビューする差分がまだありません。基準のあとにコミットを重ねてから、もう一度 `diffnote serve` を起動してください(比較対象は `diffnote serve <コミット>` でも指定できます)"
         );
     }
     let options = diffnote::serve::Options {
@@ -439,31 +451,72 @@ struct Input {
     head_all: HeadAll,
 }
 
-/// What `edit` reviews in a git bundle when it is given nothing: the changes
-/// since the last revision's head, up to `HEAD`; or, if `HEAD` is that head,
-/// that revision again (so replies can still be added).
-fn git_targets(
+const NO_RANGES: &str = "範囲(`A..B`、`A B`)は指定できません。比較の起点(ベース)は、`diffnote init` か `--base` で決め、比較対象は 1 つだけ指定してください";
+
+/// What a git review compares: from the bundle's base up to the target.
+///
+/// - With a bundle, the base is the one its first revision has; `base`, if
+///   given, must be that same commit. The target is `HEAD` if none is named.
+/// - With none, `base` starts it (`edit --base main feature`); without `base`,
+///   the target alone is a commit's own changes (from its first parent).
+fn git_range(
     repo: &diffnote::git::Repo,
     loaded: &bundle::Loaded,
-    targets: Vec<String>,
-) -> Result<Vec<String>> {
-    if !targets.is_empty() {
-        return Ok(targets);
+    base: Option<&str>,
+    target: Option<&str>,
+) -> Result<diffnote::model::GitSource> {
+    if target.is_some_and(|t| t.contains("..")) {
+        anyhow::bail!("{NO_RANGES}");
     }
-    let Some(diffnote::model::Source::Git(last)) = loaded.revisions().last().map(|r| &r.source)
-    else {
-        return Ok(targets);
-    };
-    let head = repo.commit_id("HEAD")?;
-    Ok(vec![if head == last.head {
-        format!("{}..{}", last.base, last.head)
-    } else {
-        format!("{}..{head}", last.head)
-    }])
+    let first = loaded.revisions().next().map(|r| &r.source);
+    match first {
+        Some(diffnote::model::Source::Git(first)) => {
+            if let Some(base) = base {
+                let asked = repo.commit_id(base)?;
+                if asked != first.base {
+                    anyhow::bail!(
+                        "このバンドルのベースは {} です。ベースは変えられません(別のベースでレビューするときは、新しいバンドルを作ってください)",
+                        &first.base[..first.base.len().min(10)]
+                    );
+                }
+            }
+            // What the base was called when it was set, for the tab's name.
+            let label = if first.base == first.head {
+                first.spec.clone()
+            } else {
+                first
+                    .spec
+                    .split("..")
+                    .next()
+                    .filter(|_| first.spec.contains(".."))
+                    .map_or_else(
+                        || first.base[..first.base.len().min(10)].to_string(),
+                        str::to_string,
+                    )
+            };
+            let target = target.unwrap_or("HEAD");
+            Ok(diffnote::model::GitSource {
+                base: first.base.clone(),
+                head: repo.commit_id(target)?,
+                spec: format!("{label}..{target}"),
+            })
+        }
+        Some(diffnote::model::Source::Files { .. }) => {
+            anyhow::bail!(
+                "このバンドルはディレクトリのレビューです(git のコミットは指定できません)"
+            )
+        }
+        None => match (base, target) {
+            (Some(base), target) => repo.between(base, target.unwrap_or("HEAD")),
+            (None, Some(target)) => repo.commit_range(target),
+            (None, None) => anyhow::bail!(
+                "レビューするコミットを指定してください(例: `diffnote edit HEAD`)。基準になる状態を先に決めるには、`diffnote init` を実行してください"
+            ),
+        },
+    }
 }
 
-fn git_input(repo: diffnote::git::Repo, targets: &[String]) -> Result<Input> {
-    let range = repo.resolve_range(targets)?;
+fn git_input(repo: diffnote::git::Repo, range: diffnote::model::GitSource) -> Result<Input> {
     let diff_text = repo.diff(&range)?;
     let parsed = diffnote::diff::parse(&diff_text).map_err(|e| anyhow::anyhow!("{e}"))?;
     let head_tree = repo.ls_tree(&range.head)?;
@@ -682,7 +735,8 @@ fn init_files(
 
 fn cmd_edit(
     review_path: PathBuf,
-    targets: Vec<String>,
+    target: Option<String>,
+    base: Option<String>,
     snapshot_override: Option<bundle::SnapshotMode>,
     show_specs: Vec<String>,
     title: Option<String>,
@@ -703,25 +757,21 @@ fn cmd_edit(
                     ください。"
                 );
             }
-            if targets.len() > 1 {
-                anyhow::bail!("ディレクトリのレビューが受け取る引数は、ディレクトリ 1 つまでです");
+            if base.is_some() {
+                anyhow::bail!("ディレクトリのレビューの `--base` には、まだ対応していません");
             }
-            let dir = PathBuf::from(targets.first().map_or(".", String::as_str));
+            let dir = PathBuf::from(target.as_deref().unwrap_or("."));
             files_input(
                 &loaded,
                 &dir,
                 &[review_path.clone(), draft_path_for(&review_path)],
             )?
         }
-        Some(diffnote::model::Source::Git(_)) => {
+        Some(diffnote::model::Source::Git(_)) | None => {
             let repo = diffnote::git::Repo::current();
-            git_input(repo.clone(), &git_targets(&repo, &loaded, targets)?)?
+            let range = git_range(&repo, &loaded, base.as_deref(), target.as_deref())?;
+            git_input(repo, range)?
         }
-        None if targets.is_empty() => anyhow::bail!(
-            "レビューするコミットを指定してください(例: `diffnote edit HEAD~3..HEAD`)。\
-            基準になる状態を決めるには、先に `diffnote init` を実行してください"
-        ),
-        None => git_input(diffnote::git::Repo::current(), &targets)?,
     };
     let Input {
         diff_text,

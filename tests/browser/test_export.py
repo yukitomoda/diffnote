@@ -180,7 +180,7 @@ class SideBySide(BrowserCase):
         git(repo, "commit", "-q", "-am", "c2")
         git(repo, "tag", "c2")
         long_review = os.path.join(cls.root, "long.diffnote")
-        assert diffnote("edit", "-f", long_review, "c1..c2", cwd=repo,
+        assert diffnote("edit", "-f", long_review, "--base", "c1", "c2", cwd=repo,
                         comments=[("+" + "word " * 100 + "two", "wide")]).returncode == 0
         long_html = os.path.join(cls.root, "long.html")
         assert diffnote("export", "-f", long_review, long_html).returncode == 0

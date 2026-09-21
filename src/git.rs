@@ -76,71 +76,23 @@ impl Repo {
         base_command(&self.dir)
     }
 
-    /// Resolves `args` (what the user typed after `diffnote edit`) into a
-    /// concrete base/head commit pair:
-    ///
-    /// | input        | base                 | head |
-    /// |--------------|----------------------|------|
-    /// | `X`          | `X^` (empty tree if root commit) | `X` |
-    /// | `A B`        | `A`                  | `B`  |
-    /// | `A..B`       | `A`                  | `B`  |
-    /// | `A...B`      | merge-base(`A`, `B`) | `B`  |
-    ///
-    /// Anything else (options such as `--cached`, pathspecs, 3+ revisions) is
-    /// rejected rather than guessed at.
-    pub fn resolve_range(&self, args: &[String]) -> Result<GitSource> {
-        if args.is_empty() {
-            bail!(
-                "レビューするコミットを指定してください(例: `diffnote edit HEAD~3..HEAD`、\
-                `diffnote edit main feature`、`diffnote edit <commit>`)"
-            );
-        }
-        let mut cmd = self.git();
-        cmd.arg("rev-parse").args(args);
-        let out = run_text(cmd)?;
-
-        let mut positives = Vec::new();
-        let mut negatives = Vec::new();
-        for line in out.lines() {
-            match line.strip_prefix('^') {
-                Some(oid) if is_object_id(oid) => negatives.push(oid.to_string()),
-                None if is_object_id(line) => positives.push(line.to_string()),
-                _ => bail!(
-                    "引数 '{line}' は使えません。diffnote edit が受け付けるのはコミットの指定\
-                    (`A..B`、`A...B`、`A B`、単一のコミット)だけで、オプションやパスは指定できません"
-                ),
-            }
-        }
-
-        let (base, head) = match (positives.as_slice(), negatives.as_slice()) {
-            ([x], []) => (self.parent_or_empty_tree(x)?, x.clone()),
-            ([a, b], []) => (a.clone(), b.clone()),
-            ([b], [a]) => (a.clone(), b.clone()),
-            // `A...B` resolves to `B`, `A`, `^merge-base` (in that order).
-            ([b, a], [mb]) => {
-                let expected = run_text({
-                    let mut cmd = self.git();
-                    cmd.args(["merge-base", a, b]);
-                    cmd
-                })?;
-                if expected.trim() != mb {
-                    bail!(
-                        "この組み合わせのコミット指定は使えません。`A..B`、`A...B`、`A B`、または単一のコミットにしてください"
-                    );
-                }
-                (mb.clone(), b.clone())
-            }
-            _ => {
-                bail!(
-                    "この組み合わせのコミット指定は使えません。`A..B`、`A...B`、`A B`、または単一のコミットにしてください"
-                )
-            }
-        };
-
+    /// The changes one commit made: from its first parent (the empty tree for a
+    /// root commit) to it.
+    pub fn commit_range(&self, target: &str) -> Result<GitSource> {
+        let head = self.commit_id(target)?;
         Ok(GitSource {
-            base,
+            base: self.parent_or_empty_tree(&head)?,
             head,
-            spec: args.join(" "),
+            spec: target.to_string(),
+        })
+    }
+
+    /// The changes from the commit `base` names to the one `target` names.
+    pub fn between(&self, base: &str, target: &str) -> Result<GitSource> {
+        Ok(GitSource {
+            base: self.commit_id(base)?,
+            head: self.commit_id(target)?,
+            spec: format!("{base}..{target}"),
         })
     }
 
@@ -358,47 +310,28 @@ mod tests {
         f(p, &Repo::at(p), commits.try_into().unwrap());
     }
 
-    fn args(s: &[&str]) -> Vec<String> {
-        s.iter().map(|s| s.to_string()).collect()
-    }
-
     #[test]
-    fn resolves_every_supported_shape() {
+    fn a_commit_is_reviewed_from_its_parent_and_two_commits_from_one_to_the_other() {
         with_repo(|_, repo, [c1, c2, c3]| {
-            let r = repo.resolve_range(&args(&["HEAD"])).unwrap();
+            let r = repo.commit_range("HEAD").unwrap();
             assert_eq!(
                 (r.base.as_str(), r.head.as_str()),
                 (c2.as_str(), c3.as_str())
             );
-
-            let r = repo
-                .resolve_range(&args(&["HEAD~2^{commit}", "HEAD"]))
-                .unwrap();
+            assert_eq!(r.spec, "HEAD");
+            let r = repo.between("HEAD~2", "HEAD").unwrap();
             assert_eq!(
                 (r.base.as_str(), r.head.as_str()),
                 (c1.as_str(), c3.as_str())
             );
-
-            let r = repo.resolve_range(&args(&["HEAD~2..HEAD~1"])).unwrap();
-            assert_eq!(
-                (r.base.as_str(), r.head.as_str()),
-                (c1.as_str(), c2.as_str())
-            );
-
-            // Merge base of an ancestor and its descendant is the ancestor.
-            let r = repo.resolve_range(&args(&["HEAD~1...HEAD"])).unwrap();
-            assert_eq!(
-                (r.base.as_str(), r.head.as_str()),
-                (c2.as_str(), c3.as_str())
-            );
-            assert_eq!(r.spec, "HEAD~1...HEAD");
+            assert_eq!(r.spec, "HEAD~2..HEAD");
         });
     }
 
     #[test]
     fn root_commit_is_diffed_against_the_empty_tree() {
         with_repo(|_, repo, [c1, ..]| {
-            let r = repo.resolve_range(&args(&[&c1])).unwrap();
+            let r = repo.commit_range(&c1).unwrap();
             assert_eq!(r.base, repo.empty_tree().unwrap());
             let text = repo.diff(&r).unwrap();
             assert!(text.contains("+version 1"));
@@ -407,23 +340,16 @@ mod tests {
     }
 
     #[test]
-    fn rejects_options_paths_and_odd_combinations() {
+    fn what_is_not_a_commit_is_refused() {
         with_repo(|_, repo, _| {
-            assert!(repo.resolve_range(&[]).is_err());
-            assert!(repo.resolve_range(&args(&["--cached"])).is_err());
-            assert!(repo.resolve_range(&args(&["HEAD", "--", "a.txt"])).is_err());
+            assert!(repo.commit_range("--cached").is_err());
+            assert!(repo.commit_range("no-such-rev").is_err());
             assert!(
-                repo.resolve_range(&args(&["HEAD~2", "HEAD~1", "HEAD"]))
-                    .is_err()
+                repo.commit_range("HEAD~2..HEAD").is_err(),
+                "a range is not a commit"
             );
-            // `^X` is just another spelling of `X..HEAD`...
-            assert!(repo.resolve_range(&args(&["HEAD", "^HEAD~2"])).is_ok());
-            // ...but two revisions plus an unrelated exclusion is not `A...B`.
-            assert!(
-                repo.resolve_range(&args(&["HEAD", "HEAD~1", "^HEAD~2"]))
-                    .is_err()
-            );
-            assert!(repo.resolve_range(&args(&["no-such-rev"])).is_err());
+            assert!(repo.between("HEAD~1", "no-such-rev").is_err());
+            assert!(repo.between("-x", "HEAD").is_err());
         });
     }
 
@@ -431,7 +357,7 @@ mod tests {
     fn diff_ignores_the_working_tree() {
         with_repo(|p, repo, _| {
             std::fs::write(p.join("a.txt"), "uncommitted\n").unwrap();
-            let r = repo.resolve_range(&args(&["HEAD"])).unwrap();
+            let r = repo.commit_range("HEAD").unwrap();
             let text = repo.diff(&r).unwrap();
             assert!(text.contains("+version 3"));
             assert!(!text.contains("uncommitted"));

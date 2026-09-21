@@ -301,11 +301,20 @@ fn a_git_review_keeps_files_that_comments_refer_to_even_when_a_later_diff_leaves
     let review = env.path("review.diffnote");
     let review_arg = review.to_str().unwrap();
 
-    // Session 1 (c1..c2): a comment on the README, which that diff touches.
+    // Session 1 (base c1, up to c2): a comment on the README, which that diff touches.
     env.ok(
         &repo,
         &[("+A calculator.", "more detail please"), ("+B", "why B?")],
-        &["edit", "-f", review_arg, "--snapshot", "changed", "c1..c2"],
+        &[
+            "edit",
+            "-f",
+            review_arg,
+            "--snapshot",
+            "changed",
+            "--base",
+            "c1",
+            "c2",
+        ],
     );
     let loaded = bundle::load(&review).unwrap();
     let first = loaded.revisions().next().unwrap();
@@ -315,12 +324,12 @@ fn a_git_review_keeps_files_that_comments_refer_to_even_when_a_later_diff_leaves
         "calc.txt and README.md, both touched"
     );
 
-    // Session 2 (c2..c3) doesn't touch README.md at all, but the thread on
-    // it must stay placeable, so its content is kept for this revision too.
+    // Session 2 (c1..c3, the same base) has README.md and calc.txt in it too:
+    // the thread on README stays placeable and its content is kept.
     env.ok(
         &repo,
         &[("+d", "new line")],
-        &["edit", "-f", review_arg, "c2..c3"],
+        &["edit", "-f", review_arg, "c3"],
     );
     let loaded = bundle::load(&review).unwrap();
     let second = loaded.revisions().nth(1).unwrap();
@@ -329,12 +338,13 @@ fn a_git_review_keeps_files_that_comments_refer_to_even_when_a_later_diff_leaves
         bundle::SnapshotMode::Changed,
         "inherited"
     );
-    let touched: Vec<_> = second
+    let mut touched: Vec<_> = second
         .files
         .iter()
         .filter_map(|f| f.new_path.as_deref())
         .collect();
-    assert_eq!(touched, ["calc.txt"]);
+    touched.sort();
+    assert_eq!(touched, ["README.md", "calc.txt"]);
     let mut manifest: Vec<_> = loaded
         .manifest(second)
         .into_iter()
@@ -345,7 +355,8 @@ fn a_git_review_keeps_files_that_comments_refer_to_even_when_a_later_diff_leaves
     let tree = loaded.tree_of(second);
     assert_eq!(tree["README.md"], b"# calc\n\nA calculator.\n");
     assert_eq!(tree["calc.txt"], b"a\nB\nc\nd\n");
-    // calc.txt c1, c2, c3; README c1, c2 (c3 is the same as c2): five blobs.
+    // calc.txt c1, c2, c3; README c1, c2 (c3 is the same as c2): five blobs
+    // (the base side is kept once, though both revisions have it).
     assert_eq!(count_blobs(&review), 5, "{:?}", bundle_names(&review));
 }
 
@@ -367,7 +378,9 @@ fn full_snapshots_keep_the_whole_tree_and_changed_ones_do_not() {
                 review.to_str().unwrap(),
                 "--snapshot",
                 mode,
-                "c2..c3",
+                "--base",
+                "c2",
+                "c3",
             ],
         );
         let loaded = bundle::load(&review).unwrap();
@@ -392,7 +405,7 @@ fn an_edit_that_adds_nothing_leaves_no_bundle_behind() {
     let out = env.ok(
         &repo,
         &[],
-        &["edit", "-f", review.to_str().unwrap(), "c1..c2"],
+        &["edit", "-f", review.to_str().unwrap(), "--base", "c1", "c2"],
     );
     assert!(out.contains("コメントは追加されませんでした"), "{out}");
     assert!(!review.exists());
@@ -433,23 +446,39 @@ fn threads_on_a_file_a_later_diff_leaves_alone_are_shown_and_can_be_added_to() {
     std::fs::write(repo.join("calc.txt"), "a\nB\nc\n").unwrap();
     git(&repo, &["commit", "-q", "-am", "c3"]);
     git(&repo, &["tag", "c3"]);
+    std::fs::write(repo.join("calc.txt"), "a\nB\nc\nd\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c4"]);
+    git(&repo, &["tag", "c4"]);
 
     let review = env.path("review.diffnote");
     let review_arg = review.to_str().unwrap();
 
-    // Session 1: a thread on the README (which c1..c2 changes).
+    // Session 1 (base c2, up to c3): the diff leaves README.md alone, and a
+    // thread is written on it through `--show`.
     env.ok(
         &repo,
-        &[("+line 3 (edited)", "why edit this?")],
-        &["edit", "-f", review_arg, "--snapshot", "changed", "c1..c2"],
+        &[(" line 3 (edited)", "why edit this?")],
+        &[
+            "edit",
+            "-f",
+            review_arg,
+            "--snapshot",
+            "changed",
+            "--show",
+            "README.md:3",
+            "--base",
+            "c2",
+            "c3",
+        ],
     );
 
-    // Session 2 (c2..c3) leaves README.md alone. Its thread is still shown,
-    // in a block of context, and a new comment can be written right there.
+    // Session 2 (the same base, up to c4) leaves README.md alone too. Its
+    // thread is still shown, in a block of context, and a new comment can be
+    // written right there.
     let out = env.ok(
         &repo,
         &[(" line 6", "and what about this line?")],
-        &["edit", "-f", review_arg, "c2..c3"],
+        &["edit", "-f", review_arg, "c4"],
     );
     assert!(out.contains("コメント 1 件"), "{out}");
 
@@ -545,7 +574,7 @@ fn a_git_review_keeps_only_what_it_needs_by_default() {
     env.ok(
         &repo,
         &[("+d", "new line")],
-        &["edit", "-f", review.to_str().unwrap(), "c2..c3"],
+        &["edit", "-f", review.to_str().unwrap(), "--base", "c2", "c3"],
     );
     assert_eq!(modes(&review), [bundle::SnapshotMode::Changed]);
     assert_eq!(manifest_paths(&review, 0), ["calc.txt"]);
@@ -561,7 +590,7 @@ fn a_git_review_remembers_the_commits_it_was_made_against() {
     env.ok(
         &repo,
         &[("+B", "why B?")],
-        &["edit", "-f", review.to_str().unwrap(), "c1..c2"],
+        &["edit", "-f", review.to_str().unwrap(), "--base", "c1", "c2"],
     );
     let loaded = bundle::load(&review).unwrap();
     let rev = loaded.revisions().next().unwrap();
@@ -583,18 +612,26 @@ fn the_mode_of_a_bundles_first_revision_carries_on_and_an_explicit_one_wins() {
     let repo = git_repo(&env);
     let review = env.path("review.diffnote");
     let review_arg = review.to_str().unwrap();
-    // Ask for the whole tree once...
+    // Ask for the whole tree once (the base is c2, which leaves README alone)...
     env.ok(
         &repo,
-        &[("+B", "one")],
-        &["edit", "-f", review_arg, "--snapshot", "full", "c1..c2"],
+        &[("+d", "one")],
+        &[
+            "edit",
+            "-f",
+            review_arg,
+            "--snapshot",
+            "full",
+            "--base",
+            "c2",
+            "c3",
+        ],
     );
+    assert_eq!(manifest_paths(&review, 0), ["README.md", "calc.txt"]);
     // ...and the next revision, with no flag, does the same.
-    env.ok(
-        &repo,
-        &[("+d", "two")],
-        &["edit", "-f", review_arg, "c2..c3"],
-    );
+    std::fs::write(repo.join("calc.txt"), "a\nB\nc\nd\ne\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c4"]);
+    env.ok(&repo, &[("+e", "two")], &["edit", "-f", review_arg, "HEAD"]);
     assert_eq!(
         modes(&review),
         [bundle::SnapshotMode::Full, bundle::SnapshotMode::Full]
@@ -602,19 +639,12 @@ fn the_mode_of_a_bundles_first_revision_carries_on_and_an_explicit_one_wins() {
     assert_eq!(manifest_paths(&review, 1), ["README.md", "calc.txt"]);
 
     // An explicit request beats what the bundle started with.
-    std::fs::write(repo.join("calc.txt"), "a\nB\nc\nd\ne\n").unwrap();
-    git(&repo, &["commit", "-q", "-am", "c4"]);
+    std::fs::write(repo.join("calc.txt"), "a\nB\nc\nd\ne\nf\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c5"]);
     env.ok(
         &repo,
-        &[("+e", "three")],
-        &[
-            "edit",
-            "-f",
-            review_arg,
-            "--snapshot",
-            "changed",
-            "c3..HEAD",
-        ],
+        &[("+f", "three")],
+        &["edit", "-f", review_arg, "--snapshot", "changed", "HEAD"],
     );
     assert_eq!(modes(&review)[2], bundle::SnapshotMode::Changed);
     assert_eq!(manifest_paths(&review, 2), ["calc.txt"]);
@@ -711,7 +741,16 @@ fn show_puts_lines_of_an_untouched_file_in_the_buffer_and_comments_on_them_are_r
     let out = env.ok(
         &repo,
         &[(" line 10", "what does this mean?")],
-        &["edit", "-f", review_arg, "--show", "docs.md:9-11", "c1..c2"],
+        &[
+            "edit",
+            "-f",
+            review_arg,
+            "--show",
+            "docs.md:9-11",
+            "--base",
+            "c1",
+            "c2",
+        ],
     );
     assert!(out.contains("コメント 1 件"), "{out}");
 
@@ -739,7 +778,16 @@ fn show_gives_three_lines_of_context_around_the_range_and_no_more() {
         let out = env.ok(
             &repo,
             &[(hidden, "nowhere to put this")],
-            &["edit", "-f", review_arg, "--show", "docs.md:9-11", "c1..c2"],
+            &[
+                "edit",
+                "-f",
+                review_arg,
+                "--show",
+                "docs.md:9-11",
+                "--base",
+                "c1",
+                "c2",
+            ],
         );
         assert!(
             out.contains("コメントは追加されませんでした"),
@@ -748,7 +796,16 @@ fn show_gives_three_lines_of_context_around_the_range_and_no_more() {
         let out = env.ok(
             &repo,
             &[(shown, "this is in the buffer")],
-            &["edit", "-f", review_arg, "--show", "docs.md:9-11", "c1..c2"],
+            &[
+                "edit",
+                "-f",
+                review_arg,
+                "--show",
+                "docs.md:9-11",
+                "--base",
+                "c1",
+                "c2",
+            ],
         );
         assert!(out.contains("コメント 1 件"), "{shown}: {out}");
     }
@@ -774,7 +831,9 @@ fn show_of_a_whole_file_and_of_lines_in_a_file_the_diff_touches() {
             "docs.md",
             "--show",
             "calc.txt:1-4",
-            "c1..c2",
+            "--base",
+            "c1",
+            "c2",
         ],
     );
     let loaded = bundle::load(&review).unwrap();
@@ -797,11 +856,24 @@ fn show_combines_with_existing_threads_and_asks_nothing_of_them() {
     env.ok(
         &repo,
         &[(" line 3", "first, via show")],
-        &["edit", "-f", review_arg, "--show", "docs.md:2-4", "c1..c2"],
+        &[
+            "edit",
+            "-f",
+            review_arg,
+            "--show",
+            "docs.md:2-4",
+            "--base",
+            "c1",
+            "c2",
+        ],
     );
     // Later: no --show at all, and the thread on docs.md is still in the
     // buffer (the earlier comment makes the file referenced), so a reply works.
-    let out = env.run(&repo, &[], &["edit", "-f", review_arg, "c1..c2"]);
+    let out = env.run(
+        &repo,
+        &[],
+        &["edit", "-f", review_arg, "--base", "c1", "c2"],
+    );
     assert!(out.status.success());
     let loaded = bundle::load(&review).unwrap();
     assert_eq!(comment_bodies(&loaded), ["first, via show"]);
@@ -825,7 +897,9 @@ fn show_of_something_that_cannot_be_shown_fails_before_anything_is_written() {
         let out = env.run(
             &repo,
             &[(" line 3", "never written")],
-            &["edit", "-f", review_arg, "--show", spec, "c1..c2"],
+            &[
+                "edit", "-f", review_arg, "--show", spec, "--base", "c1", "c2",
+            ],
         );
         assert!(!out.status.success(), "{spec:?} should fail");
         let err = String::from_utf8_lossy(&out.stderr);
@@ -852,7 +926,9 @@ fn show_of_a_file_the_diff_deletes_says_so() {
             review.to_str().unwrap(),
             "--show",
             "docs.md",
-            "c2..c3",
+            "--base",
+            "c2",
+            "c3",
         ],
     );
     assert!(!out.status.success());
@@ -906,14 +982,14 @@ fn a_thread_survives_a_second_review_from_the_same_base_with_a_longer_range() {
     env.ok(
         &repo,
         &[("+mul", "why mul?")],
-        &["edit", "-f", review_arg, "c1..c2"],
+        &["edit", "-f", review_arg, "--base", "c1", "c2"],
     );
     // The review is extended to c1..c3 from the same base: a comment on the
     // new header makes this a recorded revision too.
     env.ok(
         &repo,
         &[("+header", "why a header?")],
-        &["edit", "-f", review_arg, "c1..c3"],
+        &["edit", "-f", review_arg, "--base", "c1", "c3"],
     );
 
     let html_path = env.path("out.html");
@@ -999,7 +1075,16 @@ fn a_title_given_with_the_first_comment_names_the_export_and_show() {
     let out = env.ok(
         &repo,
         &[("+B", "why?")],
-        &["edit", "-f", arg, "--title", "ログイン改修 <v2>", "c1..c2"],
+        &[
+            "edit",
+            "-f",
+            arg,
+            "--title",
+            "ログイン改修 <v2>",
+            "--base",
+            "c1",
+            "c2",
+        ],
     );
     assert!(out.contains("タイトルを設定しました"), "{out}");
     assert_eq!(titles(&review), ["ログイン改修 <v2>"]);
@@ -1018,7 +1103,7 @@ fn without_a_title_the_export_keeps_the_default_heading() {
     env.ok(
         &repo,
         &[("+B", "why?")],
-        &["edit", "-f", review.to_str().unwrap(), "c1..c2"],
+        &["edit", "-f", review.to_str().unwrap(), "--base", "c1", "c2"],
     );
     assert!(titles(&review).is_empty());
     assert!(model_of(&exported(&env, &repo, &review))["title"].is_null());
@@ -1033,26 +1118,30 @@ fn a_title_can_be_changed_kept_and_cleared_later() {
     env.ok(
         &repo,
         &[("+B", "why?")],
-        &["edit", "-f", arg, "--title", "first", "c1..c2"],
+        &["edit", "-f", arg, "--title", "first", "--base", "c1", "c2"],
     );
     // Changed by a session that also comments.
     env.ok(
         &repo,
         &[(" a", "and here")],
-        &["edit", "-f", arg, "--title", "second", "c1..c2"],
+        &["edit", "-f", arg, "--title", "second", "--base", "c1", "c2"],
     );
     assert_eq!(titles(&review), ["first", "second"]);
     // The same title again records nothing new.
     let out = env.ok(
         &repo,
         &[(" c", "more")],
-        &["edit", "-f", arg, "--title", "second", "c1..c2"],
+        &["edit", "-f", arg, "--title", "second", "--base", "c1", "c2"],
     );
     assert!(!out.contains("タイトルを設定しました"), "{out}");
     assert_eq!(titles(&review), ["first", "second"]);
     assert_eq!(model_of(&exported(&env, &repo, &review))["title"], "second");
     // An empty title takes it away.
-    env.ok(&repo, &[], &["edit", "-f", arg, "--title", "", "c1..c2"]);
+    env.ok(
+        &repo,
+        &[],
+        &["edit", "-f", arg, "--title", "", "--base", "c1", "c2"],
+    );
     assert_eq!(titles(&review), ["first", "second", ""]);
     assert!(model_of(&exported(&env, &repo, &review))["title"].is_null());
 }
@@ -1067,7 +1156,16 @@ fn a_title_alone_is_enough_to_save_a_session() {
     let out = env.ok(
         &repo,
         &[],
-        &["edit", "-f", arg, "--title", "only a title", "c1..c2"],
+        &[
+            "edit",
+            "-f",
+            arg,
+            "--title",
+            "only a title",
+            "--base",
+            "c1",
+            "c2",
+        ],
     );
     assert!(out.contains("タイトルを設定しました"), "{out}");
     assert_eq!(titles(&review), ["only a title"]);
@@ -1075,12 +1173,14 @@ fn a_title_alone_is_enough_to_save_a_session() {
     env.ok(
         &repo,
         &[],
-        &["edit", "-f", arg, "--title", "renamed", "c1..c2"],
+        &[
+            "edit", "-f", arg, "--title", "renamed", "--base", "c1", "c2",
+        ],
     );
     assert_eq!(titles(&review), ["only a title", "renamed"]);
     // Without a title and without comments nothing is saved, as before.
     let before = std::fs::read(&review).unwrap();
-    env.ok(&repo, &[], &["edit", "-f", arg, "c1..c2"]);
+    env.ok(&repo, &[], &["edit", "-f", arg, "--base", "c1", "c2"]);
     assert_eq!(std::fs::read(&review).unwrap(), before);
 }
 
@@ -1143,7 +1243,7 @@ fn the_author_is_git_user_name_first() {
     env.ok(
         &repo,
         &[("+B", "why?")],
-        &["edit", "-f", review.to_str().unwrap(), "c1..c2"],
+        &["edit", "-f", review.to_str().unwrap(), "--base", "c1", "c2"],
     );
     assert_eq!(authors(&review), ["山田 太郎"]);
 }
@@ -1159,7 +1259,7 @@ fn without_a_git_name_the_email_is_the_author() {
     env.ok(
         &repo,
         &[("+B", "why?")],
-        &["edit", "-f", review.to_str().unwrap(), "c1..c2"],
+        &["edit", "-f", review.to_str().unwrap(), "--base", "c1", "c2"],
     );
     assert_eq!(authors(&review), ["taro@example.com"]);
 }
@@ -1174,9 +1274,22 @@ fn author_overrides_git_and_applies_to_every_event_of_the_session() {
     env.ok(
         &repo,
         &[("+B", "why?")],
-        &["edit", "-f", arg, "--author", "レビュアーA", "c1..c2"],
+        &[
+            "edit",
+            "-f",
+            arg,
+            "--author",
+            "レビュアーA",
+            "--base",
+            "c1",
+            "c2",
+        ],
     );
-    env.ok(&repo, &[(" a", "and here")], &["edit", "-f", arg, "c1..c2"]);
+    env.ok(
+        &repo,
+        &[(" a", "and here")],
+        &["edit", "-f", arg, "--base", "c1", "c2"],
+    );
     // The override is per session, not remembered.
     assert_eq!(authors(&review), ["レビュアーA", "山田 太郎"]);
     let html = exported(&env, &repo, &review);
@@ -1198,7 +1311,9 @@ fn a_blank_author_is_ignored() {
             review.to_str().unwrap(),
             "--author",
             "  ",
-            "c1..c2",
+            "--base",
+            "c1",
+            "c2",
         ],
     );
     assert_eq!(authors(&review), ["山田 太郎"]);
@@ -1240,7 +1355,11 @@ fn a_reader_that_has_gone_is_not_an_error() {
     let repo = git_repo(&env);
     let review = env.path("review.diffnote");
     let arg = review.to_str().unwrap();
-    env.ok(&repo, &[("+B", "why?")], &["edit", "-f", arg, "c1..c2"]);
+    env.ok(
+        &repo,
+        &[("+B", "why?")],
+        &["edit", "-f", arg, "--base", "c1", "c2"],
+    );
     let (reader, writer) = std::io::pipe().unwrap();
     drop(reader);
     let out = Command::new(bin())
@@ -1465,7 +1584,7 @@ fn edit_after_a_git_init_reviews_what_changed_since_and_then_reopens_that() {
     env.ok(&repo, &[("+e", "e も")], &["edit", "-f", review_arg]);
     let sources = git_sources(&review);
     assert_eq!(sources.len(), 3);
-    assert_eq!(sources[2].base, commit_id(&repo, "c3"));
+    assert_eq!(sources[2].base, commit_id(&repo, "c2"), "the base stays");
     assert_eq!(sources[2].head, commit_id(&repo, "HEAD"));
 }
 
@@ -1504,4 +1623,83 @@ fn init_makes_a_file_review_outside_git_and_when_told_to_inside_it() {
     assert!(said.contains("個のファイル"), "{said}");
     assert!(git_sources(&review).is_empty());
     assert!(count_blobs(&review) > 0);
+}
+
+#[test]
+fn edit_compares_the_target_with_the_base_and_ranges_are_not_accepted() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    // No bundle and no base: the commit's own changes, from its parent.
+    env.ok(
+        &repo,
+        &[("+d", "the last commit")],
+        &["edit", "-f", review_arg, "HEAD"],
+    );
+    let sources = git_sources(&review);
+    assert_eq!(sources[0].base, commit_id(&repo, "c2"));
+    assert_eq!(sources[0].head, commit_id(&repo, "c3"));
+    // A range: not accepted, and nothing is written.
+    let before = std::fs::read(&review).unwrap();
+    let ranged = env.run(&repo, &[("+d", "x")], &["edit", "-f", review_arg, "c1..c3"]);
+    assert!(!ranged.status.success());
+    assert!(String::from_utf8_lossy(&ranged.stderr).contains("範囲"));
+    let two = env.run(&repo, &[], &["edit", "-f", review_arg, "c1", "c3"]);
+    assert!(!two.status.success(), "two targets are not accepted either");
+    assert_eq!(std::fs::read(&review).unwrap(), before);
+    // The base is fixed by the bundle: the same one may be said again, another may not.
+    let other = env.run(
+        &repo,
+        &[("+d", "x")],
+        &["edit", "-f", review_arg, "--base", "c1", "c3"],
+    );
+    assert!(!other.status.success());
+    assert!(String::from_utf8_lossy(&other.stderr).contains("ベース"));
+    env.ok(
+        &repo,
+        &[],
+        &["edit", "-f", review_arg, "--base", "c2", "c3"],
+    );
+    // Nothing named and no bundle: it says what to do.
+    let none = env.path("none.diffnote");
+    let out = env.run(&repo, &[], &["edit", "-f", none.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("init"));
+    assert!(!none.exists());
+}
+
+#[test]
+fn edit_with_a_base_makes_the_bundle_as_init_and_edit_would() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    env.ok(
+        &repo,
+        &[("+d", "since c1")],
+        &["edit", "-f", review.to_str().unwrap(), "--base", "c1", "c3"],
+    );
+    let sources = git_sources(&review);
+    assert_eq!(
+        sources.len(),
+        1,
+        "the base is the revision's own base, not a separate one"
+    );
+    assert_eq!(sources[0].base, commit_id(&repo, "c1"));
+    assert_eq!(sources[0].head, commit_id(&repo, "c3"));
+    assert_eq!(sources[0].spec, "c1..c3");
+    // The bundle's later revisions keep that base, and are named with it.
+    std::fs::write(repo.join("calc.txt"), "a\nB\nc\nd\ne\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c4"]);
+    env.ok(
+        &repo,
+        &[("+e", "and now")],
+        &["edit", "-f", review.to_str().unwrap()],
+    );
+    let sources = git_sources(&review);
+    assert_eq!(sources.len(), 2);
+    assert_eq!(
+        (sources[1].base.as_str(), sources[1].spec.as_str()),
+        (sources[0].base.as_str(), "c1..HEAD")
+    );
 }
