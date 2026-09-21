@@ -105,6 +105,9 @@ pub struct Server {
     token: String,
     port: u16,
     git: GitFiles,
+    /// The comments added since this server started: the ones the page may
+    /// still edit or delete. Once the server stops, they are settled.
+    session: std::sync::Mutex<std::collections::HashSet<Ulid>>,
 }
 
 /// The commits' files, read from the repository (a tree is read once).
@@ -153,7 +156,36 @@ impl Server {
                 repo: options.repo.clone().map_or_else(Repo::current, Repo::at),
                 trees: Default::default(),
             },
+            session: Default::default(),
         }
+    }
+
+    /// The comments of this session that are still in the review, as the page
+    /// wants them.
+    fn editable(&self, loaded: &bundle::Loaded) -> Vec<String> {
+        let session = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        loaded
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Comment { id, .. } if session.contains(id) => Some(id.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn remember(&self, id: Ulid) {
+        self.session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id);
+    }
+
+    /// The whole model, as the page has it.
+    fn model_of(&self, loaded: &bundle::Loaded) -> Result<html::ViewModel, Failure> {
+        let mut model = html::view_model_for(loaded, true).map_err(internal)?;
+        model.editable = self.editable(loaded);
+        Ok(model)
     }
 
     fn git(&self) -> Option<&dyn html::CommitFiles> {
@@ -255,7 +287,10 @@ impl Server {
     }
 
     fn page(&self) -> Reply {
-        match bundle::load(&self.review).and_then(|l| html::render_served_page(&l)) {
+        match bundle::load(&self.review).and_then(|l| {
+            let editable = self.editable(&l);
+            html::render_served_page(&l, editable)
+        }) {
             Ok(page) => Reply::html(200, page),
             Err(e) => Reply::html(
                 500,
@@ -321,19 +356,19 @@ impl Server {
             Ok(l) => l,
             Err(e) => return Reply::error(500, &format!("処理に失敗しました: {e}")),
         };
-        match html::view_model_for(&loaded, true) {
+        match self.model_of(&loaded) {
             Ok(model) => Reply::json(200, &serde_json::json!({ "ok": true, "model": model })),
-            Err(e) => Reply::error(500, &format!("処理に失敗しました: {e}")),
+            Err(Failure(status, message)) => Reply::error(status, &message),
         }
     }
 
-    /// How long the review's log is: a page compares it with its own to see
+    /// The stamp of the review's log: a page compares it with its own to see
     /// whether the review has changed.
     fn version(&self) -> Reply {
         match bundle::load(&self.review) {
             Ok(l) => Reply::json(
                 200,
-                &serde_json::json!({ "ok": true, "events": l.events.len() }),
+                &serde_json::json!({ "ok": true, "stamp": html::stamp(&l) }),
             ),
             Err(e) => Reply::error(500, &format!("処理に失敗しました: {e}")),
         }
@@ -478,23 +513,21 @@ impl Server {
             anchor: Some(anchor),
             body: text.to_string(),
         });
-        let events_added = events.len();
+        let before = html::stamp(&loaded);
         self.append_all(events, blobs)?;
+        self.remember(id);
+        self.model_answer(&before, serde_json::json!({ "thread": id.to_string() }))
+    }
 
+    /// The answer to a change that gives the page the whole model: it has, as
+    /// `before`, the stamp the review had before the change.
+    fn model_answer(&self, before: &str, mut extra: serde_json::Value) -> Result<Reply, Failure> {
         let loaded = bundle::load(&self.review).map_err(internal)?;
-        // The page takes the whole model, with the thread placed in it (in
-        // every revision).
-        let model = html::view_model_for(&loaded, true).map_err(internal)?;
-        Ok(Reply::json(
-            200,
-            &serde_json::json!({
-                "ok": true,
-                "thread": id.to_string(),
-                "appended": events_added,
-                "events": loaded.events.len(),
-                "model": model,
-            }),
-        ))
+        let model = self.model_of(&loaded)?;
+        extra["ok"] = true.into();
+        extra["before"] = before.into();
+        extra["model"] = serde_json::to_value(&model).map_err(|e| internal(e.into()))?;
+        Ok(Reply::json(200, &extra))
     }
 
     fn post(&self, path: &str, request: &Request) -> Reply {
@@ -518,6 +551,8 @@ impl Server {
             ["api", "threads", id, "reopen"] => {
                 self.with_thread(id, |thread| self.set_resolved(thread, false))
             }
+            ["api", "comments", id, "edit"] => self.edit_comment(id, request.body),
+            ["api", "comments", id, "delete"] => self.delete_comment(id),
             _ => return Reply::error(404, "見つかりません"),
         };
         match result {
@@ -540,20 +575,122 @@ impl Server {
             .into_iter()
             .find(|t| t.root_id == id)
             .ok_or_else(|| Failure(404, "そのスレッドはありません".into()))?;
-        let before = loaded.events.len();
+        let before = html::stamp(&loaded);
         action(&thread)?;
         let loaded = bundle::load(&self.review).map_err(internal)?;
-        let appended = loaded.events.len() - before;
         Ok(Reply::json(
             200,
             &serde_json::json!({
                 "ok": true,
                 "thread": id.to_string(),
                 "thread_data": html::thread_json(&loaded, id),
-                "appended": appended,
-                "events": loaded.events.len(),
+                "before": before,
+                "stamp": html::stamp(&loaded),
+                "editable": self.editable(&loaded),
             }),
         ))
+    }
+
+    /// The id of a comment of this session (only those may be changed).
+    fn own_comment(&self, id: &str) -> Result<Ulid, Failure> {
+        let id =
+            Ulid::from_string(id).map_err(|_| Failure(400, "コメントの ID が不正です".into()))?;
+        let session = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        if session.contains(&id) {
+            Ok(id)
+        } else {
+            Err(Failure(
+                403,
+                "このセッションで追加したコメントだけが、編集・削除できます".into(),
+            ))
+        }
+    }
+
+    /// Rewrites the text of a comment of this session.
+    fn edit_comment(&self, id: &str, body: &[u8]) -> Result<Reply, Failure> {
+        let id = self.own_comment(id)?;
+        let value: serde_json::Value = serde_json::from_slice(body)
+            .map_err(|_| Failure(400, "送られた内容を読めません".into()))?;
+        let text = value
+            .get("body")
+            .and_then(|b| b.as_str())
+            .map(str::trim)
+            .filter(|b| !b.is_empty())
+            .ok_or_else(|| Failure(400, "コメントの本文が空です".into()))?;
+        let loaded = bundle::load(&self.review).map_err(internal)?;
+        let before = html::stamp(&loaded);
+        let mut events = loaded.events.clone();
+        let target = events
+            .iter_mut()
+            .find_map(|e| match e {
+                Event::Comment { id: c, body, .. } if *c == id => Some(body),
+                _ => None,
+            })
+            .ok_or_else(|| Failure(404, "そのコメントはありません".into()))?;
+        *target = text.to_string();
+        self.save(&loaded, &events)?;
+        self.model_answer(&before, serde_json::json!({}))
+    }
+
+    /// Takes a comment of this session out of the review: a reply alone, or a
+    /// thread (with what it was given: its replies, resolving) if all of its
+    /// replies are of this session too.
+    fn delete_comment(&self, id: &str) -> Result<Reply, Failure> {
+        let id = self.own_comment(id)?;
+        let loaded = bundle::load(&self.review).map_err(internal)?;
+        let before = html::stamp(&loaded);
+        let is_root = loaded
+            .events
+            .iter()
+            .any(|e| matches!(e, Event::Comment { id: c, parent: None, .. } if *c == id));
+        let exists = is_root
+            || loaded
+                .events
+                .iter()
+                .any(|e| matches!(e, Event::Comment { id: c, .. } if *c == id));
+        if !exists {
+            return Err(Failure(404, "そのコメントはありません".into()));
+        }
+        let gone = |e: &Event| match e {
+            Event::Comment { id: c, parent, .. } => *c == id || (is_root && *parent == Some(id)),
+            Event::Resolve { parent, .. }
+            | Event::Reopen { parent, .. }
+            | Event::Reanchor { parent, .. } => is_root && *parent == id,
+            _ => false,
+        };
+        if is_root {
+            let session = self.session.lock().unwrap_or_else(|e| e.into_inner());
+            let foreign = loaded.events.iter().any(|e| {
+                matches!(e, Event::Comment { id: c, parent: Some(p), .. } if *p == id && !session.contains(c))
+            });
+            if foreign {
+                return Err(Failure(
+                    409,
+                    "ほかのコメントが付いているため、スレッドは削除できません".into(),
+                ));
+            }
+        }
+        let removed: Vec<Ulid> = loaded
+            .events
+            .iter()
+            .filter(|e| gone(e))
+            .filter_map(|e| match e {
+                Event::Comment { id, .. } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        let events: Vec<Event> = loaded.events.iter().filter(|e| !gone(e)).cloned().collect();
+        self.save(&loaded, &events)?;
+        let mut session = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        for id in removed {
+            session.remove(&id);
+        }
+        drop(session);
+        self.model_answer(&before, serde_json::json!({}))
+    }
+
+    fn save(&self, loaded: &bundle::Loaded, events: &[Event]) -> Result<(), Failure> {
+        bundle::save(&self.review, loaded, events, &bundle::Additions::default()).map_err(internal)
     }
 
     fn append(&self, event: Event) -> Result<(), Failure> {
@@ -577,14 +714,17 @@ impl Server {
             .map(str::trim)
             .filter(|b| !b.is_empty())
             .ok_or_else(|| Failure(400, "返信の本文が空です".into()))?;
+        let id = Ulid::new();
         self.append(Event::Comment {
-            id: Ulid::new(),
+            id,
             parent: Some(thread.root_id),
             author: self.author.clone(),
             created_at: OffsetDateTime::now_utc(),
             anchor: None,
             body: text.to_string(),
-        })
+        })?;
+        self.remember(id);
+        Ok(())
     }
 
     fn set_resolved(&self, thread: &review::Thread, resolved: bool) -> Result<(), Failure> {
@@ -1050,6 +1190,183 @@ mod tests {
         assert_eq!(bare.status, 403);
     }
 
+    // ---- editing and deleting what this session added ---------------------------
+
+    /// The id of the comment a reply or a new thread made.
+    fn id_of(answer: &serde_json::Value) -> String {
+        answer["thread"].as_str().unwrap().to_string()
+    }
+
+    fn last_comment_id(f: &Fixture) -> String {
+        f.events()
+            .into_iter()
+            .rev()
+            .find_map(|e| match e {
+                Event::Comment { id, .. } => Some(id.to_string()),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    fn model_comments(f: &Fixture) -> Vec<(String, String)> {
+        let model = json(&f.request("GET", "/api/model", &[], ""));
+        model["model"]["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|t| t["comments"].as_array().unwrap().clone())
+            .map(|c| {
+                (
+                    c["id"].as_str().unwrap().to_string(),
+                    c["body"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn only_what_this_session_added_can_be_edited_and_the_page_is_told_which() {
+        let f = fixture();
+        // The fixture's own comment is from before the server started.
+        let old = last_comment_id(&f);
+        let refused = f.post(&format!("/api/comments/{old}/edit"), r#"{"body":"x"}"#);
+        assert_eq!(refused.status, 403);
+        assert_eq!(
+            f.post(&format!("/api/comments/{old}/delete"), "{}").status,
+            403
+        );
+        let model = json(&f.request("GET", "/api/model", &[], ""));
+        assert!(model["model"].get("editable").is_none(), "nothing yet");
+        // A reply of this session can.
+        let reply = json(&f.post(
+            &format!("/api/threads/{}/replies", f.thread),
+            r#"{"body":"mine"}"#,
+        ));
+        let mine = last_comment_id(&f);
+        assert_eq!(reply["editable"], serde_json::json!([mine.clone()]));
+        assert_eq!(
+            reply["thread_data"]["comments"][1]["body"], "mine",
+            "the text as written comes with it, to edit"
+        );
+        let edited = json(&f.post(
+            &format!("/api/comments/{mine}/edit"),
+            r#"{"body":"  changed  "}"#,
+        ));
+        assert_eq!(edited["ok"], true, "{edited}");
+        assert!(model_comments(&f).contains(&(mine.clone(), "changed".to_string())));
+        assert_eq!(f.events().len(), 4, "rewritten in place, nothing added");
+        assert_eq!(
+            f.post(&format!("/api/comments/{mine}/edit"), r#"{"body":" "}"#)
+                .status,
+            400
+        );
+        assert_eq!(
+            f.post("/api/comments/not-an-id/edit", r#"{"body":"x"}"#)
+                .status,
+            400
+        );
+    }
+
+    #[test]
+    fn a_reply_of_this_session_can_be_deleted_and_the_thread_stays() {
+        let f = fixture();
+        f.post(
+            &format!("/api/threads/{}/replies", f.thread),
+            r#"{"body":"oops"}"#,
+        );
+        let mine = last_comment_id(&f);
+        let before = f.events().len();
+        let answer = json(&f.post(&format!("/api/comments/{mine}/delete"), "{}"));
+        assert_eq!(answer["ok"], true, "{answer}");
+        assert_eq!(f.events().len(), before - 1);
+        assert!(!model_comments(&f).iter().any(|(id, _)| *id == mine));
+        assert!(answer["model"].get("editable").is_none());
+        // It is gone: nothing more to change (it is not this session's any more).
+        assert_eq!(
+            f.post(&format!("/api/comments/{mine}/delete"), "{}").status,
+            403
+        );
+    }
+
+    #[test]
+    fn a_thread_of_this_session_is_deleted_with_its_replies_and_resolving() {
+        let f = fixture();
+        let base = f.events().len();
+        let id = id_of(&json(&new_thread(
+            &f,
+            r#"{"scope":"global","revision":0,"body":"draft thought"}"#,
+        )));
+        f.post(
+            &format!("/api/threads/{id}/replies"),
+            r#"{"body":"me too"}"#,
+        );
+        f.post(&format!("/api/threads/{id}/resolve"), "{}");
+        assert_eq!(f.events().len(), base + 3);
+        let answer = json(&f.post(&format!("/api/comments/{id}/delete"), "{}"));
+        assert_eq!(answer["ok"], true, "{answer}");
+        assert_eq!(f.events().len(), base, "back to what it was");
+        // The review still loads and the fixture's own thread is untouched.
+        assert_eq!(model_comments(&f).len(), 1);
+    }
+
+    #[test]
+    fn a_thread_with_a_reply_from_elsewhere_is_not_deleted() {
+        let f = fixture();
+        let id = id_of(&json(&new_thread(
+            &f,
+            r#"{"scope":"global","revision":0,"body":"mine"}"#,
+        )));
+        // The command line replies to it meanwhile.
+        let loaded = bundle::load(&f.path).unwrap();
+        let mut events = loaded.events.clone();
+        events.push(Event::Comment {
+            id: Ulid::new(),
+            parent: Some(Ulid::from_string(&id).unwrap()),
+            author: "someone else".into(),
+            created_at: OffsetDateTime::now_utc(),
+            anchor: None,
+            body: "from the command line".into(),
+        });
+        bundle::save(&f.path, &loaded, &events, &Additions::default()).unwrap();
+        let before = f.events().len();
+        assert_eq!(
+            f.post(&format!("/api/comments/{id}/delete"), "{}").status,
+            409
+        );
+        assert_eq!(f.events().len(), before);
+    }
+
+    #[test]
+    fn a_new_server_has_settled_what_the_last_one_added() {
+        let f = fixture();
+        f.post(
+            &format!("/api/threads/{}/replies", f.thread),
+            r#"{"body":"mine"}"#,
+        );
+        let mine = last_comment_id(&f);
+        let later = Server::new(
+            &Options {
+                review: f.path.clone(),
+                port: 0,
+                author: None,
+                repo: None,
+            },
+            4242,
+        );
+        let refused = later.handle(&Request {
+            method: "POST",
+            target: &format!("/api/comments/{mine}/delete"),
+            headers: vec![
+                ("host".into(), "127.0.0.1:4242".into()),
+                ("cookie".into(), format!("{COOKIE}={}", later.token())),
+                ("x-diffnote".into(), "1".into()),
+                ("origin".into(), "http://127.0.0.1:4242".into()),
+            ],
+            body: b"{}",
+        });
+        assert_eq!(refused.status, 403);
+    }
+
     #[test]
     fn a_review_that_cannot_be_shown_says_so() {
         let f = fixture();
@@ -1088,7 +1405,7 @@ mod tests {
         );
         let answer = json(&reply);
         assert_eq!(answer["ok"], true);
-        assert_eq!(answer["appended"], 1);
+        assert_ne!(answer["before"], answer["stamp"], "the log changed");
         // The thread as it now is: the reply is in it.
         let bodies: Vec<String> = answer["thread_data"]["comments"]
             .as_array()
@@ -1157,33 +1474,28 @@ mod tests {
         assert!(text(&page).contains("D.api = "));
         let model = json(&get("/api/model"));
         assert_eq!(model["model"]["interactive"], true);
-        let events = model["model"]["events"].as_u64().unwrap();
-        assert_eq!(json(&get("/api/version"))["events"].as_u64(), Some(events));
+        let stamp = model["model"]["stamp"].as_str().unwrap().to_string();
+        assert_eq!(json(&get("/api/version"))["stamp"], stamp.as_str());
         f.post(
             &format!("/api/threads/{}/replies", f.thread),
             r#"{"body":"more"}"#,
         );
-        assert_eq!(
-            json(&get("/api/version"))["events"].as_u64(),
-            Some(events + 1)
-        );
+        assert_ne!(json(&get("/api/version"))["stamp"], stamp.as_str());
     }
 
     #[test]
-    fn a_change_says_what_it_added_and_the_thread_as_it_now_is() {
+    fn a_change_says_the_stamp_before_and_after_and_the_thread_as_it_now_is() {
         let f = fixture();
-        let before = json(&f.request("GET", "/api/version", &[], ""))["events"]
-            .as_u64()
-            .unwrap();
+        let before = json(&f.request("GET", "/api/version", &[], ""))["stamp"].clone();
         let resolve = format!("/api/threads/{}/resolve", f.thread);
         let answer = json(&f.post(&resolve, "{}"));
-        assert_eq!(answer["appended"], 1);
-        assert_eq!(answer["events"].as_u64(), Some(before + 1));
+        assert_eq!(answer["before"], before);
+        assert_ne!(answer["stamp"], before);
         assert_eq!(answer["thread_data"]["resolved"], true);
-        // Already resolved: nothing is added, and the page can tell.
+        // Already resolved: nothing changes, and the page can tell.
         let again = json(&f.post(&resolve, "{}"));
-        assert_eq!(again["appended"], 0);
-        assert_eq!(again["events"].as_u64(), Some(before + 1));
+        assert_eq!(again["before"], answer["stamp"]);
+        assert_eq!(again["stamp"], answer["stamp"]);
     }
 
     #[test]
@@ -1236,8 +1548,9 @@ mod tests {
             shown.contains("from the command line") && shown.contains("second"),
             "{shown}"
         );
-        // (and says the log grew by the one event it added, not by two)
-        assert_eq!(answer["appended"], 1);
+        // (and says the log was not what the page had: the command line's
+        // reply came in between)
+        assert_ne!(answer["before"], answer["stamp"]);
     }
 
     #[test]
@@ -1396,9 +1709,9 @@ mod tests {
         );
         assert_eq!(reply.status, 200, "{}", text(&reply));
         let answer = json(&reply);
-        assert_eq!(answer["appended"], 1);
         let model = &answer["model"];
-        assert_eq!(model["events"], answer["events"]);
+        assert!(model["stamp"].as_str().is_some());
+        assert_ne!(answer["before"], model["stamp"]);
         let id = answer["thread"].as_str().unwrap();
         assert!(
             model["threads"]

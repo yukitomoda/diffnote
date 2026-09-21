@@ -5,14 +5,14 @@ import unittest
 import json
 import time
 
-from harness import BrowserCase, Served, make_calc_review, make_login_review, show
+from harness import BrowserCase, Served, entries, make_calc_review, make_login_review, show
 import os
 import shutil
 
 CUR = ".diffnote-revision.is-current"
 
 
-class ClientServed(BrowserCase):
+class ServedCase(BrowserCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -44,6 +44,8 @@ class ClientServed(BrowserCase):
     def counts(self):
         return self.b.js("document.querySelector('.diffnote-summary p').textContent")
 
+
+class Replies(ServedCase):
     def test_a_reply_shows_at_once_and_is_kept(self):
         self.serve()
         b = self.b
@@ -62,14 +64,34 @@ class ClientServed(BrowserCase):
         b = self.b
         card = self.card("mul の型")
         self.assertEqual(self.counts(), "スレッド 4 件(解決済み 1 件)")
+        written = entries(self.review)
         b.js(f"document.getElementById({card!r}).querySelector('[data-diffnote-action]').click()")
         self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('[data-diffnote-action=reopen]')"))
         self.assertEqual(self.counts(), "スレッド 4 件(解決済み 2 件)")
         self.assertTrue(self.same_page())
+        deadline = time.time() + 8
+        while entries(self.review) == written and time.time() < deadline:
+            time.sleep(0.05)
         b.js(f"document.getElementById({card!r}).querySelector('[data-diffnote-action]').click()")
         self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('[data-diffnote-action=resolve]')"))
         self.assertEqual(self.counts(), "スレッド 4 件(解決済み 1 件)")
         self.assertIn("再オープン", show(self.review))
+
+    def test_pressing_resolve_twice_quickly_ends_as_the_last_press_says(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        written = entries(self.review)
+        # The second press as soon as the page shows the first, before the answer.
+        b.js(f"document.getElementById({card!r}).querySelector('[data-diffnote-action]').click()")
+        self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('[data-diffnote-action=reopen]')"))
+        b.js(f"document.getElementById({card!r}).querySelector('[data-diffnote-action]').click()")
+        deadline = time.time() + 8
+        while entries(self.review) < written + 2 and time.time() < deadline:
+            time.sleep(0.05)
+        time.sleep(0.3)
+        self.assertEqual(self.counts(), "スレッド 4 件(解決済み 1 件)", "resolved then reopened: as it was")
+        self.assertTrue(b.js(f"!!document.getElementById({card!r}).querySelector('[data-diffnote-action=resolve]')"))
 
     def test_a_failed_change_says_so_and_keeps_the_draft(self):
         self.serve()
@@ -121,6 +143,77 @@ class ClientServed(BrowserCase):
         self.assertIn('filename="r.html"', b.js("window.__export.disposition"))
         self.assertTrue(b.js("window.__export.text.includes('mul の型') && !window.__export.text.includes('D.api = ')"))
 
+    def reply_to(self, card, text):
+        b = self.b
+        b.js(f"var t=document.getElementById({card!r}).querySelector('textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,{text!r}); t.dispatchEvent(new Event('input',{{bubbles:true}}))")
+        time.sleep(0.1)
+        b.js(f"document.getElementById({card!r}).querySelector('form.diffnote-reply').requestSubmit()")
+        self.assertTrue(b.wait(f"document.getElementById({card!r}).textContent.includes({text!r}) && !document.querySelector('.is-pending')"))
+
+    def test_only_comments_added_in_this_session_have_edit_and_delete(self):
+        self.serve()
+        b = self.b
+        self.assertEqual(b.count("[data-diffnote-edit], [data-diffnote-delete]"), 0, "what was there before is settled")
+        card = self.card("mul の型")
+        self.reply_to(card, "あとから書いた返信")
+        mine = f"[data-diffnote-comment]:has([data-diffnote-edit])"
+        self.assertEqual(b.count(mine), 1)
+        self.assertIn("あとから書いた返信", b.text(mine))
+
+    def test_a_comment_of_this_session_can_be_edited(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        self.reply_to(card, "書き間違えた")
+        b.click("[data-diffnote-edit]")
+        self.assertTrue(b.wait_exists("[data-diffnote-edit-form] textarea"))
+        self.assertEqual(b.value("[data-diffnote-edit-form] textarea"), "書き間違えた", "the text as written")
+        self.write("[data-diffnote-edit-form] textarea", "書き直した")
+        b.js("document.querySelector('[data-diffnote-edit-form]').requestSubmit()")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-edit-form]') && document.body.textContent.includes('書き直した')"))
+        self.assertFalse(b.js("document.body.textContent.includes('書き間違えた')"))
+        self.assertTrue(self.same_page())
+        out = show(self.review)
+        self.assertIn("書き直した", out)
+        self.assertNotIn("書き間違えた", out)
+        # Cancelling leaves it alone.
+        b.click("[data-diffnote-edit]")
+        self.assertTrue(b.wait_exists("[data-diffnote-edit-form]"))
+        self.write("[data-diffnote-edit-form] textarea", "やっぱりやめた")
+        b.js("Array.from(document.querySelectorAll('[data-diffnote-edit-form] button')).find(function(x){return x.textContent==='キャンセル'}).click()")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-edit-form]')"))
+        self.assertIn("書き直した", show(self.review))
+
+    def test_a_reply_of_this_session_can_be_deleted_after_confirming(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        self.reply_to(card, "消したい返信")
+        b.js("window.confirm=function(){window.__asked=true; return false}")
+        b.click("[data-diffnote-delete]")
+        self.assertTrue(b.js("window.__asked"))
+        self.assertIn("消したい返信", show(self.review), "declined: still there")
+        b.js("window.confirm=function(){return true}")
+        b.click("[data-diffnote-delete]")
+        self.assertTrue(b.wait("!document.body.textContent.includes('消したい返信')"))
+        self.assertNotIn("消したい返信", show(self.review))
+        self.assertEqual(b.count("[data-diffnote-delete]"), 0)
+        self.assertTrue(b.js(f"!!document.getElementById({card!r})"), "the thread stays")
+
+    def test_a_new_thread_can_be_taken_out_again_with_what_it_was_given(self):
+        self.serve()
+        b = self.b
+        b.click(f"{CUR} [data-diffnote-add=global]")
+        self.write(".diffnote-compose textarea", "やっぱり要らない全体コメント")
+        b.js("document.querySelector('.diffnote-compose').requestSubmit()")
+        self.assertTrue(b.wait("document.body.textContent.includes('やっぱり要らない全体コメント') && !document.querySelector('.diffnote-compose-wrap')"))
+        threads = self.counts()
+        b.js("window.confirm=function(){return true}")
+        b.click("[data-diffnote-global] [data-diffnote-delete]")
+        self.assertTrue(b.wait("!document.body.textContent.includes('やっぱり要らない全体コメント')"))
+        self.assertNotEqual(self.counts(), threads)
+        self.assertNotIn("やっぱり要らない全体コメント", show(self.review))
+
     def test_the_shutdown_button_stops_the_server(self):
         self.serve()
         self.b.js("document.querySelector('[data-diffnote-shutdown]').click()")
@@ -130,7 +223,7 @@ class ClientServed(BrowserCase):
 LOGIN = "table[data-diffnote-file='src/auth/login.ts']"
 
 
-class NewThreadsOnLines(ClientServed):
+class NewThreadsOnLines(ServedCase):
     def gutter(self, kind, n, table=LOGIN):
         return f"{CUR} {table} tr[data-diffnote-{kind}='{n}'] .diffnote-line__gutter-{kind}"
 
@@ -217,7 +310,7 @@ class NewThreadsOnLines(ClientServed):
         self.assertGreater(b.count("#rev-0 .diffnote-reply"), 0, "still interactive")
 
 
-class ThreadsOnFilesAndTheReview(ClientServed):
+class ThreadsOnFilesAndTheReview(ServedCase):
     def test_a_review_wide_thread_is_added_to_its_place(self):
         self.serve()
         b = self.b
@@ -247,7 +340,7 @@ class ThreadsOnFilesAndTheReview(ClientServed):
         self.assertTrue(any("ファイル全体: calc.py" in l for l in show(self.review).splitlines()))
 
 
-class SideBySideLines(ClientServed):
+class SideBySideLines(ServedCase):
     def serve_split(self):
         self.serve(self.login)
         self.b.js("localStorage.setItem('diffnote-layout','split')")

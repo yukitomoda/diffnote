@@ -131,18 +131,25 @@ const CLIENT_API: &str = include_str!("../ui/client/api.js");
 /// it. It needs JavaScript, and nothing else: no requests, no modules, so it
 /// opens from a file.
 pub fn render_export(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
-    client_page(loaded, false)
+    client_page(loaded, None)
 }
 
 /// The same app for `diffnote serve`: it can change the review, through the
-/// server that serves it.
-pub fn render_served_page(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
-    client_page(loaded, true)
+/// server that serves it. `editable` are the comments it may edit and delete.
+pub fn render_served_page(
+    loaded: &crate::bundle::Loaded,
+    editable: Vec<String>,
+) -> anyhow::Result<String> {
+    client_page(loaded, Some(editable))
 }
 
-fn client_page(loaded: &crate::bundle::Loaded, interactive: bool) -> anyhow::Result<String> {
-    let data = if interactive {
-        served_model_json(loaded)?
+fn client_page(
+    loaded: &crate::bundle::Loaded,
+    served: Option<Vec<String>>,
+) -> anyhow::Result<String> {
+    let interactive = served.is_some();
+    let data = if let Some(editable) = served {
+        served_model_json(loaded, editable)?
     } else {
         view_model_json(loaded)?
     };
@@ -748,8 +755,8 @@ const STYLE: &str = include_str!("../ui/style.css");
 
 pub(crate) mod viewmodel;
 pub use viewmodel::{
-    OpenedData, ViewModel, chunk_data, opened_data, served_model_json, thread_json, tree_json,
-    view_model, view_model_for, view_model_json,
+    OpenedData, ViewModel, chunk_data, opened_data, served_model_json, stamp, thread_json,
+    tree_json, view_model, view_model_for, view_model_json,
 };
 
 #[cfg(test)]
@@ -1168,7 +1175,11 @@ mod tests {
             !page.contains("D.api = "),
             "an exported page makes no requests"
         );
-        assert!(render_served_page(&loaded).unwrap().contains("D.api = "));
+        assert!(
+            render_served_page(&loaded, Vec::new())
+                .unwrap()
+                .contains("D.api = ")
+        );
         assert!(!page.contains("src="), "no external file");
         assert!(!page.contains("<link"), "no external style");
     }

@@ -114,6 +114,67 @@
       </div>`;
   }
 
+  // One comment. One added since the server started has buttons to edit it and
+  // to take it out (the first comment of a thread takes the whole thread out).
+  function Comment(props) {
+    var c = props.comment;
+    var actions = props.actions;
+    var mine = !!actions && actions.editable.has(c.id);
+    var _e = useState(false);
+    var editing = _e[0];
+    var setEditing = _e[1];
+    var _t = useState('');
+    var text = _t[0];
+    var setText = _t[1];
+    var _b = useState(false);
+    var busy = _b[0];
+    var setBusy = _b[1];
+    var _r = useState('');
+    var error = _r[0];
+    var setError = _r[1];
+    var save = function () {
+      if (!text.trim() || busy) return;
+      setBusy(true);
+      setError('');
+      actions.edit(c.id, text).then(function (res) {
+        setBusy(false);
+        if (res.ok) setEditing(false);
+        else setError(res.error || '保存できませんでした');
+      });
+    };
+    var remove = function () {
+      var what = props.first && props.replies > 0 ? 'このスレッドを、返信も含めて削除しますか?' : props.first ? 'このスレッドを削除しますか?' : 'この返信を削除しますか?';
+      if (!window.confirm(what)) return;
+      setBusy(true);
+      setError('');
+      actions.remove(c.id).then(function (res) {
+        setBusy(false);
+        if (!res.ok) setError(res.error || '削除できませんでした');
+      });
+    };
+    return html`<article class="diffnote-comment" data-diffnote-comment=${c.id}>
+      <p class="diffnote-comment__author">${c.author}<${Time} at=${c.at} />${mine && !editing && html`<span class="diffnote-comment__tools">
+        <button type="button" class="diffnote-mini" data-diffnote-edit disabled=${busy}
+          onClick=${function () { setText(c.body || ''); setError(''); setEditing(true); }}>編集</button>
+        <button type="button" class="diffnote-mini" data-diffnote-delete disabled=${busy} onClick=${remove}>削除</button>
+      </span>`}</p>
+      ${editing
+        ? html`<form class="diffnote-compose" data-diffnote-edit-form onSubmit=${function (e) { e.preventDefault(); save(); }}>
+            <textarea rows="3" value=${text} onInput=${function (e) { setText(e.target.value); }}
+              onKeyDown=${function (e) {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
+                if (e.key === 'Escape') { e.stopPropagation(); setEditing(false); }
+              }}></textarea>
+            <div class="diffnote-reply__buttons">
+              <button type="submit" class="diffnote-button diffnote-button--primary" disabled=${busy}>保存</button>
+              <button type="button" class="diffnote-button" onClick=${function () { setEditing(false); }}>キャンセル</button>
+            </div>
+            ${error && html`<p class="diffnote-error">${error}</p>`}
+          </form>`
+        : html`<div class="diffnote-comment__body" dangerouslySetInnerHTML=${{ __html: c.html }}></div>${error && html`<p class="diffnote-error">${error}</p>`}`}
+    </article>`;
+  }
+
   // One thread as a card.
   function Card(props) {
     var t = props.thread;
@@ -134,11 +195,8 @@
         html`<button type="button" class="diffnote-copy" data-diffnote-copy=${loc} title="ファイルパスと行をコピー">コピー</button>`}
       </summary>
       ${absent && absent.was.length > 0 && html`<pre class="diffnote-deleted__snippet">${absent.was.join('\n') + '\n'}</pre>`}
-      ${t.comments.map(function (c) {
-        return html`<article class="diffnote-comment">
-          <p class="diffnote-comment__author">${c.author}<${Time} at=${c.at} /></p>
-          <div class="diffnote-comment__body" dangerouslySetInnerHTML=${{ __html: c.html }}></div>
-        </article>`;
+      ${t.comments.map(function (c, i) {
+        return html`<${Comment} key=${c.id} comment=${c} actions=${actions} first=${i === 0} replies=${t.comments.length - 1} />`;
       })}
       ${actions && html`<${Actions} thread=${t} actions=${actions} />`}
     </details>`;
@@ -612,10 +670,10 @@
 
   // The model, and (on the served page) the changes that can be made to it.
   // A change is shown at once and put right by the server's answer. The answer
-  // says how many events the review has and how many the change added: if the
-  // review had changed under the page (a `diffnote edit`, another tab), those
-  // don't add up and the whole model is fetched again -- as it is whenever the
-  // window is looked at again and the review has more events than the page's.
+  // says what stamp the review had before the change: if that isn't the page's
+  // (the review had changed under it: a `diffnote edit`, another tab), the whole
+  // model is fetched again -- as it is whenever the window is looked at again
+  // and the review's stamp is not the page's.
   function useReview(initial) {
     var _m = useState(initial);
     var model = _m[0];
@@ -641,13 +699,19 @@
       };
       // What a change's answer does to the page.
       var settle = function (res) {
-        if (res.events - res.appended !== ref.current.events) {
+        if (res.before !== ref.current.stamp) {
           reloadModel();
           return;
         }
         setModel(function (cur) {
-          return Object.assign({}, replace(res.thread_data)(cur), { events: res.events });
+          return Object.assign({}, replace(res.thread_data)(cur), { stamp: res.stamp, editable: res.editable });
         });
+      };
+      var latest = {};
+      // A change whose answer is the whole model (it may take a thread away).
+      var whole = function (res) {
+        if (res.ok) setModel(res.model);
+        return res;
       };
       return {
         reply: function (id, text) {
@@ -658,16 +722,25 @@
         },
         // A new thread: the answer has the whole model, with it placed.
         create: function (request) {
-          return D.api.post('/api/threads', Object.assign({ model: true }, request)).then(function (res) {
-            if (res.ok) setModel(res.model);
-            return res;
-          });
+          return D.api.post('/api/threads', request).then(whole);
+        },
+        // Comments added since the server started can be rewritten or taken out.
+        edit: function (id, text) {
+          return D.api.post('/api/comments/' + id + '/edit', { body: text }).then(whole);
+        },
+        remove: function (id) {
+          return D.api.post('/api/comments/' + id + '/delete').then(whole);
         },
         setResolved: function (id, resolved) {
           var before = ref.current.threads.filter(function (t) { return t.id === id; })[0];
           setModel(replace(Object.assign({}, before, { resolved: resolved })));
+          // Pressed again before the answer came: only the last answer says how
+          // the thread is (an earlier one would flip it back for a moment).
+          var n = (latest[id] = (latest[id] || 0) + 1);
           return D.api.post('/api/threads/' + id + '/' + (resolved ? 'resolve' : 'reopen')).then(function (res) {
-            if (res.ok) settle(res);
+            if (latest[id] !== n) {
+              if (res.ok) setModel(function (cur) { return Object.assign({}, cur, { stamp: res.stamp, editable: res.editable }); });
+            } else if (res.ok) settle(res);
             else setModel(replace(before));
             return res;
           });
@@ -680,7 +753,7 @@
       var check = function () {
         if (document.hidden) return;
         D.api.get('/api/version').then(function (res) {
-          if (res.ok && res.events !== ref.current.events) reloadModel();
+          if (res.ok && res.stamp !== ref.current.stamp) reloadModel();
         });
       };
       window.addEventListener('focus', check);
@@ -691,7 +764,12 @@
       };
     }, [initial.interactive]);
 
-    return { model: model, actions: actions };
+    // What the page may change, and which comments those are.
+    var full = useMemo(function () {
+      if (!actions) return null;
+      return Object.assign({}, actions, { editable: new Set(model.editable || []) });
+    }, [actions, model.editable]);
+    return { model: model, actions: full };
   }
 
   // Lines being chosen (pressing a line number, dragging, Shift+click), or a

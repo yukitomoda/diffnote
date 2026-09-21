@@ -21,9 +21,13 @@ pub const VERSION: u32 = 1;
 #[derive(Serialize)]
 pub struct ViewModel {
     pub version: u32,
-    /// How many events the review's log had when this was made: what a page
+    /// A stamp of the review's log when this was made (its digest): what a page
     /// compares to see whether the review has changed under it.
-    pub events: usize,
+    pub stamp: String,
+    /// The comments the page may edit or delete (served page only): those
+    /// added since the server started.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub editable: Vec<String>,
     /// Whether the page can change the review (the served one).
     pub interactive: bool,
     pub title: Option<String>,
@@ -43,11 +47,15 @@ pub struct ThreadData {
 
 #[derive(Serialize)]
 pub struct CommentData {
+    pub id: String,
     pub author: String,
     /// When it was written (RFC 3339, UTC).
     pub at: String,
     /// The text, as HTML.
     pub html: String,
+    /// The text as written (served page only: to edit it).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub body: String,
 }
 
 #[derive(Serialize)]
@@ -150,10 +158,17 @@ pub fn view_model_for(
         .collect();
     Ok(ViewModel {
         version: VERSION,
-        events: loaded.events.len(),
+        stamp: stamp(loaded),
+        editable: Vec::new(),
         interactive,
         title: crate::review::title(&loaded.events).map(str::to_string),
-        threads: threads.iter().map(thread_data).collect(),
+        threads: {
+            let ids = comment_ids(&loaded.events);
+            threads
+                .iter()
+                .map(|t| thread_data(t, &ids, interactive))
+                .collect()
+        },
         revisions,
     })
 }
@@ -165,8 +180,36 @@ pub fn view_model_json(loaded: &crate::bundle::Loaded) -> anyhow::Result<String>
 }
 
 /// The same for the served page, which may change the review.
-pub fn served_model_json(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
-    model_json(&view_model_for(loaded, true)?)
+pub fn served_model_json(
+    loaded: &crate::bundle::Loaded,
+    editable: Vec<String>,
+) -> anyhow::Result<String> {
+    let mut model = view_model_for(loaded, true)?;
+    model.editable = editable;
+    model_json(&model)
+}
+
+/// A stamp of the review's log: it differs whenever the log does (a comment
+/// added, edited or deleted).
+pub fn stamp(loaded: &crate::bundle::Loaded) -> String {
+    crate::digest::digest(serde_json::to_vec(&loaded.events).unwrap_or_default())
+}
+
+/// The ids of each thread's replies, in order (a thread's replies have no id
+/// of their own in [`Thread`]).
+fn comment_ids(events: &[crate::model::Event]) -> BTreeMap<Ulid, Vec<Ulid>> {
+    let mut ids: BTreeMap<Ulid, Vec<Ulid>> = BTreeMap::new();
+    for event in events {
+        if let crate::model::Event::Comment {
+            id,
+            parent: Some(parent),
+            ..
+        } = event
+        {
+            ids.entry(*parent).or_default().push(*id);
+        }
+    }
+    ids
 }
 
 fn model_json(model: &ViewModel) -> anyhow::Result<String> {
@@ -176,24 +219,45 @@ fn model_json(model: &ViewModel) -> anyhow::Result<String> {
 
 /// One thread as the page has it (after a reply, or a resolve).
 pub fn thread_json(loaded: &crate::bundle::Loaded, id: Ulid) -> Option<ThreadData> {
+    let ids = comment_ids(&loaded.events);
     build_threads(&loaded.events)
         .iter()
         .find(|t| t.root_id == id)
-        .map(thread_data)
+        .map(|t| thread_data(t, &ids, true))
 }
 
-fn thread_data(thread: &Thread) -> ThreadData {
-    let comment = |author: &str, at: time::OffsetDateTime, body: &str| CommentData {
+fn thread_data(
+    thread: &Thread,
+    reply_ids: &BTreeMap<Ulid, Vec<Ulid>>,
+    with_body: bool,
+) -> ThreadData {
+    let comment = |id: Ulid, author: &str, at: time::OffsetDateTime, body: &str| CommentData {
+        id: id.to_string(),
         author: author.to_string(),
         at: rfc3339(at),
         html: markdown_to_html(body),
+        body: if with_body {
+            body.to_string()
+        } else {
+            String::new()
+        },
     };
-    let mut comments = vec![comment(&thread.author, thread.created_at, &thread.body)];
+    let mut comments = vec![comment(
+        thread.root_id,
+        &thread.author,
+        thread.created_at,
+        &thread.body,
+    )];
+    let ids = reply_ids
+        .get(&thread.root_id)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
     comments.extend(
         thread
             .replies
             .iter()
-            .map(|r| comment(&r.author, r.created_at, &r.body)),
+            .zip(ids)
+            .map(|(r, id)| comment(*id, &r.author, r.created_at, &r.body)),
     );
     ThreadData {
         id: thread.root_id.to_string(),
