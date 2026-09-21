@@ -220,7 +220,7 @@ class Replies(ServedCase):
         self.assertIn("型は number を想定します。", out)
         self.assertNotIn("mul の型を確認してください。", out)
 
-    def test_deleting_a_thread_of_another_name_says_what_goes_with_it(self):
+    def test_deleting_the_first_comment_of_a_thread_deletes_only_that_comment(self):
         self.serve()
         b = self.b
         card = self.card("mul の型")
@@ -229,14 +229,23 @@ class Replies(ServedCase):
         self.assertTrue(b.wait_exists(f"#{card} [data-diffnote-warn]"))
         warning = b.text(f"#{card} [data-diffnote-warn]")
         self.assertIn("reviewer", warning, "whose it is")
-        self.assertIn("スレッド全体が削除されます", warning)
-        self.assertIn("返信 1 件", warning)
+        self.assertIn("このコメントだけが削除されます", warning)
+        self.assertIn("返信 1 件は残り", warning)
         self.assertIn("mul の型", show(self.review), "nothing is deleted before it is agreed")
         b.click(f"#{card} [data-diffnote-warn-ok]")
-        self.assertTrue(b.wait(f"!document.getElementById({card!r})"))
+        self.assertTrue(b.wait(f"!!document.querySelector('#{card} [data-diffnote-deleted]')"))
+        self.assertEqual(b.text(f"#{card} [data-diffnote-deleted]"), "このコメントは削除されました")
         out = show(self.review)
         self.assertNotIn("mul の型を確認してください。", out)
-        self.assertNotIn("自分の返信", out, "the reply went with it")
+        self.assertIn("自分の返信", out, "the reply stays")
+        self.assertTrue(b.js(f"!!document.getElementById({card!r})"), "so does the thread")
+        # What was deleted has no menu, and the list still tells the thread by its reply.
+        self.assertEqual(b.count(f"#{card} [data-diffnote-deleted] ~ [data-diffnote-comment-menu]"), 0)
+        self.assertTrue(b.js("[...document.querySelectorAll('.diffnote-threadlist__preview')].some(e => e.textContent.includes('自分の返信'))"))
+        # Deleting the reply too takes the whole thread with it.
+        b.click(f"#{card} [data-diffnote-mine] [data-diffnote-delete]")
+        b.click(f"#{card} [data-diffnote-warn-ok]")
+        self.assertTrue(b.wait(f"!document.getElementById({card!r})"))
 
     def test_a_comment_of_this_session_can_be_edited(self):
         self.serve()

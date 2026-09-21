@@ -82,6 +82,10 @@ pub struct CommentData {
     /// The text as written (served page only: to edit it).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub body: String,
+    /// The comment was taken out (a thread's first comment can't be taken out of
+    /// the log while replies stand on it: it is kept with no text).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
 }
 
 /// The base of a review: a commit (its short id), or, for a directory, when
@@ -371,6 +375,7 @@ fn thread_data(
         author: author.to_string(),
         at: rfc3339(at),
         doc: super::markdown::tree(body),
+        deleted: body.is_empty(),
         body: if with_body {
             body.to_string()
         } else {

@@ -252,6 +252,7 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 .diffnote-comment__item { font: inherit; font-size: 13px; font-weight: 400; text-align: left; padding: 4px 10px; color: var(--diffnote-color-fg); background: none; border: 0; border-radius: 6px; cursor: pointer; }
 .diffnote-comment__item:hover { background: var(--diffnote-color-gutter); }
 .diffnote-comment__item--danger { color: #cf222e; }
+.diffnote-comment__deleted { margin: 4px 0; font-size: 13px; font-style: italic; color: var(--diffnote-color-muted); }
 .diffnote-comment__warn { margin: 6px 0; padding: 8px 12px; font-size: 13px; background: #fff8c5; border: 1px solid #d4a72c; border-radius: 6px; color: #3d2e00; }
 .diffnote-comment__warn p { margin: 0 0 6px; }
 .diffnote-button--danger { color: #fff; background: #cf222e; border-color: #cf222e; }

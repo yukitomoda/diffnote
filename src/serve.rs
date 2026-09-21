@@ -1200,35 +1200,60 @@ impl Server {
                 _ => None,
             })
             .ok_or_else(|| Failure(404, "そのコメントはありません".into()))?;
+        if target.is_empty() {
+            return Err(Failure(409, "削除されたコメントは、編集できません".into()));
+        }
         *target = text.to_string();
         self.save(&loaded, &events)?;
         self.count(|s| s.edited += 1);
         self.model_answer(&before, serde_json::json!({}))
     }
 
-    /// Takes a comment out of the review: a reply alone, or a thread with what
-    /// it was given (its replies, resolving, where it was moved to).
+    /// Takes a comment out of the review, that one only. A reply is taken out of
+    /// the log. The first comment of a thread has the thread's place in it, and
+    /// the replies stand on it: while there are replies it stays, with no text
+    /// (the page says it was deleted); a thread with nothing else is taken out
+    /// whole (with resolving, and where it was moved to), as is one whose
+    /// last reply goes when its first comment was deleted before.
     fn delete_comment(&self, id: &str) -> Result<Reply, Failure> {
         let id = Self::comment_id(id)?;
         let loaded = bundle::load(&self.review).map_err(internal)?;
         let before = html::stamp(&loaded);
-        let is_root = loaded
-            .events
-            .iter()
-            .any(|e| matches!(e, Event::Comment { id: c, parent: None, .. } if *c == id));
-        let exists = is_root
-            || loaded
+        let found = loaded.events.iter().find_map(|e| match e {
+            Event::Comment { id: c, parent, .. } if *c == id => Some(*parent),
+            _ => None,
+        });
+        let Some(parent) = found else {
+            return Err(Failure(404, "そのコメントはありません".into()));
+        };
+        let replies_of = |root: Ulid, except: Option<Ulid>| {
+            loaded
                 .events
                 .iter()
-                .any(|e| matches!(e, Event::Comment { id: c, .. } if *c == id));
-        if !exists {
-            return Err(Failure(404, "そのコメントはありません".into()));
-        }
+                .filter(|e| matches!(e, Event::Comment { id: c, parent: Some(p), .. } if *p == root && Some(*c) != except))
+                .count()
+        };
+        // The thread that goes whole, if one does (its root's id).
+        let whole_thread = match parent {
+            None if replies_of(id, None) == 0 => Some(id),
+            Some(root) => {
+                let root_deleted = loaded.events.iter().any(
+                    |e| matches!(e, Event::Comment { id: c, body, .. } if *c == root && body.is_empty()),
+                );
+                (root_deleted && replies_of(root, Some(id)) == 0).then_some(root)
+            }
+            None => None,
+        };
         let gone = |e: &Event| match e {
-            Event::Comment { id: c, parent, .. } => *c == id || (is_root && *parent == Some(id)),
-            Event::Resolve { parent, .. }
-            | Event::Reopen { parent, .. }
-            | Event::Reanchor { parent, .. } => is_root && *parent == id,
+            Event::Comment {
+                id: c, parent: p, ..
+            } => match whole_thread {
+                Some(root) => *c == root || *p == Some(root),
+                None => parent.is_some() && *c == id,
+            },
+            Event::Resolve { parent: p, .. }
+            | Event::Reopen { parent: p, .. }
+            | Event::Reanchor { parent: p, .. } => whole_thread == Some(*p),
             _ => false,
         };
         let removed: Vec<Ulid> = loaded
@@ -1240,27 +1265,38 @@ impl Server {
                 _ => None,
             })
             .collect();
-        let events: Vec<Event> = loaded.events.iter().filter(|e| !gone(e)).cloned().collect();
+        let events: Vec<Event> = if parent.is_none() && whole_thread.is_none() {
+            // The first comment of a thread that has replies: it stays, with no text.
+            let mut events = loaded.events.clone();
+            for e in &mut events {
+                if let Event::Comment { id: c, body, .. } = e
+                    && *c == id
+                {
+                    body.clear();
+                }
+            }
+            events
+        } else {
+            loaded.events.iter().filter(|e| !gone(e)).cloned().collect()
+        };
         self.save(&loaded, &events)?;
         // What this session added and is now taken out no longer counts as added
         // (what was there before is only counted as taken out).
         let mut session = self.session.lock().unwrap_or_else(|e| e.into_inner());
-        let root_here = is_root && session.contains(&id);
+        let thread_here = whole_thread.is_some_and(|root| session.contains(&root));
         let replies_here = removed
             .iter()
-            .filter(|c| **c != id && session.contains(*c))
+            .filter(|c| Some(**c) != whole_thread && session.contains(*c))
             .count() as u32;
-        let own_reply_here = !is_root && session.contains(&id);
         for c in &removed {
             session.remove(c);
         }
         drop(session);
         self.count(|s| {
-            if root_here {
+            if thread_here {
                 s.threads = s.threads.saturating_sub(1);
             }
-            let gone = replies_here + u32::from(own_reply_here);
-            s.replies = s.replies.saturating_sub(gone);
+            s.replies = s.replies.saturating_sub(replies_here);
             s.deleted += 1;
         });
         self.model_answer(&before, serde_json::json!({}))
@@ -1904,19 +1940,15 @@ mod tests {
     }
 
     #[test]
-    fn a_thread_of_this_session_is_deleted_with_its_replies_and_resolving() {
+    fn a_thread_with_nothing_else_is_deleted_whole_with_its_resolving() {
         let f = fixture();
         let base = f.events().len();
         let id = id_of(&json(&new_thread(
             &f,
             r#"{"scope":"global","revision":0,"body":"draft thought"}"#,
         )));
-        f.post(
-            &format!("/api/threads/{id}/replies"),
-            r#"{"body":"me too"}"#,
-        );
         f.post(&format!("/api/threads/{id}/resolve"), "{}");
-        assert_eq!(f.events().len(), base + 3);
+        assert_eq!(f.events().len(), base + 2);
         let answer = json(&f.post(&format!("/api/comments/{id}/delete"), "{}"));
         assert_eq!(answer["ok"], true, "{answer}");
         assert_eq!(f.events().len(), base, "back to what it was");
@@ -1925,13 +1957,16 @@ mod tests {
     }
 
     #[test]
-    fn a_thread_is_deleted_with_the_replies_of_others_too_and_the_page_asks_first() {
+    fn the_first_comment_of_a_thread_with_replies_is_deleted_alone_and_the_replies_stay() {
         let f = fixture();
+        let base = f.events().len();
         let id = id_of(&json(&new_thread(
             &f,
-            r#"{"scope":"global","revision":0,"body":"mine"}"#,
+            r#"{"scope":"global","revision":0,"body":"first"}"#,
         )));
-        // The command line replies to it meanwhile.
+        f.post(&format!("/api/threads/{id}/replies"), r#"{"body":"one"}"#);
+        let one = last_comment_id(&f);
+        // Somebody else replies from the command line meanwhile.
         let loaded = bundle::load(&f.path).unwrap();
         let mut events = loaded.events.clone();
         events.push(Event::Comment {
@@ -1943,12 +1978,49 @@ mod tests {
             body: "from the command line".into(),
         });
         bundle::save(&f.path, &loaded, &events, &Additions::default()).unwrap();
+        f.post(&format!("/api/threads/{id}/resolve"), "{}");
         let before = f.events().len();
+        let answer = json(&f.post(&format!("/api/comments/{id}/delete"), "{}"));
+        assert_eq!(answer["ok"], true, "{answer}");
+        assert_eq!(f.events().len(), before, "nothing is taken out of the log");
+        // The first comment is there with no text, marked as deleted; the rest stands.
+        let thread = answer["model"]["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == id.as_str())
+            .unwrap()
+            .clone();
+        let comments = thread["comments"].as_array().unwrap();
+        assert_eq!(comments.len(), 3);
+        assert_eq!(comments[0]["deleted"], true);
+        assert!(comments[0].get("body").is_none());
+        assert_eq!(comments[1]["body"], "one");
+        assert_eq!(comments[2]["body"], "from the command line");
+        assert_eq!(thread["resolved"], true, "resolving stays");
+        // It can't be edited back.
         assert_eq!(
-            f.post(&format!("/api/comments/{id}/delete"), "{}").status,
-            200
+            f.post(&format!("/api/comments/{id}/edit"), r#"{"body":"x"}"#)
+                .status,
+            409
         );
-        assert_eq!(f.events().len(), before - 2, "the thread and the reply");
+        // Taking out the replies one by one: the thread goes with the last.
+        f.post(&format!("/api/comments/{one}/delete"), "{}");
+        assert!(f.events().len() < before);
+        let elsewhere = last_comment_id(&f);
+        assert_ne!(elsewhere, id);
+        let answer = json(&f.post(&format!("/api/comments/{elsewhere}/delete"), "{}"));
+        assert_eq!(answer["ok"], true, "{answer}");
+        assert_eq!(
+            f.events().len(),
+            base,
+            "the whole thread is gone, resolving too"
+        );
+        assert_eq!(
+            model_comments(&f).len(),
+            1,
+            "the fixture's own thread is untouched"
+        );
     }
 
     #[test]

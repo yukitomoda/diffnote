@@ -256,7 +256,8 @@
     var c = props.comment;
     var actions = props.actions;
     var links = useContext(LinksContext);
-    var canChange = !!actions && actions.editable.has(c.id);
+    // (A comment that was deleted is only a mark that it was: nothing to change.)
+    var canChange = !!actions && actions.editable.has(c.id) && !c.deleted;
     var _e = useState(false);
     var editing = _e[0];
     var setEditing = _e[1];
@@ -304,7 +305,7 @@
       if (others) reasons.push(whose);
       if (kind === 'delete') {
         if (props.first && props.replies > 0) {
-          reasons.push('スレッド全体が削除されます(返信 ' + props.replies + ' 件' + (props.othersReplies > 0 ? '、うち他の人の返信 ' + props.othersReplies + ' 件' : '') + ')。');
+          reasons.push('このコメントだけが削除されます。返信 ' + props.replies + ' 件は残り、このコメントは「削除されました」の表示になります。');
         } else if (props.first) {
           reasons.push('スレッドが削除されます。');
         } else {
@@ -340,7 +341,9 @@
             </div>
             ${error && html`<p class="diffnote-error">${error}</p>`}
           </form>`
-        : html`<div class="diffnote-comment__body">${markdown(c.doc, links)}</div>${error && html`<p class="diffnote-error">${error}</p>`}`}
+        : c.deleted
+          ? html`<p class="diffnote-comment__deleted" data-diffnote-deleted>このコメントは削除されました</p>`
+          : html`<div class="diffnote-comment__body">${markdown(c.doc, links)}</div>${error && html`<p class="diffnote-error">${error}</p>`}`}
     </article>`;
   }
 
@@ -1003,7 +1006,7 @@
                   D.interact.jumpWhenShown('r' + ctx.rev + '-thread-' + id);
                 }
               }}>
-              <span class="diffnote-thread__swatch" style=${'background:' + color}></span><span class="diffnote-threadlist__where">${lib.shortLocation(p)}</span>${t.resolved && html`<span class="diffnote-threadlist__state">解決済み</span>`}<span class="diffnote-threadlist__preview">${lib.preview(t.comments[0].doc)}</span>
+              <span class="diffnote-thread__swatch" style=${'background:' + color}></span><span class="diffnote-threadlist__where">${lib.shortLocation(p)}</span>${t.resolved && html`<span class="diffnote-threadlist__state">解決済み</span>`}<span class="diffnote-threadlist__preview">${lib.preview((t.comments.filter(function (c) { return !c.deleted; })[0] || t.comments[0]).doc) || '(削除されました)'}</span>
             </a>
           </li>`;
         })}
