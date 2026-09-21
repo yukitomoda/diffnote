@@ -44,7 +44,13 @@ class ServedCase(BrowserCase):
         return self.b.js("""(function(){var c=Array.from(document.querySelectorAll('%s .diffnote-thread')).find(function(t){return t.textContent.includes(%r)}); return c.id})()""" % (CUR, text))
 
     def counts(self):
-        return self.b.js("document.querySelector('.diffnote-summary p').textContent")
+        # From the thread list at the side: "open / all" in its badge, and the
+        # threads it marks as resolved.
+        return self.b.js("""(() => {
+            const all = document.querySelector('.diffnote-threadlist').closest('details').querySelector('.diffnote-badge').textContent.split('/')[1].trim();
+            const done = document.querySelectorAll('.diffnote-threadlist li.is-resolved').length;
+            return `スレッド ${all} 件(解決済み ${done} 件)`;
+        })()""")
 
 
 class Replies(ServedCase):
@@ -588,6 +594,10 @@ class ExpandLeftOutLines(ServedCase):
         self.assertTrue(b.exists("tr[data-diffnote-new='70']"))
 
 
+def git_short(repo, rev):
+    return harness.git(repo, "rev-parse", "--short=7", rev)
+
+
 class ServeAddsTheLatestDiff(ServedCase):
     """`init` on a commit, more commits, then `serve`: the changes since are there to review."""
 
@@ -657,8 +667,11 @@ class ServeAddsTheLatestDiff(ServedCase):
         self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-revision-link]').length === 2"))
         self.assertIn("差分を記録しました", b.js("document.querySelector('[data-diffnote-pull-note]').textContent"))
         labels = b.js("[...document.querySelectorAll('[data-diffnote-revision-link]')].map(a => a.textContent).join('|')")
-        self.assertRegex(labels, r"^#1 [0-9a-f]{7}\.\.[0-9a-f]{7} \(.*\)\|#2 [0-9a-f]{7}\.\.[0-9a-f]{7} \(.*\)$",
-                         "the revisions are named by their commits")
+        self.assertRegex(labels, r"^#1 [0-9a-f]{7} \(.*\)\|#2 [0-9a-f]{7} \(.*\)$",
+                         "the revisions are named by their commits, not the base")
+        base = b.js("document.querySelector('[data-diffnote-base]').textContent")
+        self.assertRegex(base, r"^ベース: [0-9a-f]{7}$")
+        self.assertEqual(b.js("document.querySelector('[data-diffnote-base]').textContent.slice(5)"), git_short(repo, "c1"))
         self.assertGreater(entries(review), before)
         self.assertEqual(b.js("document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink"), "1",
                          "what was taken in is shown")

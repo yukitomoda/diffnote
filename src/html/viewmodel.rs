@@ -38,6 +38,8 @@ pub struct ViewModel {
     /// target since it started (served page only).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub refreshable: bool,
+    /// What every revision is compared with: the review's first snapshot.
+    pub base: Option<BaseData>,
     /// Whether the page can change the review (the served one).
     pub interactive: bool,
     pub title: Option<String>,
@@ -66,6 +68,15 @@ pub struct CommentData {
     /// The text as written (served page only: to edit it).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub body: String,
+}
+
+/// The base of a review: a commit (its short id), or, for a directory, when
+/// the snapshot was taken (RFC 3339, UTC).
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum BaseData {
+    Git { id: String },
+    Files { at: String },
 }
 
 #[derive(Serialize)]
@@ -239,6 +250,14 @@ pub fn view_model_with(
         editable: Vec::new(),
         author: None,
         refreshable: false,
+        base: loaded.revisions().next().map(|r| match &r.source {
+            crate::model::Source::Git(g) => BaseData::Git {
+                id: g.base.chars().take(7).collect(),
+            },
+            crate::model::Source::Files { .. } => BaseData::Files {
+                at: rfc3339(r.created_at),
+            },
+        }),
         interactive,
         title: crate::review::title(&loaded.events).map(str::to_string),
         threads: {

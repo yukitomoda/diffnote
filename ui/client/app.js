@@ -1198,7 +1198,7 @@
             ? html`<${InlineEdit} name="title" value=${model.title || ''} max="200" label="タイトルを変える" placeholder="タイトル(空にすると、既定の見出しに戻ります)"
                 onSave=${review.actions.setTitle}>${model.title || DEFAULT_TITLE}<//>`
             : model.title || DEFAULT_TITLE}</h1>
-          <p>スレッド ${counts.all} 件(解決済み ${counts.resolved} 件)</p>
+          ${model.base && html`<p data-diffnote-base title="すべてのリビジョンは、これと比べた差分です">ベース: ${model.base.kind === 'git' ? html`<code>${model.base.id}</code>` : lib.formatTime(model.base.at)}</p>`}
         </header>
         ${model.revisions.length > 1 && html`<nav class="diffnote-revisions"><ul>
           ${model.revisions.map(function (r, i) {

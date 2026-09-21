@@ -76,15 +76,9 @@ fn shown_revisions(loaded: &crate::bundle::Loaded) -> anyhow::Result<Vec<Shown<'
         };
         let diff = crate::diff::parse(&text).map_err(|e| anyhow::anyhow!("{e}"))?;
         let source = match &revision.source {
-            // The commits, not what they were called (`HEAD` and branches move).
-            crate::model::Source::Git(g) => {
-                let short = |id: &str| id.chars().take(7).collect::<String>();
-                if g.base == g.head {
-                    short(&g.head)
-                } else {
-                    format!("{}..{}", short(&g.base), short(&g.head))
-                }
-            }
+            // The commit, not what it was called (`HEAD` and branches move).
+            // The base is the same for every revision, and is said apart.
+            crate::model::Source::Git(g) => g.head.chars().take(7).collect(),
             crate::model::Source::Files { .. } => "ディレクトリ".to_string(),
         };
         let label = format!(
