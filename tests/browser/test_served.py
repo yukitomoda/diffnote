@@ -1119,7 +1119,7 @@ class EmojiTable(ServedCase):
         b.js(f"(e => {{ e.focus(); e.setSelectionRange(1, 1); }})(document.querySelector({json.dumps(box)}))")
         b.click(f"{form} [data-diffnote-emoji-button]")
         self.assertTrue(b.wait_exists("[data-diffnote-emoji-panel]"))
-        self.assertTrue(b.js("document.activeElement === document.querySelector('[data-diffnote-emoji-search]')"), "ready to search")
+        self.assertTrue(b.wait("document.activeElement === document.querySelector('[data-diffnote-emoji-search]')"), "ready to search")
         # All of them at first, the reaction ones first; a word narrows them.
         total = b.count("[data-diffnote-emoji]")
         self.assertGreaterEqual(total, 100)
