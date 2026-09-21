@@ -277,6 +277,31 @@
     });
   }
 
+  // What stands for the lines a diff leaves out: buttons to show some of them
+  // (next to the hunk above, next to the hunk below) or all.
+  function Expander(props) {
+    var m = props.marker;
+    var _ = useState(false);
+    var busy = _[0];
+    var setBusy = _[1];
+    var go = function (where) {
+      if (busy) return;
+      setBusy(true);
+      props.expand(m.gap, where).then(function () { setBusy(false); });
+    };
+    var step = lib.EXPAND_STEP;
+    // Can they be had? Carried by the page (an export), or asked of the server.
+    var can = m.x && (m.embedded || !!D.api);
+    if (!can) {
+      return html`<div class="diffnote-expand"><span class="diffnote-expand__label">${m.left} 行省略</span>${m.x && !m.embedded && !D.api && html`<span class="diffnote-expand__note">(この HTML には含まれていません)</span>`}</div>`;
+    }
+    return html`<div class="diffnote-expand">
+      ${m.left > step && m.prev && html`<button type="button" class="diffnote-expand__button" data-diffnote-expand="top" disabled=${busy} onClick=${function () { go('top'); }}>↓ ${step} 行</button>`}
+      ${m.left > step && m.next && html`<button type="button" class="diffnote-expand__button" data-diffnote-expand="bottom" disabled=${busy} onClick=${function () { go('bottom'); }}>↑ ${step} 行</button>`}
+      <button type="button" class="diffnote-expand__button diffnote-expand__all" data-diffnote-expand="all" disabled=${busy} onClick=${function () { go('all'); }}>${m.left} 行をすべて表示</button>
+    </div>`;
+  }
+
   // The rows of one file's diff, with the cards of the threads on them.
   function DiffTable(props) {
     var file = props.file;
@@ -301,7 +326,11 @@
     var flatIndex = 0;
     var out = [];
     file.hunks.forEach(function (hunk, hi) {
-      if (!file.opened) out.push(html`<tr class="diffnote-hunk-header" key=${'h' + hi}><td colspan="3">${hunk.header}</td></tr>`);
+      if (hunk.marker) {
+        out.push(html`<tr class="diffnote-expand-row" key=${'g' + hi}><td colspan="3"><${Expander} marker=${hunk.marker} expand=${props.expand} /></td></tr>`);
+        return;
+      }
+      if (!file.opened && !hunk.quiet) out.push(html`<tr class="diffnote-hunk-header" key=${'h' + hi}><td colspan="3">${hunk.header}</td></tr>`);
       hunk.rows.forEach(function (row, ri) {
         var idx = flatIndex++;
         var picked = idx >= lo && idx <= hi_;
@@ -402,7 +431,11 @@
     };
     var out = [];
     file.hunks.forEach(function (hunk, hi) {
-      out.push(html`<tr class="diffnote-hunk-header" key=${'h' + hi}><td colspan="4">${hunk.header}</td></tr>`);
+      if (hunk.marker) {
+        out.push(html`<tr class="diffnote-expand-row" key=${'g' + hi}><td colspan="4"><${Expander} marker=${hunk.marker} expand=${props.expand} /></td></tr>`);
+        return;
+      }
+      if (!hunk.quiet) out.push(html`<tr class="diffnote-hunk-header" key=${'h' + hi}><td colspan="4">${hunk.header}</td></tr>`);
       lib.pairRows(hunk.rows).forEach(function (pair, pi) {
         var l = pair.left;
         var r = pair.right;
@@ -466,6 +499,39 @@
     var missing = file.status === 'context' && file.hunks.length === 0;
     var compose = useContext(ComposeContext);
     var details = useRef(null);
+    // The lines of the diff's left-out places that have been shown (their pieces,
+    // by new line number): kept by number, so they stay when the places change.
+    var _g = useState({});
+    var revealed = _g[0];
+    var setRevealed = _g[1];
+    var shown = useMemo(function () { return lib.shownFrom(file.gaps, revealed); }, [file.gaps, revealed]);
+    var view = useMemo(function () { return lib.withGaps(file, shown); }, [file, shown]);
+    var expand = function (gap, where) {
+      var g = file.gaps[gap];
+      var req = lib.expandRequest(g, shown[gap] || { top: [], bottom: [] }, where);
+      if (!req) return Promise.resolve();
+      // Rows of the file are counted by position: what was chosen is let go.
+      if (compose && compose.sel && compose.sel.path === file.path) compose.close();
+      var get = function (offset, count) {
+        if (g.t) return Promise.resolve(g.t.slice(offset, offset + count));
+        var part = function (from, left, acc) {
+          var take = Math.min(left, 1000);
+          return D.api.get('/api/files/' + ctx.rev + '/lines?path=' + encodeURIComponent(file.path) + '&from=' + (g.w + from) + '&count=' + take).then(function (res) {
+            if (!res.ok || res.lines.length === 0) return acc;
+            acc = acc.concat(res.lines);
+            return left > take ? part(from + take, left - take, acc) : acc;
+          });
+        };
+        return part(offset, count, []);
+      };
+      return get(req.offset, req.count).then(function (lines) {
+        setRevealed(function (cur) {
+          var all = Object.assign({}, cur);
+          lines.forEach(function (pieces, i) { all[g.w + req.offset + i] = pieces; });
+          return all;
+        });
+      });
+    };
     var composing = compose && compose.scope && compose.scope.kind === 'file' && compose.scope.rev === ctx.rev && compose.scope.path === file.path;
     return html`<section class="diffnote-file" id=${'r' + ctx.rev + '-file-' + htmlId(file.path)} data-diffnote-file=${file.path}>
       <details ref=${details} open=${startsOpen} onToggle=${function (e) { if (e.target.open && !opened) setOpened(true); }}>
@@ -492,7 +558,7 @@
         ${composing && html`<div class="diffnote-compose-wrap"><${Composer} scope="file" where=${file.path + ' へのコメント'} request=${{ scope: 'file', revision: ctx.rev, file: file.path }} /></div>`}
         ${fileThreads.map(function (id) { return html`<${Card} key=${id} rev=${ctx.rev} thread=${ctx.byId[id]} placement=${ctx.placements[id]} />`; })}
         ${missing && html`<p class="diffnote-file__missing">このファイルは指定したdiffに含まれていません(コメント作成時点と異なるdiffを指定している可能性があります)。</p>`}
-        ${opened && file.hunks.length > 0 && (ctx.layout === 'split' ? html`<${SplitTable} file=${file} ctx=${ctx} />` : html`<${DiffTable} file=${file} ctx=${ctx} />`)}
+        ${opened && file.hunks.length > 0 && (ctx.layout === 'split' ? html`<${SplitTable} file=${view} ctx=${ctx} expand=${expand} />` : html`<${DiffTable} file=${view} ctx=${ctx} expand=${expand} />`)}
         ${opened && file.opened && file.next && html`<div class="diffnote-more-row"><button type="button" class="diffnote-button" data-diffnote-more
           onClick=${function (e) { e.target.disabled = true; files.more(ctx.rev, file.path).then(function () { e.target.disabled = false; }); }}>続きを表示(${file.next}〜 / 全 ${file.total} 行)</button></div>`}
         ${unplaced.length > 0 && html`<section class="diffnote-outdated">

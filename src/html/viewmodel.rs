@@ -18,7 +18,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 /// The version of this format, for the page to check.
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 5;
 
 #[derive(Serialize)]
 pub struct ViewModel {
@@ -83,6 +83,42 @@ pub struct FileData {
     /// in the diff: shown for the threads that are on it).
     pub status: &'static str,
     pub hunks: Vec<HunkData>,
+    /// The lines the diff leaves out: one place before the first hunk, one
+    /// between each two, one after the last (`null` where nothing is left out).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub gaps: Vec<Option<GapData>>,
+}
+
+/// A run of lines the diff doesn't show (they are the same on both sides).
+#[derive(Serialize)]
+pub struct GapData {
+    /// How many lines.
+    pub n: u32,
+    /// The old and the new line number of the first of them.
+    pub o: u32,
+    pub w: u32,
+    /// The lines themselves, as a row's pieces, when the page has them (the
+    /// exported page carries some; the served page asks for them).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub t: Option<Vec<Vec<Token>>>,
+    /// Whether they can be had at all: the text of the file is known.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub x: bool,
+}
+
+/// How many of the lines a diff leaves out an exported page carries (so that
+/// they can be shown without a server), over all its files and revisions. The
+/// smaller places come first, so more of them can be shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExpandLimit {
+    Lines(usize),
+    All,
+}
+
+impl Default for ExpandLimit {
+    fn default() -> Self {
+        ExpandLimit::Lines(5000)
+    }
 }
 
 #[derive(Serialize)]
@@ -153,16 +189,38 @@ pub fn view_model_for(
     loaded: &crate::bundle::Loaded,
     interactive: bool,
 ) -> anyhow::Result<ViewModel> {
+    // The served page asks for the lines a diff leaves out when it wants them.
+    let limit = if interactive {
+        ExpandLimit::Lines(0)
+    } else {
+        ExpandLimit::default()
+    };
+    view_model_with(loaded, interactive, limit)
+}
+
+/// The same, with a say in how many of the left-out lines it carries.
+pub fn view_model_with(
+    loaded: &crate::bundle::Loaded,
+    interactive: bool,
+    limit: ExpandLimit,
+) -> anyhow::Result<ViewModel> {
     let shown = shown_revisions(loaded)?;
     let views = revision_views(&shown);
     let threads = build_threads(&loaded.events);
     let blobs = loaded.blobs();
 
-    let revisions = views
+    // The latest revision (the one first looked at) gets the lines first.
+    let mut budget = match limit {
+        ExpandLimit::Lines(n) => n,
+        ExpandLimit::All => usize::MAX,
+    };
+    let mut revisions: Vec<RevisionData> = views
         .iter()
         .zip(&shown)
-        .map(|(view, s)| revision_data(&threads, view, &s.label, &blobs))
+        .rev()
+        .map(|(view, s)| revision_data(&threads, view, &s.label, &blobs, &mut budget))
         .collect();
+    revisions.reverse();
     Ok(ViewModel {
         version: VERSION,
         stamp: stamp(loaded),
@@ -182,8 +240,11 @@ pub fn view_model_for(
 
 /// The model as JSON that is safe to put inside a `<script>` element: no `<`
 /// (so no `</script>` or `<!--`), which a JSON string can spell `<`.
-pub fn view_model_json(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
-    model_json(&view_model(loaded)?)
+pub fn view_model_json(
+    loaded: &crate::bundle::Loaded,
+    limit: ExpandLimit,
+) -> anyhow::Result<String> {
+    model_json(&view_model_with(loaded, false, limit)?)
 }
 
 /// The same for the served page, which may change the review.
@@ -285,12 +346,13 @@ fn revision_data(
     view: &RevisionView,
     label: &str,
     blobs: &crate::digest::Blobs,
+    budget: &mut usize,
 ) -> RevisionData {
     let placed = place(threads, view, blobs);
     let in_diff: std::collections::HashSet<String> = view.diff.files.iter().map(file_key).collect();
     let syntax_set = &*SYNTAXES;
 
-    let files = placed
+    let mut files: Vec<FileData> = placed
         .file_order
         .iter()
         .map(|key| {
@@ -304,6 +366,10 @@ fn revision_data(
                         .collect()
                 })
                 .unwrap_or_default();
+            let gaps = match file_diff {
+                Some(f) if !f.is_binary => gaps_of(&f.hunks, new_text(view, blobs, key)),
+                _ => Vec::new(),
+            };
             FileData {
                 path: key.clone(),
                 old_path: file_diff
@@ -311,9 +377,11 @@ fn revision_data(
                     .and_then(|f| f.old_path.clone()),
                 status: file_status(file_diff, in_diff.contains(key)),
                 hunks,
+                gaps,
             }
         })
         .collect();
+    carry_gap_lines(&mut files, view, blobs, syntax_set, budget);
 
     let mut placements = BTreeMap::new();
     for (thread, placement) in threads.iter().zip(&placed.placements) {
@@ -412,6 +480,137 @@ fn mark_words(hunk: &Hunk, rows: &mut [RowData]) {
             }
         }
     }
+}
+
+/// The text of a file as this revision has it (its new side), if the bundle
+/// holds it.
+fn new_text<'a>(
+    view: &RevisionView,
+    blobs: &crate::digest::Blobs<'a>,
+    path: &str,
+) -> Option<&'a str> {
+    let digest = view
+        .files
+        .iter()
+        .find(|f| f.new_path.as_deref() == Some(path))?
+        .new
+        .as_deref()?;
+    blobs.text(digest)
+}
+
+/// The number of a hunk's first and last line on a side, and of the line
+/// after it: a hunk with no lines on a side (`,0`) sits after the line its
+/// number names.
+fn after(start: u32, len: u32) -> u32 {
+    if len == 0 { start + 1 } else { start + len }
+}
+
+fn first_of(start: u32, len: u32) -> u32 {
+    if len == 0 { start + 1 } else { start }
+}
+
+/// The places the hunks leave out: before the first, between, after the last
+/// (which needs the text, to know where the file ends).
+fn gaps_of(hunks: &[Hunk], text: Option<&str>) -> Vec<Option<GapData>> {
+    if hunks.is_empty() {
+        return Vec::new();
+    }
+    let total = text.map(|t| t.lines().count() as u32);
+    let gap = |old: u32, new: u32, n: u32| {
+        (n > 0).then_some(GapData {
+            n,
+            o: old,
+            w: new,
+            t: None,
+            x: text.is_some(),
+        })
+    };
+    let mut out = Vec::with_capacity(hunks.len() + 1);
+    let first = &hunks[0];
+    out.push(gap(1, 1, first_of(first.new_start, first.new_lines) - 1));
+    for pair in hunks.windows(2) {
+        let (a, b) = (&pair[0], &pair[1]);
+        let (old, new) = (
+            after(a.old_start, a.old_lines),
+            after(a.new_start, a.new_lines),
+        );
+        let n = first_of(b.new_start, b.new_lines).saturating_sub(new);
+        out.push(gap(old, new, n));
+    }
+    let last = &hunks[hunks.len() - 1];
+    let (old, new) = (
+        after(last.old_start, last.old_lines),
+        after(last.new_start, last.new_lines),
+    );
+    out.push(total.and_then(|t| gap(old, new, (t + 1).saturating_sub(new))));
+    if out.iter().all(Option::is_none) {
+        return Vec::new();
+    }
+    out
+}
+
+/// Puts the lines of the smallest places into the files, while the budget
+/// lasts.
+fn carry_gap_lines(
+    files: &mut [FileData],
+    view: &RevisionView,
+    blobs: &crate::digest::Blobs,
+    syntax_set: &SyntaxSet,
+    budget: &mut usize,
+) {
+    if *budget == 0 {
+        return;
+    }
+    let mut places: Vec<(u32, usize, usize)> = Vec::new();
+    for (f, file) in files.iter().enumerate() {
+        for (g, gap) in file.gaps.iter().enumerate() {
+            if let Some(gap) = gap.as_ref().filter(|g| g.x) {
+                places.push((gap.n, f, g));
+            }
+        }
+    }
+    places.sort();
+    for (n, f, g) in places {
+        if n as usize > *budget {
+            break;
+        }
+        let path = files[f].path.clone();
+        let Some(text) = new_text(view, blobs, &path) else {
+            continue;
+        };
+        let Some(gap) = files[f].gaps[g].as_mut() else {
+            continue;
+        };
+        let lines: Vec<&str> = text
+            .lines()
+            .skip(gap.w as usize - 1)
+            .take(n as usize)
+            .collect();
+        let mut tokenizer = Tokenizer::new(guess_syntax(&path, syntax_set), syntax_set);
+        gap.t = Some(lines.iter().map(|l| tokenizer.line(l)).collect());
+        *budget = budget.saturating_sub(n as usize);
+    }
+}
+
+/// `count` lines of the file from line `from` (1-based) as the pieces of each,
+/// for the served page to show what a diff leaves out.
+pub fn lines_json(
+    loaded: &crate::bundle::Loaded,
+    revision: usize,
+    path: &str,
+    from: usize,
+    count: usize,
+    git: Option<&dyn CommitFiles>,
+) -> Result<Vec<Vec<Token>>, String> {
+    let text = stored_text(loaded, revision, path, git)?;
+    let syntax_set = &*SYNTAXES;
+    let mut tokenizer = Tokenizer::new(guess_syntax(path, syntax_set), syntax_set);
+    Ok(text
+        .lines()
+        .skip(from.max(1) - 1)
+        .take(count.min(2000))
+        .map(|l| tokenizer.line(l))
+        .collect())
 }
 
 fn placement_data(

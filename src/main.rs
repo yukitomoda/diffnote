@@ -153,6 +153,10 @@ enum Cmd {
         /// -o/--output の代わりに位置引数で渡す出力パス。例: `diffnote export out.html`。
         #[arg(index = 1, value_name = "OUTPUT")]
         output_pos: Option<PathBuf>,
+        /// 差分が省略している行を、HTML に埋め込む行数の上限(全ファイル・全リビジョンの合計)。
+        /// 埋め込んだ分は、HTML を開いたあとで展開できます。`0` で埋め込まず、`all` で全部埋め込みます。
+        #[arg(long, value_name = "行数|all", default_value = "5000", value_parser = parse_expand_limit)]
+        expand_limit: diffnote::html::ExpandLimit,
     },
 }
 
@@ -188,6 +192,7 @@ fn main() -> Result<()> {
             review,
             output,
             output_pos,
+            expand_limit,
         } => {
             let output = match (output, output_pos) {
                 (Some(o), None) | (None, Some(o)) => o,
@@ -200,7 +205,7 @@ fn main() -> Result<()> {
                     anyhow::bail!("出力パスがありません(位置引数か -o/--output で指定してください)")
                 }
             };
-            cmd_export(review, output)
+            cmd_export(review, output, expand_limit)
         }
     }
 }
@@ -255,9 +260,22 @@ fn open_in_browser(url: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-fn cmd_export(review_path: PathBuf, output_path: PathBuf) -> Result<()> {
+fn parse_expand_limit(s: &str) -> Result<diffnote::html::ExpandLimit, String> {
+    if s.eq_ignore_ascii_case("all") {
+        return Ok(diffnote::html::ExpandLimit::All);
+    }
+    s.parse::<usize>()
+        .map(diffnote::html::ExpandLimit::Lines)
+        .map_err(|_| "行数(0 以上の整数)か `all` を指定してください".to_string())
+}
+
+fn cmd_export(
+    review_path: PathBuf,
+    output_path: PathBuf,
+    limit: diffnote::html::ExpandLimit,
+) -> Result<()> {
     let loaded = bundle::load(&review_path)?;
-    let html = diffnote::html::render_export(&loaded).with_context(|| {
+    let html = diffnote::html::render_export_with(&loaded, limit).with_context(|| {
         format!(
             "{} にはまだ記録された差分がありません。先に `diffnote edit` を実行してください",
             review_path.display()

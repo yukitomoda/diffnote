@@ -238,3 +238,12 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 /* The words that changed, in a removed line and the added line that replaces it. */
 .diffnote-line--removed .diffnote-word, .diffnote-cell--removed .diffnote-word { background: rgba(255, 129, 130, 0.4); }
 .diffnote-line--added .diffnote-word, .diffnote-cell--added .diffnote-word { background: rgba(46, 160, 67, 0.4); }
+
+/* What stands for the lines a diff leaves out. */
+.diffnote-expand-row > td { padding: 0 !important; background: var(--diffnote-color-hunk-bg); color: var(--diffnote-color-hunk-fg); font-family: var(--diffnote-font); font-size: 12px; white-space: normal; }
+.diffnote-expand { display: flex; gap: 6px; align-items: center; padding: 3px 8px; min-height: 26px; }
+.diffnote-expand__label, .diffnote-expand__note { color: var(--diffnote-color-hunk-fg); }
+.diffnote-expand__note { opacity: 0.7; }
+.diffnote-expand__button { font: inherit; font-size: 12px; padding: 1px 10px; color: var(--diffnote-color-hunk-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; cursor: pointer; }
+.diffnote-expand__button:hover { background: var(--diffnote-color-gutter); }
+.diffnote-expand__button:disabled { opacity: 0.6; cursor: default; }

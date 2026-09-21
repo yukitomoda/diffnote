@@ -1253,3 +1253,124 @@ fn a_reader_that_has_gone_is_not_an_error() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(!err.contains("panicked") && err.is_empty(), "{err}");
 }
+
+/// A directory review of a 40-line file with two changes far apart, so that
+/// the diff leaves out lines before, between and after its two hunks.
+fn review_with_left_out_lines(env: &Env) -> (PathBuf, PathBuf) {
+    let dir = env.path("project");
+    std::fs::create_dir(&dir).unwrap();
+    let text = |a: &str, b: &str| -> String {
+        (1..=40)
+            .map(|n| match n {
+                10 => format!("{a}\n"),
+                30 => format!("{b}\n"),
+                _ => format!("line {n}\n"),
+            })
+            .collect()
+    };
+    std::fs::write(dir.join("a.txt"), text("ten", "thirty")).unwrap();
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    env.ok(&dir, &[], &["init", "-f", review_arg, "."]);
+    std::fs::write(dir.join("a.txt"), text("TEN", "THIRTY")).unwrap();
+    env.ok(
+        &dir,
+        &[("+TEN", "a comment")],
+        &["edit", "-f", review_arg, "."],
+    );
+    (dir, review)
+}
+
+/// The places the diff leaves out of `a.txt` in the last revision, as
+/// `(count, first new line, lines carried)`.
+fn gaps_of_a_txt(html: &str) -> Vec<Option<(u64, u64, Option<usize>)>> {
+    let model = model_of(html);
+    let rev = model["revisions"].as_array().unwrap().last().unwrap();
+    let file = rev["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["path"] == "a.txt")
+        .unwrap();
+    file["gaps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| {
+            g.as_object().map(|g| {
+                (
+                    g["n"].as_u64().unwrap(),
+                    g["w"].as_u64().unwrap(),
+                    g.get("t").map(|t| t.as_array().unwrap().len()),
+                )
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn the_export_carries_the_lines_a_diff_leaves_out_up_to_a_limit_smaller_places_first() {
+    let env = Env::new();
+    let (dir, review) = review_with_left_out_lines(&env);
+    let export = |extra: &[&str]| -> String {
+        let out = env.path("out.html");
+        let mut args = vec![
+            "export",
+            "-f",
+            review.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ];
+        args.extend_from_slice(extra);
+        env.ok(&dir, &[], &args);
+        std::fs::read_to_string(out).unwrap()
+    };
+    // Lines 1-6 (before the first hunk), 14-26 (between), 34-40 (after).
+    let all = gaps_of_a_txt(&export(&["--expand-limit", "all"]));
+    assert_eq!(
+        all,
+        vec![
+            Some((6, 1, Some(6))),
+            Some((13, 14, Some(13))),
+            Some((7, 34, Some(7)))
+        ]
+    );
+    // The default carries them too (they are few).
+    assert_eq!(gaps_of_a_txt(&export(&[])), all);
+    // None: the places are there, the lines are not.
+    let none = gaps_of_a_txt(&export(&["--expand-limit", "0"]));
+    assert_eq!(
+        none,
+        vec![
+            Some((6, 1, None)),
+            Some((13, 14, None)),
+            Some((7, 34, None))
+        ]
+    );
+    // A limit of 13: the two smaller places (6 + 7), not the larger (13).
+    let some = gaps_of_a_txt(&export(&["--expand-limit", "13"]));
+    assert_eq!(
+        some,
+        vec![
+            Some((6, 1, Some(6))),
+            Some((13, 14, None)),
+            Some((7, 34, Some(7)))
+        ]
+    );
+    // Not a number.
+    let out = env.path("bad.html");
+    let bad = env.run(
+        &dir,
+        &[],
+        &[
+            "export",
+            "-f",
+            review.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--expand-limit",
+            "many",
+        ],
+    );
+    assert!(!bad.status.success());
+}

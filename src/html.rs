@@ -129,7 +129,16 @@ const CLIENT_API: &str = include_str!("../ui/client/api.js");
 /// it. It needs JavaScript, and nothing else: no requests, no modules, so it
 /// opens from a file.
 pub fn render_export(loaded: &crate::bundle::Loaded) -> anyhow::Result<String> {
-    client_page(loaded, None)
+    render_export_with(loaded, ExpandLimit::default())
+}
+
+/// The same, saying how many of the lines a diff leaves out the page carries
+/// (so they can be shown from the file).
+pub fn render_export_with(
+    loaded: &crate::bundle::Loaded,
+    limit: ExpandLimit,
+) -> anyhow::Result<String> {
+    client_page(loaded, None, limit)
 }
 
 /// The same app for `diffnote serve`: it can change the review, through the
@@ -138,18 +147,19 @@ pub fn render_served_page(
     loaded: &crate::bundle::Loaded,
     editable: Vec<String>,
 ) -> anyhow::Result<String> {
-    client_page(loaded, Some(editable))
+    client_page(loaded, Some(editable), ExpandLimit::Lines(0))
 }
 
 fn client_page(
     loaded: &crate::bundle::Loaded,
     served: Option<Vec<String>>,
+    limit: ExpandLimit,
 ) -> anyhow::Result<String> {
     let interactive = served.is_some();
     let data = if let Some(editable) = served {
         served_model_json(loaded, editable)?
     } else {
-        view_model_json(loaded)?
+        view_model_json(loaded, limit)?
     };
     let title = crate::review::title(&loaded.events).unwrap_or(DEFAULT_TITLE);
     let mut scripts: Vec<&str> = CLIENT_LIBS.to_vec();
@@ -740,8 +750,8 @@ pub(crate) mod tokens;
 mod viewmodel;
 mod words;
 pub use viewmodel::{
-    OpenedData, ViewModel, chunk_data, opened_data, served_model_json, stamp, thread_json,
-    tree_json, view_model, view_model_for, view_model_json,
+    ExpandLimit, OpenedData, ViewModel, chunk_data, lines_json, opened_data, served_model_json,
+    stamp, thread_json, tree_json, view_model, view_model_for, view_model_json, view_model_with,
 };
 
 #[cfg(test)]
@@ -942,7 +952,7 @@ mod tests {
     #[test]
     fn the_model_has_the_threads_their_comments_and_a_revision_per_view() {
         let (m, [t1, ..], _dir, _loaded) = model_of_scenario();
-        assert_eq!(m.version, 4);
+        assert_eq!(m.version, 5);
         assert_eq!(m.title, None);
         assert_eq!(m.revisions.len(), 2);
         assert_eq!(m.threads.len(), 5);
@@ -1092,7 +1102,7 @@ mod tests {
                 "</script><!-- <b>bold</b> -->",
             )],
         );
-        let json = view_model_json(&loaded).unwrap();
+        let json = view_model_json(&loaded, ExpandLimit::default()).unwrap();
         assert!(!json.contains('<'), "{json}");
         // It is still the same data.
         let back: serde_json::Value = serde_json::from_str(&json).unwrap();

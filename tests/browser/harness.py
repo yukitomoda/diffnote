@@ -328,6 +328,29 @@ CALC_V2 = ("def add(a, b):\n    return a + b\n\n\ndef div(a, b):\n    if b == 0:
 CALC_V3 = '"""calc"""\n\n' + CALC_V2.replace("return None", 'raise ValueError("b is zero")')
 
 
+def make_gaps_review(root, name="gaps"):
+    """A git review of a 100-line file changed at lines 20 and 80 (and a comment
+    on each): the diff leaves out lines 1-16, 24-76 and 84-100, of which the
+    middle place is the longest."""
+    repo = os.path.join(root, name)
+    os.makedirs(repo)
+    git(repo, "init", "-q", "-b", "main")
+    text = lambda a, b: "".join({20: a + "\n", 80: b + "\n"}.get(n, f"row {n}\n") for n in range(1, 101))
+    write(repo, "long.txt", text("twenty", "eighty"))
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "c1")
+    git(repo, "tag", "c1")
+    write(repo, "long.txt", text("TWENTY", "EIGHTY"))
+    git(repo, "commit", "-q", "-am", "c2")
+    git(repo, "tag", "c2")
+    review = os.path.join(root, name + ".diffnote")
+    out = diffnote("edit", "-f", review, "--author", "reviewer", "c1..c2", cwd=repo, comments=[
+        ("+TWENTY", "20 行目を変えました。"),
+    ])
+    assert out.returncode == 0, out.stdout + out.stderr
+    return review, repo
+
+
 def make_calc_review(root):
     """A git review with two revisions of the same base (c1..c2, then c1..c3),
     a review-wide thread, threads on `return None` (resolved) and on `mul`, and

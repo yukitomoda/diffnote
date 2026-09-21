@@ -223,6 +223,87 @@
     };
   };
 
+  // --- The lines a diff leaves out ---------------------------------------
+
+  // How many lines a press shows at a time.
+  lib.EXPAND_STEP = 20;
+
+  // The file's hunks with what has been shown of the lines between them:
+  // `shown[i]` is `{ top: rows, bottom: rows }` for the place `file.gaps[i]`
+  // (before hunk i): `top` the lines next to the hunk before it, `bottom` those
+  // next to the hunk after it. What is still left out is a marker (`{ marker }`
+  // with no rows) between them; a hunk whose place is shown whole gives up its
+  // `@@` row (`quiet`). The added blocks have headers, so the rows can be told
+  // their line numbers as those of a hunk.
+  lib.withGaps = function (file, shown) {
+    var gaps = file.gaps;
+    if (!gaps || gaps.length === 0) return file;
+    var count = file.hunks.length;
+    var block = function (rows) {
+      var o = rows[0].o;
+      var n = rows[0].n;
+      return { header: '@@ -' + o + ',' + rows.length + ' +' + n + ',' + rows.length + ' @@', rows: rows, quiet: true };
+    };
+    var hunks = [];
+    for (var i = 0; i <= count; i++) {
+      var g = gaps[i];
+      var whole = false;
+      if (g) {
+        var st = (shown && shown[i]) || { top: [], bottom: [] };
+        var left = g.n - st.top.length - st.bottom.length;
+        whole = left <= 0;
+        if (st.top.length) hunks.push(block(st.top));
+        if (left > 0) {
+          hunks.push({ marker: { gap: i, left: left, n: g.n, prev: i > 0, next: i < count, x: !!g.x, embedded: !!g.t }, header: '', rows: [] });
+        }
+        if (st.bottom.length) hunks.push(block(st.bottom));
+      }
+      if (i < count) hunks.push(whole ? Object.assign({}, file.hunks[i], { quiet: true }) : file.hunks[i]);
+    }
+    return Object.assign({}, file, { hunks: hunks });
+  };
+
+  // What has been shown of each place of a file's `gaps`, from the lines shown
+  // so far (`revealed`: the pieces of each line, by new line number): the lines
+  // from the start of a place and those up to its end. Kept by line number, so
+  // that it holds when the places change (a thread brought in context).
+  lib.shownFrom = function (gaps, revealed) {
+    var out = {};
+    (gaps || []).forEach(function (g, i) {
+      if (!g) return;
+      var top = [];
+      while (top.length < g.n && revealed[g.w + top.length]) {
+        top.push({ k: 'c', o: g.o + top.length, n: g.w + top.length, t: revealed[g.w + top.length] });
+      }
+      var bottom = [];
+      while (top.length + bottom.length < g.n && revealed[g.w + g.n - 1 - bottom.length]) {
+        var at = g.n - 1 - bottom.length;
+        bottom.unshift({ k: 'c', o: g.o + at, n: g.w + at, t: revealed[g.w + at] });
+      }
+      out[i] = { top: top, bottom: bottom };
+    });
+    return out;
+  };
+
+  // What a press of `where` ('top', 'bottom' or 'all') on place `g` (with what is
+  // shown of it) asks for: `{ offset, count, side }` (the lines from `offset`
+  // of the place, added to the `side`), or null if nothing is left.
+  lib.expandRequest = function (g, st, where) {
+    var left = g.n - st.top.length - st.bottom.length;
+    if (left <= 0) return null;
+    if (where === 'all') return { offset: st.top.length, count: left, side: 'top' };
+    var count = Math.min(lib.EXPAND_STEP, left);
+    if (where === 'top') return { offset: st.top.length, count: count, side: 'top' };
+    return { offset: g.n - st.bottom.length - count, count: count, side: 'bottom' };
+  };
+
+  // The rows for lines of place `g`, from its `offset`, given the pieces of each.
+  lib.gapRows = function (g, offset, lines) {
+    return lines.map(function (pieces, i) {
+      return { k: 'c', o: g.o + offset + i, n: g.w + offset + i, t: pieces };
+    });
+  };
+
   // --- Choosing lines to comment on --------------------------------------
 
   // All the rows of a file's diff in one list (across its hunks), each with
@@ -231,6 +312,7 @@
   lib.flatRows = function (file) {
     var out = [];
     file.hunks.forEach(function (hunk, hi) {
+      if (hunk.marker) return;
       var m = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(hunk.header);
       var o = m ? +m[1] : 1;
       var n = m ? +m[2] : 1;

@@ -243,3 +243,69 @@ test('pieces are cut where the changed words begin and end, across pieces and ki
   const whole = lib.markPieces(pieces, [[1, 2], [3, 4], [10, 20]]).map((p) => p[1]).join('');
   assert.equal(whole, 'let x = "abc"');
 });
+
+test('the lines a diff leaves out are a marker between the hunks until they are shown', () => {
+  const hunk = (o, n, c) => ({ header: `@@ -${o},${c} +${n},${c} @@`, rows: [{ k: 'c', o, n, t: ['x'] }] });
+  const file = {
+    hunks: [hunk(7, 7, 3), hunk(27, 27, 3)],
+    gaps: [{ n: 6, o: 1, w: 1 }, { n: 13, o: 14, w: 14, x: true }, { n: 7, o: 34, w: 34 }],
+  };
+  // Nothing shown: a marker before, between and after the hunks.
+  let out = lib.withGaps(file, {});
+  assert.deepEqual(out.hunks.map((h) => (h.marker ? 'marker:' + h.marker.left : 'hunk')), ['marker:6', 'hunk', 'marker:13', 'hunk', 'marker:7']);
+  assert.equal(out.hunks[2].marker.prev && out.hunks[2].marker.next, true);
+  assert.equal(out.hunks[0].marker.prev, false, 'nothing before the first');
+  assert.equal(out.hunks[4].marker.next, false, 'nothing after the last');
+  // A file with no places is left alone.
+  assert.equal(lib.withGaps({ hunks: [hunk(1, 1, 1)] }, {}).hunks.length, 1);
+  // Part of the middle place shown at both ends: the marker keeps what is left.
+  const rows = (o, c) => Array.from({ length: c }, (_, i) => ({ k: 'c', o: o + i, n: o + i, t: [] }));
+  out = lib.withGaps(file, { 1: { top: rows(14, 5), bottom: rows(30, 3) } });
+  assert.deepEqual(out.hunks.map((h) => (h.marker ? 'marker:' + h.marker.left : h.quiet ? 'quiet' : 'hunk')), ['marker:6', 'hunk', 'quiet', 'marker:5', 'quiet', 'hunk', 'marker:7']);
+  assert.equal(out.hunks[2].header, '@@ -14,5 +14,5 @@', 'a block has a header, for its line numbers');
+  // All of it shown: no marker, and the hunk after gives up its @@ row.
+  out = lib.withGaps(file, { 1: { top: rows(14, 13), bottom: [] } });
+  assert.deepEqual(out.hunks.map((h) => (h.marker ? 'marker' : h.quiet ? 'quiet' : 'hunk')), ['marker', 'hunk', 'quiet', 'quiet', 'marker']);
+  // The rows of a selection can be counted across the blocks.
+  const flat = lib.flatRows(out);
+  assert.deepEqual(flat.map((f) => f.row.n), [7, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
+});
+
+test('a press asks for the next lines of the place from the side it names', () => {
+  const g = { n: 50, o: 10, w: 10 };
+  const none = { top: [], bottom: [] };
+  assert.deepEqual(lib.expandRequest(g, none, 'top'), { offset: 0, count: 20, side: 'top' });
+  assert.deepEqual(lib.expandRequest(g, none, 'bottom'), { offset: 30, count: 20, side: 'bottom' });
+  assert.deepEqual(lib.expandRequest(g, none, 'all'), { offset: 0, count: 50, side: 'top' });
+  const some = { top: new Array(20), bottom: new Array(20) };
+  assert.deepEqual(lib.expandRequest(g, some, 'top'), { offset: 20, count: 10, side: 'top' });
+  assert.deepEqual(lib.expandRequest(g, some, 'bottom'), { offset: 20, count: 10, side: 'bottom' });
+  assert.equal(lib.expandRequest(g, { top: new Array(50), bottom: [] }, 'top'), null);
+  assert.deepEqual(lib.gapRows(g, 30, [['a'], ['b']]), [{ k: 'c', o: 40, n: 40, t: ['a'] }, { k: 'c', o: 41, n: 41, t: ['b'] }]);
+});
+
+test('what was shown is kept by line number, so it holds when the places change', () => {
+  const pieces = (n) => ['line ' + n];
+  const revealed = {};
+  for (let n = 24; n <= 43; n++) revealed[n] = pieces(n);
+  revealed[60] = pieces(60);
+  // One place of 24-76 (53 lines): the lines from its start are shown, the lone one is not next to anything.
+  let shown = lib.shownFrom([null, { n: 53, o: 24, w: 24 }], revealed);
+  assert.equal(shown[1].top.length, 20);
+  assert.equal(shown[1].bottom.length, 0);
+  assert.deepEqual(shown[1].top[0], { k: 'c', o: 24, n: 24, t: ['line 24'] });
+  // A thread has brought a hunk in at 47-53: the place is now two, and the shown lines stay with the first.
+  shown = lib.shownFrom([null, { n: 23, o: 24, w: 24 }, { n: 23, o: 54, w: 54 }], revealed);
+  assert.equal(shown[1].top.length, 20);
+  assert.equal(shown[2].top.length, 0);
+  // Lines shown up to the end of a place are its bottom, in order.
+  const rev2 = {};
+  for (let n = 70; n <= 76; n++) rev2[n] = pieces(n);
+  shown = lib.shownFrom([null, { n: 53, o: 24, w: 24 }], rev2);
+  assert.deepEqual(shown[1].bottom.map((r) => r.n), [70, 71, 72, 73, 74, 75, 76]);
+  // A place shown whole is counted once (top), not twice.
+  const all = {};
+  for (let n = 24; n <= 76; n++) all[n] = pieces(n);
+  shown = lib.shownFrom([null, { n: 53, o: 24, w: 24 }], all);
+  assert.equal(shown[1].top.length + shown[1].bottom.length, 53);
+});

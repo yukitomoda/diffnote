@@ -7,7 +7,7 @@ import unittest
 
 import harness
 import harness
-from harness import BrowserCase, diffnote, git, make_calc_review, make_login_review, write
+from harness import BrowserCase, diffnote, git, make_calc_review, make_gaps_review, make_login_review, write
 
 CUR = ".diffnote-revision.is-current"
 
@@ -337,3 +337,91 @@ class SideBySide(BrowserCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExpandLeftOutLines(BrowserCase):
+    """The lines a diff leaves out, shown a little at a time or all at once."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        review, _ = make_gaps_review(cls.root)
+        cls.review = review
+        cls.urls = {}
+        for name, extra in (("all", []), ("none", ["--expand-limit", "0"]), ("some", ["--expand-limit", "20"])):
+            path = os.path.join(cls.root, f"gaps_{name}.html")
+            assert diffnote("export", "-f", review, path, *extra).returncode == 0
+            cls.urls[name] = pathlib.Path(path).as_uri()
+
+    def open(self, name):
+        self.b = self.browser
+        self.b.open(self.urls[name])
+        self.b.js("localStorage.clear(); localStorage.setItem('diffnote-layout','unified')")
+        self.b.reload()
+        # A diff with no thread on a file starts folded: open the file.
+        self.assertTrue(self.b.wait_exists(".diffnote-expand-row"))
+
+    def rows(self):
+        return self.b.js("Array.from(document.querySelectorAll('.diffnote-diff tr[data-diffnote-new]')).map(function(r){return +r.getAttribute('data-diffnote-new')})")
+
+    def markers(self):
+        return self.b.js("Array.from(document.querySelectorAll('.diffnote-expand-row .diffnote-expand')).map(function(e){return e.textContent.trim().replace(/\\s+/g,' ')})")
+
+    def test_the_places_are_marked_with_how_many_lines_are_left_out(self):
+        self.open("all")
+        self.assertEqual(self.b.count(".diffnote-expand-row"), 3)
+        self.assertTrue(self.b.js("document.querySelectorAll('.diffnote-expand-row')[1].textContent.includes('53')"), self.markers())
+        self.assertEqual(self.rows()[0], 17, "the first hunk starts at line 17")
+
+    def test_a_press_shows_a_few_lines_next_to_the_hunk_it_names_and_the_rest_stays_hidden(self):
+        self.open("all")
+        b = self.b
+        middle = ".diffnote-expand-row:nth-of-type(2)"
+        before = len(self.rows())
+        # The middle place: 53 lines. "↓" shows 20 after the hunk above (23-42).
+        b.js("Array.from(document.querySelectorAll('.diffnote-expand-row')).filter(function(r){return r.textContent.includes('53')})[0].querySelector('[data-diffnote-expand=top]').click()")
+        self.assertTrue(b.wait(f"document.querySelectorAll('.diffnote-diff tr[data-diffnote-new]').length === {before + 20}"))
+        rows = self.rows()
+        self.assertEqual(rows[rows.index(23) + 19], 42, "the 20 lines after the hunk above")
+        self.assertTrue(any("33" in m for m in self.markers()), self.markers())
+        # "↑" shows 20 before the hunk below (57-76).
+        b.js("Array.from(document.querySelectorAll('.diffnote-expand-row')).filter(function(r){return r.textContent.includes('33')})[0].querySelector('[data-diffnote-expand=bottom]').click()")
+        self.assertTrue(b.wait(f"document.querySelectorAll('.diffnote-diff tr[data-diffnote-new]').length === {before + 40}"))
+        self.assertIn(57, self.rows())
+        self.assertNotIn(50, self.rows(), "the middle of the place is still out")
+
+    def test_all_at_once_leaves_no_marker_and_the_lines_are_whole_and_in_order(self):
+        self.open("all")
+        b = self.b
+        b.js("Array.from(document.querySelectorAll('.diffnote-expand-row')).filter(function(r){return r.textContent.includes('53')})[0].querySelector('[data-diffnote-expand=all]').click()")
+        self.assertTrue(b.wait("document.querySelectorAll('.diffnote-expand-row').length === 2"))
+        rows = self.rows()
+        self.assertEqual(rows[rows.index(23):rows.index(77)], list(range(23, 77)), "24-76 all there, in order")
+        self.assertEqual(b.count(".diffnote-hunk-header"), 1, "the second hunk's @@ row is not needed")
+        self.assertIn("row 50", b.text("table.diffnote-diff"))
+
+    def test_a_place_over_the_limit_is_only_named_and_the_smaller_ones_can_be_shown(self):
+        self.open("some")
+        markers = self.markers()
+        # Limit 20: the places of 16 and of 17 lines fit (not both), the 53 don't.
+        buttons = self.b.js("Array.from(document.querySelectorAll('.diffnote-expand-row')).map(function(r){return r.querySelectorAll('button').length})")
+        self.assertEqual(buttons[1], 0, markers)
+        self.assertIn("含まれていません", markers[1])
+        self.assertEqual(sum(1 for n in buttons if n > 0), 1, "one of the two smaller places fits in 20")
+
+    def test_with_none_carried_no_place_can_be_shown(self):
+        self.open("none")
+        self.assertEqual(self.b.count(".diffnote-expand-row button"), 0)
+        self.assertEqual(self.b.count(".diffnote-expand-row"), 3)
+
+    def test_shown_lines_are_lines_to_read_in_both_layouts_and_a_thread_can_still_be_read(self):
+        self.open("all")
+        b = self.b
+        b.js("Array.from(document.querySelectorAll('.diffnote-expand-row')).filter(function(r){return r.textContent.includes('16')})[0].querySelector('[data-diffnote-expand=all]').click()")
+        self.assertTrue(b.wait("document.querySelectorAll('.diffnote-expand-row').length === 2"))
+        self.assertEqual(self.rows()[:3], [1, 2, 3])
+        b.js("localStorage.setItem('diffnote-layout','split')")
+        b.reload()
+        # The choice of layout starts the places over (they are shown again as markers).
+        self.assertTrue(b.wait_exists(".diffnote-expand-row"))
+        self.assertEqual(b.count("table.diffnote-diff--split .diffnote-expand-row td[colspan='4']"), 3)

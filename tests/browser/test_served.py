@@ -5,7 +5,7 @@ import unittest
 import json
 import time
 
-from harness import BrowserCase, Served, entries, make_calc_review, make_login_review, show
+from harness import BrowserCase, Served, entries, make_calc_review, make_gaps_review, make_login_review, show
 import os
 import shutil
 
@@ -452,6 +452,50 @@ class SideBySideLines(ServedCase):
         self.assertTrue(b.wait_exists(".diffnote-composer-row"))
         b.click("[data-diffnote-layout=unified]")
         self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row') && !document.querySelector('.is-picked, .diffnote-select')"))
+
+
+class ExpandLeftOutLines(ServedCase):
+    """The served page asks the server for the lines a diff leaves out."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.gaps, _ = make_gaps_review(cls.root)
+
+    def test_the_lines_come_from_the_server_a_few_at_a_time_and_all_at_once(self):
+        self.serve(self.gaps)
+        b = self.b
+        rows = lambda: b.js("Array.from(document.querySelectorAll('.diffnote-diff tr[data-diffnote-new]')).map(function(r){return +r.getAttribute('data-diffnote-new')})")
+        marker = lambda n: f"Array.from(document.querySelectorAll('.diffnote-expand-row')).filter(function(r){{return r.textContent.includes('{n}')}})[0]"
+        before = len(rows())
+        b.js(marker(53) + ".querySelector('[data-diffnote-expand=top]').click()")
+        self.assertTrue(b.wait(f"document.querySelectorAll('.diffnote-diff tr[data-diffnote-new]').length === {before + 20}"))
+        self.assertTrue(self.same_page())
+        # The rest of that place at once.
+        b.js(marker(33) + ".querySelector('[data-diffnote-expand=all]').click()")
+        self.assertTrue(b.wait(f"document.querySelectorAll('.diffnote-diff tr[data-diffnote-new]').length === {before + 53}"))
+        got = rows()
+        self.assertEqual(got[got.index(23):got.index(77)], list(range(23, 77)))
+        self.assertIn("row 50", b.text("table.diffnote-diff"))
+        # Looking records nothing.
+        self.assertEqual(entries(self.review), 3)
+
+    def test_a_comment_can_be_written_on_a_line_that_was_left_out_and_shown(self):
+        self.serve(self.gaps)
+        b = self.b
+        b.js("Array.from(document.querySelectorAll('.diffnote-expand-row')).filter(function(r){return r.textContent.includes('53')})[0].querySelector('[data-diffnote-expand=all]').click()")
+        self.assertTrue(b.wait("document.querySelectorAll('.diffnote-diff tr[data-diffnote-new=\"50\"]').length === 1"))
+        b.click_at(f"{CUR} table[data-diffnote-file='long.txt'] tr[data-diffnote-new='50'] .diffnote-line__gutter-new")
+        self.assertTrue(b.wait_exists(".diffnote-composer-row"))
+        self.assertEqual(b.text(".diffnote-compose__where"), "long.txt:50")
+        self.write(".diffnote-composer-row textarea", "ここも気になります")
+        b.js("document.querySelector('.diffnote-composer-row .diffnote-compose').requestSubmit()")
+        self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row')"))
+        self.assertIn("long.txt:50", show(self.review))
+        # The thread brought its own context in; what was shown stays shown.
+        self.assertTrue(b.wait_exists(f"{CUR} table[data-diffnote-file='long.txt'] .diffnote-thread-row"))
+        self.assertTrue(b.exists("tr[data-diffnote-new='30']"))
+        self.assertTrue(b.exists("tr[data-diffnote-new='70']"))
 
 
 if __name__ == "__main__":

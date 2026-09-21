@@ -399,6 +399,24 @@ impl Server {
                     None => Reply::error(404, "そのリビジョンはありません"),
                 }
             }
+            // Lines of a file the diff leaves out: `count` from line `from`.
+            "lines" => {
+                let number =
+                    |key: &str, default: usize| param(key).parse::<usize>().unwrap_or(default);
+                match html::lines_json(
+                    &loaded,
+                    revision,
+                    &param("path"),
+                    number("from", 1),
+                    number("count", 20),
+                    self.git(),
+                ) {
+                    Ok(lines) => {
+                        Reply::json(200, &serde_json::json!({ "ok": true, "lines": lines }))
+                    }
+                    Err(message) => refused(message),
+                }
+            }
             "open" => match html::opened_data(&loaded, revision, &param("path"), self.git()) {
                 Ok(file) => Reply::json(200, &serde_json::json!({ "ok": true, "file": file })),
                 Err(message) => refused(message),
@@ -2044,6 +2062,36 @@ mod tests {
         let last = json(&get(&f, "/api/files/0/more?path=big.txt&from=1001"));
         assert!(last["next"].is_null());
         assert_eq!(last["hunk"]["rows"].as_array().unwrap().len(), 200);
+    }
+
+    #[test]
+    fn lines_a_diff_leaves_out_are_given_a_piece_at_a_time_from_a_line() {
+        let f = fixture_with_a_tree();
+        let reply = get(&f, "/api/files/0/lines?path=big.txt&from=101&count=3");
+        assert_eq!(reply.status, 200, "{}", text(&reply));
+        let lines = &json(&reply)["lines"];
+        assert_eq!(lines.as_array().unwrap().len(), 3);
+        assert_eq!(lines[0], serde_json::json!(["line 101"]));
+        // Past the end there is nothing; the count is capped; a file that isn't
+        // there or isn't text is refused with a reason.
+        let end = json(&get(
+            &f,
+            "/api/files/0/lines?path=big.txt&from=1199&count=50",
+        ));
+        assert_eq!(end["lines"].as_array().unwrap().len(), 2);
+        let all = json(&get(
+            &f,
+            "/api/files/0/lines?path=big.txt&from=1&count=999999",
+        ));
+        assert_eq!(all["lines"].as_array().unwrap().len(), 1200);
+        assert_eq!(
+            get(&f, "/api/files/0/lines?path=bin.dat&from=1&count=3").status,
+            400
+        );
+        assert_eq!(
+            get(&f, "/api/files/0/lines?path=nope.txt&from=1&count=3").status,
+            400
+        );
     }
 
     #[test]
