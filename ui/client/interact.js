@@ -86,7 +86,11 @@
   // A thread in the list: open its card, bring it to the middle of the screen
   // and keep its range shown.
   function jump(link) {
-    var card = document.getElementById(link.getAttribute('href').slice(1));
+    jumpTo(link.getAttribute('href').slice(1));
+  }
+
+  function jumpTo(id) {
+    var card = document.getElementById(id);
     if (!card) return;
     for (var n = card; n; n = n.parentElement) {
       if (n.tagName === 'DETAILS') n.open = true;
@@ -249,6 +253,16 @@
     reset: function () {
       pinned = null;
       clear();
+    },
+    // Go to the element with this id once the page has drawn it (it is being
+    // brought back), looking for it for a moment.
+    jumpWhenShown: function (id) {
+      var tries = 0;
+      var look = function () {
+        if (document.getElementById(id)) jumpTo(id);
+        else if (++tries < 30) requestAnimationFrame(look);
+      };
+      requestAnimationFrame(look);
     },
   };
 })(window.Diffnote);

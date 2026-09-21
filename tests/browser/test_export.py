@@ -55,11 +55,22 @@ class StaticExport(BrowserCase):
         item = "[data-diffnote-check='calc.py']"
         self.assertEqual(b.js(f"document.querySelector({json.dumps(item)}).textContent"), "✓")
         self.assertTrue(b.exists("li.is-viewed [data-diffnote-open-count]"), "what is still open is said, small")
-        self.assertLess(b.count(".diffnote-threadlist li"), threads_before, "its threads are not listed")
+        self.assertEqual(b.count(".diffnote-threadlist li"), threads_before, "its threads are still listed")
         b.click(item)
         self.assertTrue(b.wait(f"!!document.querySelector({json.dumps(section)})"), "brought back")
         self.assertEqual(b.count(".diffnote-threadlist li"), threads_before)
         self.assertIn(f"0 / {files}", b.js("document.querySelector('[data-diffnote-viewed-count]').textContent"))
+
+    def test_a_thread_picked_in_the_list_brings_back_the_file_it_is_on(self):
+        b = self.b
+        section = f"{CUR} section.diffnote-file[data-diffnote-file='calc.py']"
+        b.click(f"{section} [data-diffnote-viewed]")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(section)})"))
+        b.click(".diffnote-threadlist a[title^='calc.py']")
+        self.assertTrue(b.wait(f"!!document.querySelector({json.dumps(section)})"), "the file is back")
+        self.assertFalse(b.exists("[data-diffnote-check='calc.py'][aria-pressed='true']"))
+        # It goes to the thread as well: the card is on the screen.
+        self.assertTrue(b.wait(f"(() => {{ const c = document.querySelector({json.dumps(section + ' .diffnote-thread')}); if (!c) return false; const r = c.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight; }})()"))
 
     def test_a_looked_at_file_that_is_another_file_in_the_other_revision_is_not_marked_there(self):
         b = self.b

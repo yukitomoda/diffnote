@@ -743,20 +743,25 @@
 
   function ThreadList(props) {
     var ctx = props.ctx;
+    var viewed = useContext(ViewedContext);
     var open = ctx.model.threads.filter(function (t) { return !t.resolved; }).length;
     return html`<details class="diffnote-side" open>
       <summary>スレッド <span class="diffnote-badge" title="未解決 / 全部">${open} / ${ctx.model.threads.length}</span></summary>
       <nav class="diffnote-threadlist"><ol>
-        ${ctx.order.filter(function (id) {
-          // Not those of a file that was looked at: they are not shown.
-          var p = ctx.placements[id];
-          return !(p && p.file && ctx.viewedPaths && ctx.viewedPaths[p.file]);
-        }).map(function (id) {
+        ${ctx.order.map(function (id) {
           var t = ctx.byId[id];
           var p = ctx.placements[id];
           var color = p && p.kind === 'line' ? lib.color(p.color) : '#8b949e';
           return html`<li key=${id} class=${t.resolved ? 'is-resolved' : ''}>
-            <a href=${'#r' + ctx.rev + '-thread-' + id} data-diffnote-jump=${id} title=${lib.location(p) || '差分全体'}>
+            <a href=${'#r' + ctx.rev + '-thread-' + id} data-diffnote-jump=${id} title=${lib.location(p) || '差分全体'}
+              onClick=${function () {
+                // A thread of a file that was looked at brings the file back.
+                var file = p && p.file && ctx.revision.files.filter(function (f) { return f.path === p.file; })[0];
+                if (file && viewed && viewed.is(file)) {
+                  viewed.toggle(file);
+                  D.interact.jumpWhenShown('r' + ctx.rev + '-thread-' + id);
+                }
+              }}>
               <span class="diffnote-thread__swatch" style=${'background:' + color}></span><span class="diffnote-threadlist__where">${lib.shortLocation(p)}</span>${t.resolved && html`<span class="diffnote-threadlist__state">解決済み</span>`}<span class="diffnote-threadlist__preview">${lib.preview(t.comments[0].doc)}</span>
             </a>
           </li>`;
