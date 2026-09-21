@@ -700,6 +700,53 @@ class Images(ServedCase):
         self.assertTrue(b.wait_exists(".diffnote-compose textarea[placeholder^='コメントを書く']"))
         self.assertTrue(above(".diffnote-compose textarea[placeholder^='コメントを書く']"), "new comment")
 
+    def test_any_file_can_be_attached_and_is_offered_only_to_be_saved(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        self.paste(box, "notes.txt", "text/plain", "hello attachment")
+        self.assertTrue(b.wait("!!document.querySelector('[data-diffnote-attach-status]') && document.querySelector('[data-diffnote-attach-status]').textContent.includes('を添付しました')"))
+        self.assertIn("「notes.txt」", b.text("[data-diffnote-attach-status]"))
+        self.assertRegex(b.js(f"document.querySelector({json.dumps(box)}).value"), r"\[notes\.txt\]\(diffnote-file:[0-9a-f]{64}\)")
+        self.assertEqual(len([n for n in harness.zip_names(self.review) if n.startswith("attachments/")]), 1)
+        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
+        link = f"#{card} .diffnote-comment__body a.diffnote-attachment"
+        self.assertTrue(b.wait_exists(link))
+        self.assertEqual(b.js(f"document.querySelector({json.dumps(link)}).getAttribute('download')"), "notes.txt")
+        href = b.js(f"document.querySelector({json.dumps(link)}).getAttribute('href')")
+        self.assertTrue(href.startswith("/api/attachments/"), href)
+        got = b.js("fetch(%s).then(async r => [r.headers.get('content-disposition'), r.headers.get('content-type'), await r.text()])" % json.dumps(href))
+        self.assertTrue(got[0].startswith("attachment;"), got)
+        self.assertEqual(got[1], "application/octet-stream")
+        self.assertEqual(got[2], "hello attachment")
+        # The export has it inside, still to be saved.
+        exported = b.js("fetch('/export').then(r => r.text())")
+        self.assertIn("data:application/octet-stream;base64,", exported)
+        path = os.path.join(self.fresh("export"), "with-file.html")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(exported)
+        b.open(pathlib.Path(path).as_uri(), ready="!!document.querySelector('a.diffnote-attachment')")
+        self.assertTrue(b.js("document.querySelector('a.diffnote-attachment').getAttribute('href').startsWith('data:application/octet-stream;base64,')"))
+        self.assertEqual(b.js("document.querySelector('a.diffnote-attachment').getAttribute('download')"), "notes.txt")
+
+    def test_a_file_over_the_reviews_limit_is_told_so_and_not_sent(self):
+        self.serve()
+        b = self.b
+        self.assertEqual(b.js("JSON.parse(document.getElementById('diffnote-data').textContent).attachment_limit"), 5 * 1024 * 1024)
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        b.js("""(function(sel){
+          var dt = new DataTransfer(); dt.items.add(new File([new Uint8Array(6 * 1024 * 1024)], 'big.bin', {type: 'application/octet-stream'}));
+          var ta = document.querySelector(sel); ta.focus();
+          ta.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}));
+        })(%s)""" % json.dumps(box))
+        self.assertTrue(b.wait("!!document.querySelector('.is-failed[data-diffnote-attach-status]')"))
+        said = b.text("[data-diffnote-attach-status]")
+        self.assertIn("big.bin", said)
+        self.assertIn("超えています", said)
+        self.assertEqual([n for n in harness.zip_names(self.review) if n.startswith("attachments/")], [], "nothing was sent")
+
     def test_an_svg_is_taken_only_if_nothing_in_it_runs(self):
         self.serve()
         b = self.b

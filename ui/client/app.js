@@ -139,27 +139,40 @@
     var setStatus = _s[1];
     var latest = useRef(text);
     latest.current = text;
+    var links = useContext(LinksContext);
     var send = function (files, field) {
-      var images = Array.prototype.filter.call(files || [], function (f) { return /^image\//.test(f.type); });
-      if (!D.api || images.length === 0) return false;
+      var list = Array.prototype.slice.call(files || []);
+      if (!D.api || list.length === 0) return false;
+      var limit = links && links.limit;
+      // Too big: said here, before anything is sent.
+      var big = limit && list.filter(function (f) { return f.size > limit; })[0];
+      if (big) {
+        setStatus({ failed: true, text: '「' + (big.name || 'ファイル') + '」(' + lib.formatSize(big.size) + ')は、添付できる大きさ(' + lib.formatSize(limit) + ')を超えています' });
+        return true;
+      }
       var from = field.selectionStart;
       var to = field.selectionEnd;
-      setStatus({ busy: true, text: '画像を送っています…' });
+      setStatus({ busy: true, text: '送っています…' });
       var snippets = [];
       var last = null;
-      var chain = images.reduce(function (p, file) {
+      var images = 0;
+      var chain = list.reduce(function (p, file) {
         return p.then(function () {
-          return D.api.upload(file).then(function (res) {
-            if (!res.ok) throw new Error(res.error || '画像を追加できませんでした');
-            snippets.push(lib.imageMarkdown(res.id));
-            last = res;
+          var isImage = /^image\//.test(file.type);
+          var name = file.name || (isImage ? 'image' : 'file');
+          return (isImage ? D.api.upload(file) : D.api.uploadFile(file, name)).then(function (res) {
+            if (!res.ok) throw new Error(res.error || '添付できませんでした');
+            if (isImage) images++;
+            snippets.push(isImage ? lib.imageMarkdown(res.id) : lib.fileMarkdown(name, res.id));
+            last = { res: res, name: name, isImage: isImage };
           });
         });
       }, Promise.resolve());
       chain.then(function () {
         var put = lib.insertAt(latest.current, from, to, snippets.join('\n') + '\n');
         setText(put.text);
-        setStatus({ text: '画像を追加しました(' + lib.formatSize(last.size) + ')。バンドルの大きさ: ' + lib.formatSize(last.bundle_size) + (last.size > 5 * 1024 * 1024 ? '。大きな画像です' : '') });
+        var what = list.length > 1 ? list.length + ' 件を添付しました' : last.isImage ? '画像を追加しました' : '「' + last.name + '」を添付しました';
+        setStatus({ text: what + '(' + lib.formatSize(last.res.size) + ')。バンドルの大きさ: ' + lib.formatSize(last.res.bundle_size) + (last.res.size > 5 * 1024 * 1024 ? '。大きなファイルです' : '') });
       }, function (err) {
         setStatus({ failed: true, text: err.message });
       });
@@ -181,8 +194,8 @@
       // The button that opens the file chooser, and the note under the box.
       picker: function (field) {
         if (!D.api) return null;
-        return html`<label class="diffnote-attach" title="画像を添付します(貼り付けや、ドラッグ&ドロップでも追加できます)">🖼 画像
-          <input type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" multiple data-diffnote-attach
+        return html`<label class="diffnote-attach" title="ファイルや画像を添付します(貼り付けや、ドラッグ&ドロップでも追加できます)">📎 添付
+          <input type="file" multiple data-diffnote-attach
             onChange=${function (e) { var f = field(); if (f) send(e.target.files, f); e.target.value = ''; }} /></label>`;
       },
       note: status && html`<p class=${'diffnote-attach__status' + (status.failed ? ' is-failed' : '')} data-diffnote-attach-status role="status">${status.text}</p>`,
@@ -529,6 +542,12 @@
           // An image of the review, drawn only as an <img>: nothing else is loaded.
           var src = links && links.image ? links.image(n.id) : '';
           return src ? h('img', { key: i, class: 'diffnote-image', src: src, alt: n.alt || '' }) : h('span', { key: i }, n.alt || '[画像]');
+        }
+        case 'file': {
+          // Another file of the review: only ever to be saved.
+          var name = lib.plainText(n.c).trim() || 'file';
+          var href = links && links.file ? links.file(n.id, name) : '';
+          return href ? h('a', { key: i, class: 'diffnote-attachment', href: href, download: name, rel: 'noopener' }, '📎 ', kids) : h('span', { key: i }, kids);
         }
         case 'code': return h('code', { key: i }, n.s || '');
         case 'br': return h('br', { key: i });
@@ -1492,6 +1511,13 @@
         current: current,
         revisions: model.revisions.length,
         has: function (path) { return Object.prototype.hasOwnProperty.call(known, path); },
+        // The most a file attached to a comment may weigh (the review's rule).
+        limit: model.attachment_limit,
+        // Where another attached file is: in the page, or at the server.
+        file: function (id, name) {
+          if (model.attachments && model.attachments[id]) return model.attachments[id];
+          return model.interactive ? '/api/attachments/' + id + '?name=' + encodeURIComponent(name) : '';
+        },
         // Where an image is: in the page (an exported one), or at the server.
         image: function (id) {
           if (model.images && model.images[id]) return model.images[id];

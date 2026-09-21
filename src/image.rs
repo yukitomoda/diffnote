@@ -10,8 +10,12 @@
 /// What a comment's link to an image starts with.
 pub const SCHEME: &str = "diffnote-image:";
 
-/// The largest image that may be attached, in bytes.
-pub const MAX_BYTES: usize = 20 * 1024 * 1024;
+/// What a comment's link to a file that is not an image starts with.
+pub const FILE_SCHEME: &str = "diffnote-file:";
+
+/// The most the server takes in one request, whatever the review's own limit
+/// on an attached file says (it is all held in memory).
+pub const CEILING: usize = 100 * 1024 * 1024;
 
 /// The id an image has: the hex of its sha256 digest.
 pub fn id_of(bytes: &[u8]) -> String {
@@ -29,16 +33,42 @@ pub fn is_id(s: &str) -> bool {
 
 /// The ids of the images a text (a comment's body) refers to.
 pub fn ids_in(text: &str) -> Vec<String> {
+    ids_after(SCHEME, text)
+}
+
+/// The ids of the other attached files a text refers to.
+pub fn file_ids_in(text: &str) -> Vec<String> {
+    ids_after(FILE_SCHEME, text)
+}
+
+fn ids_after(scheme: &str, text: &str) -> Vec<String> {
     let mut found = Vec::new();
     let mut rest = text;
-    while let Some(at) = rest.find(SCHEME) {
-        let after = &rest[at + SCHEME.len()..];
+    while let Some(at) = rest.find(scheme) {
+        let after = &rest[at + scheme.len()..];
         if after.len() >= 64 && is_id(&after[..64]) && !found.contains(&after[..64].to_string()) {
             found.push(after[..64].to_string());
         }
-        rest = &rest[at + SCHEME.len()..];
+        rest = &rest[at + scheme.len()..];
     }
     found
+}
+
+/// A name to save an attached file under: what the page says it is called,
+/// without anything that could make it a path or spoil a header.
+pub fn file_name(asked: &str) -> String {
+    let base = asked.rsplit(['/', '\\']).next().unwrap_or("");
+    let clean: String = base
+        .chars()
+        .filter(|c| !c.is_control() && !matches!(c, '"' | ':' | '*' | '?' | '<' | '>' | '|'))
+        .take(120)
+        .collect();
+    let clean = clean.trim().trim_start_matches('.').to_string();
+    if clean.is_empty() {
+        "file".to_string()
+    } else {
+        clean
+    }
 }
 
 /// The media type of an image that may be attached (PNG, JPEG, GIF, WebP, or an
@@ -47,12 +77,6 @@ pub fn ids_in(text: &str) -> Vec<String> {
 pub fn kind(bytes: &[u8]) -> Result<&'static str, String> {
     if bytes.is_empty() {
         return Err("画像が空です".into());
-    }
-    if bytes.len() > MAX_BYTES {
-        return Err(format!(
-            "画像が大きすぎます({} MB まで)",
-            MAX_BYTES / (1024 * 1024)
-        ));
     }
     if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
         return Ok("image/png");
@@ -158,7 +182,6 @@ mod tests {
         assert!(kind(b"").is_err());
         assert!(kind(b"just text").is_err());
         assert!(kind(b"<html><body>x</body></html>").is_err());
-        assert!(kind(&vec![0u8; MAX_BYTES + 1]).is_err());
     }
 
     #[test]
@@ -181,6 +204,18 @@ mod tests {
             kind(br#"<svg xmlns="http://www.w3.org/2000/svg"><text>only one action on it</text></svg>"#),
             Ok("image/svg+xml")
         );
+    }
+
+    #[test]
+    fn a_name_to_save_a_file_under_is_only_a_name() {
+        assert_eq!(file_name("report.pdf"), "report.pdf");
+        assert_eq!(file_name("C:\\dir\\log file.txt"), "log file.txt");
+        assert_eq!(file_name("../../etc/passwd"), "passwd");
+        assert_eq!(file_name("a\"b\r\n.txt"), "ab.txt");
+        assert_eq!(file_name(".hidden"), "hidden");
+        assert_eq!(file_name(""), "file");
+        assert_eq!(file_name("///"), "file");
+        assert_eq!(file_name(&"x".repeat(500)).chars().count(), 120);
     }
 
     #[test]

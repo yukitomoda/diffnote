@@ -391,3 +391,9 @@ test('a size is said roughly, and a picture is put in a text where the cursor wa
   assert.equal(lib.plainText([{ t: 'p', c: ['see ', { t: 'image', id, alt: 'a shot' }] }]).trim(), 'see a shot');
   assert.equal(lib.preview([{ t: 'p', c: [{ t: 'image', id, alt: '' }] }]), '[画像]');
 });
+
+test('a link to another attached file is named by the file, without what would end the name early', () => {
+  const id = 'c'.repeat(64);
+  assert.equal(lib.fileMarkdown('report.pdf', id), `[report.pdf](diffnote-file:${id})`);
+  assert.equal(lib.fileMarkdown('a[1]\\b.txt', id), `[a1b.txt](diffnote-file:${id})`);
+});

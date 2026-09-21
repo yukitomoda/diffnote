@@ -8,10 +8,13 @@
 //! Layout inside the zip:
 //! ```text
 //! review.jsonl
+//! settings.json             the review's settings as they are now (left out if all
+//!                          are their defaults)
 //! diffs/<digest>.diff      one per recorded revision (its unified diff)
 //! blobs/<sha256 hex>       one per distinct file version, however many
 //!                          revisions have it
 //! images/<sha256 hex>      one per distinct image attached to a comment
+//! attachments/<sha256 hex> one per distinct other file attached to a comment
 //! ```
 //! `<digest>` is a revision's digest string (`sha256:...`) with the
 //! `sha256:` prefix stripped, so it's a plain hex string safe to use as a
@@ -25,7 +28,7 @@
 //! an in-place edit), at the cost of not scaling to huge bundles.
 
 pub use crate::model::SnapshotMode;
-use crate::model::{Event, Revision, Source, TreeFile};
+use crate::model::{Event, Revision, Settings, Source, TreeFile};
 use anyhow::{Context, Result};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -34,6 +37,9 @@ use zip::{ZipArchive, ZipWriter};
 
 pub struct Loaded {
     pub events: Vec<Event>,
+    /// The review's settings (see [`Settings`]); a change is made here and
+    /// saved with the bundle.
+    pub settings: Settings,
     /// Existing `diffs/`/`blobs/` entries, carried through unchanged into
     /// the rewritten archive.
     carried_entries: Vec<(String, Vec<u8>)>,
@@ -160,6 +166,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
     if !path.exists() {
         return Ok(Loaded {
             events: Vec::new(),
+            settings: Settings::default(),
             carried_entries: Vec::new(),
         });
     }
@@ -174,6 +181,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
     })?;
 
     let mut events = Vec::new();
+    let mut settings = Settings::default();
     let mut carried_entries = Vec::new();
 
     for i in 0..archive.len() {
@@ -192,6 +200,10 @@ pub fn load(path: &Path) -> Result<Loaded> {
             })?;
             events =
                 crate::review::parse_jsonl(&text, &format!("{} の review.jsonl", path.display()))?;
+        } else if name == "settings.json" {
+            settings = serde_json::from_slice(&bytes).with_context(|| {
+                format!("{} の settings.json を読めませんでした", path.display())
+            })?;
         } else {
             carried_entries.push((name, bytes));
         }
@@ -199,6 +211,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
 
     Ok(Loaded {
         events,
+        settings,
         carried_entries,
     })
 }
@@ -223,6 +236,9 @@ pub struct Images<'a> {
     pub add: &'a [Vec<u8>],
     /// If given, the ids of the images to keep: the others are left out.
     pub keep: Option<&'a std::collections::HashSet<String>>,
+    /// The same for the other files attached to comments.
+    pub add_files: &'a [Vec<u8>],
+    pub keep_files: Option<&'a std::collections::HashSet<String>>,
 }
 
 /// The ids (hex digests) of the images a bundle holds.
@@ -236,6 +252,22 @@ impl Loaded {
             .map(|(_, bytes)| bytes.as_slice())
     }
 
+    /// The bytes of a file attached to a comment (not an image).
+    pub fn attachment(&self, id: &str) -> Option<&[u8]> {
+        let wanted = format!("attachments/{id}");
+        self.carried_entries
+            .iter()
+            .find(|(name, _)| *name == wanted)
+            .map(|(_, bytes)| bytes.as_slice())
+    }
+
+    pub fn attachment_ids(&self) -> Vec<String> {
+        self.carried_entries
+            .iter()
+            .filter_map(|(name, _)| name.strip_prefix("attachments/").map(str::to_string))
+            .collect()
+    }
+
     pub fn image_ids(&self) -> Vec<String> {
         self.carried_entries
             .iter()
@@ -246,9 +278,18 @@ impl Loaded {
 
 /// One image of a bundle, read without reading the rest of it.
 pub fn read_image(path: &Path, id: &str) -> Option<Vec<u8>> {
+    read_entry(path, &format!("images/{id}"))
+}
+
+/// One attached file of a bundle, read without reading the rest of it.
+pub fn read_attachment(path: &Path, id: &str) -> Option<Vec<u8>> {
+    read_entry(path, &format!("attachments/{id}"))
+}
+
+fn read_entry(path: &Path, name: &str) -> Option<Vec<u8>> {
     let file = std::fs::File::open(path).ok()?;
     let mut archive = ZipArchive::new(file).ok()?;
-    let mut entry = archive.by_name(&format!("images/{id}")).ok()?;
+    let mut entry = archive.by_name(name).ok()?;
     let mut bytes = Vec::new();
     entry.read_to_end(&mut bytes).ok()?;
     Some(bytes)
@@ -282,9 +323,24 @@ pub fn save_with(
             writer.write_all(b"\n")?;
         }
 
+        // Settings are only written if some is not its default.
+        if loaded.settings != Settings::default() {
+            writer.start_file("settings.json", options)?;
+            writer.write_all(
+                serde_json::to_string_pretty(&loaded.settings)
+                    .context("設定を JSON にできませんでした")?
+                    .as_bytes(),
+            )?;
+        }
+
         let mut written: std::collections::HashSet<String> = std::collections::HashSet::new();
         for (name, bytes) in &loaded.carried_entries {
             if let (Some(keep), Some(id)) = (images.keep, name.strip_prefix("images/"))
+                && !keep.contains(id)
+            {
+                continue;
+            }
+            if let (Some(keep), Some(id)) = (images.keep_files, name.strip_prefix("attachments/"))
                 && !keep.contains(id)
             {
                 continue;
@@ -315,6 +371,17 @@ pub fn save_with(
         for bytes in images.add {
             let name = format!(
                 "images/{}",
+                digest_path_component(&crate::digest::digest(bytes))
+            );
+            if written.insert(name.clone()) {
+                writer.start_file(name, options)?;
+                writer.write_all(bytes)?;
+            }
+        }
+
+        for bytes in images.add_files {
+            let name = format!(
+                "attachments/{}",
                 digest_path_component(&crate::digest::digest(bytes))
             );
             if written.insert(name.clone()) {
@@ -651,6 +718,60 @@ mod tests {
         assert_eq!(
             blobs.chain(&digest("v1\n"), &digest("v3\n")).unwrap(),
             vec!["v1\n", "v2\n", "v3\n"]
+        );
+    }
+
+    #[test]
+    fn settings_are_state_kept_in_settings_json_only_when_one_is_not_its_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.diffnote");
+        let loaded = load(&path).unwrap();
+        assert_eq!(loaded.settings, Settings::default());
+        assert_eq!(loaded.settings.attachment_limit, 5 * 1024 * 1024);
+        let events = vec![sample_event()];
+        save(&path, &loaded, &events, &Additions::default()).unwrap();
+        let names = |p: &Path| -> Vec<String> {
+            let mut a = ZipArchive::new(std::fs::File::open(p).unwrap()).unwrap();
+            (0..a.len())
+                .map(|i| a.by_index(i).unwrap().name().to_string())
+                .collect()
+        };
+        assert!(
+            !names(&path).contains(&"settings.json".to_string()),
+            "nothing to say"
+        );
+        // Changed: written, and read back; the state, not a history.
+        let mut loaded = load(&path).unwrap();
+        loaded.settings.attachment_limit = 1234;
+        save(&path, &loaded, &events, &Additions::default()).unwrap();
+        assert!(names(&path).contains(&"settings.json".to_string()));
+        let mut loaded = load(&path).unwrap();
+        assert_eq!(loaded.settings.attachment_limit, 1234);
+        assert!(
+            !entry_names(&loaded).contains(&"settings.json"),
+            "not carried as an entry"
+        );
+        // It stays through a save that doesn't touch it, and is one entry, not two.
+        save(&path, &loaded, &events, &Additions::default()).unwrap();
+        assert_eq!(
+            names(&path)
+                .iter()
+                .filter(|n| *n == "settings.json")
+                .count(),
+            1
+        );
+        assert_eq!(load(&path).unwrap().settings.attachment_limit, 1234);
+        // Back to the default: the entry goes.
+        loaded.settings = Settings::default();
+        save(&path, &loaded, &events, &Additions::default()).unwrap();
+        assert!(!names(&path).contains(&"settings.json".to_string()));
+        // A settings.json that says less than all of them: the rest are defaults.
+        let mut loaded = load(&path).unwrap();
+        loaded.settings.attachment_limit = 9;
+        save(&path, &loaded, &events, &Additions::default()).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Settings>("{}").unwrap(),
+            Settings::default()
         );
     }
 }

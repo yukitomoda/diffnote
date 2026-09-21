@@ -12,7 +12,8 @@
 //!   inline nodes directly), `pre` (`s` the code, `lang`), `hr`;
 //! - tables: `table` (`al` the columns' alignments: `l`, `c`, `r` or `""`) of
 //!   `thead` (its cells) and `tr`s (their cells), a cell being `td`;
-//! - inline: `em`, `strong`, `del`, `code` (`s`), `a` (`href`), `br`, `image`
+//! - inline: `em`, `strong`, `del`, `code` (`s`), `a` (`href`), `br`, `file` (`id`,
+//!   a link that names a file of the bundle, drawn as one to save), `image`
 //!   (`id` of an image of the bundle, `alt`: only a link that names one, see
 //!   `crate::image`).
 //!
@@ -138,7 +139,12 @@ fn open(tag: &Tag) -> Value {
         Tag::TableRow => json!({ "t": "tr" }),
         Tag::TableCell => json!({ "t": "td" }),
         Tag::Link { dest_url, .. } => {
-            if safe_link(dest_url) {
+            if let Some(id) = dest_url
+                .strip_prefix(crate::image::FILE_SCHEME)
+                .filter(|id| crate::image::is_id(id))
+            {
+                json!({ "t": "file", "id": id })
+            } else if safe_link(dest_url) {
                 json!({ "t": "a", "href": dest_url.as_ref() })
             } else {
                 json!({ "t": "a" })
@@ -255,6 +261,18 @@ mod tests {
             );
             assert!(out.contains("alt words"), "{other}: {out}");
         }
+    }
+
+    #[test]
+    fn a_link_to_a_file_of_the_bundle_is_a_node_with_its_text() {
+        let id = "b".repeat(64);
+        assert_eq!(
+            json_of(&format!("[the log](diffnote-file:{id})")),
+            format!(r#"[{{"c":[{{"c":["the log"],"id":"{id}","t":"file"}}],"t":"p"}}]"#)
+        );
+        // Not an id: a link that goes nowhere is its text.
+        let out = json_of("[x](diffnote-file:short)");
+        assert!(!out.contains("file") && out.contains('x'), "{out}");
     }
 
     #[test]

@@ -148,6 +148,30 @@ fn base_span_for(file: Option<&crate::diff::FileDiff>, head: LineSpan) -> LineSp
     }
 }
 
+/// A size as a person says it: `5 MB`, `830 KB`.
+fn size_words(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0)).replace(".0 MB", " MB")
+    } else if bytes >= 1024 {
+        format!("{} KB", bytes / 1024)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+/// The bytes of a text in the `%XX` form (all but letters, digits and `-_.~`).
+fn percent_encode(text: &str) -> String {
+    let mut out = String::new();
+    for b in text.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 /// The server's identity and rules; [`Server::handle`] is the whole of its
 /// behavior and does no networking.
 pub struct Server {
@@ -182,6 +206,7 @@ struct Stats {
     titled: u32,
     settings: u32,
     images: u32,
+    files: u32,
 }
 
 impl Stats {
@@ -196,6 +221,9 @@ impl Stats {
         }
         if self.images > 0 {
             added.push(format!("画像 {} 件", self.images));
+        }
+        if self.files > 0 {
+            added.push(format!("ファイル {} 件", self.files));
         }
         let mut parts = Vec::new();
         if !added.is_empty() {
@@ -480,6 +508,9 @@ impl Server {
             ("GET", "/api/version") => self.version(),
             ("GET", "/api/compare") => self.compare(query),
             ("GET", p) if p.starts_with("/api/images/") => self.image(&p["/api/images/".len()..]),
+            ("GET", p) if p.starts_with("/api/attachments/") => {
+                self.attachment(&p["/api/attachments/".len()..], query)
+            }
             ("GET", p) if p.starts_with("/api/files/") => {
                 self.files(&p["/api/files/".len()..], query)
             }
@@ -603,6 +634,7 @@ impl Server {
     /// there, how big it is, and how big the bundle now is.
     fn add_image(&self, bytes: &[u8]) -> Result<Reply, Failure> {
         let mime = crate::image::kind(bytes).map_err(|m| Failure(400, m))?;
+        self.within_limit(bytes.len())?;
         let id = crate::image::id_of(bytes);
         let loaded = bundle::load(&self.review).map_err(internal)?;
         let new = loaded.image(&id).is_none();
@@ -610,7 +642,7 @@ impl Server {
             let none = bundle::Additions::default();
             let images = bundle::Images {
                 add: &[bytes.to_vec()],
-                keep: None,
+                ..Default::default()
             };
             bundle::save_with(&self.review, &loaded, &loaded.events, &none, &images)
                 .map_err(internal)?;
@@ -631,6 +663,95 @@ impl Server {
         ))
     }
 
+    /// Whether a file of this many bytes may be attached, by the limit the
+    /// review has.
+    fn within_limit(&self, size: usize) -> Result<(), Failure> {
+        let loaded = bundle::load(&self.review).map_err(internal)?;
+        let limit = loaded.settings.attachment_limit;
+        if size as u64 > limit {
+            return Err(Failure(
+                413,
+                format!(
+                    "添付できる大きさ({})を超えています(このファイルは {})",
+                    size_words(limit),
+                    size_words(size as u64)
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Puts a file that is not an image in the review (`name` is only what the
+    /// page calls it: it is asked for again when the file is fetched).
+    fn add_attachment(&self, target: &str, bytes: &[u8]) -> Result<Reply, Failure> {
+        if bytes.is_empty() {
+            return Err(Failure(400, "ファイルが空です".into()));
+        }
+        self.within_limit(bytes.len())?;
+        let id = crate::image::id_of(bytes);
+        let loaded = bundle::load(&self.review).map_err(internal)?;
+        if loaded.attachment(&id).is_none() {
+            let none = bundle::Additions::default();
+            let files = bundle::Images {
+                add_files: &[bytes.to_vec()],
+                ..Default::default()
+            };
+            bundle::save_with(&self.review, &loaded, &loaded.events, &none, &files)
+                .map_err(internal)?;
+            self.count(|s| s.files += 1);
+        }
+        let name = crate::image::file_name(
+            &query_param(target.split_once('?').map_or("", |(_, q)| q), "name").unwrap_or_default(),
+        );
+        let bundle_size = std::fs::metadata(&self.review)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        Ok(Reply::json(
+            200,
+            &serde_json::json!({
+                "ok": true,
+                "id": id,
+                "name": name,
+                "size": bytes.len(),
+                "bundle_size": bundle_size,
+            }),
+        ))
+    }
+
+    /// A file attached to a comment, to be saved: never shown by itself.
+    fn attachment(&self, id: &str, query: &str) -> Reply {
+        if !crate::image::is_id(id) {
+            return Reply::error(404, "見つかりません");
+        }
+        let Some(bytes) = bundle::read_attachment(&self.review, id) else {
+            return Reply::error(404, "そのファイルはありません");
+        };
+        let name = crate::image::file_name(&query_param(query, "name").unwrap_or_default());
+        let mut reply = Reply::new(200, "application/octet-stream", bytes);
+        reply.headers = vec![
+            (
+                "Content-Disposition".into(),
+                format!(
+                    "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+                    name.chars()
+                        .map(|c| if c.is_ascii() { c } else { '_' })
+                        .collect::<String>(),
+                    percent_encode(&name)
+                ),
+            ),
+            (
+                "Content-Security-Policy".into(),
+                "sandbox; default-src 'none'".into(),
+            ),
+            ("X-Content-Type-Options".into(), "nosniff".into()),
+            (
+                "Cache-Control".into(),
+                "private, max-age=31536000, immutable".into(),
+            ),
+        ];
+        reply
+    }
+
     /// At the end of the session: the images that no comment shows any more
     /// (one was pasted and the comment given up, or taken out) are let go.
     fn drop_unused_images(&self) {
@@ -638,18 +759,26 @@ impl Server {
             return;
         };
         let mut used = std::collections::HashSet::new();
+        let mut used_files = std::collections::HashSet::new();
         for event in &loaded.events {
             if let Event::Comment { body, .. } = event {
                 used.extend(crate::image::ids_in(body));
+                used_files.extend(crate::image::file_ids_in(body));
             }
         }
-        if loaded.image_ids().iter().all(|id| used.contains(id)) {
+        if loaded.image_ids().iter().all(|id| used.contains(id))
+            && loaded
+                .attachment_ids()
+                .iter()
+                .all(|id| used_files.contains(id))
+        {
             return;
         }
         let none = bundle::Additions::default();
         let images = bundle::Images {
-            add: &[],
             keep: Some(&used),
+            keep_files: Some(&used_files),
+            ..Default::default()
         };
         let _ = bundle::save_with(&self.review, &loaded, &loaded.events, &none, &images);
     }
@@ -883,7 +1012,7 @@ impl Server {
     }
 
     fn post(&self, path: &str, request: &Request) -> Reply {
-        if request.body.len() > MAX_BODY && path != "/api/images" {
+        if request.body.len() > MAX_BODY && path != "/api/images" && path != "/api/attachments" {
             return Reply::error(413, "送られた内容が大きすぎます");
         }
         if path == "/api/shutdown" {
@@ -920,6 +1049,7 @@ impl Server {
             ["api", "title"] => self.set_title(request.body),
             ["api", "whitespace"] => self.set_ignore_whitespace(request.body),
             ["api", "images"] => self.add_image(request.body),
+            ["api", "attachments"] => self.add_attachment(request.target, request.body),
             ["api", "refresh"] => self.refresh(),
             ["api", "comments", id, "edit"] => self.edit_comment(id, request.body),
             ["api", "comments", id, "delete"] => self.delete_comment(id),
@@ -1324,8 +1454,9 @@ pub fn run(options: &Options, on_ready: impl FnOnce(&str, &[String])) -> Result<
         {
             use std::io::Read;
             // One byte more than allowed: enough to tell it is too big.
-            let limit = if request.url() == "/api/images" {
-                crate::image::MAX_BYTES
+            let path = request.url().split('?').next().unwrap_or("");
+            let limit = if path == "/api/images" || path == "/api/attachments" {
+                crate::image::CEILING
             } else {
                 MAX_BODY
             };
@@ -2176,6 +2307,115 @@ mod tests {
             .to_string();
         assert!(told.contains("画像 2 件"), "{told}");
         assert_eq!(bundle::load(&f.path).unwrap().image_ids(), vec![id]);
+    }
+
+    /// Says in the review how big an attached file may be.
+    fn set_attachment_limit(f: &Fixture, bytes: u64) {
+        let mut loaded = bundle::load(&f.path).unwrap();
+        loaded.settings.attachment_limit = bytes;
+        let events = loaded.events.clone();
+        bundle::save(&f.path, &loaded, &events, &bundle::Additions::default()).unwrap();
+    }
+
+    #[test]
+    fn any_file_can_be_attached_and_is_only_ever_sent_to_be_saved() {
+        let f = fixture();
+        let data = b"PK\x03\x04 some log or archive \xff\x00";
+        let told = json(&f.send_bytes("/api/attachments?name=%E3%83%AD%E3%82%B0.zip", data));
+        assert_eq!(told["ok"], true);
+        assert_eq!(told["name"], "ログ.zip");
+        assert_eq!(told["size"], data.len());
+        let id = told["id"].as_str().unwrap().to_string();
+        assert_eq!(f.send_bytes("/api/attachments", b"").status, 400);
+        // Kept apart from the images.
+        assert_eq!(
+            bundle::load(&f.path).unwrap().attachment_ids(),
+            vec![id.clone()]
+        );
+        assert!(bundle::load(&f.path).unwrap().image_ids().is_empty());
+        // Sent as a download that can do nothing else.
+        let got = f.request(
+            "GET",
+            &format!("/api/attachments/{id}?name=%E3%83%AD%E3%82%B0.zip"),
+            &[],
+            "",
+        );
+        assert_eq!(got.status, 200);
+        assert_eq!(got.content_type, "application/octet-stream");
+        assert_eq!(got.body, data);
+        let header = |name: &str| {
+            got.headers
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, v)| v.clone())
+        };
+        let disposition = header("Content-Disposition").unwrap();
+        assert!(disposition.starts_with("attachment;"), "{disposition}");
+        assert!(
+            disposition.contains("filename*=UTF-8''%E3%83%AD%E3%82%B0.zip"),
+            "{disposition}"
+        );
+        assert_eq!(header("X-Content-Type-Options").as_deref(), Some("nosniff"));
+        assert!(header("Content-Security-Policy").is_some_and(|v| v.starts_with("sandbox")));
+        // A name can't be a path or spoil the header.
+        let got = f.request(
+            "GET",
+            &format!("/api/attachments/{id}?name=..%2F..%2Fa%22b.txt"),
+            &[],
+            "",
+        );
+        assert!(header_of(&got, "Content-Disposition").contains("filename=\"ab.txt\""));
+        assert_eq!(
+            f.request("GET", "/api/attachments/nope", &[], "").status,
+            404
+        );
+        // A comment that names it makes a node; the one that nothing names goes at the end.
+        let reply = format!(r#"{{"body":"[ログ](diffnote-file:{id})"}}"#);
+        f.post(&format!("/api/threads/{}/replies", f.thread), &reply);
+        f.send_bytes("/api/attachments?name=other", b"other data");
+        assert_eq!(bundle::load(&f.path).unwrap().attachment_ids().len(), 2);
+        let told = json(&f.post("/api/shutdown", "{}"))["farewell"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(told.contains("ファイル 2 件"), "{told}");
+        assert_eq!(bundle::load(&f.path).unwrap().attachment_ids(), vec![id]);
+    }
+
+    fn header_of(reply: &Reply, name: &str) -> String {
+        reply
+            .headers
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn what_may_be_attached_is_limited_by_the_review_5_mb_unless_it_says_otherwise() {
+        let f = fixture();
+        let model = json(&f.request("GET", "/api/model", &[], ""));
+        assert_eq!(model["model"]["attachment_limit"], 5 * 1024 * 1024);
+        // Under the limit; then the review says 100 bytes.
+        assert_eq!(
+            f.send_bytes("/api/attachments?name=a", &[7u8; 90]).status,
+            200
+        );
+        set_attachment_limit(&f, 100);
+        let model = json(&f.request("GET", "/api/model", &[], ""));
+        assert_eq!(model["model"]["attachment_limit"], 100);
+        let over = f.send_bytes("/api/attachments?name=b", &[8u8; 101]);
+        assert_eq!(over.status, 413);
+        let said = json(&over)["error"].as_str().unwrap().to_string();
+        assert!(said.contains("100 B") && said.contains("101 B"), "{said}");
+        // The same rule for an image.
+        let mut png = PNG.to_vec();
+        png.extend([0u8; 200]);
+        assert_eq!(f.send_bytes("/api/images", &png).status, 413);
+        assert_eq!(f.send_bytes("/api/images", PNG).status, 200);
+        // Bigger again.
+        set_attachment_limit(&f, 1000);
+        assert_eq!(f.send_bytes("/api/images", &png).status, 200);
     }
 
     #[test]

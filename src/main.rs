@@ -1293,10 +1293,18 @@ fn cmd_edit(
 
 fn cmd_show(review_path: PathBuf) -> Result<()> {
     let loaded = bundle::load(&review_path)?;
+    let settings = loaded.settings;
     let events = loaded.events;
     if events.is_empty() {
         println!("{} は空です", review_path.display());
         return Ok(());
+    }
+    // The settings that are not what they would be anyway.
+    if settings != diffnote::model::Settings::default() {
+        println!(
+            "[設定] 添付ファイルの上限={} バイト",
+            settings.attachment_limit
+        );
     }
     for event in &events {
         match event {

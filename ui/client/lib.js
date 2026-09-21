@@ -470,6 +470,13 @@
     return '![画像](diffnote-image:' + id + ')';
   };
 
+  // What a comment says for another file of the review: a link to save it,
+  // named by what the file is called (the brackets that would end the name early
+  // are left out).
+  lib.fileMarkdown = function (name, id) {
+    return '[' + name.replace(/[\[\]\\]/g, '') + '](diffnote-file:' + id + ')';
+  };
+
   // The text with `insert` where the choice was (`from` to `to`), and where the
   // cursor goes after it.
   lib.insertAt = function (text, from, to, insert) {

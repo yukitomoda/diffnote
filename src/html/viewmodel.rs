@@ -48,6 +48,12 @@ pub struct ViewModel {
     /// the server).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub images: BTreeMap<String, String>,
+    /// The same for the other files attached to comments.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub attachments: BTreeMap<String, String>,
+    /// The most a file attached to a comment may weigh, in bytes (the review's
+    /// own rule: the page says so before sending what is too big).
+    pub attachment_limit: u64,
     /// Whether the page can change the review (the served one).
     pub interactive: bool,
     pub title: Option<String>,
@@ -276,6 +282,12 @@ pub fn view_model_with(
         } else {
             embedded_images(loaded)
         },
+        attachments: if interactive {
+            BTreeMap::new()
+        } else {
+            embedded_files(loaded)
+        },
+        attachment_limit: loaded.settings.attachment_limit,
         interactive,
         title: crate::review::title(&loaded.events).map(str::to_string),
         threads: {
@@ -481,6 +493,27 @@ fn embedded_images(loaded: &crate::bundle::Loaded) -> BTreeMap<String, String> {
         }
     }
     images
+}
+
+/// The other files the comments refer to, as `data:` addresses by id.
+fn embedded_files(loaded: &crate::bundle::Loaded) -> BTreeMap<String, String> {
+    let mut files = BTreeMap::new();
+    for event in &loaded.events {
+        let crate::model::Event::Comment { body, .. } = event else {
+            continue;
+        };
+        for id in crate::image::file_ids_in(body) {
+            if !files.contains_key(&id)
+                && let Some(bytes) = loaded.attachment(&id)
+            {
+                files.insert(
+                    id,
+                    crate::image::data_uri("application/octet-stream", bytes),
+                );
+            }
+        }
+    }
+    files
 }
 
 /// The digests of a file's two versions, as one string (`None` for a file that

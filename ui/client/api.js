@@ -39,6 +39,17 @@
         return unreachable;
       });
     },
+    // A file that is not a picture: its bytes, and what it is called.
+    uploadFile: function (blob, name) {
+      return fetch('/api/attachments?name=' + encodeURIComponent(name), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', 'X-Diffnote': '1' },
+        credentials: 'same-origin',
+        body: blob,
+      }).then(read, function () {
+        return unreachable;
+      });
+    },
     get: function (path) {
       return fetch(path, { credentials: 'same-origin' }).then(read, function () {
         return unreachable;

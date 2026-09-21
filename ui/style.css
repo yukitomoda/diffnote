@@ -333,3 +333,5 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 .diffnote-compose__head .diffnote-attach-bar { margin-bottom: 0; }
 .diffnote-attach__status { margin: 4px 0 0; font-size: 12px; color: var(--diffnote-color-muted); }
 .diffnote-attach__status.is-failed { color: #cf222e; }
+.diffnote-attachment { display: inline-block; padding: 1px 8px; font-size: 13px; color: var(--diffnote-color-fg); background: var(--diffnote-color-gutter); border: 1px solid var(--diffnote-color-border); border-radius: 6px; text-decoration: none; word-break: break-all; }
+.diffnote-attachment:hover { border-color: var(--diffnote-color-muted); }

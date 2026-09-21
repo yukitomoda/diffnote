@@ -34,6 +34,33 @@ pub enum SnapshotMode {
 
 /// The commits a git-backed review was made against, resolved to full ids
 /// at edit time (so a moving ref such as `HEAD~4` is pinned).
+/// What an attached file may weigh unless the review says otherwise (5 MB).
+pub const DEFAULT_ATTACHMENT_LIMIT: u64 = 5 * 1024 * 1024;
+
+/// The review's settings: state, not history (only what they are now is kept,
+/// in the bundle's `settings.json`, and a setting that is left out is its
+/// default). What the review says about how it is worked on -- rules that go
+/// with it to whoever continues it -- belongs here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Settings {
+    /// The most a file attached to a comment (an image, or any other file) may
+    /// weigh, in bytes.
+    #[serde(default = "default_attachment_limit")]
+    pub attachment_limit: u64,
+}
+
+fn default_attachment_limit() -> u64 {
+    DEFAULT_ATTACHMENT_LIMIT
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            attachment_limit: DEFAULT_ATTACHMENT_LIMIT,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitSource {
     pub base: String,
