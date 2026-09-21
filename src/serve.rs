@@ -389,15 +389,15 @@ impl Server {
         )
     }
 
-    /// The comments of this session that are still in the review, as the page
-    /// wants them.
+    /// The comments the page may edit or delete: all of them (a review is
+    /// shared by people who trust one another; the page asks first if a comment
+    /// is somebody else's).
     fn editable(&self, loaded: &bundle::Loaded) -> Vec<String> {
-        let session = self.session.lock().unwrap_or_else(|e| e.into_inner());
         loaded
             .events
             .iter()
             .filter_map(|e| match e {
-                Event::Comment { id, .. } if session.contains(id) => Some(id.to_string()),
+                Event::Comment { id, .. } => Some(id.to_string()),
                 _ => None,
             })
             .collect()
@@ -1174,24 +1174,14 @@ impl Server {
         self.model_answer(&before, serde_json::json!({}))
     }
 
-    /// The id of a comment of this session (only those may be changed).
-    fn own_comment(&self, id: &str) -> Result<Ulid, Failure> {
-        let id =
-            Ulid::from_string(id).map_err(|_| Failure(400, "コメントの ID が不正です".into()))?;
-        let session = self.session.lock().unwrap_or_else(|e| e.into_inner());
-        if session.contains(&id) {
-            Ok(id)
-        } else {
-            Err(Failure(
-                403,
-                "このセッションで追加したコメントだけが、編集・削除できます".into(),
-            ))
-        }
+    /// The id a comment is asked for by.
+    fn comment_id(id: &str) -> Result<Ulid, Failure> {
+        Ulid::from_string(id).map_err(|_| Failure(400, "コメントの ID が不正です".into()))
     }
 
-    /// Rewrites the text of a comment of this session.
+    /// Rewrites the text of a comment (whoever wrote it, and whenever).
     fn edit_comment(&self, id: &str, body: &[u8]) -> Result<Reply, Failure> {
-        let id = self.own_comment(id)?;
+        let id = Self::comment_id(id)?;
         let value: serde_json::Value = serde_json::from_slice(body)
             .map_err(|_| Failure(400, "送られた内容を読めません".into()))?;
         let text = value
@@ -1216,11 +1206,10 @@ impl Server {
         self.model_answer(&before, serde_json::json!({}))
     }
 
-    /// Takes a comment of this session out of the review: a reply alone, or a
-    /// thread (with what it was given: its replies, resolving) if all of its
-    /// replies are of this session too.
+    /// Takes a comment out of the review: a reply alone, or a thread with what
+    /// it was given (its replies, resolving, where it was moved to).
     fn delete_comment(&self, id: &str) -> Result<Reply, Failure> {
-        let id = self.own_comment(id)?;
+        let id = Self::comment_id(id)?;
         let loaded = bundle::load(&self.review).map_err(internal)?;
         let before = html::stamp(&loaded);
         let is_root = loaded
@@ -1242,18 +1231,6 @@ impl Server {
             | Event::Reanchor { parent, .. } => is_root && *parent == id,
             _ => false,
         };
-        if is_root {
-            let session = self.session.lock().unwrap_or_else(|e| e.into_inner());
-            let foreign = loaded.events.iter().any(|e| {
-                matches!(e, Event::Comment { id: c, parent: Some(p), .. } if *p == id && !session.contains(c))
-            });
-            if foreign {
-                return Err(Failure(
-                    409,
-                    "ほかのコメントが付いているため、スレッドは削除できません".into(),
-                ));
-            }
-        }
         let removed: Vec<Ulid> = loaded
             .events
             .iter()
@@ -1265,18 +1242,25 @@ impl Server {
             .collect();
         let events: Vec<Event> = loaded.events.iter().filter(|e| !gone(e)).cloned().collect();
         self.save(&loaded, &events)?;
+        // What this session added and is now taken out no longer counts as added
+        // (what was there before is only counted as taken out).
         let mut session = self.session.lock().unwrap_or_else(|e| e.into_inner());
-        for id in &removed {
-            session.remove(id);
+        let root_here = is_root && session.contains(&id);
+        let replies_here = removed
+            .iter()
+            .filter(|c| **c != id && session.contains(*c))
+            .count() as u32;
+        let own_reply_here = !is_root && session.contains(&id);
+        for c in &removed {
+            session.remove(c);
         }
         drop(session);
-        // What was added and is now taken out no longer counts as added.
-        let replies = removed.len().saturating_sub(usize::from(is_root)) as u32;
         self.count(|s| {
-            if is_root {
+            if root_here {
                 s.threads = s.threads.saturating_sub(1);
             }
-            s.replies = s.replies.saturating_sub(replies);
+            let gone = replies_here + u32::from(own_reply_here);
+            s.replies = s.replies.saturating_sub(gone);
             s.deleted += 1;
         });
         self.model_answer(&before, serde_json::json!({}))
@@ -1856,25 +1840,25 @@ mod tests {
     }
 
     #[test]
-    fn only_what_this_session_added_can_be_edited_and_the_page_is_told_which() {
+    fn any_comment_can_be_edited_including_one_from_before_the_server_started() {
         let f = fixture();
         // The fixture's own comment is from before the server started.
         let old = last_comment_id(&f);
-        let refused = f.post(&format!("/api/comments/{old}/edit"), r#"{"body":"x"}"#);
-        assert_eq!(refused.status, 403);
-        assert_eq!(
-            f.post(&format!("/api/comments/{old}/delete"), "{}").status,
-            403
-        );
         let model = json(&f.request("GET", "/api/model", &[], ""));
-        assert!(model["model"].get("editable").is_none(), "nothing yet");
+        assert_eq!(model["model"]["editable"], serde_json::json!([old.clone()]));
+        let edited = json(&f.post(
+            &format!("/api/comments/{old}/edit"),
+            r#"{"body":"reworded"}"#,
+        ));
+        assert_eq!(edited["ok"], true, "{edited}");
+        assert!(model_comments(&f).contains(&(old.clone(), "reworded".to_string())));
         // A reply of this session can.
         let reply = json(&f.post(
             &format!("/api/threads/{}/replies", f.thread),
             r#"{"body":"mine"}"#,
         ));
         let mine = last_comment_id(&f);
-        assert_eq!(reply["editable"], serde_json::json!([mine.clone()]));
+        assert_eq!(reply["editable"], serde_json::json!([old, mine.clone()]));
         assert_eq!(
             reply["thread_data"]["comments"][1]["body"], "mine",
             "the text as written comes with it, to edit"
@@ -1911,11 +1895,11 @@ mod tests {
         assert_eq!(answer["ok"], true, "{answer}");
         assert_eq!(f.events().len(), before - 1);
         assert!(!model_comments(&f).iter().any(|(id, _)| *id == mine));
-        assert!(answer["model"].get("editable").is_none());
-        // It is gone: nothing more to change (it is not this session's any more).
+        assert!(!answer["model"]["editable"].to_string().contains(&mine));
+        // It is gone: nothing more to change.
         assert_eq!(
             f.post(&format!("/api/comments/{mine}/delete"), "{}").status,
-            403
+            404
         );
     }
 
@@ -1941,7 +1925,7 @@ mod tests {
     }
 
     #[test]
-    fn a_thread_with_a_reply_from_elsewhere_is_not_deleted() {
+    fn a_thread_is_deleted_with_the_replies_of_others_too_and_the_page_asks_first() {
         let f = fixture();
         let id = id_of(&json(&new_thread(
             &f,
@@ -1962,13 +1946,13 @@ mod tests {
         let before = f.events().len();
         assert_eq!(
             f.post(&format!("/api/comments/{id}/delete"), "{}").status,
-            409
+            200
         );
-        assert_eq!(f.events().len(), before);
+        assert_eq!(f.events().len(), before - 2, "the thread and the reply");
     }
 
     #[test]
-    fn a_new_server_has_settled_what_the_last_one_added() {
+    fn a_new_server_can_still_change_what_the_last_one_added() {
         let f = fixture();
         f.post(
             &format!("/api/threads/{}/replies", f.thread),
@@ -1986,7 +1970,7 @@ mod tests {
             },
             4242,
         );
-        let refused = later.handle(&Request {
+        let deleted = later.handle(&Request {
             method: "POST",
             target: &format!("/api/comments/{mine}/delete"),
             headers: vec![
@@ -2000,7 +1984,7 @@ mod tests {
             ],
             body: b"{}",
         });
-        assert_eq!(refused.status, 403);
+        assert_eq!(deleted.status, 200);
     }
 
     #[test]

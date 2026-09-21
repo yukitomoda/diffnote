@@ -256,7 +256,7 @@
     var c = props.comment;
     var actions = props.actions;
     var links = useContext(LinksContext);
-    var mine = !!actions && actions.editable.has(c.id);
+    var canChange = !!actions && actions.editable.has(c.id);
     var _e = useState(false);
     var editing = _e[0];
     var setEditing = _e[1];
@@ -269,6 +269,10 @@
     var _r = useState('');
     var error = _r[0];
     var setError = _r[1];
+    // What is asked before a change goes ahead: `{ kind, reasons }`.
+    var _a = useState(null);
+    var ask = _a[0];
+    var setAsk = _a[1];
     var attach = useAttach(text, setText);
     var field = useRef(null);
     var save = function () {
@@ -281,9 +285,8 @@
         else setError(res.error || '保存できませんでした');
       });
     };
-    var remove = function () {
-      var what = props.first && props.replies > 0 ? 'このスレッドを、返信も含めて削除しますか?' : props.first ? 'このスレッドを削除しますか?' : 'この返信を削除しますか?';
-      if (!window.confirm(what)) return;
+    var doRemove = function () {
+      setAsk(null);
       setBusy(true);
       setError('');
       actions.remove(c.id).then(function (res) {
@@ -291,12 +294,37 @@
         if (!res.ok) setError(res.error || '削除できませんでした');
       });
     };
-    return html`<article class="diffnote-comment" data-diffnote-comment=${c.id}>
-      <p class="diffnote-comment__author">${c.author}<${Time} at=${c.at} />${mine && !editing && html`<span class="diffnote-comment__tools">
-        <button type="button" class="diffnote-mini" data-diffnote-edit disabled=${busy}
-          onClick=${function () { setText(c.body || ''); setError(''); setEditing(true); }}>編集</button>
-        <button type="button" class="diffnote-mini" data-diffnote-delete disabled=${busy} onClick=${remove}>削除</button>
-      </span>`}</p>
+    var startEdit = function () { setText(c.body || ''); setError(''); setAsk(null); setEditing(true); };
+    // A comment somebody else wrote is asked about first (whoever is signed in as
+    // another name), so that it isn't changed by mistake; so is any delete.
+    var others = actions && actions.author != null && c.author !== actions.author;
+    var whose = others ? '「' + c.author + '」さんが書いたコメントです(あなたは「' + actions.author + '」)。' : '';
+    var change = function (kind) {
+      var reasons = [];
+      if (others) reasons.push(whose);
+      if (kind === 'delete') {
+        if (props.first && props.replies > 0) {
+          reasons.push('スレッド全体が削除されます(返信 ' + props.replies + ' 件' + (props.othersReplies > 0 ? '、うち他の人の返信 ' + props.othersReplies + ' 件' : '') + ')。');
+        } else if (props.first) {
+          reasons.push('スレッドが削除されます。');
+        } else {
+          reasons.push('この返信が削除されます。');
+        }
+      }
+      if (reasons.length === 0) { startEdit(); return; }
+      setAsk({ kind: kind, reasons: reasons });
+    };
+    return html`<article class="diffnote-comment" data-diffnote-comment=${c.id} data-diffnote-mine=${actions && !others ? '' : undefined}>
+      <p class="diffnote-comment__author">${c.author}<${Time} at=${c.at} />${canChange && !editing && html`<${CommentMenu} busy=${busy}
+        onEdit=${function () { change('edit'); }} onDelete=${function () { change('delete'); }} />`}</p>
+      ${ask && html`<div class="diffnote-comment__warn" role="alert" data-diffnote-warn>
+        ${ask.reasons.map(function (r, i) { return html`<p key=${i}>${r}</p>`; })}
+        <div class="diffnote-reply__buttons">
+          <button type="button" class=${'diffnote-button ' + (ask.kind === 'delete' ? 'diffnote-button--danger' : 'diffnote-button--primary')} data-diffnote-warn-ok
+            onClick=${function () { if (ask.kind === 'delete') doRemove(); else startEdit(); }}>${ask.kind === 'delete' ? '削除する' : '編集する'}</button>
+          <button type="button" class="diffnote-button" data-diffnote-warn-cancel onClick=${function () { setAsk(null); }}>やめる</button>
+        </div>
+      </div>`}
       ${editing
         ? html`<form class="diffnote-compose" data-diffnote-edit-form onSubmit=${function (e) { e.preventDefault(); save(); }}>
             <div class="diffnote-attach-bar">${attach.picker(function () { return field.current; })}</div>
@@ -314,6 +342,36 @@
           </form>`
         : html`<div class="diffnote-comment__body">${markdown(c.doc, links)}</div>${error && html`<p class="diffnote-error">${error}</p>`}`}
     </article>`;
+  }
+
+  // The 「⋮」 of a comment: what can be done to it (in the page while it is shut,
+  // only not shown).
+  function CommentMenu(props) {
+    var _o = useState(false);
+    var open = _o[0];
+    var setOpen = _o[1];
+    var box = useRef(null);
+    useEffect(function () {
+      if (!open) return undefined;
+      var away = function (e) { if (box.current && !box.current.contains(e.target)) setOpen(false); };
+      var key = function (e) { if (e.key === 'Escape') setOpen(false); };
+      document.addEventListener('mousedown', away);
+      document.addEventListener('keydown', key);
+      return function () {
+        document.removeEventListener('mousedown', away);
+        document.removeEventListener('keydown', key);
+      };
+    }, [open]);
+    return html`<span class="diffnote-comment__menu" ref=${box}>
+      <button type="button" class="diffnote-comment__more" data-diffnote-comment-menu aria-label="コメントの操作" aria-haspopup="true" aria-expanded=${open}
+        onClick=${function () { setOpen(!open); }}>⋮</button>
+      <span class="diffnote-comment__panel" hidden=${!open}>
+        <button type="button" class="diffnote-comment__item" data-diffnote-edit disabled=${props.busy}
+          onClick=${function () { setOpen(false); props.onEdit(); }}>編集</button>
+        <button type="button" class="diffnote-comment__item diffnote-comment__item--danger" data-diffnote-delete disabled=${props.busy}
+          onClick=${function () { setOpen(false); props.onDelete(); }}>削除</button>
+      </span>
+    </span>`;
   }
 
   // One thread as a card.
@@ -337,7 +395,8 @@
       </summary>
       ${absent && absent.was.length > 0 && html`<pre class="diffnote-deleted__snippet">${absent.was.join('\n') + '\n'}</pre>`}
       ${t.comments.map(function (c, i) {
-        return html`<${Comment} key=${c.id} comment=${c} actions=${actions} first=${i === 0} replies=${t.comments.length - 1} />`;
+        return html`<${Comment} key=${c.id} comment=${c} actions=${actions} first=${i === 0} replies=${t.comments.length - 1}
+          othersReplies=${actions ? t.comments.slice(1).filter(function (x) { return x.author !== actions.author; }).length : 0} />`;
       })}
       ${actions && html`<${Actions} thread=${t} actions=${actions} />`}
     </details>`;
@@ -1273,8 +1332,8 @@
     // What the page may change, and which comments those are.
     var full = useMemo(function () {
       if (!actions) return null;
-      return Object.assign({}, actions, { editable: new Set(model.editable || []) });
-    }, [actions, model.editable]);
+      return Object.assign({}, actions, { editable: new Set(model.editable || []), author: model.author });
+    }, [actions, model.editable, model.author]);
     return { model: model, actions: full, pending: pending };
   }
 

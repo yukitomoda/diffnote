@@ -188,7 +188,7 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 .diffnote-thread__swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: baseline; }
 .diffnote-comment { border-top: 1px solid var(--diffnote-color-border); padding: 6px 0; }
 .diffnote-comment:first-of-type { border-top: none; }
-.diffnote-comment__author { font-weight: 600; margin: 0; font-size: 12.5px; color: var(--diffnote-color-muted); }
+.diffnote-comment__author { display: flex; align-items: baseline; font-weight: 600; margin: 0; font-size: 12.5px; color: var(--diffnote-color-muted); }
 .diffnote-comment__time { margin-left: 0.7em; font-weight: 400; font-size: 11px; color: #8b949e; white-space: nowrap; }
 .diffnote-comment__body { font-size: 14px; }
 .diffnote-comment__body p { margin: 10px 0; }
@@ -243,8 +243,19 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 .diffnote-diff--split[data-diffnote-copy-side="new"] .diffnote-split-row > td:nth-child(-n+2) { user-select: none; }
 /* Nor the "@@" rows and the thread cards in between, which the copy leaves out. */
 .diffnote-diff--split[data-diffnote-copy-side] .diffnote-hunk-header, .diffnote-diff--split[data-diffnote-copy-side] .diffnote-thread-row { user-select: none; }
-.diffnote-comment__tools { margin-left: 8px; }
-.diffnote-comment__tools .diffnote-mini { margin-left: 4px; }
+/* What can be done to a comment. */
+.diffnote-comment__menu { position: relative; margin-left: auto; }
+.diffnote-comment__more { font: inherit; font-size: 16px; line-height: 1; padding: 0 7px 3px; color: var(--diffnote-color-muted); background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
+.diffnote-comment__more:hover, .diffnote-comment__more[aria-expanded="true"] { color: var(--diffnote-color-fg); background: var(--diffnote-color-gutter); border-color: var(--diffnote-color-border); }
+.diffnote-comment__panel { position: absolute; right: 0; top: calc(100% + 2px); z-index: 25; display: flex; flex-direction: column; min-width: 7em; padding: 4px; background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18); }
+.diffnote-comment__panel[hidden] { display: none; }
+.diffnote-comment__item { font: inherit; font-size: 13px; font-weight: 400; text-align: left; padding: 4px 10px; color: var(--diffnote-color-fg); background: none; border: 0; border-radius: 6px; cursor: pointer; }
+.diffnote-comment__item:hover { background: var(--diffnote-color-gutter); }
+.diffnote-comment__item--danger { color: #cf222e; }
+.diffnote-comment__warn { margin: 6px 0; padding: 8px 12px; font-size: 13px; background: #fff8c5; border: 1px solid #d4a72c; border-radius: 6px; color: #3d2e00; }
+.diffnote-comment__warn p { margin: 0 0 6px; }
+.diffnote-button--danger { color: #fff; background: #cf222e; border-color: #cf222e; }
+.diffnote-button--danger:hover { background: #a40e26; }
 .diffnote-comment > .diffnote-compose { margin-top: 4px; }
 
 /* Code colors, by the kind of what is written (see src/html/tokens.rs). */

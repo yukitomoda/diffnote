@@ -165,7 +165,7 @@ class Replies(ServedCase):
         card = self.card("mul の型")
         body = '<img src=x onerror="window.__ran=1"> **強調** [悪い](javascript:window.__ran=2) [良い](https://example.com/a) `code`'
         self.reply_to(card, body, shows="良い")
-        mine = f"[data-diffnote-comment]:has([data-diffnote-edit]) .diffnote-comment__body"
+        mine = "[data-diffnote-mine] .diffnote-comment__body"
         self.assertEqual(b.count(f"{mine} img, {mine} script"), 0, "no element from raw HTML")
         self.assertIn('<img src=x onerror="window.__ran=1">', b.text(mine), "it is shown as the text it is")
         self.assertEqual(b.count(f"{mine} strong"), 1)
@@ -176,22 +176,74 @@ class Replies(ServedCase):
         time.sleep(0.3)
         self.assertFalse(b.js("'__ran' in window"))
 
-    def test_only_comments_added_in_this_session_have_edit_and_delete(self):
+    def test_every_comment_has_a_menu_and_only_those_of_the_signed_in_name_are_marked_as_mine(self):
         self.serve()
         b = self.b
-        self.assertEqual(b.count("[data-diffnote-edit], [data-diffnote-delete]"), 0, "what was there before is settled")
+        total = b.count("[data-diffnote-comment]")
+        self.assertEqual(b.count("[data-diffnote-comment-menu]"), total, "the older ones too")
+        self.assertEqual(b.count("[data-diffnote-mine]"), 0, "nothing of 検証者 yet")
         card = self.card("mul の型")
         self.reply_to(card, "あとから書いた返信")
-        mine = f"[data-diffnote-comment]:has([data-diffnote-edit])"
-        self.assertEqual(b.count(mine), 1)
-        self.assertIn("あとから書いた返信", b.text(mine))
+        self.assertEqual(b.count("[data-diffnote-mine]"), 1)
+        self.assertIn("あとから書いた返信", b.text("[data-diffnote-mine]"))
+        # The menu is shut until it is opened.
+        panel = "[data-diffnote-mine] .diffnote-comment__panel"
+        self.assertTrue(b.js(f"document.querySelector({json.dumps(panel)}).hidden"))
+        b.click("[data-diffnote-mine] [data-diffnote-comment-menu]")
+        self.assertFalse(b.js(f"document.querySelector({json.dumps(panel)}).hidden"))
+
+    def test_a_comment_of_another_name_is_asked_about_before_it_is_edited_or_deleted(self):
+        self.serve()
+        b = self.b
+        others = "[data-diffnote-comment]:not([data-diffnote-mine])"
+        card = self.card("mul の型")
+        first = f"#{card} {others}"
+        self.assertTrue(b.exists(first))
+        # Edit: a warning first, and nothing changes if it is declined.
+        b.click(f"{first} [data-diffnote-edit]")
+        self.assertTrue(b.wait_exists(f"{first} [data-diffnote-warn]"))
+        warning = b.text(f"{first} [data-diffnote-warn]")
+        self.assertIn("reviewer", warning)
+        self.assertIn("検証者", warning)
+        self.assertFalse(b.exists("[data-diffnote-edit-form]"))
+        b.click(f"{first} [data-diffnote-warn-cancel]")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(first + ' [data-diffnote-warn]')})"))
+        # Agreed: it can be edited, whoever wrote it and whenever.
+        b.click(f"{first} [data-diffnote-edit]")
+        self.assertTrue(b.wait_exists(f"{first} [data-diffnote-warn]"))
+        b.click(f"{first} [data-diffnote-warn-ok]")
+        self.assertTrue(b.wait_exists("[data-diffnote-edit-form] textarea"))
+        self.write("[data-diffnote-edit-form] textarea", "型は number を想定します。")
+        b.js("document.querySelector('[data-diffnote-edit-form]').requestSubmit()")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-edit-form]')"))
+        out = show(self.review)
+        self.assertIn("型は number を想定します。", out)
+        self.assertNotIn("mul の型を確認してください。", out)
+
+    def test_deleting_a_thread_of_another_name_says_what_goes_with_it(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        self.reply_to(card, "自分の返信")
+        b.click(f"#{card} [data-diffnote-comment]:not([data-diffnote-mine]) [data-diffnote-delete]")
+        self.assertTrue(b.wait_exists(f"#{card} [data-diffnote-warn]"))
+        warning = b.text(f"#{card} [data-diffnote-warn]")
+        self.assertIn("reviewer", warning, "whose it is")
+        self.assertIn("スレッド全体が削除されます", warning)
+        self.assertIn("返信 1 件", warning)
+        self.assertIn("mul の型", show(self.review), "nothing is deleted before it is agreed")
+        b.click(f"#{card} [data-diffnote-warn-ok]")
+        self.assertTrue(b.wait(f"!document.getElementById({card!r})"))
+        out = show(self.review)
+        self.assertNotIn("mul の型を確認してください。", out)
+        self.assertNotIn("自分の返信", out, "the reply went with it")
 
     def test_a_comment_of_this_session_can_be_edited(self):
         self.serve()
         b = self.b
         card = self.card("mul の型")
         self.reply_to(card, "書き間違えた")
-        b.click("[data-diffnote-edit]")
+        b.click("[data-diffnote-mine] [data-diffnote-edit]")
         self.assertTrue(b.wait_exists("[data-diffnote-edit-form] textarea"))
         self.assertEqual(b.value("[data-diffnote-edit-form] textarea"), "書き間違えた", "the text as written")
         self.write("[data-diffnote-edit-form] textarea", "書き直した")
@@ -203,7 +255,7 @@ class Replies(ServedCase):
         self.assertIn("書き直した", out)
         self.assertNotIn("書き間違えた", out)
         # Cancelling leaves it alone.
-        b.click("[data-diffnote-edit]")
+        b.click("[data-diffnote-mine] [data-diffnote-edit]")
         self.assertTrue(b.wait_exists("[data-diffnote-edit-form]"))
         self.write("[data-diffnote-edit-form] textarea", "やっぱりやめた")
         b.js("Array.from(document.querySelectorAll('[data-diffnote-edit-form] button')).find(function(x){return x.textContent==='キャンセル'}).click()")
@@ -215,15 +267,18 @@ class Replies(ServedCase):
         b = self.b
         card = self.card("mul の型")
         self.reply_to(card, "消したい返信")
-        b.js("window.confirm=function(){window.__asked=true; return false}")
-        b.click("[data-diffnote-delete]")
-        self.assertTrue(b.js("window.__asked"))
+        mine = "[data-diffnote-mine]"
+        b.click(f"{mine} [data-diffnote-delete]")
+        self.assertTrue(b.wait_exists(f"{mine} [data-diffnote-warn]"), "asked first")
+        b.click(f"{mine} [data-diffnote-warn-cancel]")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(mine + ' [data-diffnote-warn]')})"))
         self.assertIn("消したい返信", show(self.review), "declined: still there")
-        b.js("window.confirm=function(){return true}")
-        b.click("[data-diffnote-delete]")
+        b.click(f"{mine} [data-diffnote-delete]")
+        self.assertTrue(b.wait_exists(f"{mine} [data-diffnote-warn-ok]"))
+        b.click(f"{mine} [data-diffnote-warn-ok]")
         self.assertTrue(b.wait("!document.body.textContent.includes('消したい返信')"))
         self.assertNotIn("消したい返信", show(self.review))
-        self.assertEqual(b.count("[data-diffnote-delete]"), 0)
+        self.assertEqual(b.count("[data-diffnote-mine]"), 0)
         self.assertTrue(b.js(f"!!document.getElementById({card!r})"), "the thread stays")
 
     def test_a_new_thread_can_be_taken_out_again_with_what_it_was_given(self):
@@ -234,8 +289,9 @@ class Replies(ServedCase):
         b.js("document.querySelector('.diffnote-compose').requestSubmit()")
         self.assertTrue(b.wait("document.body.textContent.includes('やっぱり要らない全体コメント') && !document.querySelector('.diffnote-compose-wrap')"))
         threads = self.counts()
-        b.js("window.confirm=function(){return true}")
-        b.click("[data-diffnote-global] [data-diffnote-delete]")
+        b.click("[data-diffnote-global] [data-diffnote-mine] [data-diffnote-delete]")
+        self.assertTrue(b.wait_exists("[data-diffnote-global] [data-diffnote-warn-ok]"))
+        b.click("[data-diffnote-global] [data-diffnote-warn-ok]")
         self.assertTrue(b.wait("!document.body.textContent.includes('やっぱり要らない全体コメント')"))
         self.assertNotEqual(self.counts(), threads)
         self.assertNotIn("やっぱり要らない全体コメント", show(self.review))
