@@ -57,12 +57,8 @@ pub fn tree(body: &str) -> Vec<Value> {
                         push(&mut stack, child);
                     }
                     continue;
-                } else if node["t"] == "img" {
-                    for child in children {
-                        push(&mut stack, child);
-                    }
-                    continue;
-                } else if node["t"] == "skip" {
+                } else if matches!(node["t"].as_str(), Some("img" | "skip")) {
+                    // Not drawn as such: what is inside stays.
                     for child in children {
                         push(&mut stack, child);
                     }

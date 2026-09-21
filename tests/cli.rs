@@ -241,9 +241,7 @@ fn a_directory_review_over_several_sessions() {
     assert_eq!(model["revisions"].as_array().unwrap().len(), 2);
     for body in ["why uppercase?", "overall remark", "new line"] {
         // One thread, which every revision's view has (placed in each).
-        let id = thread_saying(&model, &format!("<p>{body}</p>"))["id"]
-            .as_str()
-            .unwrap();
+        let id = thread_saying(&model, body)["id"].as_str().unwrap();
         for rev in model["revisions"].as_array().unwrap() {
             assert!(rev["placements"].get(id).is_some(), "{body} in every view");
         }
@@ -960,7 +958,7 @@ fn thread_saying<'a>(model: &'a serde_json::Value, text: &str) -> &'a serde_json
         .as_array()
         .unwrap()
         .iter()
-        .find(|t| t["comments"][0]["html"].as_str().unwrap().contains(text))
+        .find(|t| t["comments"][0]["doc"].to_string().contains(text))
         .unwrap_or_else(|| panic!("no thread says {text:?}"))
 }
 
