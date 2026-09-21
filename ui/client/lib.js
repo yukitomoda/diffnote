@@ -81,7 +81,7 @@
     if (row.n != null && cover.new[row.n]) ids = ids.concat(cover.new[row.n]);
     if (row.o != null && cover.old[row.o]) ids = ids.concat(cover.old[row.o]);
     return ids.filter(function (id, i) {
-      return i === 0 || ids[i - 1] !== id;
+      return ids.indexOf(id) === i;
     });
   };
 

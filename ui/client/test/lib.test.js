@@ -45,7 +45,7 @@ test('coverage puts each thread on the lines of its range, on the side it is on'
 
 test('a row is covered on either of its numbers, each thread once in a row', () => {
   const cover = { new: { 3: ['a', 'b'] }, old: { 2: ['b'], 3: ['a'] } };
-  assert.deepEqual(lib.covering(cover, { k: 'c', o: 3, n: 3 }), ['a', 'b', 'a']);
+  assert.deepEqual(lib.covering(cover, { k: 'c', o: 3, n: 3 }), ['a', 'b']);
   assert.deepEqual(lib.covering(cover, { k: 'c', o: 2, n: 3 }), ['a', 'b']);
   assert.deepEqual(lib.covering(cover, { k: 'a', n: 3 }), ['a', 'b']);
   assert.deepEqual(lib.covering(cover, { k: 'd', o: 2 }), ['b']);
@@ -205,4 +205,10 @@ test('of the threads on a line only the shown ones count while resolved ones are
   assert.deepEqual(lib.shownIds(['a', 'b'], byId, true), ['b']);
   assert.deepEqual(lib.shownIds(['a', 'b'], byId, false), ['a', 'b']);
   assert.deepEqual(lib.shownIds(['a', 'c'], byId, true), []);
+});
+
+test('a thread that covers both the old and the new line of a row is one of the row\'s threads, not two', () => {
+  const cover = { new: { 46: ['a', 'b', 'c'] }, old: { 38: ['a', 'b', 'c'] } };
+  assert.deepEqual(lib.covering(cover, { o: 38, n: 46 }), ['a', 'b', 'c']);
+  assert.deepEqual(lib.covering({ new: { 1: ['a', 'b'] }, old: { 1: ['b', 'c'] } }, { o: 1, n: 1 }), ['a', 'b', 'c']);
 });
