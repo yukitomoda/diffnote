@@ -105,6 +105,15 @@ class StaticExport(BrowserCase):
         b.reload()
         self.assertTrue(b.js("document.querySelector('[data-diffnote-hide-resolved]').checked"), "kept: hidden")
 
+    def test_the_file_badges_count_the_threads_that_are_shown(self):
+        b = self.b
+        badge = f"{CUR} .diffnote-filelist .diffnote-badge"
+        total = lambda: b.js("Array.from(document.querySelectorAll(%s)).reduce(function(n,e){return n+Number(e.textContent)},0)" % json.dumps(badge))
+        # Of the 4 threads, one is the whole review's (in no file) and one is resolved.
+        self.assertEqual(total(), 2)
+        b.click("[data-diffnote-hide-resolved]")
+        self.assertEqual(total(), 3)
+
     def test_a_line_that_only_a_resolved_thread_is_about_loses_its_mark_while_hidden(self):
         b = self.b
         b.click("[data-diffnote-revision-link='0']")

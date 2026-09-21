@@ -408,7 +408,10 @@
       <summary>ファイル</summary>
       <nav class="diffnote-filelist"><ul>
         ${ctx.revision.files.map(function (f) {
-          var n = lib.threadsOfFile(ctx.order, ctx.placements, f.path).length;
+          // The threads that are shown: resolved ones don't count while hidden.
+          var n = lib.threadsOfFile(ctx.order, ctx.placements, f.path).filter(function (id) {
+            return !(ctx.hideResolved && ctx.byId[id].resolved);
+          }).length;
           return html`<li key=${f.path}><a href=${'#r' + ctx.rev + '-file-' + htmlId(f.path)}>${f.path}</a>${n > 0 && html` <span class="diffnote-badge">${n}</span>`}</li>`;
         })}
       </ul></nav>
@@ -546,7 +549,7 @@
       placements: revision.placements, hideResolved: props.hideResolved, layout: props.layout,
     };
     var globals = order.filter(function (id) { return revision.placements[id].kind === 'global'; });
-    var listOrder = { model: model, rev: rev, revision: Object.assign({}, revision, { files: files }), byId: byId, order: revision.order, placements: revision.placements };
+    var listOrder = { model: model, rev: rev, revision: Object.assign({}, revision, { files: files }), hideResolved: props.hideResolved, byId: byId, order: revision.order, placements: revision.placements };
 
     // The file list marks the files that are on screen.
     useEffect(function () {
