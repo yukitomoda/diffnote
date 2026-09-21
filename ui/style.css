@@ -174,3 +174,28 @@ body.is-selecting { user-select: none; }
   .diffnote-file > details > summary { top: 0; position: static; }
   .diffnote-thread-row > td { padding-left: 12px !important; }
 }
+
+/* The layout switch in the top bar. */
+.diffnote-layout { display: flex; margin-left: auto; border: 1px solid var(--diffnote-color-border); border-radius: 6px; overflow: hidden; background: var(--diffnote-color-bg); }
+.diffnote-layout + .diffnote-toggle { margin-left: 16px; }
+.diffnote-layout__button { font: inherit; font-size: 12.5px; padding: 2px 12px; color: var(--diffnote-color-muted); background: none; border: 0; cursor: pointer; }
+.diffnote-layout__button + .diffnote-layout__button { border-left: 1px solid var(--diffnote-color-border); }
+.diffnote-layout__button:hover { color: var(--diffnote-color-fg); background: var(--diffnote-color-gutter); }
+.diffnote-layout__button.is-current { color: var(--diffnote-color-fg); font-weight: 600; background: var(--diffnote-color-gutter); }
+
+/* Side by side: the old file on the left, the new on the right; long lines
+   wrap, since the two columns share the width. */
+.diffnote-diff--split { table-layout: fixed; }
+.diffnote-diff--split .diffnote-col-gutter { width: 3.6em; }
+.diffnote-diff--split .diffnote-line__content { width: auto; white-space: pre-wrap; word-break: break-all; overflow-wrap: anywhere; }
+.diffnote-diff--split .diffnote-line__gutter-new { border-left: 1px solid var(--diffnote-color-border); }
+.diffnote-diff--split td.diffnote-line__gutter-old, .diffnote-diff--split td.diffnote-line__gutter-new { width: auto; min-width: 0; }
+.diffnote-diff--split .diffnote-cell--removed { background: var(--diffnote-color-removed-bg); }
+.diffnote-diff--split .diffnote-cell--added { background: var(--diffnote-color-added-bg); }
+.diffnote-diff--split .diffnote-line__gutter-old.diffnote-cell--removed, .diffnote-diff--split .diffnote-line__gutter-new.diffnote-cell--removed { background: var(--diffnote-color-removed-gutter); }
+.diffnote-diff--split .diffnote-line__gutter-old.diffnote-cell--added, .diffnote-diff--split .diffnote-line__gutter-new.diffnote-cell--added { background: var(--diffnote-color-added-gutter); }
+.diffnote-diff--split .diffnote-cell--empty { background: var(--diffnote-color-gutter); }
+.diffnote-diff--split .diffnote-line__content.diffnote-cell--removed::before { content: "-"; }
+.diffnote-diff--split .diffnote-line__content.diffnote-cell--added::before { content: "+"; }
+.diffnote-diff--split td.diffnote-gutter--commented { --dn-l: var(--diffnote-bars); color: var(--diffnote-color-fg); font-weight: 600; }
+.diffnote-diff--split .diffnote-thread-row > td { padding-left: 16px !important; }

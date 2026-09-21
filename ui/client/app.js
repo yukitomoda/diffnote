@@ -123,6 +123,68 @@
     return html`<div class="diffnote-diff-scroll"><table class="diffnote-diff"><tbody>${out}</tbody></table></div>`;
   }
 
+  // The same rows side by side: what a file was on the left, what it is on the
+  // right. A run of removed rows sits beside the run of added rows after it.
+  // A thread's mark (its color bar) is on the gutter of the side it is on; its
+  // range, when hovered, is shown on the whole row.
+  function SplitTable(props) {
+    var file = props.file;
+    var ctx = props.ctx;
+    var cover = useMemo(
+      function () {
+        return lib.coverage(ctx.order, ctx.placements, file.path);
+      },
+      [ctx.order, ctx.placements, file.path]
+    );
+    var after = useMemo(
+      function () {
+        return lib.cardsAfter(ctx.order, ctx.placements, file.path);
+      },
+      [ctx.order, ctx.placements, file.path]
+    );
+    var hidden = function (ids) {
+      return ctx.hideResolved && ids.length > 0 && ids.every(function (id) { return ctx.byId[id].resolved; });
+    };
+    var cellKind = function (row, side) {
+      if (!row) return 'empty';
+      return row.k === 'c' ? 'context' : side === 'old' ? 'removed' : 'added';
+    };
+    var out = [];
+    file.hunks.forEach(function (hunk, hi) {
+      out.push(html`<tr class="diffnote-hunk-header" key=${'h' + hi}><td colspan="4">${hunk.header}</td></tr>`);
+      lib.pairRows(hunk.rows).forEach(function (pair, pi) {
+        var l = pair.left;
+        var r = pair.right;
+        var idsL = l && l.o != null ? cover.old[l.o] || [] : [];
+        var idsR = r && r.n != null ? cover.new[r.n] || [] : [];
+        var ids = idsL.concat(idsR.filter(function (id) { return idsL.indexOf(id) < 0; }));
+        var shownL = idsL.length > 0 && !hidden(idsL);
+        var shownR = idsR.length > 0 && !hidden(idsR);
+        var bars = function (side) {
+          return '--diffnote-bars: ' + lib.bars(side.map(function (id) { return ctx.placements[id].color; }));
+        };
+        var kl = cellKind(l, 'old');
+        var kr = cellKind(r, 'new');
+        out.push(html`<tr class="diffnote-split-row" key=${hi + ':' + pi} data-diffnote-threads=${ids.length ? ids.join(' ') : undefined}>
+          <td class=${'diffnote-line__gutter-old diffnote-cell--' + kl + (shownL ? ' diffnote-gutter--commented' : '')} style=${shownL ? bars(idsL) : undefined}>${l && l.o != null ? l.o : ''}</td>
+          <td class=${'diffnote-line__content diffnote-cell--' + kl}>${l && html`<code dangerouslySetInnerHTML=${{ __html: l.h }}></code>`}</td>
+          <td class=${'diffnote-line__gutter-new diffnote-cell--' + kr + (shownR ? ' diffnote-gutter--commented' : '')} style=${shownR ? bars(idsR) : undefined}>${r && r.n != null ? r.n : ''}</td>
+          <td class=${'diffnote-line__content diffnote-cell--' + kr}>${r && html`<code dangerouslySetInnerHTML=${{ __html: r.h }}></code>`}</td>
+        </tr>`);
+        // The cards of the pair: those of its new-side line, then its old-side line.
+        var cards = lib.cardsOfRow(after, r || {});
+        if (l && l !== r) cards = cards.concat(lib.cardsOfRow(after, { o: l.o }));
+        cards.forEach(function (id) {
+          out.push(html`<tr class="diffnote-thread-row" key=${'c' + id}><td colspan="4"><${Card} rev=${ctx.rev} thread=${ctx.byId[id]} placement=${ctx.placements[id]} /></td></tr>`);
+        });
+      });
+    });
+    return html`<div class="diffnote-diff-scroll"><table class="diffnote-diff diffnote-diff--split">
+      <colgroup><col class="diffnote-col-gutter" /><col /><col class="diffnote-col-gutter" /><col /></colgroup>
+      <tbody>${out}</tbody>
+    </table></div>`;
+  }
+
   // A file: its own threads, its diff (drawn when it is first opened), and
   // the threads that could not be placed in it.
   function File(props) {
@@ -144,7 +206,7 @@
         </summary>
         ${fileThreads.map(function (id) { return html`<${Card} key=${id} rev=${ctx.rev} thread=${ctx.byId[id]} placement=${ctx.placements[id]} />`; })}
         ${missing && html`<p class="diffnote-file__missing">このファイルは指定したdiffに含まれていません(コメント作成時点と異なるdiffを指定している可能性があります)。</p>`}
-        ${opened && file.hunks.length > 0 && html`<${DiffTable} file=${file} ctx=${ctx} />`}
+        ${opened && file.hunks.length > 0 && (ctx.layout === 'split' ? html`<${SplitTable} file=${file} ctx=${ctx} />` : html`<${DiffTable} file=${file} ctx=${ctx} />`)}
         ${unplaced.length > 0 && html`<section class="diffnote-outdated">
           <h3>未配置のコメント</h3>
           ${unplaced.map(function (id) {
@@ -206,7 +268,7 @@
     var order = useMemo(function () { return model.threads.map(function (t) { return t.id; }); }, [model]);
     var ctx = {
       model: model, rev: rev, revision: revision, byId: byId, order: order,
-      placements: revision.placements, hideResolved: props.hideResolved,
+      placements: revision.placements, hideResolved: props.hideResolved, layout: props.layout,
     };
     var globals = order.filter(function (id) { return revision.placements[id].kind === 'global'; });
     var listOrder = { model: model, rev: rev, revision: revision, byId: byId, order: revision.order, placements: revision.placements };
@@ -241,6 +303,25 @@
     </section>`;
   }
 
+  // Whether the window is wide enough for two columns of code.
+  function useWide() {
+    var query = '(min-width: 900px)';
+    var _ = useState(window.matchMedia(query).matches);
+    var wide = _[0];
+    var setWide = _[1];
+    useEffect(function () {
+      var mq = window.matchMedia(query);
+      var on = function () { setWide(mq.matches); };
+      if (mq.addEventListener) mq.addEventListener('change', on);
+      else mq.addListener(on);
+      return function () {
+        if (mq.removeEventListener) mq.removeEventListener('change', on);
+        else mq.removeListener(on);
+      };
+    }, []);
+    return wide;
+  }
+
   function revisionFromHash(model) {
     var m = /^#rev-(\d+)$/.exec(location.hash);
     if (m && +m[1] < model.revisions.length) return +m[1];
@@ -257,12 +338,18 @@
     var hide = _h[0];
     var setHide = _h[1];
     var counts = lib.counts(model.threads);
+    // Side by side, if chosen and there is room for two columns.
+    var _l = useState(kept('diffnote-layout', 'unified') === 'split' ? 'split' : 'unified');
+    var chosen = _l[0];
+    var setChosen = _l[1];
+    var wide = useWide();
+    var layout = chosen === 'split' && wide ? 'split' : 'unified';
 
     // At once (not after the next paint): the style that hides cards hangs on it.
     useLayoutEffect(function () {
       document.body.classList.toggle('diffnote-hide-resolved', hide);
       D.interact.reset();
-    }, [hide, current]);
+    }, [hide, current, layout]);
 
     return html`<article class="diffnote-review">
       <div class="diffnote-topbar">
@@ -276,13 +363,19 @@
               onClick=${function (e) { e.preventDefault(); setCurrent(i); }}>${r.label}</a></li>`;
           })}
         </ul></nav>`}
+        ${wide && html`<div class="diffnote-layout" role="group" aria-label="差分の表示">
+          ${[['unified', '統合'], ['split', '横並び']].map(function (o) {
+            return html`<button type="button" key=${o[0]} data-diffnote-layout=${o[0]} class=${'diffnote-layout__button' + (o[0] === layout ? ' is-current' : '')}
+              onClick=${function () { keep('diffnote-layout', o[0]); setChosen(o[0]); }}>${o[1]}</button>`;
+          })}
+        </div>`}
         ${counts.resolved > 0 && html`<label class="diffnote-toggle">
           <input type="checkbox" data-diffnote-hide-resolved checked=${hide}
             onChange=${function (e) { keep('diffnote-hide-resolved', e.target.checked ? '1' : '0'); setHide(e.target.checked); }} />
           解決済みを隠す<span class="diffnote-toggle__count" data-diffnote-resolved-count>${'(' + counts.resolved + ')'}</span>
         </label>`}
       </div>
-      <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} />
+      <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} />
     </article>`;
   }
 
