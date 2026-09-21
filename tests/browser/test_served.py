@@ -325,6 +325,16 @@ class SideBySideLines(ClientServed):
         self.assertEqual(b.count(f"{CUR} {LOGIN} td.is-picked"), 2, "one cell's number and text, on the old side")
         self.assertEqual(b.value(".diffnote-composer-row textarea"), "書きかけ")
 
+    def test_cards_between_are_not_selected_along_with_one_side(self):
+        self.serve_split()
+        b = self.b
+        b.js("document.querySelector(\"td.diffnote-line__gutter-new[data-diffnote-new='3']\").nextElementSibling.setAttribute('data-t','x')")
+        b.drag("[data-t=x]", "[data-t=x]")
+        # Everything in a card (its text, the reply box, the buttons) can't be selected.
+        selectable = b.js("Array.from(document.querySelectorAll('.diffnote-diff--split .diffnote-thread-row, .diffnote-diff--split .diffnote-thread-row *')).filter(function(e){return getComputedStyle(e).userSelect!=='none'}).map(function(e){return e.tagName})")
+        self.assertEqual(selectable, [])
+        self.assertGreater(b.count(".diffnote-diff--split .diffnote-thread-row textarea"), 0)
+
     def test_changing_the_layout_lets_go_of_the_choice(self):
         self.serve_split()
         b = self.b
