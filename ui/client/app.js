@@ -1200,7 +1200,7 @@
             : model.title || DEFAULT_TITLE}</h1>
           ${model.base && html`<p data-diffnote-base title="すべてのリビジョンは、これと比べた差分です">ベース: ${model.base.kind === 'git' ? html`<code>${model.base.id}</code>` : lib.formatTime(model.base.at)}</p>`}
         </header>
-        ${model.revisions.length > 1 && html`<nav class="diffnote-revisions"><ul>
+        ${model.revisions.length > 0 && html`<nav class="diffnote-revisions"><ul>
           ${model.revisions.map(function (r, i) {
             return html`<li key=${i}><a href=${'#rev-' + i} data-diffnote-revision-link=${i} class=${i === current ? 'is-current' : ''}
               onClick=${function (e) { e.preventDefault(); setCurrent(i); }}>${r.label}</a></li>`;

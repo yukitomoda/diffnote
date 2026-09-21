@@ -655,7 +655,7 @@ class ServeAddsTheLatestDiff(ServedCase):
         assert harness.diffnote("init", "-f", review, "c1", cwd=repo).returncode == 0
         self.open_page(Served(review, cwd=repo))
         b = self.b
-        self.assertEqual(b.js("document.querySelectorAll('[data-diffnote-revision-link]').length"), 0, "one revision: no list")
+        self.assertEqual(b.js("document.querySelectorAll('[data-diffnote-revision-link]').length"), 1, "one revision: its tab is shown")
         harness.write(repo, "long.txt", "".join(f"new {n}\n" for n in range(1, 101)))
         harness.git(repo, "commit", "-q", "-am", "c3")
         before = entries(review)
