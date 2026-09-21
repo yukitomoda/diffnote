@@ -730,6 +730,27 @@ class Images(ServedCase):
         self.assertTrue(b.js("document.querySelector('a.diffnote-attachment').getAttribute('href').startsWith('data:application/octet-stream;base64,')"))
         self.assertEqual(b.js("document.querySelector('a.diffnote-attachment').getAttribute('download')"), "notes.txt")
 
+    def test_a_file_dropped_on_a_box_is_attached_and_the_box_says_it_can_take_it(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        js = """(function(sel, type){
+          var dt = new DataTransfer(); dt.items.add(new File([new TextEncoder().encode('dropped data')], 'dropped.txt', {type: 'text/plain'}));
+          var ta = document.querySelector(sel);
+          var ev = new DragEvent(type, {dataTransfer: dt, bubbles: true, cancelable: true});
+          ta.dispatchEvent(ev);
+          return [ev.defaultPrevented, ta.classList.contains('is-dropping')];
+        })(%s, %s)"""
+        over = b.js(js % (json.dumps(box), json.dumps("dragover")))
+        self.assertEqual(over, [True, True], "the browser is told it may drop here, and the box shows it")
+        b.js(js % (json.dumps(box), json.dumps("dragleave")))
+        self.assertFalse(b.js(f"document.querySelector({json.dumps(box)}).classList.contains('is-dropping')"))
+        dropped = b.js(js % (json.dumps(box), json.dumps("drop")))
+        self.assertEqual(dropped[0], True, "the browser does not open the file itself")
+        self.assertTrue(b.wait("!!document.querySelector('[data-diffnote-attach-status]') && document.querySelector('[data-diffnote-attach-status]').textContent.includes('「dropped.txt」を添付しました')"))
+        self.assertRegex(b.js(f"document.querySelector({json.dumps(box)}).value"), r"\[dropped\.txt\]\(diffnote-file:[0-9a-f]{64}\)")
+
     def test_a_file_over_the_reviews_limit_is_told_so_and_not_sent(self):
         self.serve()
         b = self.b

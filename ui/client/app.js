@@ -185,11 +185,17 @@
           if (send(e.clipboardData && e.clipboardData.files, e.currentTarget)) e.preventDefault();
         },
         onDrop: function (e) {
+          e.currentTarget.classList.remove('is-dropping');
           if (send(e.dataTransfer && e.dataTransfer.files, e.currentTarget)) e.preventDefault();
         },
+        // Over a box with a file: it says it can take it.
         onDragOver: function (e) {
-          if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0) e.preventDefault();
+          if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0) {
+            e.preventDefault();
+            e.currentTarget.classList.add('is-dropping');
+          }
         },
+        onDragLeave: function (e) { e.currentTarget.classList.remove('is-dropping'); },
       } : {},
       // The button that opens the file chooser, and the note under the box.
       picker: function (field) {
