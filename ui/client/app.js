@@ -801,6 +801,8 @@
   function markdown(nodes, links, inLink) {
     return (nodes || []).map(function (n, i) {
       if (typeof n === 'string') {
+        // `:+1:` is 👍 (the text as written is kept; it is only shown so).
+        n = lib.withShortcodes(D.emoji || [], n);
         if (!links || inLink) return n;
         // `src/a.ts:10-13` in the text goes to those lines.
         return lib.lineRefs(n, links.has, links.revisions).map(function (piece, j) {
@@ -1231,7 +1233,7 @@
                   D.interact.jumpWhenShown('r' + ctx.rev + '-thread-' + id);
                 }
               }}>
-              <span class="diffnote-thread__swatch" style=${'background:' + color}></span><span class="diffnote-threadlist__where">${lib.shortLocation(p)}</span>${t.resolved && html`<span class="diffnote-threadlist__state">解決済み</span>`}<span class="diffnote-threadlist__preview">${lib.preview((t.comments.filter(function (c) { return !c.deleted; })[0] || t.comments[0]).doc) || '(削除されました)'}</span>
+              <span class="diffnote-thread__swatch" style=${'background:' + color}></span><span class="diffnote-threadlist__where">${lib.shortLocation(p)}</span>${t.resolved && html`<span class="diffnote-threadlist__state">解決済み</span>`}<span class="diffnote-threadlist__preview">${lib.withShortcodes(D.emoji || [], lib.preview((t.comments.filter(function (c) { return !c.deleted; })[0] || t.comments[0]).doc)) || '(削除されました)'}</span>
             </a>
           </li>`;
         })}

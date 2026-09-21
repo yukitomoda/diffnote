@@ -1153,6 +1153,25 @@ class EmojiTable(ServedCase):
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-emoji-panel]')"))
         self.assertEqual(b.value(box), "🎉", "nothing was added")
 
+    def test_a_shortcode_is_shown_as_its_emoji_and_the_text_stays_as_written(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        self.write(box, "承認 :+1: :tada: 時刻 12:30:45 :nope: `:bug:`")
+        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
+        body = f"#{card} [data-diffnote-mine] .diffnote-comment__body"
+        self.assertTrue(b.wait(f"!document.querySelector('.is-pending') && !!document.querySelector({json.dumps(body)})"))
+        self.assertEqual(b.text(body), "承認 👍 🎉 時刻 12:30:45 :nope: :bug:", "code is left as it is")
+        self.assertIn(":+1: :tada:", show(self.review), "what was written is what is kept")
+        # The same in a page that only shows the review.
+        exported = b.js("fetch('/export').then(r => r.text())")
+        path = os.path.join(self.fresh("export"), "emoji.html")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(exported)
+        b.open(pathlib.Path(path).as_uri(), ready="!!document.querySelector('.diffnote-comment__body')")
+        self.assertTrue(b.js("[...document.querySelectorAll('.diffnote-comment__body')].some(e => e.textContent.includes('承認 👍 🎉'))"))
+
     def write_search(self, text):
         self.b.js("var t=document.querySelector('[data-diffnote-emoji-search]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(t,%s); t.dispatchEvent(new Event('input',{bubbles:true}))" % json.dumps(text))
         time.sleep(0.1)
