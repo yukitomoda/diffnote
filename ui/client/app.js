@@ -322,6 +322,14 @@
         case 'hr': return h('hr', { key: i });
         case 'em': return h('em', { key: i }, kids);
         case 'strong': return h('strong', { key: i }, kids);
+        case 'del': return h('del', { key: i }, kids);
+        case 'table': return h('div', { key: i, class: 'diffnote-table' }, h('table', null, (n.c || []).map(function (row, r) {
+          var head = row.t === 'thead';
+          return h(head ? 'thead' : 'tbody', { key: r }, h('tr', null, (row.c || []).map(function (cell, j) {
+            var al = { l: 'left', c: 'center', r: 'right' }[(n.al || [])[j]];
+            return h(head ? 'th' : 'td', { key: j, style: al ? 'text-align:' + al : undefined }, markdown(cell.c));
+          })));
+        })));
         case 'code': return h('code', { key: i }, n.s || '');
         case 'br': return h('br', { key: i });
         case 'a':

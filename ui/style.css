@@ -169,6 +169,10 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-comment__body { font-size: 14px; }
 .diffnote-comment__body p { margin: 2px 0; }
 .diffnote-comment__body pre { overflow-x: auto; background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; padding: 8px 12px; font-family: var(--diffnote-font-mono); font-size: 12.5px; }
+.diffnote-table { overflow-x: auto; margin: 6px 0; }
+.diffnote-comment__body table { border-collapse: collapse; font-size: 13px; }
+.diffnote-comment__body th, .diffnote-comment__body td { border: 1px solid var(--diffnote-color-border); padding: 3px 10px; }
+.diffnote-comment__body th { background: var(--diffnote-color-gutter); }
 .diffnote-comment__body code { font-family: var(--diffnote-font-mono); font-size: 12.5px; }
 .diffnote-deleted__snippet { margin: 6px 0; padding: 4px 8px; background: var(--diffnote-color-removed-bg); font-family: var(--diffnote-font-mono); font-size: 12.5px; white-space: pre-wrap; border-radius: 4px; }
 .diffnote-outdated { padding: 8px 12px; background: #fffbea; border-top: 1px solid var(--diffnote-color-border); }

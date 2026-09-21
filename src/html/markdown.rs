@@ -10,11 +10,13 @@
 //! - blocks: `p` (paragraph), `h` (`l` the level), `quote`, `ul`, `ol` (`start`),
 //!   `li` (the children of an item are blocks, or, in a tight list, text and
 //!   inline nodes directly), `pre` (`s` the code, `lang`), `hr`;
-//! - inline: `em`, `strong`, `code` (`s`), `a` (`href`), `br`.
+//! - tables: `table` (`al` the columns' alignments: `l`, `c`, `r` or `""`) of
+//!   `thead` (its cells) and `tr`s (their cells), a cell being `td`;
+//! - inline: `em`, `strong`, `del`, `code` (`s`), `a` (`href`), `br`.
 //!
-//! Others (images, tables, footnotes, ...) are not drawn as such: their text is.
+//! Others (images, footnotes, ...) are not drawn as such: their text is.
 
-use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use serde_json::{Value, json};
 
 /// The nodes of `body`.
@@ -34,7 +36,8 @@ pub fn tree(body: &str) -> Vec<Value> {
         }
     }
 
-    for event in Parser::new(body) {
+    let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH;
+    for event in Parser::new_ext(body, options) {
         match event {
             Event::Start(tag) => {
                 if let Tag::CodeBlock(_) = tag {
@@ -108,6 +111,22 @@ fn open(tag: &Tag) -> Value {
         Tag::Item => json!({ "t": "li" }),
         Tag::Emphasis => json!({ "t": "em" }),
         Tag::Strong => json!({ "t": "strong" }),
+        Tag::Strikethrough => json!({ "t": "del" }),
+        Tag::Table(aligns) => {
+            let al: Vec<&str> = aligns
+                .iter()
+                .map(|a| match a {
+                    Alignment::Left => "l",
+                    Alignment::Center => "c",
+                    Alignment::Right => "r",
+                    Alignment::None => "",
+                })
+                .collect();
+            json!({ "t": "table", "al": al })
+        }
+        Tag::TableHead => json!({ "t": "thead" }),
+        Tag::TableRow => json!({ "t": "tr" }),
+        Tag::TableCell => json!({ "t": "td" }),
         Tag::Link { dest_url, .. } => {
             if safe_link(dest_url) {
                 json!({ "t": "a", "href": dest_url.as_ref() })
@@ -215,6 +234,20 @@ mod tests {
         assert!(out.contains(r#""t":"ol""#) && out.contains(r#""start":1"#));
         assert!(out.contains(r#""t":"quote""#) && out.contains(r#""t":"hr""#));
         assert!(out.contains(r#""t":"br""#));
+    }
+
+    #[test]
+    fn tables_and_strikethrough_are_nodes() {
+        assert_eq!(
+            json_of("|a|b|\n|:-|-:|\n|1|~~2~~|"),
+            r#"[{"al":["l","r"],"c":[{"c":[{"c":["a"],"t":"td"},{"c":["b"],"t":"td"}],"t":"thead"},{"c":[{"c":["1"],"t":"td"},{"c":[{"c":["2"],"t":"del"}],"t":"td"}],"t":"tr"}],"t":"table"}]"#
+        );
+        // Raw HTML in a cell is still text.
+        let out = json_of("|a|\n|-|\n|<b onclick=x>|");
+        assert!(
+            !out.contains(r#""t":"b""#) && out.contains("<b onclick=x>"),
+            "{out}"
+        );
     }
 
     #[test]

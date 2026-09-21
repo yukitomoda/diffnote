@@ -479,3 +479,4 @@ class BinaryFiles(BrowserCase):
         self.assertEqual(tint("new.bin"), "rgb(230, 255, 236)", "added: greenish")
         self.assertEqual(tint("gone.bin"), "rgb(255, 235, 233)", "deleted: reddish")
         self.assertNotIn(tint("same.bin"), (tint("new.bin"), tint("gone.bin")), "changed: as usual")
+

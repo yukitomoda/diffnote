@@ -436,6 +436,22 @@ class ThreadsOnFilesAndTheReview(ServedCase):
         self.assertTrue(self.same_page())
         self.assertIn("全体の方針について", show(self.review))
 
+    def test_a_table_and_struck_out_text_are_drawn_and_html_in_a_cell_is_text(self):
+        self.serve()
+        b = self.b
+        b.click(f"{CUR} [data-diffnote-add=global]")
+        self.write(".diffnote-compose textarea", "~~古い~~ 新しい\n\n|名前|値|\n|:-|-:|\n|x|1|\n|y|<b id=evil>|")
+        b.js("document.querySelector('.diffnote-compose').requestSubmit()")
+        body = f"{CUR} [data-diffnote-global] .diffnote-comment__body"
+        self.assertTrue(b.wait(f"!!document.querySelector({json.dumps(body + ' table')})"))
+        self.assertEqual(b.js(f"document.querySelector({json.dumps(body + ' del')}).textContent"), "古い")
+        self.assertEqual(b.count(body + " table th"), 2)
+        self.assertEqual(b.count(body + " table tr"), 3)
+        self.assertEqual(b.js(f"document.querySelectorAll({json.dumps(body + ' table td')})[0].style.textAlign"), "left")
+        self.assertEqual(b.js(f"document.querySelectorAll({json.dumps(body + ' table td')})[1].style.textAlign"), "right")
+        self.assertFalse(b.exists("#evil"), "HTML in a cell is not an element")
+        self.assertIn("<b id=evil>", b.js(f"document.querySelector({json.dumps(body + ' table')}).textContent"))
+
     def test_a_file_thread_is_added_to_the_file_and_the_box_can_be_closed_with_escape(self):
         self.serve()
         b = self.b
