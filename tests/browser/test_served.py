@@ -9,6 +9,7 @@ import harness
 from harness import BrowserCase, Served, entries, make_calc_review, make_gaps_review, make_login_review, show
 import os
 import shutil
+import subprocess
 
 CUR = ".diffnote-revision.is-current"
 
@@ -537,7 +538,7 @@ class ServeAddsTheLatestDiff(ServedCase):
     def test_the_commits_since_the_base_are_added_and_can_be_commented_on(self):
         self.start()
         b = self.b
-        self.assertTrue(any("最新の差分を記録しました" in l for l in self.server.said), self.server.said)
+        self.assertTrue(any("差分を記録しました" in l for l in self.server.said), self.server.said)
         self.assertEqual(entries(self.review), 3, "meta, the base, and the revision since")
         self.assertTrue(b.wait_exists("section.diffnote-file[data-diffnote-file='long.txt']"))
         b.js("document.querySelector('section.diffnote-file[data-diffnote-file=\"long.txt\"] details').open = true")
@@ -558,13 +559,68 @@ class ServeAddsTheLatestDiff(ServedCase):
         self.assertTrue(any("差分がまだありません" in n for n in server.notices), server.notices)
         self.assertEqual(entries(review), 2, "nothing was added")
 
+    def open_page(self, server):
+        self.server = server
+        self.addCleanup(server.stop)
+        self.b = self.browser
+        ready = "!!document.querySelector('.diffnote-file')"
+        self.b.open(server.url, ready=ready)
+
+    def test_a_range_can_be_named_and_makes_the_bundle_if_there_is_none(self):
+        review = os.path.join(self.fresh("review"), "named.diffnote")
+        server = Served(review, cwd=self.repo, extra=["c1..c2"])
+        self.open_page(server)
+        self.assertTrue(any("差分を記録しました" in l for l in server.said), server.said)
+        self.assertTrue(os.path.exists(review))
+        self.assertTrue(self.b.wait_exists("section.diffnote-file[data-diffnote-file='long.txt']"))
+        self.assertGreaterEqual(entries(review), 2)
+
+    def test_a_range_named_for_a_bundle_that_has_a_base_is_added_and_not_twice(self):
+        review = os.path.join(self.fresh("review"), "based.diffnote")
+        assert harness.diffnote("init", "-f", review, "c2", cwd=self.repo).returncode == 0
+        server = Served(review, cwd=self.repo, extra=["c1..c2"])
+        self.open_page(server)
+        added = entries(review)
+        self.assertEqual(added, 3, "meta, the base, and the range named")
+        server.stop()
+        again = Served(review, cwd=self.repo, extra=["c1..c2"])
+        self.addCleanup(again.stop)
+        self.assertFalse(any("差分を記録しました" in l for l in again.said), again.said)
+        self.assertEqual(entries(review), added)
+
+    def test_a_range_that_is_not_one_stops_serve_before_it_starts(self):
+        review = os.path.join(self.fresh("review"), "bad.diffnote")
+        out = subprocess.run([harness.BIN, "serve", "-f", review, "--no-open", "no-such-branch..c2"],
+                             cwd=self.repo, capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertFalse(os.path.exists(review))
+
+    def test_a_directory_bundle_takes_the_directory_named_and_nothing_when_none_is(self):
+        root = self.fresh("plain")
+        with open(os.path.join(root, "a.txt"), "w") as f:
+            f.write("one\ntwo\nthree\n")
+        review = os.path.join(self.fresh("review"), "files.diffnote")
+        assert harness.diffnote("init", "-f", review, cwd=root).returncode == 0
+        with open(os.path.join(root, "a.txt"), "w") as f:
+            f.write("one\nTWO\nthree\n")
+        # No directory named: nothing is added (the directory is not known).
+        quiet = Served(review, cwd=root)
+        self.assertFalse(any("差分を記録しました" in l or "変更を記録しました" in l for l in quiet.said), quiet.said)
+        quiet.stop()
+        self.assertEqual(entries(review), 2)
+        server = Served(review, cwd=root, extra=["."])
+        self.open_page(server)
+        self.assertTrue(any("ディレクトリの変更を記録しました" in l for l in server.said), server.said)
+        self.assertEqual(entries(review), 3)
+        self.assertTrue(self.b.wait_exists("section.diffnote-file[data-diffnote-file='a.txt']"))
+
     def test_serving_again_with_nothing_new_adds_nothing(self):
         self.start()
         self.server.stop()
         before = entries(self.review)
         again = Served(self.review, cwd=self.repo, author="検証者")
         self.addCleanup(again.stop)
-        self.assertFalse(any("最新の差分" in l for l in again.said), again.said)
+        self.assertFalse(any("差分を記録しました" in l for l in again.said), again.said)
         self.assertEqual(entries(self.review), before)
 
 

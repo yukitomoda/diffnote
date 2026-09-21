@@ -128,6 +128,9 @@ enum Cmd {
         /// git のレビューを作ったリポジトリ。バンドルに保存されていないファイルを、コミットから開くために使う。省略時は、起動したディレクトリ。
         #[arg(long, value_name = "DIR")]
         repo: Option<PathBuf>,
+        /// レビューに加える差分。`edit` と同じ指定です。git のレビュー: `A..B`、`A B`、`A...B`、単一のコミット。省略すると、最後のリビジョンの head から今の HEAD まで。バンドルがなければ作ります。ディレクトリのレビュー: 最後のスナップショットと比べるディレクトリ(省略時は何も加えません)。すでに記録された差分や、空の差分は加えません。
+        #[arg(value_name = "REV|DIR", num_args = 0..)]
+        targets: Vec<String>,
     },
     /// レビューバンドルに保存されたスレッドと返信を表示する。
     Show {
@@ -191,7 +194,8 @@ fn main() -> Result<()> {
             no_open,
             author,
             repo,
-        } => cmd_serve(review, port, no_open, author, repo),
+            targets,
+        } => cmd_serve(review, port, no_open, author, repo, targets),
         Cmd::Export {
             review,
             output,
@@ -214,26 +218,51 @@ fn main() -> Result<()> {
     }
 }
 
-/// For `serve` on a git bundle: the changes from where the last revision
-/// stopped up to `HEAD` are recorded as a revision (so they can be reviewed in
-/// the browser), if `HEAD` has moved since. Says what it did, or why it didn't
-/// when that is worth saying.
-fn add_latest_git_revision(review_path: &Path, repo: &diffnote::git::Repo) -> Result<()> {
+/// For `serve`, the counterpart of what `edit` does with what it is given: the
+/// diff it names is recorded as a revision of the bundle (made if there is
+/// none yet, for git), so that it can be reviewed in the browser.
+///
+/// - A git bundle: `targets` is a commit specification as for `edit`; with
+///   none, the changes from where the last revision stopped up to `HEAD`.
+/// - A directory bundle: the directory to compare with the last snapshot. With
+///   none nothing is added (the directory is unknown: `.` may be anywhere).
+/// - No bundle yet: `targets` names the commits, as `edit` does.
+///
+/// Nothing is written if the diff is empty or is already recorded.
+fn add_revision(review_path: &Path, repo: &diffnote::git::Repo, targets: &[String]) -> Result<()> {
     let loaded = bundle::load(review_path)?;
-    let Some(diffnote::model::Source::Git(last)) = loaded.revisions().last().map(|r| &r.source)
-    else {
-        return Ok(());
+    let explicit = !targets.is_empty();
+    let input = match loaded.source() {
+        Some(diffnote::model::Source::Files { .. }) => {
+            if targets.len() > 1 {
+                anyhow::bail!("ディレクトリのレビューが受け取る引数は、ディレクトリ 1 つまでです");
+            }
+            let Some(dir) = targets.first() else {
+                return Ok(());
+            };
+            files_input(
+                &loaded,
+                Path::new(dir),
+                &[review_path.to_path_buf(), draft_path_for(review_path)],
+            )?
+        }
+        Some(diffnote::model::Source::Git(_)) => {
+            if !explicit && !repo.exists() {
+                return Ok(());
+            }
+            git_input(repo.clone(), &git_targets(repo, &loaded, targets.to_vec())?)?
+        }
+        None => {
+            if !explicit {
+                anyhow::bail!(
+                    "{} がありません。先に `diffnote init` でレビューを作るか、レビューするコミットを指定してください(例: `diffnote serve HEAD~3..HEAD`)",
+                    review_path.display()
+                );
+            }
+            git_input(repo.clone(), targets)?
+        }
     };
-    if !repo.exists() {
-        return Ok(());
-    }
-    let head = repo.commit_id("HEAD")?;
-    if head == last.head {
-        return Ok(());
-    }
-    let last_head = last.head.clone();
-    let input = git_input(repo.clone(), &[format!("{last_head}..{head}")])?;
-    if input.diff_text.trim().is_empty() {
+    if input.diff_text.trim().is_empty() || loaded.revisions().any(|r| r.digest == input.digest) {
         return Ok(());
     }
     let Input {
@@ -247,8 +276,24 @@ fn add_latest_git_revision(review_path: &Path, repo: &diffnote::git::Repo) -> Re
         head_some,
         head_all,
     } = input;
+    let said = match &source {
+        diffnote::model::Source::Git(g) => {
+            let short = |id: &str| id[..id.len().min(10)].to_string();
+            format!("差分を記録しました: {}..{}", short(&g.base), short(&g.head))
+        }
+        diffnote::model::Source::Files { .. } => "ディレクトリの変更を記録しました".to_string(),
+    };
+    let is_git = matches!(source, diffnote::model::Source::Git(_));
     let mode = diffnote::record::pick_snapshot_mode(None, loaded.snapshot_mode(), &source);
     let mut new_events = Vec::new();
+    if loaded.events.is_empty() {
+        new_events.push(Event::Meta {
+            version: 1,
+            created_at: OffsetDateTime::now_utc(),
+            description: None,
+            context_lines: 3,
+        });
+    }
     let additions = diffnote::record::record_session(
         &loaded,
         &mut new_events,
@@ -260,19 +305,14 @@ fn add_latest_git_revision(review_path: &Path, repo: &diffnote::git::Repo) -> Re
             new_files: &new_files,
             base_files: &base_files,
         },
-        &|| confirm_snapshot_size(mode, true, tree_size),
+        &|| confirm_snapshot_size(mode, is_git, tree_size),
         &*head_some,
         head_all,
     )?;
     let mut events = loaded.events.clone();
     events.extend(new_events);
     bundle::save(review_path, &loaded, &events, &additions)?;
-    let short = |id: &str| id[..id.len().min(10)].to_string();
-    println!(
-        "最新の差分を記録しました: {}..{}(HEAD)",
-        short(&last_head),
-        short(&head)
-    );
+    println!("{said}");
     Ok(())
 }
 
@@ -282,20 +322,23 @@ fn cmd_serve(
     no_open: bool,
     author: Option<String>,
     repo: Option<PathBuf>,
+    targets: Vec<String>,
 ) -> Result<()> {
-    if !review.exists() {
+    if !review.exists() && targets.is_empty() {
         anyhow::bail!(
-            "{} がありません。先に `diffnote edit` か `diffnote init` でレビューを作ってください",
+            "{} がありません。先に `diffnote init` か `diffnote edit` でレビューを作るか、レビューするコミットを指定してください(例: `diffnote serve HEAD~3..HEAD`)",
             review.display()
         );
     }
-    // A git bundle: what has been committed since it was last looked at is
-    // added, so it can be reviewed here.
+    // What was asked for is added to the review, so it can be reviewed here (a
+    // failure to do what was asked stops; one to do what was not, only says so).
     let git = repo
         .clone()
         .map_or_else(diffnote::git::Repo::current, diffnote::git::Repo::at);
-    if let Err(e) = add_latest_git_revision(&review, &git) {
-        println!("注意: 最新の差分を記録できませんでした: {e}");
+    match add_revision(&review, &git, &targets) {
+        Ok(()) => {}
+        Err(e) if !targets.is_empty() => return Err(e),
+        Err(e) => println!("注意: 最新の差分を記録できませんでした: {e}"),
     }
     if bundle::load(&review)
         .ok()
