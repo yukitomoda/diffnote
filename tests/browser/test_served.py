@@ -527,6 +527,91 @@ class IgnoreWhitespaceStored(ServedCase):
         self.assertIn("設定変更 2 件", b.js("document.body.textContent"))
 
 
+class CompareWithAnEarlierRevision(ServedCase):
+    """The base in the top bar is a menu: a revision can be looked at against an earlier one."""
+
+    def choose(self, value):
+        self.b.js("(s => { s.value = %r; s.dispatchEvent(new Event('change', {bubbles: true})); })(document.querySelector('[data-diffnote-base-select]'))" % value)
+
+    def test_the_menu_offers_the_base_and_the_earlier_revisions_and_only_when_there_is_one(self):
+        self.serve()
+        b = self.b
+        options = b.js("[...document.querySelectorAll('[data-diffnote-base-select] option')].map(o => o.textContent)")
+        self.assertEqual(len(options), 2, options)
+        self.assertRegex(options[0], r"^[0-9a-f]{7}$")
+        self.assertTrue(options[1].startswith("#1 "), options)
+        b.click("[data-diffnote-revision-link='0']")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-base-select]')"), "nothing is earlier than the first")
+
+    def test_the_revision_is_shown_against_the_chosen_one_and_nothing_is_recorded(self):
+        self.serve()
+        b = self.b
+        before = entries(self.review)
+        self.choose("0")
+        self.assertTrue(b.wait_exists("[data-diffnote-compare-note]"))
+        self.assertRegex(b.text("[data-diffnote-compare-note]"), r"^#1 [0-9a-f]{7} → #2 [0-9a-f]{7} の間の変更")
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-base]').classList.contains('is-changed')"))
+        # What changed from c2 to c3: a docstring (two lines) and one line replaced.
+        self.assertTrue(b.wait(f"document.querySelectorAll('{CUR} tr.diffnote-line--added').length === 3"))
+        self.assertEqual(b.count(f"{CUR} tr.diffnote-line--removed"), 1)
+        # The threads are where they are in this view.
+        self.card("mul の型")
+        self.assertEqual(entries(self.review), before, "looking writes nothing")
+        self.choose("")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-compare-note]')"))
+        self.assertGreater(b.count(f"{CUR} tr.diffnote-line--added"), 3, "the base's diff again")
+
+    def test_a_thread_on_a_line_is_written_against_the_base_whatever_it_is_compared_with(self):
+        self.serve()
+        b = self.b
+        self.choose("0")
+        self.assertTrue(b.wait_exists("[data-diffnote-compare-note]"))
+        # A removed line is not in this revision: pressing it does nothing.
+        b.click_at(f"{CUR} tr.diffnote-line--removed .diffnote-line__gutter-old")
+        time.sleep(0.3)
+        self.assertFalse(b.exists(".diffnote-composer-row"))
+        # The `raise` line (line 9 of this revision) can be commented on.
+        row = f"{CUR} tr.diffnote-line--added[data-diffnote-new='9'] .diffnote-line__gutter-new"
+        b.click_at(row)
+        self.assertTrue(b.wait_exists(".diffnote-composer-row"))
+        self.assertEqual(b.text(".diffnote-compose__where"), "calc.py:9")
+        self.write(".diffnote-composer-row textarea", "比べた画面で書きました")
+        b.js("document.querySelector('.diffnote-composer-row .diffnote-compose').requestSubmit()")
+        self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row')"))
+        self.assertTrue(any("calc.py:9" in l for l in show(self.review).splitlines()), show(self.review))
+        self.assertIn("比べた画面で書きました", show(self.review))
+        # Back at the base: the thread is on the same line there.
+        self.choose("")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-compare-note]')"))
+        self.card("比べた画面で書きました")
+        self.assertEqual(b.js("[...document.querySelectorAll('%s .diffnote-thread')].find(t => t.textContent.includes('比べた画面で書きました')).querySelector('.diffnote-thread__where').textContent" % CUR), "calc.py:9")
+
+    def test_a_file_marked_as_looked_at_stays_so_in_the_other_view(self):
+        self.serve()
+        b = self.b
+        section = f"{CUR} section.diffnote-file[data-diffnote-file='calc.py']"
+        b.click(f"{section} [data-diffnote-viewed]")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(section)})"))
+        self.choose("0")
+        self.assertTrue(b.wait_exists("[data-diffnote-compare-note]"))
+        self.assertFalse(b.exists(section), "still looked at")
+
+    def test_it_falls_back_to_the_base_when_the_tab_changes_to_the_first_revision(self):
+        self.serve()
+        b = self.b
+        self.choose("0")
+        self.assertTrue(b.wait_exists("[data-diffnote-compare-note]"))
+        b.click("[data-diffnote-revision-link='0']")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-compare-note]')"))
+
+    def test_the_server_refuses_what_is_not_an_earlier_revision(self):
+        self.serve()
+        b = self.b
+        for query in ("rev=1&from=1", "rev=0&from=1", "rev=9&from=0", "rev=1"):
+            status = b.js("fetch('/api/compare?%s').then(r => r.status)" % query)
+            self.assertIn(status, (400,), query)
+
+
 class ThreadsOnFilesAndTheReview(ServedCase):
     def test_a_review_wide_thread_is_added_to_its_place(self):
         self.serve()
@@ -813,9 +898,10 @@ class ServeAddsTheLatestDiff(ServedCase):
         labels = b.js("[...document.querySelectorAll('[data-diffnote-revision-link]')].map(a => a.textContent).join('|')")
         self.assertRegex(labels, r"^#1 [0-9a-f]{7} \(.*\)\|#2 [0-9a-f]{7} \(.*\)$",
                          "the revisions are named by their commits, not the base")
-        base = b.js("document.querySelector('[data-diffnote-base]').textContent")
-        self.assertRegex(base, r"^ベース: [0-9a-f]{7}$")
-        self.assertEqual(b.js("document.querySelector('[data-diffnote-base]').textContent.slice(5)"), git_short(repo, "c1"))
+        # (With a revision before it, the base is a menu whose first choice is the base.)
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-base]').textContent.startsWith('ベース: ')"))
+        base = b.js("document.querySelector('[data-diffnote-base-select] option').textContent")
+        self.assertEqual(base, git_short(repo, "c1"))
         self.assertGreater(entries(review), before)
         self.assertEqual(b.js("document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink"), "1",
                          "what was taken in is shown")

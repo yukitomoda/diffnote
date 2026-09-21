@@ -463,6 +463,81 @@ fn file_sig(files: &[crate::model::FileDigest], path: &str) -> Option<String> {
     Some(format!("{}|{}", old.unwrap_or(""), new.unwrap_or("")))
 }
 
+/// What the revision `to` looks like when compared with the revision `from`
+/// (an earlier one) instead of with the base: the files the two revisions
+/// changed, as they were in `from` and as they are in `to`. Only for looking:
+/// nothing is recorded, and what is drawn is `to`'s own text on the new side.
+/// The texts come from what the bundle holds (a file a revision doesn't touch
+/// is as it was in the base, which the other revision's diff has).
+pub fn compare_data(
+    loaded: &crate::bundle::Loaded,
+    to: usize,
+    from: usize,
+) -> anyhow::Result<RevisionData> {
+    let shown = shown_revisions(loaded)?;
+    if from >= to || to >= shown.len() {
+        anyhow::bail!("比べるリビジョンが正しくありません");
+    }
+    let (before, after) = (&shown[from], &shown[to]);
+    let blobs = loaded.blobs();
+    let entry = |files: &'_ [crate::model::FileDigest], path: &str| {
+        files
+            .iter()
+            .find(|f| f.new_path.as_deref() == Some(path))
+            .or_else(|| files.iter().find(|f| f.old_path.as_deref() == Some(path)))
+            .cloned()
+    };
+    let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for f in before.revision.files.iter().chain(&after.revision.files) {
+        if let Some(p) = f.new_path.as_ref().or(f.old_path.as_ref()) {
+            paths.insert(p.clone());
+        }
+    }
+    // The text of a file in one revision: what that revision's diff says it
+    // became, or, if the diff doesn't touch it, what the other one says it was
+    // (the base). `Some(None)` is a file that isn't there; `None`, one whose
+    // text is not held (or not text).
+    let text_in = |own: &[crate::model::FileDigest],
+                   other: &[crate::model::FileDigest],
+                   path: &str|
+     -> Option<Option<Vec<u8>>> {
+        let digest = match entry(own, path) {
+            Some(e) => e.new,
+            None => entry(other, path)?.old,
+        };
+        match digest {
+            None => Some(None),
+            Some(d) => blobs.text(&d).map(|t| Some(t.as_bytes().to_vec())),
+        }
+    };
+    let (mut old_tree, mut new_tree) = (crate::files::Tree::new(), crate::files::Tree::new());
+    for path in &paths {
+        let old = text_in(&before.revision.files, &after.revision.files, path);
+        let new = text_in(&after.revision.files, &before.revision.files, path);
+        let (Some(old), Some(new)) = (old, new) else {
+            continue;
+        };
+        if let Some(bytes) = old {
+            old_tree.insert(path.clone(), bytes);
+        }
+        if let Some(bytes) = new {
+            new_tree.insert(path.clone(), bytes);
+        }
+    }
+    let (text, files) = crate::files::diff_trees(&old_tree, &new_tree);
+    let diff = crate::diff::parse(&text).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let label = format!("{} → {}", before.label, after.label);
+    let view = RevisionView {
+        label: label.clone(),
+        diff: &diff,
+        files: &files,
+        tree: &after.tree,
+    };
+    let threads = build_threads(&loaded.events);
+    let mut budget = 0;
+    Ok(revision_data(&threads, &view, &label, &blobs, &mut budget))
+}
+
 /// What a change to a file did to it, whatever it is that is in it.
 fn binary_change(f: &FileDiff) -> &'static str {
     if f.new_path.is_none() {

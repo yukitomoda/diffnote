@@ -112,6 +112,42 @@ impl Reply {
     }
 }
 
+/// Where the lines `head` of the new side are on the old side of a file's diff:
+/// the old lines they sit on (unchanged lines), or the point they are added at
+/// (`len` 0), as the page counts them when it is shown the diff itself.
+fn base_span_for(file: Option<&crate::diff::FileDiff>, head: LineSpan) -> LineSpan {
+    // The old line a new line is at, and whether it is an unchanged one.
+    let old_next = |n: u32| -> (u32, bool) {
+        let mut delta: i64 = 0;
+        for hunk in file.map_or(&[][..], |f| &f.hunks[..]) {
+            // (A hunk with no lines on a side names the line before it.)
+            let new_first = hunk.new_start + u32::from(hunk.new_lines == 0);
+            let old_first = hunk.old_start + u32::from(hunk.old_lines == 0);
+            if n < new_first {
+                break;
+            }
+            let mut old_now = old_first;
+            for line in &hunk.lines {
+                if line.new_line == Some(n) {
+                    return (line.old_line.unwrap_or(old_now), line.old_line.is_some());
+                }
+                if let Some(o) = line.old_line {
+                    old_now = o + 1;
+                }
+            }
+            delta = i64::from(old_first + hunk.old_lines) - i64::from(new_first + hunk.new_lines);
+        }
+        ((i64::from(n) + delta).max(1) as u32, true)
+    };
+    let (start, _) = old_next(head.start);
+    let last = head.start + head.len.saturating_sub(1);
+    let (end, unchanged) = old_next(last);
+    LineSpan {
+        start,
+        len: (end + u32::from(unchanged)).saturating_sub(start),
+    }
+}
+
 /// The server's identity and rules; [`Server::handle`] is the whole of its
 /// behavior and does no networking.
 pub struct Server {
@@ -438,6 +474,7 @@ impl Server {
             ("GET", "/export") => self.export(),
             ("GET", "/api/model") => self.model(),
             ("GET", "/api/version") => self.version(),
+            ("GET", "/api/compare") => self.compare(query),
             ("GET", p) if p.starts_with("/api/files/") => {
                 self.files(&p["/api/files/".len()..], query)
             }
@@ -526,6 +563,26 @@ impl Server {
         match self.model_of(&loaded) {
             Ok(model) => Reply::json(200, &serde_json::json!({ "ok": true, "model": model })),
             Err(Failure(status, message)) => Reply::error(status, &message),
+        }
+    }
+
+    /// A revision as it looks against an earlier one (`rev` and `from`, as the
+    /// tabs number them, from 0) instead of against the base: for looking only.
+    fn compare(&self, query: &str) -> Reply {
+        let number = |key: &str| query_param(query, key).and_then(|v| v.parse::<usize>().ok());
+        let (Some(to), Some(from)) = (number("rev"), number("from")) else {
+            return Reply::error(400, "比べるリビジョンが指定されていません");
+        };
+        let loaded = match bundle::load(&self.review) {
+            Ok(l) => l,
+            Err(e) => return Reply::error(500, &format!("処理に失敗しました: {e}")),
+        };
+        match html::compare_data(&loaded, to, from) {
+            Ok(revision) => Reply::json(
+                200,
+                &serde_json::json!({ "ok": true, "revision": revision, "stamp": html::stamp(&loaded) }),
+            ),
+            Err(e) => Reply::error(400, &e.to_string()),
         }
     }
 
@@ -650,11 +707,22 @@ impl Server {
             }
             Ok(LineSpan { start, len })
         };
-        let scope = match kind {
+        let mut derive_base = false;
+        let mut scope = match kind {
             "lines" => {
                 let file = file.ok_or_else(|| bad("ファイルが指定されていません"))?;
-                let (base, head) = (span("base")?, span("head")?);
-                if base.len == 0 && head.len == 0 {
+                let head = span("head")?;
+                // The page says the lines of the new side only (as it does when it
+                // shows the revision against another one): where they are on the
+                // old side is what the revision's own diff says.
+                let base = if value.get("base").is_some() {
+                    span("base")?
+                } else {
+                    derive_base = true;
+                    LineSpan { start: 0, len: 0 }
+                };
+                if (base.len == 0 && head.len == 0) && !derive_base || derive_base && head.len == 0
+                {
                     return Err(bad("行が選ばれていません"));
                 }
                 AnchorScope::Span {
@@ -682,6 +750,9 @@ impl Server {
             && anchor::find_file(diff, file).is_none()
         {
             return Err(bad("そのファイルはこのリビジョンの差分にありません"));
+        }
+        if derive_base && let AnchorScope::Span { file, base, head } = &mut scope {
+            *base = base_span_for(anchor::find_file(diff, file), *head);
         }
         let anchor = create::build_anchor(&scope, diff, files, &rev.source.revisions(&rev.digest))
             .map_err(internal)?;
@@ -1916,6 +1987,25 @@ mod tests {
         assert_eq!(told["summary"]["discarded"], true);
         assert_eq!(std::fs::read(&f.path).unwrap(), before, "and is back");
         assert!(server.farewell().contains("保存せずに終了"));
+    }
+
+    #[test]
+    fn the_old_side_of_lines_of_the_new_side_is_read_from_the_diff() {
+        let diff =
+            crate::diff::parse("--- a/f\n+++ b/f\n@@ -2,3 +2,4 @@\n a2\n-b3\n+B3\n+B3b\n a4\n")
+                .unwrap();
+        let file = diff.files.first();
+        let base = |start, len| base_span_for(file, LineSpan { start, len });
+        let span = |start, len| LineSpan { start, len };
+        // Before the hunk, on an unchanged line, on added lines (a point), after it.
+        assert_eq!(base(1, 1), span(1, 1));
+        assert_eq!(base(2, 1), span(2, 1));
+        assert_eq!(base(3, 2), span(4, 0));
+        assert_eq!(base(5, 1), span(4, 1));
+        assert_eq!(base(2, 4), span(2, 3), "from a2 to a4: old 2 to 4");
+        assert_eq!(base(9, 1), span(8, 1));
+        // A file the diff doesn't have is the same on both sides.
+        assert_eq!(base_span_for(None, span(7, 2)), span(7, 2));
     }
 
     #[test]

@@ -758,8 +758,9 @@ pub(crate) mod tokens;
 mod viewmodel;
 mod words;
 pub use viewmodel::{
-    ExpandLimit, OpenedData, ViewModel, chunk_data, lines_json, opened_data, served_model_json,
-    stamp, thread_json, tree_json, view_model, view_model_for, view_model_json, view_model_with,
+    ExpandLimit, OpenedData, ViewModel, chunk_data, compare_data, lines_json, opened_data,
+    served_model_json, stamp, thread_json, tree_json, view_model, view_model_for, view_model_json,
+    view_model_with,
 };
 
 #[cfg(test)]

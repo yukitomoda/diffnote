@@ -92,6 +92,7 @@ class StaticExport(BrowserCase):
         b.click("[data-diffnote-view-menu]")
         self.assertFalse(b.js(f"document.querySelector({json.dumps(panel)}).hidden"))
         self.assertEqual(b.js("document.querySelector('[data-diffnote-layout=unified]').classList.contains('is-current')"), True)
+        time.sleep(0.2)  # (the menu listens for Escape once it has been drawn)
         b.escape()
         self.assertTrue(b.wait(f"document.querySelector({json.dumps(panel)}).hidden"), "Escape shuts it")
 

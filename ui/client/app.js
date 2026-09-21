@@ -543,6 +543,8 @@
         var colors = lib.shownIds(ids, ctx.byId, ctx.hideResolved).map(function (id) { return ctx.placements[id].color; });
         var begin = compose && function (e) {
           if (e.button !== 0) return;
+          // Against another revision, a removed line is not in this one.
+          if (ctx.compare && row.k === 'd') return;
           e.preventDefault();
           compose.begin(ctx.rev, file.path, idx, e.shiftKey);
         };
@@ -563,7 +565,7 @@
           var c = lib.counters(flat, sel.anchor, sel.to);
           out.push(html`<tr class="diffnote-composer-row" key="compose"><td colspan="3">
             <${Composer} scope="lines" where=${lib.chosenLocation(file.path, c)} copy=${lib.chosenLocation(file.path, c) + '@' + (ctx.rev + 1)}
-              request=${{ revision: ctx.rev, file: file.path, base: c.base, head: c.head }} />
+              request=${ctx.compare ? { revision: ctx.rev, file: file.path, head: c.head } : { revision: ctx.rev, file: file.path, base: c.base, head: c.head }} />
           </td></tr>`);
         }
         lib.cardsOfRow(after, row).forEach(function (id) {
@@ -617,6 +619,8 @@
       return ' is-picked' + (i === lo ? ' is-picked-first' : '') + (i === hi_ ? ' is-picked-last' : '');
     };
     var begin = function (row, side) {
+      // (Against another revision, only the new side is this revision's.)
+      if (ctx.compare && side === 'old') return undefined;
       return compose && row && function (e) {
         if (e.button !== 0) return;
         e.preventDefault();
@@ -664,7 +668,7 @@
           var c = lib.counters(flat, sel.anchor, sel.to, sel.side);
           out.push(html`<tr class="diffnote-composer-row" key="compose"><td colspan="4">
             <${Composer} scope="lines" where=${lib.chosenLocation(file.path, c)} copy=${lib.chosenLocation(file.path, c) + '@' + (ctx.rev + 1)}
-              request=${{ revision: ctx.rev, file: file.path, base: c.base, head: c.head }} />
+              request=${ctx.compare ? { revision: ctx.rev, file: file.path, head: c.head } : { revision: ctx.rev, file: file.path, base: c.base, head: c.head }} />
           </td></tr>`);
         }
         // The cards of the pair: those of its new-side line, then its old-side line.
@@ -786,7 +790,7 @@
     var ctx = props.ctx;
     var viewed = useContext(ViewedContext);
     // The files of the diff (not those opened to look at) are what is counted.
-    var files = ctx.model.revisions[ctx.rev].files;
+    var files = ctx.diffFiles;
     return html`<details class="diffnote-side" open>
       <summary>ファイル${viewed && files.length > 0 && html` <span class="diffnote-badge diffnote-badge--viewed" data-diffnote-viewed-count title="確認済みにしたファイル / ファイル数">✓ ${files.filter(viewed.is).length}/${files.length}</span>`}</summary>
       <nav class="diffnote-filelist"><ul>
@@ -928,14 +932,19 @@
   function Revision(props) {
     var model = props.model;
     var rev = props.index;
-    var revision = model.revisions[rev];
+    // (Compared with an earlier revision instead of the base: another view of it.)
+    var revision = props.override || model.revisions[rev];
     var byId = useMemo(function () {
       var m = {};
       model.threads.forEach(function (t) { m[t.id] = t; });
       return m;
     }, [model]);
     // The threads in the order they were written (their ids sort by time).
-    var order = useMemo(function () { return model.threads.map(function (t) { return t.id; }); }, [model]);
+    // (A thread that the revision's data doesn't know yet, being written while it is
+    // looked at against another, waits for that data to come again.)
+    var order = useMemo(function () {
+      return model.threads.map(function (t) { return t.id; }).filter(function (id) { return !!revision.placements[id]; });
+    }, [model, revision]);
     // The files opened to look at come after the diff's; one that a thread has
     // since brought in keeps the lines that were opened.
     var opened = useContext(OpenedContext);
@@ -955,13 +964,13 @@
     }, [revision, opened && opened.byRev[rev]]);
     var ctx = {
       model: model, rev: rev, revision: revision, byId: byId, order: order,
-      placements: revision.placements, hideResolved: props.hideResolved, layout: props.layout, ignoreSpace: props.ignoreSpace,
+      placements: revision.placements, hideResolved: props.hideResolved, layout: props.layout, ignoreSpace: props.ignoreSpace, compare: !!props.override,
     };
     var globals = order.filter(function (id) { return revision.placements[id].kind === 'global'; });
     var viewed = useContext(ViewedContext);
     var viewedPaths = {};
     files.forEach(function (f) { if (viewed && viewed.is(f)) viewedPaths[f.path] = true; });
-    var listOrder = { viewedPaths: viewedPaths, model: model, rev: rev, revision: Object.assign({}, revision, { files: files }), hideResolved: props.hideResolved, byId: byId, order: revision.order, placements: revision.placements };
+    var listOrder = { diffFiles: revision.files, viewedPaths: viewedPaths, model: model, rev: rev, revision: Object.assign({}, revision, { files: files }), hideResolved: props.hideResolved, byId: byId, order: revision.order, placements: revision.placements };
 
     // The file list marks the files that are on screen.
     useEffect(function () {
@@ -993,6 +1002,7 @@
       <div class="diffnote-viewbar">
         ${props.compose && html`<div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global"
           onClick=${function () { props.compose.openScope('global', rev); }}>レビュー全体にコメントする</button></div>`}
+        ${props.override && html`<p class="diffnote-compare-note" data-diffnote-compare-note>${props.overrideNote}</p>`}
         <${ViewMenu} />
       </div>
       ${(globals.length > 0 || props.compose) && html`<section class="diffnote-global-comments" data-diffnote-global>
@@ -1340,6 +1350,39 @@
     var hide = _h[0];
     var setHide = _h[1];
     var counts = lib.counts(model.threads);
+    // The revision is looked at against an earlier one (chosen at the base) instead
+    // of against the base: the number of that one, or `null`. Only for looking.
+    var _a = useState(null);
+    var against = _a[0];
+    var setAgainst = _a[1];
+    var _k = useState(null);
+    var cmp = _k[0];
+    var setCmp = _k[1];
+    useEffect(function () {
+      if (against != null && against >= current) setAgainst(null);
+    }, [current, against]);
+    useEffect(function () {
+      if (!review.actions || against == null || against >= current) { setCmp(null); return undefined; }
+      var stale = false;
+      D.api.get('/api/compare?rev=' + current + '&from=' + against).then(function (res) {
+        if (stale) return;
+        if (res.ok) setCmp({ rev: current, from: against, data: res.revision });
+        else { setCmp(null); setAgainst(null); }
+      });
+      return function () { stale = true; };
+    }, [against, current, model.stamp]);
+    // What the page draws for the revision then: the same files, but a file that
+    // is marked as looked at is the same one (its text is this revision's).
+    var override = useMemo(function () {
+      if (!cmp || cmp.rev !== current || cmp.from !== against) return null;
+      var sigs = {};
+      model.revisions[current].files.forEach(function (f) { sigs[f.path] = f.sig; });
+      return Object.assign({}, cmp.data, {
+        files: cmp.data.files.map(function (f) {
+          return Object.prototype.hasOwnProperty.call(sigs, f.path) ? Object.assign({}, f, { sig: sigs[f.path] }) : f;
+        }),
+      });
+    }, [cmp, current, against, model]);
     // The tab that is shown is kept in view when there are more than fit.
     var tabs = useRef(null);
     useLayoutEffect(function () {
@@ -1440,7 +1483,13 @@
             ? html`<${InlineEdit} name="title" value=${model.title || ''} max="200" label="タイトルを変える" placeholder="タイトル(空にすると、既定の見出しに戻ります)"
                 onSave=${review.actions.setTitle}>${model.title || DEFAULT_TITLE}<//>`
             : model.title || DEFAULT_TITLE}</h1>
-          ${model.base && html`<p data-diffnote-base title="すべてのリビジョンは、これと比べた差分です">ベース: ${model.base.kind === 'git' ? html`<code>${model.base.id}</code>` : lib.formatTime(model.base.at)}</p>`}
+          ${model.base && html`<p data-diffnote-base class=${against != null ? 'is-changed' : ''} title=${against != null ? 'ベースの代わりに、このリビジョンと比べて表示しています(記録は変わりません)' : 'すべてのリビジョンは、これと比べた差分です'}>ベース: ${review.actions && current > 0
+            ? html`<select class="diffnote-base__select" data-diffnote-base-select aria-label="比べる相手" value=${against == null ? '' : String(against)}
+                onChange=${function (e) { setAgainst(e.target.value === '' ? null : +e.target.value); }}>
+                <option value="">${model.base.kind === 'git' ? model.base.id : lib.formatTime(model.base.at)}</option>
+                ${model.revisions.slice(0, current).map(function (r, i) { return html`<option key=${i} value=${String(i)}>${r.label}</option>`; })}
+              </select>`
+            : model.base.kind === 'git' ? html`<code>${model.base.id}</code>` : lib.formatTime(model.base.at)}</p>`}
         </header>
         ${model.revisions.length > 0 && html`<nav class="diffnote-revisions" ref=${tabs} onWheel=${function (e) {
           // The tabs scroll sideways (no bar is shown): the wheel does it too.
@@ -1468,7 +1517,8 @@
       <${ActionsContext.Provider} value=${review.actions}>
         <${ComposeContext.Provider} value=${compose}>
           <${OpenedContext.Provider} value=${openedFiles}>
-            <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} ignoreSpace=${ignoreSpace} compose=${compose}
+            <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} ignoreSpace=${ignoreSpace} compose=${compose} override=${override}
+              overrideNote=${override ? model.revisions[against].label.replace(/ \(.*$/, '') + ' → ' + model.revisions[current].label.replace(/ \(.*$/, '') + ' の間の変更を表示しています。コメントは、ベースとの差分に付きます(削除された行には付けられません)。' : ''}
               author=${review.actions ? model.author : null} onAuthor=${review.actions && review.actions.setAuthor} />
           <//>
         <//>
