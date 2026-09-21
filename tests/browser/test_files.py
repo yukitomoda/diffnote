@@ -29,6 +29,8 @@ class FilesCase(BrowserCase):
         self.addCleanup(self.server.stop)
         self.b = self.browser
         self.b.open(self.server.url)
+        self.b.js("localStorage.setItem('diffnote-layout','unified')")
+        self.b.reload()
         self.b.js("window.__marker='same-page'; window.__table=document.querySelector('.diffnote-diff')")
 
     def open_tree(self):

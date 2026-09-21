@@ -994,8 +994,14 @@
     var hide = _h[0];
     var setHide = _h[1];
     var counts = lib.counts(model.threads);
-    // Side by side, if chosen and there is room for two columns.
-    var _l = useState(kept('diffnote-layout', 'unified') === 'split' ? 'split' : 'unified');
+    // Side by side, if chosen and there is room for two columns. What was chosen
+    // before is kept; without a choice the page starts side by side if the
+    // window is wide (only when it opens: resizing the window doesn't change it).
+    var _l = useState(function () {
+      var stored = kept('diffnote-layout', '');
+      if (stored === 'split' || stored === 'unified') return stored;
+      return window.matchMedia('(min-width: 1200px)').matches ? 'split' : 'unified';
+    });
     var chosen = _l[0];
     var setChosen = _l[1];
     var wide = useWide();

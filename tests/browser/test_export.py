@@ -2,6 +2,7 @@
 import json
 import os
 import pathlib
+import time
 import unittest
 
 import harness
@@ -24,8 +25,9 @@ class StaticExport(BrowserCase):
     def setUp(self):
         self.b = self.browser
         self.b.open(self.url)
-        # Every test starts as a first visit: nothing kept by the browser.
-        self.b.js("localStorage.clear()")
+        # Every test starts with nothing kept by the browser but the unified
+        # layout (a first visit in a wide window starts side by side).
+        self.b.js("localStorage.clear(); localStorage.setItem('diffnote-layout','unified')")
         self.b.reload()
 
     def card(self, text):
@@ -187,19 +189,41 @@ class SideBySide(BrowserCase):
     def setUp(self):
         self.b = self.browser
         self.b.open(self.url)
-        self.b.js("localStorage.clear()")
+        self.b.js("localStorage.clear(); localStorage.setItem('diffnote-layout','unified')")
         self.b.reload()
 
     def split(self):
         self.b.click("[data-diffnote-layout='split']")
         self.assertTrue(self.b.wait_exists("table.diffnote-diff--split"))
 
-    def test_the_switch_offers_two_layouts_and_starts_unified(self):
+    def test_the_switch_offers_two_layouts(self):
         b = self.b
         self.assertEqual(b.count(".diffnote-layout__button"), 2)
         self.assertEqual(b.text(".diffnote-layout__button.is-current"), "統合")
         self.assertEqual(b.count("table.diffnote-diff--split"), 0)
         self.assertGreater(b.count("table.diffnote-diff tr[class*='diffnote-line--']"), 0)
+
+    def test_a_first_visit_starts_side_by_side_in_a_wide_window_and_unified_in_a_narrow_one(self):
+        b = self.b
+        b.js("localStorage.clear()")
+        b.reload()
+        self.assertEqual(b.text(".diffnote-layout__button.is-current"), "横並び", "the window is 1500 wide")
+        self.assertEqual(b.count("table.diffnote-diff--split") > 0, True)
+        self.assertEqual(b.js("localStorage.getItem('diffnote-layout')"), None, "not kept until chosen")
+        b.cdp.call("Emulation.setDeviceMetricsOverride", width=1000, height=800, deviceScaleFactor=1, mobile=False)
+        try:
+            b.reload()
+            self.assertEqual(b.text(".diffnote-layout__button.is-current"), "統合")
+            # Only when it opens: making the window wide doesn't change it.
+            b.cdp.call("Emulation.setDeviceMetricsOverride", width=1600, height=800, deviceScaleFactor=1, mobile=False)
+            time.sleep(0.3)
+            self.assertEqual(b.text(".diffnote-layout__button.is-current"), "統合")
+            self.assertEqual(b.count("table.diffnote-diff--split"), 0)
+            b.cdp.call("Emulation.setDeviceMetricsOverride", width=1000, height=800, deviceScaleFactor=1, mobile=False)
+            time.sleep(0.3)
+            self.assertEqual(b.text(".diffnote-layout__button.is-current"), "統合")
+        finally:
+            b.cdp.call("Emulation.clearDeviceMetricsOverride")
 
     def test_a_removed_line_sits_beside_the_added_ones_and_unchanged_lines_are_on_both_sides(self):
         b = self.b
