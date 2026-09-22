@@ -13,9 +13,10 @@ import { Revision } from './Revision.tsx';
 import { QuitButton } from './settings/Quit.tsx';
 import { SettingsScreen } from './settings/Screen.tsx';
 import { useCompose } from './state/compose.ts';
-import { ActionsContext, ComposeContext, LinksContext, OpenedContext, ViewedContext } from './state/contexts.ts';
+import { ActionsContext, ComposeContext, LinksContext, OpenedContext } from './state/contexts.ts';
 import { useOpened } from './state/opened.ts';
 import { useReview } from './state/review.ts';
+import { isViewed, seen, toggleViewed } from './state/viewed.ts';
 import {
   hideResolved,
   ignoreWhitespace,
@@ -24,8 +25,8 @@ import {
   watchWidth,
 } from './state/view.ts';
 import type { At } from './lib.ts';
-import type { FileData, RevisionData, ViewModel } from './model.ts';
-import type { Links, Viewed } from './state/contexts.ts';
+import type { RevisionData, ViewModel } from './model.ts';
+import type { Links } from './state/contexts.ts';
 import type { PullNote } from './settings/General.tsx';
 import type { Section } from './settings/Screen.tsx';
 
@@ -105,24 +106,6 @@ function App(props: { model: ViewModel }) {
     var shown = nav && nav.querySelector<HTMLElement>('a.is-current');
     if (nav && shown) nav.scrollLeft = shown.offsetLeft - (nav.clientWidth - shown.offsetWidth) / 2;
   }, [current, model.revisions.length]);
-  // The files marked as looked at, by path, with what the file was then.
-  var _v = useState<Record<string, string>>({});
-  var seen = _v[0];
-  var setSeen = _v[1];
-  var viewed: Viewed = useMemo(function (): Viewed {
-    var is = function (f: FileData) { return Object.prototype.hasOwnProperty.call(seen, f.path) && seen[f.path] === (f.sig || ''); };
-    return {
-      is: is,
-      toggle: function (f: FileData) {
-        setSeen(function (cur) {
-          var next = Object.assign({}, cur);
-          if (Object.prototype.hasOwnProperty.call(cur, f.path) && cur[f.path] === (f.sig || '')) delete next[f.path];
-          else next[f.path] = f.sig || '';
-          return next;
-        });
-      },
-    };
-  }, [seen]);
   var links: Links = useMemo(function (): Links {
     // A path is a place if some revision has the file.
     var known: Record<string, boolean> = {};
@@ -136,7 +119,7 @@ function App(props: { model: ViewModel }) {
       var of = place.kind === 'thread' ? revision.placements[place.id] : null;
       var path = place.kind === 'thread' ? (of && 'file' in of ? of.file : null) : place.path;
       var file = path && revision.files.filter(function (f) { return f.path === path; })[0];
-      if (file && viewed.is(file)) viewed.toggle(file);
+      if (file && isViewed(file, seen.get())) toggleViewed(file);
       if (place.kind === 'file') interact.showFile(rev, place.path);
       else if (place.kind === 'thread') interact.jumpWhenShown('r' + rev + '-thread-' + place.id);
       else interact.showLines(rev, place.path, place.side, place.start, place.end);
@@ -175,7 +158,7 @@ function App(props: { model: ViewModel }) {
       },
       jump: jump,
     };
-  }, [model, viewed, current]);
+  }, [model, current]);
   // The initial address may already point at a specific place (from a copied
   // link, or typed in): jump there once the page has drawn.
   useEffect(function () {
@@ -287,7 +270,6 @@ function App(props: { model: ViewModel }) {
       placementOf={function (id) { return ((model.revisions[current] || {}).placements || {})[id]; }}
       onSelect={setScreen} onClose={function () { setScreen(null); }} />}
     <div class="diffnote-review-body" hidden={screen != null && !!review.actions}>
-    <ViewedContext.Provider value={viewed}>
     <LinksContext.Provider value={links}>
     <ActionsContext.Provider value={review.actions}>
       <ComposeContext.Provider value={compose}>
@@ -303,7 +285,6 @@ function App(props: { model: ViewModel }) {
       </ComposeContext.Provider>
     </ActionsContext.Provider>
     </LinksContext.Provider>
-    </ViewedContext.Provider>
     </div>
   </article>;
 }

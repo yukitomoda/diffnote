@@ -4,7 +4,9 @@ import { lib } from '../lib.ts';
 import { server } from '../transport.ts';
 import { DiffTable, SplitTable } from './tables.jsx';
 import { htmlId } from '../dom.ts';
-import { ComposeContext, OpenedContext, ViewedContext } from '../state/contexts.ts';
+import { useStore } from '@nanostores/preact';
+import { ComposeContext, OpenedContext } from '../state/contexts.ts';
+import { isViewed, seen, toggleViewed } from '../state/viewed.ts';
 import { Card } from '../thread/Card.tsx';
 import { Composer } from '../thread/Composer.tsx';
 import type { Token } from '../model.ts';
@@ -72,15 +74,15 @@ export function File(props: FileProps) {
   var composing = compose && compose!.scope && compose!.scope.kind === 'file' && compose!.scope.rev === ctx.rev && compose!.scope.path === file.path;
   // A file that was added or deleted as a whole (a binary one too) is tinted.
   var kind = file.status === 'binary' ? file.change : file.status;
-  var viewed = useContext(ViewedContext);
+  var marks = useStore(seen);
   // A file that was looked at is not shown at all (with its threads): the
   // list at the side says so, and takes it back.
-  if (viewed && viewed.is(file)) return null;
+  if (isViewed(file, marks)) return null;
   return <section class={'diffnote-file' + (kind === 'added' || kind === 'deleted' ? ' diffnote-file--' + kind : '')} id={'r' + ctx.rev + '-file-' + htmlId(file.path)} data-diffnote-file={file.path}>
     <details ref={details} open={startsOpen} onToggle={function (e) { if (e.currentTarget.open && !opened) setOpened(true); }}>
       <summary>
-        {viewed && <button type="button" class="diffnote-mini diffnote-mini--check" data-diffnote-viewed={file.path} title={lib.m('ui.file.viewed_title')}
-          onClick={function (e) { e.preventDefault(); e.stopPropagation(); viewed.toggle(file); }}>{lib.m('ui.file.viewed_button')}</button>}
+        {<button type="button" class="diffnote-mini diffnote-mini--check" data-diffnote-viewed={file.path} title={lib.m('ui.file.viewed_title')}
+          onClick={function (e) { e.preventDefault(); e.stopPropagation(); toggleViewed(file); }}>{lib.m('ui.file.viewed_button')}</button>}
         {file.status !== 'binary' && stat.added + stat.removed > 0 && <span class="diffnote-stat" data-diffnote-stat title={lib.mf('ui.file.stat_title', { added: String(stat.added), removed: String(stat.removed) })}>
           <span class="diffnote-stat__add">+{stat.added}</span> <span class="diffnote-stat__del">−{stat.removed}</span>
           <span class="diffnote-stat__blocks" aria-hidden="true">{lib.diffBlocks(stat.added, stat.removed).map(function (k, i) { return <i key={i} class={'is-' + k}></i>; })}</span>

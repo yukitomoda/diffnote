@@ -3,7 +3,9 @@ import { useContext } from 'preact/hooks';
 import { EMOJI } from '../emoji.ts';
 import { lib } from '../lib.ts';
 import { htmlId } from '../dom.ts';
-import { LinksContext, ViewedContext } from '../state/contexts.ts';
+import { useStore } from '@nanostores/preact';
+import { LinksContext } from '../state/contexts.ts';
+import { isViewed, seen, toggleViewed } from '../state/viewed.ts';
 import type { ListCtx } from '../state/contexts.ts';
 
 interface ListProps {
@@ -12,15 +14,15 @@ interface ListProps {
 
 export function FileList(props: ListProps) {
   var ctx = props.ctx;
-  var viewed = useContext(ViewedContext);
+  var marks = useStore(seen);
   var links = useContext(LinksContext);
   // The files of the diff (not those opened to look at) are what is counted.
   var files = ctx.diffFiles;
   return <details class="diffnote-side" open>
-    <summary>{lib.m('ui.tree.files_summary')}{viewed && files.length > 0 && <>{' '}<span class="diffnote-badge diffnote-badge--viewed" data-diffnote-viewed-count title={lib.m('ui.tree.viewed_count_title')}>✓ {files.filter(viewed.is).length}/{files.length}</span></>}</summary>
+    <summary>{lib.m('ui.tree.files_summary')}{files.length > 0 && <>{' '}<span class="diffnote-badge diffnote-badge--viewed" data-diffnote-viewed-count title={lib.m('ui.tree.viewed_count_title')}>✓ {files.filter(function (f) { return isViewed(f, marks); }).length}/{files.length}</span></>}</summary>
     <nav class="diffnote-filelist"><ul>
       {ctx.revision.files.map(function (f) {
-        var done = !!(viewed && viewed.is(f));
+        var done = isViewed(f, marks);
         var ids = lib.threadsOfFile(ctx.order, ctx.placements, f.path);
         // The threads that are shown: resolved ones don't count while hidden.
         var n = ids.filter(function (id) {
@@ -29,8 +31,8 @@ export function FileList(props: ListProps) {
         // What is left open in a file that was looked at.
         var open = ids.filter(function (id) { return !ctx.byId[id].resolved; }).length;
         return <li key={f.path} class={done ? 'is-viewed' : ''}>
-          {viewed && <button type="button" class="diffnote-check" data-diffnote-check={f.path} aria-pressed={done}
-            title={done ? lib.m('ui.file.unmark_viewed_title') : lib.m('ui.file.mark_viewed_title')} onClick={function () { viewed.toggle(f); }}>{done ? '✓' : ''}</button>}
+          {<button type="button" class="diffnote-check" data-diffnote-check={f.path} aria-pressed={done}
+            title={done ? lib.m('ui.file.unmark_viewed_title') : lib.m('ui.file.mark_viewed_title')} onClick={function () { toggleViewed(f); }}>{done ? '✓' : ''}</button>}
           <a href={'#r' + ctx.rev + '-file-' + htmlId(f.path)} data-diffnote-file-link={f.path}
             onClick={function (e) {
               // A file that was looked at comes back; one that was folded opens; and it is marked.

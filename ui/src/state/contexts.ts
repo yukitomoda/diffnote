@@ -123,12 +123,6 @@ export interface Opened {
   more(rev: number, path: string): Promise<Answer<{ hunk?: Hunk; next?: number | null }>>;
 }
 
-/** The files marked as looked at (one that has become another is not marked). */
-export interface Viewed {
-  is(file: FileData): boolean;
-  toggle(file: FileData): void;
-}
-
 /** Where a jump can go, and what a comment's attachments are. */
 export interface Links {
   /** Which revision is shown, and how many there are. */
@@ -141,19 +135,6 @@ export interface Links {
   image(id: string): string;
   go(ref: LineRef | At): void;
   jump(rev: number, place: At): void;
-}
-
-/** How the diff is shown, and the ways to change it (the ⚙ menu). */
-export interface View {
-  wide: boolean;
-  layout: 'unified' | 'split';
-  resolved: number;
-  interactive: boolean;
-  hide: boolean;
-  ignoreSpace: boolean;
-  toggleSpace(on: boolean): void;
-  setLayout(layout: 'unified' | 'split'): void;
-  setHide(on: boolean): void;
 }
 
 /**
@@ -207,9 +188,6 @@ export interface ListCtx {
 export const ActionsContext = createContext<Actions | null>(null);
 export const ComposeContext = createContext<Compose | null>(null);
 export const OpenedContext = createContext<Opened | null>(null);
-// These three are given by the page whatever it is (an exported page marks
-// files as looked at and jumps about like any other); the default stands for
-// nothing and is never the one used.
-export const ViewedContext = createContext<Viewed>(null as unknown as Viewed);
+// Given by the page whatever it is (an exported page jumps about like any
+// other); the default stands for nothing and is never the one used.
 export const LinksContext = createContext<Links>(null as unknown as Links);
-export const ViewContext = createContext<View>(null as unknown as View);

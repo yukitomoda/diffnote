@@ -6,7 +6,9 @@ import { ViewMenu } from './ViewMenu.tsx';
 import { File } from './diff/File.tsx';
 import { Tree } from './nav/Tree.tsx';
 import { FileList, ThreadList } from './nav/lists.tsx';
-import { OpenedContext, ViewedContext } from './state/contexts.ts';
+import { useStore } from '@nanostores/preact';
+import { OpenedContext } from './state/contexts.ts';
+import { isViewed, seen } from './state/viewed.ts';
 import { Card } from './thread/Card.tsx';
 import { Composer } from './thread/Composer.tsx';
 import type { RevisionData, ThreadData, ViewModel } from './model.ts';
@@ -69,9 +71,9 @@ export function Revision(props: RevisionProps) {
     compare: props.override ? 1 : null,
   };
   var globals = order.filter(function (id) { return revision.placements[id].kind === 'global'; });
-  var viewed = useContext(ViewedContext);
+  var marks = useStore(seen);
   var viewedPaths: Record<string, boolean> = {};
-  files.forEach(function (f) { if (viewed && viewed.is(f)) viewedPaths[f.path] = true; });
+  files.forEach(function (f) { if (isViewed(f, marks)) viewedPaths[f.path] = true; });
   var listOrder: ListCtx = { diffFiles: revision.files, model: model, rev: rev, revision: Object.assign({}, revision, { files: files }), hideResolved: props.hideResolved, byId: byId, order: revision.order, placements: revision.placements };
 
   // The file list marks the files that are on screen.
