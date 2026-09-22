@@ -186,6 +186,34 @@
     return out;
   };
 
+  // Which comments show which attachment, by its id: `{ id: [{thread, comment,
+  // name}] }`. Read from the comments' own text (`{t:'image'|'file', id}`
+  // nodes), so the server needs to say nothing about it. A comment that was
+  // deleted has no text left, so it refers to nothing.
+  lib.attachmentUses = function (threads) {
+    var uses = {};
+    var walk = function (nodes, at) {
+      (nodes || []).forEach(function (n) {
+        if (!n || typeof n === 'string') return;
+        if ((n.t === 'image' || n.t === 'file') && n.id) {
+          var name = n.t === 'image' ? n.alt : lib.plainText(n.c).trim();
+          (uses[n.id] = uses[n.id] || []).push({
+            thread: at.thread,
+            comment: at.comment,
+            name: name || '',
+          });
+        }
+        walk(n.c, at);
+      });
+    };
+    (threads || []).forEach(function (t) {
+      (t.comments || []).forEach(function (c) {
+        walk(c.doc, { thread: t.id, comment: c.id });
+      });
+    });
+    return uses;
+  };
+
   // The text of a comment's nodes (see `src/html/markdown.rs`), a line for each
   // block and each break.
   lib.plainText = function (nodes) {
@@ -638,7 +666,7 @@
       got[decodeURIComponent(k)] = decodeURIComponent(v);
     });
     if (!/^\d+$/.test(got.rev || '')) return null;
-    var screen = ['general', 'settings', 'user'].indexOf(got.screen) >= 0 ? got.screen : null;
+    var screen = ['general', 'settings', 'attachments', 'user'].indexOf(got.screen) >= 0 ? got.screen : null;
     var against = /^\d+$/.test(got.against || '') ? +got.against : null;
     return { rev: +got.rev, screen: screen, against: against, at: got.at ? lib.parseAt(got.at) : null };
   };

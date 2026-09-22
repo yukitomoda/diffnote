@@ -395,6 +395,22 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
 .diffnote-settings__info dt { width: 8em; color: var(--diffnote-color-muted); }
 .diffnote-settings__info dd { margin: 0; }
 
+/* 添付: one row per attached image or file, with what uses it. */
+.diffnote-attached { margin: 12px 0 0; padding: 0; list-style: none; }
+.diffnote-attached__empty, .diffnote-attached__total { margin: 12px 0 0; font-size: 12.5px; color: var(--diffnote-color-muted); }
+.diffnote-attached__item { display: grid; grid-template-columns: 48px 1fr auto; gap: 12px; align-items: start; padding: 10px 0; border-top: 1px solid var(--diffnote-color-border); }
+.diffnote-attached__thumb { width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; background: var(--diffnote-color-gutter); border-radius: 6px; overflow: hidden; }
+.diffnote-attached__thumb img { max-width: 100%; max-height: 100%; }
+.diffnote-attached__name { margin: 0; font-weight: 600; word-break: break-all; }
+.diffnote-attached__name .diffnote-badge { margin-left: 6px; font-weight: normal; }
+.diffnote-attached__meta { margin: 2px 0 0; font-size: 12.5px; color: var(--diffnote-color-muted); }
+.diffnote-attached__uses { margin: 4px 0 0; font-size: 12.5px; color: var(--diffnote-color-muted); }
+.diffnote-attached__use { margin-left: 6px; padding: 0; font: inherit; color: var(--diffnote-color-accent); background: none; border: 0; cursor: pointer; }
+.diffnote-attached__use:hover { text-decoration: underline; }
+.diffnote-attached__buttons { display: flex; flex-direction: column; gap: 6px; }
+.diffnote-attached__warn { grid-column: 1 / -1; padding: 10px 12px; background: var(--diffnote-color-gutter); border-radius: 8px; }
+.diffnote-attached__warn p { margin: 0 0 8px; }
+
 /* A quotation in a comment: a bar at the left, the text a little quieter. */
 .diffnote-comment__body blockquote { margin: 8px 0; padding: 2px 0 2px 14px; color: var(--diffnote-color-muted); border-left: 4px solid var(--diffnote-color-border); }
 .diffnote-comment__body blockquote > :first-child { margin-top: 0; }

@@ -1080,6 +1080,122 @@ class Images(ServedCase):
         self.assertEqual(b.count(f"#{card} img"), 0, "nothing is loaded from an address")
 
 
+class AttachmentsScreen(ServedCase):
+    """The 添付 section of the settings screen: what the comments have
+    attached, what uses it, and taking one out."""
+
+    def attach(self, kind, name, content, mime=None, base64=False):
+        """Attaches through the page's own calls (what pasting ends up doing),
+        and gives back the id it is stored under."""
+        made = "new Blob([bytes], {type: %s})" % json.dumps(mime or "application/octet-stream")
+        call = ("Diffnote.api.upload(%s)" % made) if kind == "image" else (
+            "Diffnote.api.uploadFile(%s, %s)" % (made, json.dumps(name)))
+        return self.b.js("""(function () {
+          var bytes = %s ? Uint8Array.from(atob(%s), function (c) { return c.charCodeAt(0); })
+                         : new TextEncoder().encode(%s);
+          return %s.then(function (r) { return r.id; });
+        })()""" % ("true" if base64 else "false", json.dumps(content),
+                   json.dumps(content), call))
+
+    def open_attachments(self, rows):
+        """Opens the 添付 section and waits for the `rows` it should list (the
+        screen asks for a fresh model as it opens: an upload doesn't bring
+        one)."""
+        b = self.b
+        b.click("[data-diffnote-settings]")
+        self.assertTrue(b.wait_exists("[data-diffnote-settings-page]"))
+        b.click("[data-diffnote-settings-nav='attachments']")
+        self.assertTrue(b.wait_exists("[data-diffnote-attachments-pane]"))
+        self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-attached]').length === %d" % rows))
+
+    def stored_images(self):
+        return [n for n in harness.zip_names(self.review) if n.startswith("images/")]
+
+    def rows(self):
+        return self.b.js("""[...document.querySelectorAll('[data-diffnote-attached]')].map(function (li) {
+          return { id: li.dataset.diffnoteAttached, text: li.textContent,
+                   unused: !!li.querySelector('[data-diffnote-attached-unused]'),
+                   uses: [...li.querySelectorAll('[data-diffnote-attached-use]')].map(function (u) { return u.textContent; }) };
+        })""")
+
+    def test_everything_attached_is_listed_with_what_uses_it_unused_first(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        shown = self.attach("image", "shot.png", PNG_1X1, "image/png", base64=True)
+        saved = self.attach("file", "ログ.zip", "PK an archive", "application/zip")
+        spare = self.attach("image", "spare.svg", SVG_OK, "image/svg+xml")
+        self.write(box, f"見てください ![再現時の画面](diffnote-image:{shown}) と [ログ.zip](diffnote-file:{saved})")
+        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
+        self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('img.diffnote-image')"))
+        self.open_attachments(3)
+        rows = self.rows()
+        self.assertEqual([r["id"] for r in rows][0], spare, "the one nothing uses comes first")
+        self.assertTrue(rows[0]["unused"])
+        self.assertIn("未使用", rows[0]["text"])
+        self.assertIn("(名前なし)", rows[0]["text"], "no comment names it")
+        self.assertFalse(rows[1]["unused"] or rows[2]["unused"])
+        by_id = {r["id"]: r for r in rows}
+        self.assertIn("再現時の画面", by_id[shown]["text"], "an image is called what the comment calls it")
+        self.assertIn("image/png", by_id[shown]["text"])
+        self.assertIn("ログ.zip", by_id[saved]["text"])
+        self.assertEqual(len(by_id[shown]["uses"]), 1)
+        self.assertRegex(by_id[shown]["uses"][0], r"^\S+:\d", "a use says where that comment is")
+        # An image is shown as itself; a download is offered for each.
+        self.assertTrue(b.wait(f"document.querySelector('[data-diffnote-attached=\"{shown}\"] img').naturalWidth === 1"))
+        self.assertEqual(b.count("[data-diffnote-attached-download]"), 3)
+        self.assertEqual(
+            b.js(f"document.querySelector('[data-diffnote-attached-download=\"{saved}\"]').getAttribute('download')"),
+            "ログ.zip", "a file keeps the name the comment gives it")
+
+    def test_a_use_goes_to_the_comment_that_shows_it(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        shown = self.attach("image", "shot.png", PNG_1X1, "image/png", base64=True)
+        self.write(box, f"![図](diffnote-image:{shown})")
+        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
+        self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('img.diffnote-image')"))
+        self.open_attachments(1)
+        where = b.text("[data-diffnote-attached-use]")
+        self.assertTrue(where, "the comment's place is the link")
+        b.click("[data-diffnote-attached-use]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"), "the screen closes")
+        self.assertTrue(b.wait(f"location.hash.includes('thread')"), "and the address says where it went")
+
+    def test_an_attachment_is_deleted_after_confirming_and_the_comment_is_left_as_written(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        shown = self.attach("image", "shot.png", PNG_1X1, "image/png", base64=True)
+        self.write(box, f"![図](diffnote-image:{shown})")
+        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
+        self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('img.diffnote-image')"))
+        self.open_attachments(1)
+        # Asked about first, and giving up leaves it alone.
+        b.click(f"[data-diffnote-attached-delete='{shown}']")
+        self.assertTrue(b.wait_exists("[data-diffnote-attached-warn]"))
+        self.assertIn("リンクは切れた", b.text("[data-diffnote-attached-warn]"), "it says what deleting does")
+        b.js("document.querySelector('[data-diffnote-attached-warn] .diffnote-button:not([data-diffnote-attached-delete-ok])').click()")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-attached-warn]')"))
+        self.assertEqual(len(self.stored_images()), 1)
+        # Confirmed: gone from the bundle and from the list, the comment as it was.
+        b.click(f"[data-diffnote-attached-delete='{shown}']")
+        b.click("[data-diffnote-attached-delete-ok]")
+        self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-attached]').length === 0"))
+        self.assertEqual(self.stored_images(), [])
+        self.assertIn(f"diffnote-image:{shown}", show(self.review), "what was written stays written")
+        # The comment still says what it said; the image it named is just gone.
+        b.click("[data-diffnote-settings-back]")
+        self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('img.diffnote-image')"))
+        self.assertEqual(
+            b.js(f"fetch(document.getElementById({card!r}).querySelector('img.diffnote-image').src, {{cache: 'reload'}}).then(r => r.status)"),
+            404, "and the server no longer has it")
+
+
 class Quoting(ServedCase):
     """Quoting a comment (or what was chosen in it) in the reply box of its thread."""
 

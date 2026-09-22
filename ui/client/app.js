@@ -614,7 +614,7 @@
   }
 
   // The left-hand nav of the settings screen: which of its sections is shown.
-  var SETTINGS_SECTIONS = ['general', 'settings', 'user'];
+  var SETTINGS_SECTIONS = ['general', 'settings', 'attachments', 'user'];
   function sectionLabel(key) {
     return lib.m('ui.settings.' + key + '_tab');
   }
@@ -731,6 +731,96 @@
     </form>`;
   }
 
+  // 添付: what the comments have attached, and what uses it. Unused ones are
+  // dropped at 終了 anyway; this is where to see them, save one, or take one
+  // out on the spot.
+  function AttachmentsPane(props) {
+    var model = props.model;
+    var listed = (model.bundle && model.bundle.attachments) || [];
+    var _e = useState('');
+    var error = _e[0];
+    var setError = _e[1];
+    // The one being asked about before it goes, by id.
+    var _a = useState(null);
+    var ask = _a[0];
+    var setAsk = _a[1];
+    var uses = useMemo(function () { return lib.attachmentUses(model.threads); }, [model.threads]);
+    // Unused first (the ones worth clearing out), then as the server sorted
+    // them: biggest first.
+    var order = useMemo(function () {
+      return listed.slice().sort(function (a, b) {
+        return ((uses[a.id] || []).length > 0) - ((uses[b.id] || []).length > 0);
+      });
+    }, [listed, uses]);
+    var total = listed.reduce(function (n, a) { return n + a.size; }, 0);
+    var remove = function (a) {
+      setAsk(null);
+      setError('');
+      props.remove(a).then(function (res) {
+        if (!res.ok) setError(res.error || lib.m('ui.attachments.delete_failed'));
+      });
+    };
+    var nameOf = function (a) {
+      var named = (uses[a.id] || []).filter(function (u) { return u.name; })[0];
+      return named ? named.name : lib.m('ui.attachments.no_name');
+    };
+    // What it is saved as. A file is called what the comment's link says (a
+    // real file name); an image's text there is a description, not a name, so
+    // it is saved by its digest, with the extension its type usually has.
+    var fileName = function (a) {
+      var named = a.kind === 'file' && (uses[a.id] || []).filter(function (u) { return u.name; })[0];
+      if (named) return named.name;
+      var ext = (a.media_type || '').split('/')[1];
+      return 'diffnote-' + a.id.slice(0, 12) + (ext ? '.' + ext.replace('+xml', '') : '');
+    };
+    return html`<div data-diffnote-attachments-pane>
+      <h2>${lib.m('ui.attachments.heading')}</h2>
+      <p class="diffnote-settings__note">${lib.m('ui.attachments.note')}</p>
+      ${listed.length === 0
+        ? html`<p class="diffnote-attached__empty">${lib.m('ui.attachments.empty')}</p>`
+        : html`<p class="diffnote-attached__total">${lib.mf('ui.attachments.total', { count: String(listed.length), size: lib.formatSize(total) })}</p>
+          <ul class="diffnote-attached">
+            ${order.map(function (a) {
+              var used = uses[a.id] || [];
+              var image = a.kind === 'image';
+              var href = (image ? '/api/images/' : '/api/attachments/') + a.id
+                + (image ? '' : '?name=' + encodeURIComponent(fileName(a)));
+              return html`<li key=${a.id} class="diffnote-attached__item" data-diffnote-attached=${a.id}>
+                <div class="diffnote-attached__thumb">${image
+                  ? h('img', { src: '/api/images/' + a.id, alt: '' })
+                  : html`<span aria-hidden="true">📎</span>`}</div>
+                <div class="diffnote-attached__what">
+                  <p class="diffnote-attached__name">${nameOf(a)}${used.length === 0 && html`<span class="diffnote-badge" data-diffnote-attached-unused>${lib.m('ui.attachments.unused')}</span>`}</p>
+                  <p class="diffnote-attached__meta">${image ? lib.m('ui.attachments.image_kind') : lib.m('ui.attachments.file_kind')} ・ ${a.media_type || ''}${a.media_type ? ' ・ ' : ''}${lib.formatSize(a.size)}</p>
+                  ${used.length > 0 && html`<p class="diffnote-attached__uses" data-diffnote-attached-uses>
+                    ${lib.mf('ui.attachments.used_by', { n: String(used.length) })}${used.map(function (u, i) {
+                      return html`<button key=${i} type="button" class="diffnote-attached__use" data-diffnote-attached-use=${u.thread}
+                        onClick=${function () { props.onShow(u.thread); }}>${lib.shortLocation(props.placementOf(u.thread))}</button>`;
+                    })}
+                  </p>`}
+                </div>
+                <div class="diffnote-attached__buttons">
+                  <a class="diffnote-button" data-diffnote-attached-download=${a.id} href=${href} download=${fileName(a)}>${lib.m('ui.attachments.download')}</a>
+                  <button type="button" class="diffnote-button" data-diffnote-attached-delete=${a.id}
+                    onClick=${function () { setAsk(a.id); }}>${lib.m('ui.attachments.delete')}</button>
+                </div>
+                ${ask === a.id && html`<div class="diffnote-attached__warn" role="alert" data-diffnote-attached-warn>
+                  <p>${used.length > 0
+                    ? lib.mf('ui.attachments.confirm_used', { name: nameOf(a) })
+                    : lib.mf('ui.attachments.confirm_unused', { name: nameOf(a) })}</p>
+                  <div class="diffnote-reply__buttons">
+                    <button type="button" class="diffnote-button diffnote-button--danger" data-diffnote-attached-delete-ok
+                      onClick=${function () { remove(a); }}>${lib.m('ui.attachments.confirm_delete')}</button>
+                    <button type="button" class="diffnote-button" onClick=${function () { setAsk(null); }}>${lib.m('ui.confirm_cancel')}</button>
+                  </div>
+                </div>`}
+              </li>`;
+            })}
+          </ul>`}
+      ${error && html`<p class="diffnote-error" role="alert">${error}</p>`}
+    </div>`;
+  }
+
   // ユーザー設定: this machine's user settings (`diffnote config`; today, just
   // the author name) -- not part of the bundle (applies to every review from
   // now on, not only this one).
@@ -797,6 +887,8 @@
         <div class="diffnote-settings__pane">
           ${props.section === 'general' && html`<${GeneralPane} model=${props.model} pending=${props.pending} note=${props.note} onPull=${props.onPull} />`}
           ${props.section === 'settings' && html`<${SettingsFormPane} model=${props.model} save=${props.saveSettings} />`}
+          ${props.section === 'attachments' && html`<${AttachmentsPane} model=${props.model} remove=${props.removeAttached}
+            onShow=${props.onShowThread} placementOf=${props.placementOf} />`}
           ${props.section === 'user' && html`<${UserSettingsPane} model=${props.model} save=${props.saveUserSettings} />`}
         </div>
       </div>
@@ -1606,6 +1698,12 @@
         saveSettings: function (settings) {
           return D.api.post('/api/settings', settings).then(whole);
         },
+        // Takes an image or another attached file out of the bundle. What the
+        // comments say is left as it was, so a link to it simply goes nowhere.
+        removeAttached: function (attached) {
+          var where = attached.kind === 'image' ? '/api/images/' : '/api/attachments/';
+          return D.api.post(where + attached.id + '/delete').then(whole);
+        },
         // This machine's user settings (author name; kept for every review, not
         // only this one): the answer is the whole model, with the name applied
         // for the rest of this session too.
@@ -1664,7 +1762,7 @@
       if (!actions) return null;
       return Object.assign({}, actions, { editable: new Set(model.editable || []), changed: new Set(model.changed || []), author: model.author });
     }, [actions, model.editable, model.changed, model.author]);
-    return { model: model, actions: full, pending: pending };
+    return { model: model, actions: full, pending: pending, reload: reloadModel };
   }
 
   // Lines being chosen (pressing a line number, dragging, Shift+click), or a
@@ -1889,6 +1987,12 @@
     var _st = useState(initialHash ? initialHash.screen : null);
     var screen = _st[0];
     var setScreen = _st[1];
+    // 添付 lists what the bundle holds, and an upload's answer says only how
+    // big the bundle now is (not a whole model): ask for one when that screen
+    // opens, so what was just attached is in the list.
+    useEffect(function () {
+      if (screen === 'attachments' && review.reload) review.reload();
+    }, [screen === 'attachments']);
     // The place last jumped to (a file, some lines, or a thread): kept only so
     // it is part of the address; nothing else reads it back except the effects
     // that write and retrace it.
@@ -1944,7 +2048,9 @@
         has: function (path) { return Object.prototype.hasOwnProperty.call(known, path); },
         // The most a file attached to a comment may weigh (the review's rule).
         limit: model.attachment_limit,
-        // Where another attached file is: in the page, or at the server.
+        // Where another attached file is: in the page, or at the server. One
+        // the 添付 screen has taken out is asked for all the same (the comment
+        // is left as written): the link is simply broken from then on.
         file: function (id, name) {
           if (model.attachments && model.attachments[id]) return model.attachments[id];
           return model.interactive ? '/api/attachments/' + id + '?name=' + encodeURIComponent(name) : '';
@@ -2089,7 +2195,11 @@
         </div>
       </div>
       ${screen != null && review.actions && html`<${SettingsScreen} section=${screen} model=${model} pending=${review.pending} note=${note} onPull=${pull}
-        saveSettings=${review.actions.saveSettings} saveUserSettings=${review.actions.saveUserSettings} onSelect=${setScreen} onClose=${function () { setScreen(null); }} />`}
+        saveSettings=${review.actions.saveSettings} saveUserSettings=${review.actions.saveUserSettings}
+        removeAttached=${review.actions.removeAttached}
+        onShowThread=${function (id) { setScreen(null); links.go({ kind: 'thread', id: id }); }}
+        placementOf=${function (id) { return ((model.revisions[current] || {}).placements || {})[id]; }}
+        onSelect=${setScreen} onClose=${function () { setScreen(null); }} />`}
       <div class="diffnote-review-body" hidden=${screen != null && !!review.actions}>
       <${ViewContext.Provider} value=${viewOptions}>
       <${ViewedContext.Provider} value=${viewed}>

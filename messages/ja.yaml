@@ -898,6 +898,8 @@ ui:
       全般
     settings_tab: |-
       設定
+    attachments_tab: |-
+      添付
     user_tab: |-
       ユーザー設定
     general_heading: |-
@@ -954,6 +956,38 @@ ui:
       ← レビューに戻る
     title_button: |-
       設定を開く
+
+  attachments:
+    heading: |-
+      添付
+    note: |-
+      コメントに貼った画像やファイルです。どのコメントからも使われていないものは、終了のときに取り除かれます
+    empty: |-
+      添付はありません
+    total: |-
+      {count} 件・{size}
+    image_kind: |-
+      画像
+    file_kind: |-
+      ファイル
+    no_name: |-
+      (名前なし)
+    unused: |-
+      未使用
+    used_by: |-
+      コメント {n} 件
+    download: |-
+      ダウンロード
+    delete: |-
+      削除
+    confirm_unused: |-
+      「{name}」を削除します
+    confirm_used: |-
+      「{name}」を削除します。コメントの本文は変わらないため、リンクは切れたままになります
+    confirm_delete: |-
+      削除する
+    delete_failed: |-
+      削除できませんでした
 
   user_settings:
     heading: |-
