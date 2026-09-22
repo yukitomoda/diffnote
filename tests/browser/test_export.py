@@ -102,6 +102,27 @@ class StaticExport(BrowserCase):
         b.escape()
         self.assertTrue(b.wait(f"document.querySelector({json.dumps(panel)}).hidden"), "Escape shuts it")
 
+    def test_the_lists_beside_the_diff_can_be_put_away_and_brought_back(self):
+        b = self.b
+        toggle = "[data-diffnote-sidebar-toggle]"
+        width = lambda: b.js("document.querySelector('%s section.diffnote-file').getBoundingClientRect().width" % CUR)
+        self.assertTrue(b.visible(".diffnote-sidebar"))
+        narrow = width()
+        b.click(toggle)
+        self.assertTrue(b.wait("!document.querySelector('.diffnote-sidebar:not([hidden])')"))
+        self.assertGreater(width(), narrow, "the diff takes the room the lists had")
+        # The button stays where it was, which is how they come back.
+        self.assertTrue(b.visible(toggle))
+        self.assertEqual(b.js("document.querySelector('%s %s').getAttribute('aria-expanded')" % (CUR, toggle)), "false")
+        b.click(toggle)
+        self.assertTrue(b.wait("!!document.querySelector('.diffnote-sidebar:not([hidden])')"))
+        self.assertEqual(width(), narrow, "and the diff gives it back")
+        # It is for making room for a moment: opening the page again has them.
+        b.click(toggle)
+        self.assertTrue(b.wait("!document.querySelector('.diffnote-sidebar:not([hidden])')"))
+        b.reload()
+        self.assertTrue(b.visible(".diffnote-sidebar"), "not kept, unlike the layout")
+
     def test_the_latest_revision_is_shown_and_the_tabs_switch(self):
         b = self.b
         self.assertEqual(b.count("[data-diffnote-revision-link]"), 2)

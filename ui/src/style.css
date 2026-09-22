@@ -42,6 +42,9 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-revision__title { display: none; }
 .diffnote-js .diffnote-revision:not(.is-current) { display: none; }
 .diffnote-sidebar { grid-column: 1; grid-row: 1 / span 200; position: sticky; top: calc(var(--diffnote-topbar-h) + 12px); height: calc(100vh - var(--diffnote-topbar-h) - 24px); display: flex; flex-direction: column; margin-top: 12px; border-right: 1px solid var(--diffnote-color-border); padding-right: 8px; font-size: 12.5px; }
+/* The class sets `display`, which beats the `hidden` attribute on its own:
+   say it again, so putting the lists away is a matter of that attribute. */
+.diffnote-sidebar[hidden] { display: none; }
 .diffnote-sidebar__lists { flex: 1; min-height: 0; overflow: auto; }
 .diffnote-side > summary { cursor: pointer; font-weight: 600; font-size: 12px; color: var(--diffnote-color-muted); padding: 4px 8px; user-select: none; }
 .diffnote-side + .diffnote-side { margin-top: 8px; }
@@ -309,7 +312,13 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 
 /* The view menu, at the top right of the diff. */
 .diffnote-viewbar { grid-column: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; }
+.diffnote-viewbar__left { display: flex; align-items: center; gap: 12px; }
 .diffnote-viewbar .diffnote-add { padding: 0; }
+/* Put the lists away for a moment: the diff then has the whole width, and the
+   button stays where it was, to bring them back. */
+.diffnote-button--icon { padding: 3px 8px; line-height: 1; }
+.diffnote-revision.is-sidebar-hidden { grid-template-columns: minmax(0, 1fr); }
+.diffnote-revision.is-sidebar-hidden > * { grid-column: 1; }
 .diffnote-viewmenu { position: relative; margin-left: auto; }
 .diffnote-viewmenu__panel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 14em; padding: 6px; background: var(--diffnote-color-bg); color: var(--diffnote-color-fg); border: 1px solid var(--diffnote-color-border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18); font-size: 13px; }
 .diffnote-viewmenu__panel[hidden] { display: none; }

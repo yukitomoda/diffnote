@@ -9,6 +9,7 @@ import { FileList, ThreadList } from './nav/lists.tsx';
 import { useStore } from '@nanostores/preact';
 import { OpenedContext } from './state/contexts.ts';
 import { isViewed, seen } from './state/viewed.ts';
+import { setSidebarHidden, sidebarHidden } from './state/view.ts';
 import { Card } from './thread/Card.tsx';
 import { Composer } from './thread/Composer.tsx';
 import type { RevisionData, ThreadData, ViewModel } from './model.ts';
@@ -72,6 +73,7 @@ export function Revision(props: RevisionProps) {
   };
   var globals = order.filter(function (id) { return revision.placements[id].kind === 'global'; });
   var marks = useStore(seen);
+  var hidden = useStore(sidebarHidden);
   var viewedPaths: Record<string, boolean> = {};
   files.forEach(function (f) { if (isViewed(f, marks)) viewedPaths[f.path] = true; });
   var listOrder: ListCtx = { diffFiles: revision.files, model: model, rev: rev, revision: Object.assign({}, revision, { files: files }), hideResolved: props.hideResolved, byId: byId, order: revision.order, placements: revision.placements };
@@ -97,10 +99,10 @@ export function Revision(props: RevisionProps) {
     return function () { io.disconnect(); };
   }, [rev, Object.keys(viewedPaths).join('\n')]);
 
-  return <section class="diffnote-revision is-current" id={'rev-' + rev} data-diffnote-revision={rev}>
+  return <section class={'diffnote-revision is-current' + (hidden ? ' is-sidebar-hidden' : '')} id={'rev-' + rev} data-diffnote-revision={rev}>
     <h2 class="diffnote-revision__title">{revision.label}</h2>
-    <aside class="diffnote-sidebar">
-      <div class="diffnote-sidebar__lists">
+    <aside class="diffnote-sidebar" hidden={hidden}>
+      <div class="diffnote-sidebar__lists" id={'rev-' + rev + '-lists'}>
         <FileList ctx={listOrder} />
         {model.threads.length > 0 && <ThreadList ctx={listOrder} />}
         {opened && <Tree rev={rev} />}
@@ -108,8 +110,16 @@ export function Revision(props: RevisionProps) {
       {props.author != null && props.onToggleUserSettings && <UserChip name={props.author} open={!!props.userSettingsOpen} onToggle={props.onToggleUserSettings} />}
     </aside>
     <div class="diffnote-viewbar">
-      {props.compose && <div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global"
-        onClick={function () { props.compose!.openScope('global', rev); }}>{lib.m('ui.compose.global_button')}</button></div>}
+      <div class="diffnote-viewbar__left">
+        {/* The lists take a column of the page; this puts them away, and is
+            where they are got back from, so it stays where it is either way. */}
+        <button type="button" class="diffnote-button diffnote-button--icon" data-diffnote-sidebar-toggle
+          aria-expanded={!hidden} aria-controls={'rev-' + rev + '-lists'}
+          title={lib.m(hidden ? 'ui.sidebar.show_title' : 'ui.sidebar.hide_title')}
+          onClick={function () { setSidebarHidden(!hidden); }}>{lib.m(hidden ? 'ui.sidebar.show_button' : 'ui.sidebar.hide_button')}</button>
+        {props.compose && <div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global"
+          onClick={function () { props.compose!.openScope('global', rev); }}>{lib.m('ui.compose.global_button')}</button></div>}
+      </div>
       {props.override && <p class="diffnote-compare-note" data-diffnote-compare-note tabindex={0} title={props.overrideNote!.tip} aria-label={props.overrideNote!.short + '。' + props.overrideNote!.tip}>{props.overrideNote!.short}<span class="diffnote-compare-note__icon" aria-hidden="true">⚠</span></p>}
       <ViewMenu resolved={lib.counts(model.threads).resolved} interactive={!!model.interactive} />
     </div>

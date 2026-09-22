@@ -26,6 +26,12 @@ export const layout = computed([chosenLayout, wide], (chosen, room): Layout =>
 export const hideResolved = atom(true);
 export const ignoreWhitespace = atom(false);
 
+/**
+ * Whether the lists beside the diff are out of the way just now. Not kept:
+ * it is for making room for a moment, so a page opened again has them back.
+ */
+export const sidebarHidden = atom(false);
+
 export function setLayout(next: Layout): void {
   keep('diffnote-layout', next);
   chosenLayout.set(next);
@@ -38,6 +44,10 @@ export function setHideResolved(on: boolean): void {
 
 export function setIgnoreWhitespace(on: boolean): void {
   ignoreWhitespace.set(on);
+}
+
+export function setSidebarHidden(on: boolean): void {
+  sidebarHidden.set(on);
 }
 
 /**

@@ -878,6 +878,16 @@ ui:
     global_where: |-
       レビュー全体へのコメント
 
+  sidebar:
+    hide_button: |-
+      «
+    hide_title: |-
+      左の一覧を隠して、差分を広く表示します
+    show_button: |-
+      »
+    show_title: |-
+      左の一覧を表示します
+
   viewmenu:
     button: |-
       ⚙ 表示 ▾
