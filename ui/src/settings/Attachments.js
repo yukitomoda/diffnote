@@ -1,0 +1,95 @@
+// 添付: what is attached, what uses it, and taking one out.
+import { h } from 'preact';
+import { useMemo, useState } from 'preact/hooks';
+import { lib } from '../lib.js';
+import { html } from '../html.js';
+
+// 添付: what the comments have attached, and what uses it. Unused ones are
+// dropped at 終了 anyway; this is where to see them, save one, or take one
+// out on the spot.
+export function AttachmentsPane(props) {
+  var model = props.model;
+  var listed = (model.bundle && model.bundle.attachments) || [];
+  var _e = useState('');
+  var error = _e[0];
+  var setError = _e[1];
+  // The one being asked about before it goes, by id.
+  var _a = useState(null);
+  var ask = _a[0];
+  var setAsk = _a[1];
+  var uses = useMemo(function () { return lib.attachmentUses(model.threads); }, [model.threads]);
+  // Unused first (the ones worth clearing out), then as the server sorted
+  // them: biggest first.
+  var order = useMemo(function () {
+    return listed.slice().sort(function (a, b) {
+      return ((uses[a.id] || []).length > 0) - ((uses[b.id] || []).length > 0);
+    });
+  }, [listed, uses]);
+  var total = listed.reduce(function (n, a) { return n + a.size; }, 0);
+  var remove = function (a) {
+    setAsk(null);
+    setError('');
+    props.remove(a).then(function (res) {
+      if (!res.ok) setError(res.error || lib.m('ui.attachments.delete_failed'));
+    });
+  };
+  var nameOf = function (a) {
+    var named = (uses[a.id] || []).filter(function (u) { return u.name; })[0];
+    return named ? named.name : lib.m('ui.attachments.no_name');
+  };
+  // What it is saved as. A file is called what the comment's link says (a
+  // real file name); an image's text there is a description, not a name, so
+  // it is saved by its digest, with the extension its type usually has.
+  var fileName = function (a) {
+    var named = a.kind === 'file' && (uses[a.id] || []).filter(function (u) { return u.name; })[0];
+    if (named) return named.name;
+    var ext = (a.media_type || '').split('/')[1];
+    return 'diffnote-' + a.id.slice(0, 12) + (ext ? '.' + ext.replace('+xml', '') : '');
+  };
+  return html`<div data-diffnote-attachments-pane>
+    <h2>${lib.m('ui.attachments.heading')}</h2>
+    <p class="diffnote-settings__note">${lib.m('ui.attachments.note')}</p>
+    ${listed.length === 0
+      ? html`<p class="diffnote-attached__empty">${lib.m('ui.attachments.empty')}</p>`
+      : html`<p class="diffnote-attached__total">${lib.mf('ui.attachments.total', { count: String(listed.length), size: lib.formatSize(total) })}</p>
+        <ul class="diffnote-attached">
+          ${order.map(function (a) {
+            var used = uses[a.id] || [];
+            var image = a.kind === 'image';
+            var href = (image ? '/api/images/' : '/api/attachments/') + a.id
+              + (image ? '' : '?name=' + encodeURIComponent(fileName(a)));
+            return html`<li key=${a.id} class="diffnote-attached__item" data-diffnote-attached=${a.id}>
+              <div class="diffnote-attached__thumb">${image
+                ? h('img', { src: '/api/images/' + a.id, alt: '' })
+                : html`<span aria-hidden="true">📎</span>`}</div>
+              <div class="diffnote-attached__what">
+                <p class="diffnote-attached__name">${nameOf(a)}${used.length === 0 && html`<span class="diffnote-badge" data-diffnote-attached-unused>${lib.m('ui.attachments.unused')}</span>`}</p>
+                <p class="diffnote-attached__meta">${image ? lib.m('ui.attachments.image_kind') : lib.m('ui.attachments.file_kind')} ・ ${a.media_type || ''}${a.media_type ? ' ・ ' : ''}${lib.formatSize(a.size)}</p>
+                ${used.length > 0 && html`<p class="diffnote-attached__uses" data-diffnote-attached-uses>
+                  ${lib.mf('ui.attachments.used_by', { n: String(used.length) })}${used.map(function (u, i) {
+                    return html`<button key=${i} type="button" class="diffnote-attached__use" data-diffnote-attached-use=${u.thread}
+                      onClick=${function () { props.onShow(u.thread); }}>${lib.shortLocation(props.placementOf(u.thread))}</button>`;
+                  })}
+                </p>`}
+              </div>
+              <div class="diffnote-attached__buttons">
+                <a class="diffnote-button" data-diffnote-attached-download=${a.id} href=${href} download=${fileName(a)}>${lib.m('ui.attachments.download')}</a>
+                <button type="button" class="diffnote-button" data-diffnote-attached-delete=${a.id}
+                  onClick=${function () { setAsk(a.id); }}>${lib.m('ui.attachments.delete')}</button>
+              </div>
+              ${ask === a.id && html`<div class="diffnote-attached__warn" role="alert" data-diffnote-attached-warn>
+                <p>${used.length > 0
+                  ? lib.mf('ui.attachments.confirm_used', { name: nameOf(a) })
+                  : lib.mf('ui.attachments.confirm_unused', { name: nameOf(a) })}</p>
+                <div class="diffnote-reply__buttons">
+                  <button type="button" class="diffnote-button diffnote-button--danger" data-diffnote-attached-delete-ok
+                    onClick=${function () { remove(a); }}>${lib.m('ui.attachments.confirm_delete')}</button>
+                  <button type="button" class="diffnote-button" onClick=${function () { setAsk(null); }}>${lib.m('ui.confirm_cancel')}</button>
+                </div>
+              </div>`}
+            </li>`;
+          })}
+        </ul>`}
+    ${error && html`<p class="diffnote-error" role="alert">${error}</p>`}
+  </div>`;
+}

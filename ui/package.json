@@ -7,13 +7,15 @@
   "license": "MIT",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node --test \"src/test/**/*.test.js\""
+    "test": "node --test \"src/test/**/*.test.js\"",
+    "typecheck": "tsc"
   },
   "dependencies": {
     "htm": "3.1.1",
     "preact": "10.24.3"
   },
   "devDependencies": {
-    "esbuild": "^0.28.2"
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
   }
 }

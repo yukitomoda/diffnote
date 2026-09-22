@@ -35,6 +35,11 @@ jobs:
 
       - run: npm --prefix ui ci
 
+      - name: Types
+        # esbuild strips the types without looking at them, so they are checked
+        # here (what is still JavaScript is not checked).
+        run: npm --prefix ui run typecheck
+
       - name: Build
         run: npm --prefix ui run build
 

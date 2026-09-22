@@ -42,4 +42,5 @@ depends = ["client"]
 run = [
   "cargo fmt --all --check",
   "cargo clippy --all-targets -- -D warnings",
+  "npm --prefix ui run typecheck",
 ]

@@ -1,0 +1,28 @@
+{
+  // Types only: esbuild builds the page (it strips the types and never checks
+  // them), so this is what `npm --prefix ui run typecheck` reads. Files become
+  // TypeScript one at a time, and while a file is still .js it is not checked.
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "types": [],
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": ["src"]
+}
