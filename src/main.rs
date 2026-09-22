@@ -85,9 +85,6 @@ enum Cmd {
         /// レビューのタイトル。エクスポートの見出しに使われる(省略できる)。
         #[arg(long, value_name = "TITLE")]
         title: Option<String>,
-        /// コメントなどの作者名。省略時は git の user.name、なければ user.email、なければ環境のユーザー名。
-        #[arg(long, value_name = "NAME")]
-        author: Option<String>,
     },
     /// レビュー対象を $EDITOR で開いてコメントを書き、レビューバンドルに追記する(git のレビューでは、バンドルがなければ作成する)。
     Edit {
@@ -242,8 +239,7 @@ fn main() -> Result<()> {
             files,
             repo,
             title,
-            author,
-        } => cmd_init(review, target, files, repo, title, author),
+        } => cmd_init(review, target, files, repo, title),
         Cmd::Edit {
             review,
             target,
@@ -418,7 +414,7 @@ fn add_revision(
             let Some(base_dir) = base else {
                 anyhow::bail!("{NEEDS_A_BASE}");
             };
-            init_files(review_path, Path::new(base_dir), None, None, false)?;
+            init_files(review_path, Path::new(base_dir), None, false)?;
             fresh = FreshBundle(Some(review_path.to_path_buf()));
             loaded = bundle::load(review_path)?;
         } else if let Some(base_dir) = base {
@@ -963,7 +959,6 @@ fn cmd_init(
     files: bool,
     repo: Option<PathBuf>,
     title: Option<String>,
-    author: Option<String>,
 ) -> Result<()> {
     if review_path.exists() {
         anyhow::bail!("{} はすでに存在します", review_path.display());
@@ -975,11 +970,10 @@ fn cmd_init(
             &repo,
             target.as_deref().unwrap_or("HEAD"),
             title,
-            author,
         );
     }
     let dir = PathBuf::from(target.as_deref().unwrap_or("."));
-    init_files(&review_path, &dir, title, author, true)
+    init_files(&review_path, &dir, title, true)
 }
 
 /// The events every new bundle starts with: what it was made by.
@@ -1009,7 +1003,6 @@ fn init_git(
     repo: &diffnote::git::Repo,
     rev: &str,
     title: Option<String>,
-    _author: Option<String>,
 ) -> Result<()> {
     let commit = repo.commit_id(rev)?;
     let mut events = first_events();
@@ -1046,13 +1039,7 @@ fn init_git(
     Ok(())
 }
 
-fn init_files(
-    review_path: &Path,
-    dir: &Path,
-    title: Option<String>,
-    _author: Option<String>,
-    say: bool,
-) -> Result<()> {
+fn init_files(review_path: &Path, dir: &Path, title: Option<String>, say: bool) -> Result<()> {
     let tree = diffnote::files::read_tree(dir, &[review_path.to_path_buf()])?;
     let digest = diffnote::files::tree_digest(&tree);
     let size: u64 = tree.values().map(|b| b.len() as u64).sum();
@@ -1150,7 +1137,7 @@ fn cmd_edit(
             let Some(base_dir) = base.as_deref() else {
                 anyhow::bail!("{NEEDS_A_BASE}");
             };
-            init_files(&review_path, Path::new(base_dir), None, None, false)?;
+            init_files(&review_path, Path::new(base_dir), None, false)?;
             fresh = FreshBundle(Some(review_path.clone()));
             loaded = bundle::load(&review_path)?;
         } else if let Some(base_dir) = base.as_deref() {
