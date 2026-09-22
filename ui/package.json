@@ -1,0 +1,19 @@
+{
+  "name": "diffnote-ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The page diffnote exports and serves. Bundled into ui/dist, which src/html.rs embeds.",
+  "license": "MIT",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test \"src/test/**/*.test.js\""
+  },
+  "dependencies": {
+    "htm": "3.1.1",
+    "preact": "10.24.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

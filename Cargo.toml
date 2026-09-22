@@ -25,6 +25,10 @@ two-face = { version = "0.5.2", default-features = false, features = ["syntect-f
 dirs = "7.0.0"
 serde_yaml = "0.9.34"
 
+# build.rs checks that the built page (ui/dist) matches what it was built from.
+[build-dependencies]
+sha2 = "0.10"
+
 # The dependencies that read syntax definitions and color code are slow
 # unoptimized (seconds per run in a debug build): keep them optimized.
 [profile.dev.package."*"]

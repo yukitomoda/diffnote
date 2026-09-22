@@ -18,8 +18,40 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # The page is built with node, once, and every other job takes that same
+  # bundle (the binary carries it: see ui/README.md). So node is needed here and
+  # nowhere else, and everything is checked against one build of the page.
+  client:
+    name: the page
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - run: npm --prefix ui ci
+
+      - name: Build
+        run: npm --prefix ui run build
+
+      - name: Test
+        # What the page is built from, under Node's own test runner.
+        run: npm --prefix ui test
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
+          include-hidden-files: true # ui/dist/.sources, which build.rs reads
+          if-no-files-found: error
+
   test:
     name: ${{ matrix.os }} / rust ${{ matrix.toolchain }}
+    needs: client
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -38,6 +70,11 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
+
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
@@ -49,17 +86,6 @@ jobs:
         # Formatting doesn't depend on the platform, so once is enough.
         if: matrix.toolchain == 'stable' && runner.os == 'Linux'
         run: cargo fmt --all --check
-
-      - name: JavaScript syntax
-        # The page's script is a plain file (see ui/README.md); Node is on
-        # the runner.
-        if: matrix.toolchain == 'stable' && runner.os == 'Linux'
-        run: node --check ui/client/lib.js && node --check ui/client/interact.js && node --check ui/client/api.js && node --check ui/client/app.js
-
-      - name: JavaScript tests
-        # Pure functions of the page (ui/client/lib.js), with Node's own runner.
-        if: matrix.toolchain == 'stable' && runner.os == 'Linux'
-        run: node --test ui/client/test/*.test.js
 
       - name: Clippy
         # Warnings are errors, but only on stable: a new Rust adds lints, and
@@ -74,9 +100,14 @@ jobs:
   # the Ubuntu runner.
   browser:
     name: browser tests
+    needs: client
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build

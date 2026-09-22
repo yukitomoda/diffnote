@@ -1,7 +1,6 @@
-'use strict';
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const lib = require('../lib.js');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { lib } from '../lib.js';
 
 // The handful of messages/ja.yaml keys this test file's assertions rely on
 // (these tests exercise lib.js's own formatting, not the wording itself).

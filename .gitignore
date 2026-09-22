@@ -2,3 +2,6 @@
 /.diffnote
 /.diffnote.draft
 __pycache__/
+# The page is built from ui/src (`mise run build`), not kept here.
+/ui/dist
+/ui/node_modules

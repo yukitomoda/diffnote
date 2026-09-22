@@ -9,11 +9,13 @@ Shift+click, Escape) is what is tested.
 The reviews they open are made by the real `diffnote` (its `edit`, run with a
 fake editor: `fake_editor.py`); nothing is checked in as a fixture.
 
-    cargo build
+    mise run build
     python3 -m unittest discover -s tests/browser -v
 
 Needs Python 3, Chrome or Chromium (`CHROME=/path/to/chrome` to name it) and
-`unzip`, and a built binary (`DIFFNOTE_BIN=...`, default `target/debug/diffnote`).
+`unzip`, and a built binary (`DIFFNOTE_BIN=...`, default `target/debug/diffnote`)
+-- built after the page it carries, which is what `mise run build` does (see
+ui/README.md).
 A test module is skipped, not failed, when the browser or the binary is missing.
 
 Tips for writing more:

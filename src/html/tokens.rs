@@ -1,6 +1,6 @@
 //! Code as tokens: a line is a list of pieces of text, each with the kind of
 //! thing it is (`keyword`, `string`, ...) or none. The colors are the page's
-//! (`.tok-*` in `ui/style.css`), not the data's.
+//! (`.tok-*` in `ui/src/style.css`), not the data's.
 //!
 //! In JSON a piece with no kind is just its text, and one with a kind is
 //! `[kind, text]`.

@@ -1094,7 +1094,7 @@ impl Server {
 
     /// A new thread on lines of a revision's diff, on a file, or on the whole
     /// review. The page says which lines as counters on each side (see
-    /// `lib.counters` in `ui/client`).
+    /// `lib.counters` in `ui/src`).
     fn create_thread(&self, body: &[u8]) -> Result<Reply, Failure> {
         let bad = |key: &str| Failure(400, m(key).to_string());
         let value: serde_json::Value =
@@ -2132,7 +2132,8 @@ mod tests {
         let page = text(&reply);
         assert!(page.contains(r#"id="diffnote-data""#));
         assert!(page.contains("why B?"), "the data has the comments");
-        assert!(page.contains("D.api = "));
+        // The served page's bundle is the one that talks to the server.
+        assert!(page.contains("fetch("));
         assert!(page.contains(r#""interactive":true"#));
     }
 
@@ -3291,7 +3292,7 @@ mod tests {
         let get = |t: &str| f.request("GET", t, &[], "");
         let page = get("/");
         assert_eq!(page.status, 200);
-        assert!(text(&page).contains("D.api = "));
+        assert!(text(&page).contains("fetch("));
         let model = json(&get("/api/model"));
         assert_eq!(model["model"]["interactive"], true);
         let stamp = model["model"]["stamp"].as_str().unwrap().to_string();

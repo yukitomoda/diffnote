@@ -14,8 +14,30 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The page, built once with node; each binary below carries this same bundle
+  # (see ui/README.md), so none of the platforms needs node.
+  client:
+    name: the page
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm --prefix ui ci
+      - run: npm --prefix ui run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
+          include-hidden-files: true # ui/dist/.sources, which build.rs reads
+          if-no-files-found: error
+
   build:
     name: build (${{ matrix.target }})
+    needs: client
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
@@ -31,6 +53,11 @@ jobs:
         run: git config --global core.autocrlf false
 
       - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -71,7 +98,9 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}
+          # The release takes every `archive-*`, and nothing else (the page's
+          # bundle is an artifact too, and is not published).
+          name: archive-${{ matrix.target }}
           path: ${{ steps.package.outputs.file }}
           if-no-files-found: error
 
@@ -84,6 +113,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: archive-*
           path: dist
           merge-multiple: true
 

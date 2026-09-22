@@ -6,7 +6,7 @@
 //! [`m`] looks one up by its dotted path (`cli.init.about`), and [`mf`]
 //! additionally substitutes `{name}` placeholders in it. The same file is
 //! also embedded into the served/exported page as JSON (see
-//! `html::MESSAGES_JSON`) for the WebUI's own `m`/`mf` in `ui/client/lib.js`
+//! `html::MESSAGES_JSON`) for the WebUI's own `m`/`mf` in `ui/src/lib.js`
 //! to read -- one source of truth for both sides.
 
 use std::collections::HashMap;

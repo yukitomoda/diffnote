@@ -112,21 +112,16 @@ fn revision_views<'a>(shown: &'a [Shown<'a>]) -> Vec<RevisionView<'a>> {
         .collect()
 }
 
-/// The scripts of the client-side page, in the order they are put in it: the
-/// libraries (plain-script builds, so the page works from a file), then the
-/// page's own. Each adds to `window.Diffnote`.
-const CLIENT_LIBS: [&str; 6] = [
-    include_str!("../ui/vendor/preact.min.js"),
-    include_str!("../ui/vendor/hooks.umd.js"),
-    include_str!("../ui/vendor/htm.js"),
-    include_str!("../ui/client/emoji.js"),
-    include_str!("../ui/client/lib.js"),
-    include_str!("../ui/client/interact.js"),
-];
-const CLIENT_APP: &str = include_str!("../ui/client/app.js");
-/// Only the served page talks to the server (an exported page makes no
-/// requests), so only it has this.
-const CLIENT_API: &str = include_str!("../ui/client/api.js");
+/// The page's script: one bundle, built from `ui/src` into `ui/dist` by
+/// `mise run build` (see ui/README.md; build.rs says so if it is missing or
+/// older than what it was built from). It is put in the page as a plain script,
+/// so that the page works from a file, and it sets `window.Diffnote`.
+///
+/// There are two, and what tells them apart is what they were built from: only
+/// the served page talks to the server, so the exported page's bundle holds
+/// none of the code that would (`ui/src/entry-export.js`).
+const CLIENT_EXPORT: &str = include_str!("../ui/dist/export.js");
+const CLIENT_SERVE: &str = include_str!("../ui/dist/serve.js");
 
 /// The page `diffnote export` writes: one self-contained HTML file, drawn in
 /// the browser by a client-side app from the data of [`view_model`] embedded in
@@ -178,15 +173,11 @@ fn client_page(
         view_model_json(loaded, limit)?
     };
     let title = crate::review::title(&loaded.settings).unwrap_or(m("html.default_title"));
-    let mut scripts: Vec<&str> = CLIENT_LIBS.to_vec();
-    if interactive {
-        scripts.push(CLIENT_API);
-    }
-    scripts.push(CLIENT_APP);
-    let scripts: String = scripts
-        .iter()
-        .map(|s| format!("<script>\n{s}\n</script>\n"))
-        .collect();
+    let script = if interactive {
+        CLIENT_SERVE
+    } else {
+        CLIENT_EXPORT
+    };
     Ok(format!(
         r#"<!DOCTYPE html>
 <html lang="ja">
@@ -203,7 +194,10 @@ fn client_page(
 <div id="app"></div>
 <script type="application/json" id="diffnote-data">{data}</script>
 <script type="application/json" id="diffnote-messages">{messages}</script>
-{scripts}<script>Diffnote.start();</script>
+<script>
+{script}
+</script>
+<script>Diffnote.start();</script>
 </body>
 </html>
 "#,
@@ -760,7 +754,7 @@ fn escape_html(s: &str) -> String {
     out
 }
 
-const STYLE: &str = include_str!("../ui/style.css");
+const STYLE: &str = include_str!("../ui/dist/style.css");
 
 mod markdown;
 pub(crate) mod tokens;
@@ -948,15 +942,18 @@ mod tests {
 
     #[test]
     fn hiding_resolved_threads_covers_cards_rows_list_entries_and_line_marks() {
-        // The rules the box switches on (the class is on the body).
+        // The rules the box switches on (the class is on the body). The style is
+        // built (`mise run build`), so it is read without its spacing.
+        let style: String = STYLE.chars().filter(|c| !c.is_whitespace()).collect();
         for rule in [
-            ".diffnote-hide-resolved .diffnote-thread--resolved { display: none; }",
-            ".diffnote-hide-resolved .diffnote-thread-row:has(> td > .diffnote-thread--resolved) { display: none; }",
-            ".diffnote-hide-resolved .diffnote-outdated__entry:has(> .diffnote-thread--resolved) { display: none; }",
-            ".diffnote-hide-resolved .diffnote-threadlist .is-resolved { display: none; }",
-            ".diffnote-hide-resolved .diffnote-line--resolved-only > td:first-child { --dn-l: 0 0 0 0 transparent; }",
+            ".diffnote-hide-resolved .diffnote-thread--resolved { display: none }",
+            ".diffnote-hide-resolved .diffnote-thread-row:has(> td > .diffnote-thread--resolved) { display: none }",
+            ".diffnote-hide-resolved .diffnote-outdated__entry:has(> .diffnote-thread--resolved) { display: none }",
+            ".diffnote-hide-resolved .diffnote-threadlist .is-resolved { display: none }",
+            ".diffnote-hide-resolved .diffnote-line--resolved-only > td:first-child { --dn-l: 0 0 0 0 transparent }",
         ] {
-            assert!(STYLE.contains(rule), "{rule}");
+            let want: String = rule.chars().filter(|c| !c.is_whitespace()).collect();
+            assert!(style.contains(&want), "{rule}");
         }
     }
 
@@ -1167,6 +1164,24 @@ mod tests {
         assert_eq!(file_status(None, false), "context");
     }
 
+    /// The page without what is inside its script elements: the bundle is built
+    /// minified, so a line like `full.src = image.src` is in it as `full.src=`,
+    /// which says nothing about what the page loads. What it loads is in the
+    /// markup, and `ui/src/test/sources.test.js` keeps elements out of the
+    /// scripts' own text.
+    fn without_scripts(page: &str) -> String {
+        let mut out = String::new();
+        let mut rest = page;
+        while let Some(start) = rest.find("<script") {
+            out.push_str(&rest[..start]);
+            rest = &rest[start..];
+            let end = rest.find("</script>").map_or(rest.len(), |i| i + 9);
+            rest = &rest[end..];
+        }
+        out.push_str(rest);
+        out
+    }
+
     #[test]
     fn the_export_is_one_page_with_its_data_and_scripts_and_nothing_to_fetch() {
         let (_dir, loaded, _ids) = scenario_parts();
@@ -1175,50 +1190,27 @@ mod tests {
         assert!(page.contains("Diffnote.start();"));
         assert!(page.contains(r#"<div id="app"></div>"#));
         // Nothing that would need a request, a module or a worker (which a
-        // page opened from a file can't have).
-        for s in CLIENT_LIBS.iter().chain(&[CLIENT_APP]) {
-            assert!(
-                !s.contains("</script"),
-                "a script that would end its element"
-            );
-            assert!(!s.contains("import("), "dynamic import");
-            assert!(!s.contains("fetch("), "fetch");
-            assert!(!s.contains("XMLHttpRequest"), "XMLHttpRequest");
-            assert!(!s.contains("new Worker"), "workers");
-            assert!(!s.contains("serviceWorker"), "service workers");
-        }
-        // What the page shows is made of elements, never of HTML text (a comment
-        // or a line of code can't become markup): true of the page's own
-        // scripts (the libraries are theirs).
-        for own in [
-            CLIENT_LIBS[3],
-            CLIENT_LIBS[4],
-            CLIENT_LIBS[5],
-            CLIENT_APP,
-            CLIENT_API,
-        ] {
-            for banned in [
-                "innerHTML",
-                "dangerouslySetInnerHTML",
-                "insertAdjacentHTML",
-                "document.write",
-            ] {
-                assert!(!own.contains(banned), "{banned}");
-            }
-        }
-        assert!(!page.contains(r#"type="module""#));
-        // Only the served page has what talks to the server.
+        // page opened from a file can't have). What the bundle is built from is
+        // held to more than this by `ui/src/test/sources.test.js`.
         assert!(
-            !page.contains("D.api = "),
+            !CLIENT_EXPORT.contains("</script"),
+            "a script that would end its element"
+        );
+        assert!(!CLIENT_EXPORT.contains("import("), "dynamic import");
+        assert!(!CLIENT_EXPORT.contains("XMLHttpRequest"), "XMLHttpRequest");
+        assert!(!CLIENT_EXPORT.contains("new Worker"), "workers");
+        assert!(!CLIENT_EXPORT.contains("serviceWorker"), "service workers");
+        assert!(!page.contains(r#"type="module""#));
+        // Only the served page has what talks to the server: it is left out of
+        // the exported page's bundle, not turned off in it.
+        assert!(
+            !CLIENT_EXPORT.contains("fetch("),
             "an exported page makes no requests"
         );
-        assert!(
-            render_served_page(&loaded, Vec::new(), Vec::new(), "a".into(), false, 0)
-                .unwrap()
-                .contains("D.api = ")
-        );
-        assert!(!page.contains("src="), "no external file");
-        assert!(!page.contains("<link"), "no external style");
+        assert!(CLIENT_SERVE.contains("fetch("));
+        let markup = without_scripts(&page);
+        assert!(!markup.contains("src="), "no external file");
+        assert!(!markup.contains("<link"), "no external style");
     }
 
     #[test]

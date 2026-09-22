@@ -1,3 +1,45 @@
 [tools]
 claude = "latest"
 rust = "latest"
+# The page's scripts are bundled with node (see ui/README.md). 24 or newer, so
+# that a test written in TypeScript runs under `node --test` as it is.
+node = "24"
+
+# The page is built with node, the binary with cargo, in that order (the binary
+# carries the page). These tasks are how to do it: whichever half you changed,
+# `mise run build` and `mise run test` are right.
+
+[tasks.install]
+description = "画面のビルドに使うパッケージを入れる"
+run = "npm --prefix ui ci"
+sources = ["ui/package-lock.json"]
+outputs = ["ui/node_modules/.package-lock.json"]
+
+[tasks.client]
+description = "画面(ui/src)を ui/dist にビルドする"
+depends = ["install"]
+run = "npm --prefix ui run build"
+sources = ["ui/src/**/*", "ui/build.mjs", "ui/package.json"]
+outputs = ["ui/dist/export.js", "ui/dist/serve.js", "ui/dist/style.css"]
+
+[tasks.build]
+description = "画面と実行ファイルをビルドする"
+depends = ["client"]
+run = "cargo build"
+
+[tasks.test]
+description = "すべてのテスト(Rust・画面・ブラウザ)"
+depends = ["build"]
+run = [
+  "cargo test",
+  "npm --prefix ui test",
+  "python3 -m unittest discover -s tests/browser",
+]
+
+[tasks.check]
+description = "書式と lint"
+depends = ["client"]
+run = [
+  "cargo fmt --all --check",
+  "cargo clippy --all-targets -- -D warnings",
+]
