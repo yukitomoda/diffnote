@@ -622,6 +622,21 @@ class LineLinks(BrowserCase):
         b = self.b
         self.assertEqual(b.js("document.querySelector(`${'%s'} .diffnote-thread .diffnote-copy`).getAttribute('data-diffnote-copy')" % CUR).endswith("@2"), True)
 
+    def test_the_browser_back_and_forward_buttons_retrace_a_jump_to_another_revision(self):
+        # Exported HTML is opened from a file (no server): the address's hash is
+        # the only part of the URL that can change without a real navigation.
+        b = self.b
+        self.assertEqual(b.js("document.querySelector('.diffnote-revision.is-current').id"), "rev-1")
+        b.click("[data-diffnote-lineref='long.txt:L5-5']")
+        self.assertTrue(b.wait("document.querySelector('.diffnote-revision.is-current').id === 'rev-0'"))
+        # A moment for the popstate listener (a useEffect) to attach.
+        time.sleep(0.1)
+        b.js("history.back()")
+        self.assertTrue(b.wait("document.querySelector('.diffnote-revision.is-current').id === 'rev-1'"))
+        time.sleep(0.1)
+        b.js("history.forward()")
+        self.assertTrue(b.wait("document.querySelector('.diffnote-revision.is-current').id === 'rev-0'"))
+
     def test_picking_a_file_in_the_list_brings_it_back_opens_it_and_marks_it(self):
         b = self.b
         section = f"{CUR} section.diffnote-file[data-diffnote-file='other.txt']"

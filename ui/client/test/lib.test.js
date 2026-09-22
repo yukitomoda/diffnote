@@ -464,3 +464,44 @@ test('a file says how many lines its diff adds and removes, and shows five block
   assert.deepEqual(lib.diffBlocks(1, 100), ['a', 'd', 'd', 'd', 'd']);
   for (const [a, r] of [[1, 1], [3, 7], [50, 50], [2, 1]]) assert.equal(lib.diffBlocks(a, r).length, 5);
 });
+
+test('the page state round-trips through a hash: revision, screen, compare target, and a jump', () => {
+  const round = (state) => lib.parseHash(lib.formatHash(state));
+  assert.deepEqual(round({ rev: 2, screen: null, against: null, at: null }), { rev: 2, screen: null, against: null, at: null });
+  assert.deepEqual(round({ rev: 0, screen: 'bundle', against: null, at: null }), { rev: 0, screen: 'bundle', against: null, at: null });
+  assert.deepEqual(round({ rev: 3, screen: 'user', against: 1, at: null }), { rev: 3, screen: 'user', against: 1, at: null });
+  assert.deepEqual(
+    round({ rev: 1, screen: null, against: null, at: { kind: 'file', path: 'src/a b.ts' } }),
+    { rev: 1, screen: null, against: null, at: { kind: 'file', path: 'src/a b.ts' } }
+  );
+  assert.deepEqual(
+    round({ rev: 1, screen: null, against: null, at: { kind: 'thread', id: '01ABCXYZ' } }),
+    { rev: 1, screen: null, against: null, at: { kind: 'thread', id: '01ABCXYZ' } }
+  );
+  assert.deepEqual(
+    round({ rev: 1, screen: null, against: null, at: { kind: 'lines', path: 'a/b.rs', side: 'new', start: 10, end: 13 } }),
+    { rev: 1, screen: null, against: null, at: { kind: 'lines', path: 'a/b.rs', side: 'new', start: 10, end: 13 } }
+  );
+  assert.deepEqual(
+    round({ rev: 1, screen: null, against: null, at: { kind: 'lines', path: 'a/b.rs', side: 'old', start: 10, end: 10 } }),
+    { rev: 1, screen: null, against: null, at: { kind: 'lines', path: 'a/b.rs', side: 'old', start: 10, end: 10 } }
+  );
+});
+
+test('a hash with no revision (or none at all) parses to null: nothing to go on', () => {
+  assert.equal(lib.parseHash(''), null);
+  assert.equal(lib.parseHash('#'), null);
+  assert.equal(lib.parseHash('screen=user'), null);
+  assert.equal(lib.parseHash('rev=abc'), null);
+  assert.equal(lib.parseHash('#rev-2'), null, 'the old, one-way format is not read back');
+  // An unknown screen or a broken `at` is dropped, not fatal.
+  assert.deepEqual(lib.parseHash('rev=1&screen=nope&at=garbled'), { rev: 1, screen: null, against: null, at: null });
+});
+
+test('the hash is built in a fixed, readable order', () => {
+  assert.equal(lib.formatHash({ rev: 1, screen: null, against: null, at: null }), 'rev=1');
+  assert.equal(
+    lib.formatHash({ rev: 1, screen: 'bundle', against: 0, at: { kind: 'file', path: 'a.rs' } }),
+    'rev=1&screen=bundle&against=0&at=file%3Aa.rs'
+  );
+});

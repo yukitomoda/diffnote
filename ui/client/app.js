@@ -1228,6 +1228,7 @@
   function FileList(props) {
     var ctx = props.ctx;
     var viewed = useContext(ViewedContext);
+    var links = useContext(LinksContext);
     // The files of the diff (not those opened to look at) are what is counted.
     var files = ctx.diffFiles;
     return html`<details class="diffnote-side" open>
@@ -1249,8 +1250,7 @@
               onClick=${function (e) {
                 // A file that was looked at comes back; one that was folded opens; and it is marked.
                 e.preventDefault();
-                if (viewed && viewed.is(f)) viewed.toggle(f);
-                D.interact.showFile(ctx.rev, f.path);
+                links.go({ kind: 'file', path: f.path });
               }}>${f.path}</a>
             ${done
               ? open > 0 && html`<span class="diffnote-badge" data-diffnote-open-count title=${'未解決のスレッドが ' + open + ' 件あります'}>${open}</span>`
@@ -1263,7 +1263,7 @@
 
   function ThreadList(props) {
     var ctx = props.ctx;
-    var viewed = useContext(ViewedContext);
+    var links = useContext(LinksContext);
     var open = ctx.model.threads.filter(function (t) { return !t.resolved; }).length;
     return html`<details class="diffnote-side" open>
       <summary>スレッド <span class="diffnote-badge" title="未解決 / 全部">${open} / ${ctx.model.threads.length}</span></summary>
@@ -1274,14 +1274,7 @@
           var color = p && p.kind === 'line' ? lib.color(p.color) : '#8b949e';
           return html`<li key=${id} class=${t.resolved ? 'is-resolved' : ''}>
             <a href=${'#r' + ctx.rev + '-thread-' + id} data-diffnote-jump=${id} title=${lib.location(p) || '差分全体'}
-              onClick=${function () {
-                // A thread of a file that was looked at brings the file back.
-                var file = p && p.file && ctx.revision.files.filter(function (f) { return f.path === p.file; })[0];
-                if (file && viewed && viewed.is(file)) {
-                  viewed.toggle(file);
-                  D.interact.jumpWhenShown('r' + ctx.rev + '-thread-' + id);
-                }
-              }}>
+              onClick=${function (e) { e.preventDefault(); links.go({ kind: 'thread', id: id }); }}>
               <span class="diffnote-thread__swatch" style=${'background:' + color}></span><span class="diffnote-threadlist__where">${lib.shortLocation(p)}</span>${t.resolved && html`<span class="diffnote-threadlist__state">解決済み</span>`}<span class="diffnote-threadlist__preview">${lib.withShortcodes(D.emoji || [], lib.preview((t.comments.filter(function (c) { return !c.deleted; })[0] || t.comments[0]).doc)) || '(削除されました)'}</span>
             </a>
           </li>`;
@@ -1469,12 +1462,6 @@
       };
     }, []);
     return wide;
-  }
-
-  function revisionFromHash(model) {
-    var m = /^#rev-(\d+)$/.exec(location.hash);
-    if (m && +m[1] < model.revisions.length) return +m[1];
-    return model.revisions.length - 1;
   }
 
   // The model, and (on the served page) the changes that can be made to it.
@@ -1779,9 +1766,20 @@
     var review = useReview(props.model);
     var openedFiles = useOpened(props.model.interactive);
     var model = review.model;
-    var _c = useState(revisionFromHash(model));
+    // Where the page starts, from the address (see the effects near the bottom
+    // of this function): the revision (1-based there, as the tabs are), the
+    // settings screen, what it is compared against, and the last place jumped
+    // to. `null` if there was nothing to go on.
+    var initialHash = lib.parseHash(location.hash);
+    var initialRev = initialHash && initialHash.rev >= 1 && initialHash.rev <= model.revisions.length
+      ? initialHash.rev - 1
+      : model.revisions.length - 1;
+    var _c = useState(initialRev);
     var current = _c[0];
     var setCurrent = _c[1];
+    // Set just before a change is made because the browser's back/forward moved
+    // the address (so the effect that writes it back doesn't write it again).
+    var navigating = useRef(false);
     // Resolved threads are hidden unless that was turned off before.
     var _h = useState(kept('diffnote-hide-resolved', '1') !== '0');
     var hide = _h[0];
@@ -1789,7 +1787,7 @@
     var counts = lib.counts(model.threads);
     // The revision is looked at against an earlier one (chosen at the base) instead
     // of against the base: the number of that one, or `null`. Only for looking.
-    var _a = useState(null);
+    var _a = useState(initialHash ? initialHash.against : null);
     var against = _a[0];
     var setAgainst = _a[1];
     var _k = useState(null);
@@ -1822,9 +1820,15 @@
     }, [cmp, current, against, model]);
     // The settings screen shown instead of the review, if any: the review's
     // own (`'bundle'`), or this machine's user settings (`'user'`).
-    var _st = useState(null);
+    var _st = useState(initialHash ? initialHash.screen : null);
     var screen = _st[0];
     var setScreen = _st[1];
+    // The place last jumped to (a file, some lines, or a thread): kept only so
+    // it is part of the address; nothing else reads it back except the effects
+    // that write and retrace it.
+    var _at = useState(initialHash ? initialHash.at : null);
+    var at = _at[0];
+    var setAt = _at[1];
     // The tab that is shown is kept in view when there are more than fit.
     var tabs = useRef(null);
     useLayoutEffect(function () {
@@ -1855,6 +1859,19 @@
       // A path is a place if some revision has the file.
       var known = {};
       model.revisions.forEach(function (r) { r.files.forEach(function (f) { known[f.path] = true; }); });
+      // Opens a file, some of its lines, or a thread, in revision `rev` (bringing
+      // back a file marked "viewed" first, since it would otherwise be hidden).
+      // Used for a live jump, and to retrace one from the address alike.
+      var jump = function (rev, place) {
+        var revision = model.revisions[rev];
+        if (!revision) return;
+        var path = place.kind === 'thread' ? ((revision.placements[place.id] || {}).file || null) : place.path;
+        var file = path && revision.files.filter(function (f) { return f.path === path; })[0];
+        if (file && viewed.is(file)) viewed.toggle(file);
+        if (place.kind === 'file') D.interact.showFile(rev, place.path);
+        else if (place.kind === 'thread') D.interact.jumpWhenShown('r' + rev + '-thread-' + place.id);
+        else D.interact.showLines(rev, place.path, place.side, place.start, place.end);
+      };
       return {
         current: current,
         revisions: model.revisions.length,
@@ -1871,16 +1888,55 @@
           if (model.images && model.images[id]) return model.images[id];
           return model.interactive ? '/api/images/' + id : '';
         },
+        // A place chosen by clicking: a line reference (`{path,side,start,end,rev}`,
+        // as `lib.lineRefs` gives them), or `{kind:'file'|'thread', ...}`. Also
+        // remembered, so the browser's back/forward can retrace the jump.
         go: function (ref) {
           var index = ref.rev == null ? current : ref.rev - 1;
+          var place = ref.kind ? ref : { kind: 'lines', path: ref.path, side: ref.side, start: ref.start, end: ref.end };
           if (index !== current) setCurrent(index);
-          var file = model.revisions[index].files.filter(function (f) { return f.path === ref.path; })[0];
-          // A file that was looked at is brought back to be shown.
-          if (file && viewed.is(file)) viewed.toggle(file);
-          D.interact.showLines(index, ref.path, ref.side, ref.start, ref.end);
+          setAt(place);
+          jump(index, place);
         },
+        jump: jump,
       };
     }, [model, viewed, current]);
+    // The initial address may already point at a specific place (from a copied
+    // link, or typed in): jump there once the page has drawn.
+    useEffect(function () {
+      if (initialHash && initialHash.at) links.jump(initialRev, initialHash.at);
+    }, []);
+    // The browser's back/forward buttons: retrace the revision, settings screen,
+    // compare target and last jump, exactly as the address says.
+    useEffect(function () {
+      var onPop = function () {
+        var parsed = lib.parseHash(location.hash);
+        if (!parsed || parsed.rev < 1 || parsed.rev > model.revisions.length) return;
+        navigating.current = true;
+        var index = parsed.rev - 1;
+        setCurrent(index);
+        setScreen(parsed.screen);
+        setAgainst(parsed.against);
+        setAt(parsed.at);
+        if (parsed.at) links.jump(index, parsed.at);
+      };
+      window.addEventListener('popstate', onPop);
+      return function () { window.removeEventListener('popstate', onPop); };
+    }, [model.revisions.length, links]);
+    // The other way around: what changed here is written to the address (so
+    // the buttons above have something to retrace), unless it came from there
+    // just now. The very first time, the address is only filled in, not added
+    // to (nothing was navigated to yet -- it is where the page already was).
+    var everWritten = useRef(false);
+    useEffect(function () {
+      if (navigating.current) { navigating.current = false; everWritten.current = true; return; }
+      var hash = '#' + lib.formatHash({ rev: current + 1, screen: screen, against: against, at: at });
+      if (hash !== location.hash) {
+        if (everWritten.current) history.pushState(null, '', hash);
+        else history.replaceState(null, '', hash);
+      }
+      everWritten.current = true;
+    }, [current, screen, against, at]);
     // Differences that are only in white space ignored: the review says how the page
     // starts (a default kept in it), and changing it here is for this page only.
     var _w = useState(!!model.ignore_whitespace);
@@ -1947,7 +2003,7 @@
         }}><ul>
           ${model.revisions.map(function (r, i) {
             return html`<li key=${i}><a href=${'#rev-' + i} data-diffnote-revision-link=${i} class=${i === current ? 'is-current' : ''}
-              onClick=${function (e) { e.preventDefault(); setScreen(null); setCurrent(i); }}>${r.label}</a></li>`;
+              onClick=${function (e) { e.preventDefault(); setScreen(null); setAt(null); setCurrent(i); }}>${r.label}</a></li>`;
           })}
         </ul></nav>`}
         <div class="diffnote-topbar__actions">

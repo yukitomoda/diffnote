@@ -568,5 +568,57 @@
     return { text: text.slice(0, start) + insert + text.slice(end), cursor: start + insert.length };
   };
 
+  // Where a jump landed: a whole file, some of its lines (as `chosenLocation`
+  // does), or a thread (by id). One piece of `pageState`, below.
+  lib.formatAt = function (at) {
+    if (at.kind === 'file') return 'file:' + at.path;
+    if (at.kind === 'thread') return 'thread:' + at.id;
+    var span = at.end > at.start ? at.start + '-' + at.end : String(at.start);
+    return 'lines:' + at.path + ':' + (at.side === 'old' ? 'L' : 'R') + span;
+  };
+
+  lib.parseAt = function (text) {
+    var m;
+    if ((m = /^file:(.+)$/.exec(text))) return { kind: 'file', path: m[1] };
+    if ((m = /^thread:(.+)$/.exec(text))) return { kind: 'thread', id: m[1] };
+    if ((m = /^lines:(.+):([LR])(\d+)(?:-(\d+))?$/.exec(text))) {
+      var start = +m[3];
+      var end = m[4] != null ? +m[4] : start;
+      return { kind: 'lines', path: m[1], side: m[2] === 'L' ? 'old' : 'new', start: start, end: end };
+    }
+    return null;
+  };
+
+  // The page's state that belongs in the URL, so the browser's back/forward
+  // buttons retrace it: the revision shown, the settings screen (if any), what
+  // it is compared against (if not the base), and the last place jumped to (if
+  // any) -- as a hash string (without the leading `#`), and back. Anything not
+  // given a `rev` (the essential part) parses to `null` (nothing to go on).
+  lib.formatHash = function (state) {
+    var p = [];
+    var put = function (k, v) { p.push(encodeURIComponent(k) + '=' + encodeURIComponent(v)); };
+    put('rev', String(state.rev));
+    if (state.screen) put('screen', state.screen);
+    if (state.against != null) put('against', String(state.against));
+    if (state.at) put('at', lib.formatAt(state.at));
+    return p.join('&');
+  };
+
+  lib.parseHash = function (hash) {
+    var text = String(hash || '').replace(/^#/, '');
+    var got = {};
+    text.split('&').forEach(function (part) {
+      if (!part) return;
+      var eq = part.indexOf('=');
+      var k = eq < 0 ? part : part.slice(0, eq);
+      var v = eq < 0 ? '' : part.slice(eq + 1);
+      got[decodeURIComponent(k)] = decodeURIComponent(v);
+    });
+    if (!/^\d+$/.test(got.rev || '')) return null;
+    var screen = got.screen === 'bundle' || got.screen === 'user' ? got.screen : null;
+    var against = /^\d+$/.test(got.against || '') ? +got.against : null;
+    return { rev: +got.rev, screen: screen, against: against, at: got.at ? lib.parseAt(got.at) : null };
+  };
+
   if (typeof module !== 'undefined' && module.exports) module.exports = lib;
 })(typeof window !== 'undefined' ? (window.Diffnote = window.Diffnote || {}) : (globalThis.Diffnote = globalThis.Diffnote || {}));

@@ -489,7 +489,7 @@ class Replies(ServedCase):
         b.click("[data-diffnote-user-settings]")
         self.assertTrue(b.wait_exists("[data-diffnote-user-settings-page]"))
         self.assertEqual(b.value("[data-diffnote-user-setting-author]"), "")
-        self.assertTrue(b.js("document.activeElement === document.querySelector('[data-diffnote-user-setting-author]')"), "focused")
+        self.assertTrue(b.wait("document.activeElement === document.querySelector('[data-diffnote-user-setting-author]')"), "focused")
         self.assertTrue(b.js("document.querySelector('[data-diffnote-user-settings-save]').disabled"), "nothing changed yet")
         b.click("[data-diffnote-user-settings-back]")
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-user-settings-page]')"))
@@ -584,6 +584,7 @@ class Replies(ServedCase):
         # the review's own settings).
         b.click("[data-diffnote-user-settings]")
         self.assertTrue(b.wait_exists("[data-diffnote-user-settings-page]"))
+        time.sleep(0.1)  # let the screen's own Escape listener (a useEffect) attach
         b.escape()
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-user-settings-page]')"))
 
@@ -1811,6 +1812,116 @@ class Reopen(ServedCase):
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("--reopen", out.stderr)
         self.assertFalse(os.path.exists(review))
+
+
+class BrowserHistory(ServedCase):
+    """The browser's own back/forward buttons retrace revision switches,
+    settings screens, and jumps (deep links).
+
+    A short sleep sits before every `history.back()`/`forward()` and
+    `b.escape()` here: the listener that hears them is attached by a
+    `useEffect`, which runs a moment after the element it belongs to first
+    appears (`wait_exists` only says the element is there). Firing the key
+    or navigating sooner sometimes beats the listener to it."""
+
+    SETTLE = 0.1
+
+    def settle(self):
+        time.sleep(self.SETTLE)
+
+    def current_tab(self):
+        return self.b.js("document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink")
+
+    def test_back_and_forward_retrace_revision_switches(self):
+        self.serve()
+        b = self.b
+        first = self.current_tab()
+        self.settle()
+        b.click("[data-diffnote-revision-link='0']")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink === '0'"))
+        self.settle()
+        b.js("history.back()")
+        self.assertTrue(b.wait(f"document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink === {json.dumps(first)}"))
+        self.settle()
+        b.js("history.forward()")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink === '0'"))
+
+    def test_back_and_forward_retrace_opening_and_closing_the_settings_screens(self):
+        self.serve()
+        b = self.b
+        self.assertFalse(b.exists("[data-diffnote-settings-page]"))
+        self.settle()
+        b.click("[data-diffnote-settings]")
+        self.assertTrue(b.wait_exists("[data-diffnote-settings-page]"))
+        self.settle()
+        b.click("[data-diffnote-user-settings]")
+        self.assertTrue(b.wait_exists("[data-diffnote-user-settings-page]"))
+        self.settle()
+        b.js("history.back()")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-user-settings-page]')"))
+        self.assertTrue(b.wait_exists("[data-diffnote-settings-page]"))
+        self.settle()
+        b.js("history.back()")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"))
+        self.settle()
+        b.js("history.forward()")
+        self.assertTrue(b.wait_exists("[data-diffnote-settings-page]"))
+        self.settle()
+        b.js("history.forward()")
+        self.assertTrue(b.wait_exists("[data-diffnote-user-settings-page]"))
+
+    def test_back_and_forward_retrace_a_thread_jump_from_the_sidebar(self):
+        self.serve()
+        b = self.b
+        original = self.current_tab()
+        thread_id = b.js("document.querySelector('[data-diffnote-jump]').getAttribute('data-diffnote-jump')")
+        hover = "document.querySelector(%s).classList.contains('diffnote-hover')" % json.dumps(f'[data-diffnote-thread-id="{thread_id}"]')
+        self.settle()
+        b.click(f"[data-diffnote-jump='{thread_id}']")
+        self.assertTrue(b.wait(hover))
+        # Elsewhere first, so back has something distinct to undo.
+        b.click("[data-diffnote-revision-link='0']")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink === '0'"))
+        self.settle()
+        b.js("history.back()")
+        self.assertTrue(b.wait(f"document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink === {json.dumps(original)}"))
+        self.assertTrue(b.wait(hover), "the jump (and its highlight) come back too")
+
+    def test_back_and_forward_retrace_a_line_reference_clicked_in_a_comment(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        self.reply_to(card, "calc.py:14 を見てください")
+        self.settle()
+        b.click("[data-diffnote-revision-link='0']")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink === '0'"))
+        b.click("[data-diffnote-revision-link='1']")
+        self.assertTrue(b.wait_exists("[data-diffnote-lineref]"))
+        b.click("[data-diffnote-lineref]")
+        self.assertTrue(b.wait("!!document.querySelector('tr.diffnote-linked')"))
+        # One step back: the jump itself is undone (the revision switch is a
+        # step of its own, from before it).
+        self.settle()
+        b.js("history.back()")
+        self.assertTrue(b.wait("!document.querySelector('tr.diffnote-linked')"))
+        self.assertEqual(b.js("document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink"), "1")
+        self.settle()
+        b.js("history.back()")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink === '0'"))
+        # Forward, twice: the switch, then the jump, both come back.
+        self.settle()
+        b.js("history.forward()")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink === '1'"))
+        self.settle()
+        b.js("history.forward()")
+        self.assertTrue(b.wait("!!document.querySelector('tr.diffnote-linked')"), "the jump is retraced too")
+
+    def test_opening_a_url_with_a_hash_starts_there_directly(self):
+        self.serve()
+        b = self.b
+        url = self.server.url.split('#')[0] + '#rev=1'
+        b.open(url, ready="!!document.querySelector('.diffnote-file')")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink === '0'"))
 
 
 if __name__ == "__main__":
