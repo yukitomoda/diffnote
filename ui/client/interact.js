@@ -163,15 +163,17 @@
     // Its own size; too big for the window, the box scrolls. Pressing it fits
     // it to the window instead, and again brings it back (the cursor says so).
     var fitted = false;
-    var fit = function () {
-      box.classList.toggle('is-fitted', fitted);
-    };
     full.addEventListener('click', function (e) {
       e.stopPropagation();
-      // Only worth toggling for an image the window can't hold as it is.
-      if (!fitted && full.naturalWidth <= box.clientWidth && full.naturalHeight <= box.clientHeight) return;
+      // One the window can hold has nothing to shrink to: pressing it (the
+      // cursor says zoom-out) is being done with it.
+      var overflows = box.scrollWidth > box.clientWidth || box.scrollHeight > box.clientHeight;
+      if (!fitted && !overflows) {
+        closeZoom();
+        return;
+      }
       fitted = !fitted;
-      fit();
+      box.classList.toggle('is-fitted', fitted);
     });
     var close = document.createElement('button');
     close.type = 'button';

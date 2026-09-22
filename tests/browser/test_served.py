@@ -1157,6 +1157,17 @@ class ImageZoom(ServedCase):
         b.escape()
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-zoom]')"))
 
+    def test_pressing_one_that_fits_the_window_closes_it(self):
+        self.serve()
+        b = self.b
+        card = self.comment_with_a_picture(700, 300)
+        b.click(f"#{card} img.diffnote-image")
+        self.assertTrue(b.wait_exists("[data-diffnote-zoom-image]"))
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-zoom-image]').complete"))
+        self.assertEqual(b.js("getComputedStyle(document.querySelector('[data-diffnote-zoom-image]')).cursor"), "zoom-out")
+        b.click("[data-diffnote-zoom-image]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-zoom]')"), "the cursor said so")
+
     def test_the_close_button_and_the_space_around_it_close_it(self):
         self.serve()
         b = self.b
