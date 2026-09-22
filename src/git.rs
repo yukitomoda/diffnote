@@ -227,7 +227,7 @@ impl Repo {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .context(m("git.cat_file_failed"))?;
+            .context(m("git.exec_failed_short"))?;
         let mut stdin = child.stdin.take().unwrap();
         let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
 
@@ -239,7 +239,7 @@ impl Repo {
             scope.spawn(move || {
                 let _ = stdin.write_all(request.as_bytes());
             });
-            for oid in oids {
+            for _ in oids {
                 let mut header = String::new();
                 std::io::BufRead::read_line(&mut stdout, &mut header)?;
                 // "<oid> blob <size>"; anything else (e.g. "<oid> missing") is an error.
@@ -247,12 +247,9 @@ impl Repo {
                 let (Some(_), Some("blob"), Some(size)) =
                     (fields.next(), fields.next(), fields.next())
                 else {
-                    bail!(mf(
-                        "git.blob_read_failed",
-                        &[("oid", oid), ("header", header.trim())]
-                    ));
+                    bail!(mf("git.blob_read_failed", &[("header", header.trim())]));
                 };
-                let size: usize = size.parse().context(m("git.cat_file_bad_size"))?;
+                let size: usize = size.parse().context(m("git.bad_size"))?;
                 let mut content = vec![0u8; size + 1]; // + trailing newline
                 stdout.read_exact(&mut content)?;
                 content.pop();

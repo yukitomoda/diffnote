@@ -1525,7 +1525,7 @@ diff --git a/f.rs b/f.rs
         let parsed = parse(&with_range("", "")).unwrap();
         assert_eq!(parsed.warnings.len(), 1);
         assert!(
-            parsed.warnings[0].contains("範囲 は閉じられて"),
+            parsed.warnings[0].contains("範囲 にコメントがない"),
             "{:?}",
             parsed.warnings
         );

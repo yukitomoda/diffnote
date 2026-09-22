@@ -848,7 +848,7 @@ class CompareWithAnEarlierRevision(ServedCase):
         self.choose("0")
         self.assertTrue(b.wait_exists("[data-diffnote-compare-note]"))
         self.assertRegex(b.text("[data-diffnote-compare-note]"), r"^#1 [0-9a-f]{7} \.\. #2 [0-9a-f]{7}⚠$")
-        self.assertIn("削除された行", b.js("document.querySelector('[data-diffnote-compare-note]').title"), "the explanation is the tooltip")
+        self.assertIn("表示だけの切り替え", b.js("document.querySelector('[data-diffnote-compare-note]').title"), "the explanation is the tooltip")
         self.assertTrue(b.js("document.querySelector('[data-diffnote-base]').classList.contains('is-changed')"))
         # What changed from c2 to c3: a docstring (two lines) and one line replaced.
         self.assertTrue(b.wait(f"document.querySelectorAll('{CUR} tr.diffnote-line--added').length === 3"))

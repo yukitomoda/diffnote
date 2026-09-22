@@ -201,10 +201,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
         let mut entry = archive.by_index(i).with_context(|| {
             mf(
                 "bundle.entry_read_failed",
-                &[
-                    ("path", &path.display().to_string()),
-                    ("index", &i.to_string()),
-                ],
+                &[("path", &path.display().to_string())],
             )
         })?;
         let name = entry.name().to_string();
@@ -411,7 +408,7 @@ pub fn save_with(
 
         writer.start_file("review.jsonl", options)?;
         for event in events {
-            let line = serde_json::to_string(event).context(m("bundle.event_json_failed"))?;
+            let line = serde_json::to_string(event).context(m("bundle.encode_failed"))?;
             writer.write_all(line.as_bytes())?;
             writer.write_all(b"\n")?;
         }
@@ -421,7 +418,7 @@ pub fn save_with(
             writer.start_file("settings.json", options)?;
             writer.write_all(
                 serde_json::to_string_pretty(&loaded.settings)
-                    .context(m("bundle.settings_json_failed"))?
+                    .context(m("bundle.encode_failed"))?
                     .as_bytes(),
             )?;
         }
@@ -430,7 +427,7 @@ pub fn save_with(
             writer.start_file("reactions.json", options)?;
             writer.write_all(
                 serde_json::to_string_pretty(&loaded.reactions)
-                    .context(m("bundle.reactions_json_failed"))?
+                    .context(m("bundle.encode_failed"))?
                     .as_bytes(),
             )?;
         }
@@ -492,7 +489,7 @@ pub fn save_with(
             }
         }
 
-        writer.finish().context(m("bundle.zip_finish_failed"))?;
+        writer.finish().context(m("bundle.encode_failed"))?;
     }
 
     temp.persist(path).with_context(|| {

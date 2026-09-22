@@ -444,7 +444,7 @@ fn add_revision(
             }
             None if !explicit => {
                 anyhow::bail!(mf(
-                    "main.add_revision.no_bundle",
+                    "main.no_bundle",
                     &[("path", &review_path.display().to_string())]
                 ));
             }
@@ -573,7 +573,7 @@ fn cmd_serve(
         }
         if !explicit {
             anyhow::bail!(mf(
-                "main.serve.no_bundle",
+                "main.no_bundle",
                 &[("path", &review.display().to_string())]
             ));
         }
@@ -1477,7 +1477,6 @@ fn cmd_edit(
             "main.edit.saved",
             &[
                 ("comments", &comment_count.to_string()),
-                ("events", &new_events.len().to_string()),
                 ("path", &review_path.display().to_string()),
             ]
         )
