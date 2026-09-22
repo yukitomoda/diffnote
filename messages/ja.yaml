@@ -1076,6 +1076,7 @@ ui:
     binary_suffix_named: " (バイナリ・{change})"
     binary_suffix_plain: " (バイナリ)"
     renamed_suffix: " (名前変更)"
+    renamed_suffix_from: " ({old} から名前変更)"
     close_title: |-
       この表示を閉じます
     close_button: |-

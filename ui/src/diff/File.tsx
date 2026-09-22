@@ -90,7 +90,11 @@ export function File(props: FileProps) {
         <h2>{file.path}{file.status === 'binary' ? (function () {
           var change = lib.messages['ui.binary_change.' + file.change];
           return change ? lib.mf('ui.file.binary_suffix_named', { change: change }) : lib.m('ui.file.binary_suffix_plain');
-        })() : ''}{file.status === 'renamed' ? lib.m('ui.file.renamed_suffix') : ''}</h2>
+        })() : ''}{file.status === 'renamed' && (file.old_path
+          // Where it was before, said here: the heading is the only place the
+          // path it moved from is written, and a folded file shows it too.
+          ? <span class="diffnote-file__from" data-diffnote-renamed-from={file.old_path}>{lib.mf('ui.file.renamed_suffix_from', { old: file.old_path })}</span>
+          : lib.m('ui.file.renamed_suffix'))}</h2>
         <button type="button" class="diffnote-copy" data-diffnote-copy={file.path} title={lib.m('ui.copy.path_title')}>{lib.m('ui.copy_button')}</button>
         {file.opened && files && <button type="button" class="diffnote-mini" data-diffnote-close title={lib.m('ui.file.close_title')}
           onClick={function (e) {
