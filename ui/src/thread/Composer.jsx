@@ -2,7 +2,7 @@
 import { useContext, useEffect, useRef } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { useAutoGrow } from '../dom.ts';
-import { ComposeContext } from '../state/contexts.js';
+import { ComposeContext } from '../state/contexts.ts';
 import { useAttach } from './attach.jsx';
 
 // The box a new thread is written in: on chosen lines, on a file, or on the

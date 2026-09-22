@@ -1,7 +1,7 @@
 // The ⚙ menu over a diff: how it is shown.
 import { useContext, useEffect, useRef, useState } from 'preact/hooks';
 import { lib } from './lib.ts';
-import { ViewContext } from './state/contexts.js';
+import { ViewContext } from './state/contexts.ts';
 
 // 「表示」: how the diff is shown, in a menu at the top right of the diff.
 export function ViewMenu() {

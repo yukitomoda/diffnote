@@ -3,7 +3,7 @@ import { useContext } from 'preact/hooks';
 import { EMOJI } from '../emoji.ts';
 import { lib } from '../lib.ts';
 import { htmlId } from '../dom.ts';
-import { LinksContext, ViewedContext } from '../state/contexts.js';
+import { LinksContext, ViewedContext } from '../state/contexts.ts';
 
 export function FileList(props) {
   var ctx = props.ctx;

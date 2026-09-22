@@ -6,7 +6,7 @@ import { ViewMenu } from './ViewMenu.jsx';
 import { File } from './diff/File.jsx';
 import { Tree } from './nav/Tree.jsx';
 import { FileList, ThreadList } from './nav/lists.jsx';
-import { OpenedContext, ViewedContext } from './state/contexts.js';
+import { OpenedContext, ViewedContext } from './state/contexts.ts';
 import { Card } from './thread/Card.jsx';
 import { Composer } from './thread/Composer.jsx';
 

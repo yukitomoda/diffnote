@@ -2,7 +2,7 @@
 import { useContext, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { transport } from '../transport.ts';
-import { LinksContext } from '../state/contexts.js';
+import { LinksContext } from '../state/contexts.ts';
 import { EmojiButton } from './Reactions.jsx';
 
 // Pictures for a box that a comment is written in: pasted (a screenshot),

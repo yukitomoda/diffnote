@@ -3,7 +3,7 @@ import { useContext, useMemo, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { transport } from '../transport.ts';
 import { tokens } from '../markdown.jsx';
-import { ComposeContext } from '../state/contexts.js';
+import { ComposeContext } from '../state/contexts.ts';
 import { Card } from '../thread/Card.jsx';
 import { Composer } from '../thread/Composer.jsx';
 

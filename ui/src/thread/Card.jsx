@@ -2,7 +2,7 @@
 import { useContext, useEffect, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { useAutoGrow } from '../dom.ts';
-import { ActionsContext } from '../state/contexts.js';
+import { ActionsContext } from '../state/contexts.ts';
 import { Comment } from './Comment.jsx';
 import { useAttach } from './attach.jsx';
 

@@ -3,7 +3,7 @@ import { Fragment } from 'preact';
 import { useContext, useEffect, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { transport } from '../transport.ts';
-import { OpenedContext } from '../state/contexts.js';
+import { OpenedContext } from '../state/contexts.ts';
 
 // The entries of a directory of the files that could be opened (read from
 // the server when shown: a directory of thousands costs nothing until then).

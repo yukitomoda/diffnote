@@ -13,7 +13,7 @@ import { useWide } from './dom.ts';
 import { QuitButton } from './settings/Quit.jsx';
 import { SettingsScreen } from './settings/Screen.jsx';
 import { useCompose } from './state/compose.js';
-import { ActionsContext, ComposeContext, LinksContext, OpenedContext, ViewContext, ViewedContext } from './state/contexts.js';
+import { ActionsContext, ComposeContext, LinksContext, OpenedContext, ViewContext, ViewedContext } from './state/contexts.ts';
 import { keep, kept } from './state/kept.ts';
 import { useOpened } from './state/opened.js';
 import { useReview } from './state/review.js';

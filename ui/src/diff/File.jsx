@@ -4,7 +4,7 @@ import { lib } from '../lib.ts';
 import { transport } from '../transport.ts';
 import { DiffTable, SplitTable } from './tables.jsx';
 import { htmlId } from '../dom.ts';
-import { ComposeContext, OpenedContext, ViewedContext } from '../state/contexts.js';
+import { ComposeContext, OpenedContext, ViewedContext } from '../state/contexts.ts';
 import { Card } from '../thread/Card.jsx';
 import { Composer } from '../thread/Composer.jsx';
 
