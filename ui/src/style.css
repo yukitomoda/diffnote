@@ -42,10 +42,13 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-revision__title { display: none; }
 .diffnote-js .diffnote-revision:not(.is-current) { display: none; }
 .diffnote-sidebar { grid-column: 1; grid-row: 1 / span 200; position: sticky; top: calc(var(--diffnote-topbar-h) + 12px); height: calc(100vh - var(--diffnote-topbar-h) - 24px); display: flex; flex-direction: column; margin-top: 12px; border-right: 1px solid var(--diffnote-color-border); padding-right: 8px; font-size: 12.5px; }
-/* The class sets `display`, which beats the `hidden` attribute on its own:
-   say it again, so putting the lists away is a matter of that attribute. */
-.diffnote-sidebar[hidden] { display: none; }
 .diffnote-sidebar__lists { flex: 1; min-height: 0; overflow: auto; }
+/* Who is signing the comments, and the button that puts the lists away, at
+   the foot of the column. */
+/* At the foot of the column whether or not the lists are there to fill it. */
+.diffnote-sidebar__foot { flex: none; display: flex; align-items: center; gap: 8px; margin-top: auto; padding: 8px 0 4px; border-top: 1px solid var(--diffnote-color-border); }
+/* (Said of the foot, to beat `.diffnote-mini`'s own left margin.) */
+.diffnote-sidebar__foot .diffnote-sidebar__toggle { margin-left: auto; padding: 0 6px; font-size: 13px; line-height: 22px; }
 .diffnote-side > summary { cursor: pointer; font-weight: 600; font-size: 12px; color: var(--diffnote-color-muted); padding: 4px 8px; user-select: none; }
 .diffnote-side + .diffnote-side { margin-top: 8px; }
 .diffnote-threadlist ol { list-style: none; margin: 0; padding: 0; }
@@ -312,13 +315,11 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 
 /* The view menu, at the top right of the diff. */
 .diffnote-viewbar { grid-column: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; }
-.diffnote-viewbar__left { display: flex; align-items: center; gap: 12px; }
 .diffnote-viewbar .diffnote-add { padding: 0; }
-/* Put the lists away for a moment: the diff then has the whole width, and the
-   button stays where it was, to bring them back. */
-.diffnote-button--icon { padding: 3px 8px; line-height: 1; }
-.diffnote-revision.is-sidebar-hidden { grid-template-columns: minmax(0, 1fr); }
-.diffnote-revision.is-sidebar-hidden > * { grid-column: 1; }
+/* The lists put away for a moment: the column is then no wider than the
+   button that brings them back, and the diff has the rest. */
+.diffnote-revision.is-sidebar-hidden { grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; }
+.diffnote-revision.is-sidebar-hidden .diffnote-user { display: none; }
 .diffnote-viewmenu { position: relative; margin-left: auto; }
 .diffnote-viewmenu__panel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 14em; padding: 6px; background: var(--diffnote-color-bg); color: var(--diffnote-color-fg); border: 1px solid var(--diffnote-color-border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18); font-size: 13px; }
 .diffnote-viewmenu__panel[hidden] { display: none; }
@@ -332,7 +333,7 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 
 /* The name comments are written under, at the foot of the side. Pressing it
    opens the user settings screen (like the title does for the review's). */
-.diffnote-user { position: relative; flex: none; display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 8px 8px 4px; border-top: 1px solid var(--diffnote-color-border); font-size: 13px; }
+.diffnote-user { position: relative; min-width: 0; display: flex; align-items: center; gap: 8px; padding-left: 8px; font-size: 13px; }
 .diffnote-user__avatar { flex: none; width: 26px; height: 26px; line-height: 26px; text-align: center; font-weight: 700; color: #fff; background: var(--diffnote-color-accent); border-radius: 50%; }
 .diffnote-user__button { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; font: inherit; font-size: 13px; color: inherit; background: none; border: 1px solid transparent; border-radius: 6px; padding: 1px 6px; margin-left: -6px; cursor: pointer; }
 .diffnote-user__button:hover, .diffnote-user__button:focus-visible { background: var(--diffnote-color-bg); border-color: var(--diffnote-color-border); }

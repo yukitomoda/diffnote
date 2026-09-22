@@ -105,23 +105,35 @@ class StaticExport(BrowserCase):
     def test_the_lists_beside_the_diff_can_be_put_away_and_brought_back(self):
         b = self.b
         toggle = "[data-diffnote-sidebar-toggle]"
-        width = lambda: b.js("document.querySelector('%s section.diffnote-file').getBoundingClientRect().width" % CUR)
-        self.assertTrue(b.visible(".diffnote-sidebar"))
-        narrow = width()
+        lists = ".diffnote-sidebar__lists"
+        width = lambda sel: b.js("document.querySelector(%s).getBoundingClientRect().width" % json.dumps(CUR + " " + sel))
+        self.assertTrue(b.visible(lists))
+        diff, column = width("section.diffnote-file"), width(".diffnote-sidebar")
+        # The button is at the foot of the lists' own column, by its right edge.
+        foot = b.js("(() => { const f = document.querySelector('%s .diffnote-sidebar__foot').getBoundingClientRect();"
+                    " const t = document.querySelector('%s %s').getBoundingClientRect();"
+                    " const s = document.querySelector('%s .diffnote-sidebar').getBoundingClientRect();"
+                    " return {bottom: s.bottom - f.bottom, right: f.right - t.right, inside: t.left >= s.left}; })()"
+                    % (CUR, CUR, toggle, CUR))
+        self.assertLess(foot["bottom"], 12, foot)
+        self.assertLess(foot["right"], 4, foot)
+        self.assertTrue(foot["inside"], foot)
+
         b.click(toggle)
-        self.assertTrue(b.wait("!document.querySelector('.diffnote-sidebar:not([hidden])')"))
-        self.assertGreater(width(), narrow, "the diff takes the room the lists had")
-        # The button stays where it was, which is how they come back.
+        self.assertTrue(b.wait("!document.querySelector('%s:not([hidden])')" % lists))
+        self.assertGreater(width("section.diffnote-file"), diff, "the diff takes the room the lists had")
+        # All that is left of the column is the button, which is how they come back.
         self.assertTrue(b.visible(toggle))
+        self.assertLess(width(".diffnote-sidebar"), width(toggle) + 16, "no wider than the button")
         self.assertEqual(b.js("document.querySelector('%s %s').getAttribute('aria-expanded')" % (CUR, toggle)), "false")
         b.click(toggle)
-        self.assertTrue(b.wait("!!document.querySelector('.diffnote-sidebar:not([hidden])')"))
-        self.assertEqual(width(), narrow, "and the diff gives it back")
+        self.assertTrue(b.wait("!!document.querySelector('%s:not([hidden])')" % lists))
+        self.assertEqual(width(".diffnote-sidebar"), column, "and the column comes back as it was")
         # It is for making room for a moment: opening the page again has them.
         b.click(toggle)
-        self.assertTrue(b.wait("!document.querySelector('.diffnote-sidebar:not([hidden])')"))
+        self.assertTrue(b.wait("!document.querySelector('%s:not([hidden])')" % lists))
         b.reload()
-        self.assertTrue(b.visible(".diffnote-sidebar"), "not kept, unlike the layout")
+        self.assertTrue(b.visible(lists), "not kept, unlike the layout")
 
     def test_the_latest_revision_is_shown_and_the_tabs_switch(self):
         b = self.b
