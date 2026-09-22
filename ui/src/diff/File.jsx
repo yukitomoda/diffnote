@@ -5,8 +5,8 @@ import { transport } from '../transport.ts';
 import { DiffTable, SplitTable } from './tables.jsx';
 import { htmlId } from '../dom.ts';
 import { ComposeContext, OpenedContext, ViewedContext } from '../state/contexts.ts';
-import { Card } from '../thread/Card.jsx';
-import { Composer } from '../thread/Composer.jsx';
+import { Card } from '../thread/Card.tsx';
+import { Composer } from '../thread/Composer.tsx';
 
 // A file: its own threads, its diff (drawn when it is first opened), and
 // the threads that could not be placed in it.

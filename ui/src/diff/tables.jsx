@@ -4,8 +4,8 @@ import { lib } from '../lib.ts';
 import { transport } from '../transport.ts';
 import { tokens } from '../markdown.tsx';
 import { ComposeContext } from '../state/contexts.ts';
-import { Card } from '../thread/Card.jsx';
-import { Composer } from '../thread/Composer.jsx';
+import { Card } from '../thread/Card.tsx';
+import { Composer } from '../thread/Composer.tsx';
 
 // What stands for the lines a diff leaves out: buttons to show some of them
 // (next to the hunk above, next to the hunk below) or all.

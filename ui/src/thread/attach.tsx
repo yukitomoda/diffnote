@@ -4,18 +4,35 @@ import { lib } from '../lib.ts';
 import { transport } from '../transport.ts';
 import { LinksContext } from '../state/contexts.ts';
 import { EmojiButton } from './Reactions.jsx';
+import { server } from '../transport.ts';
+import type { JSX } from 'preact';
 
 // Pictures for a box that a comment is written in: pasted (a screenshot),
 // dropped, or chosen. Each goes to the server, and what stands for it in the
 // text is put where the cursor was. Only on the served page.
-export function useAttach(text, setText) {
-  var _s = useState(null);
+/** What is being attached, or what came of it. */
+interface AttachStatus {
+  text: string;
+  busy?: boolean;
+  failed?: boolean;
+}
+
+/** The buttons over a box, what they do to its text, and the note under it. */
+export interface Attach {
+  status: AttachStatus | null;
+  handlers: JSX.HTMLAttributes<HTMLTextAreaElement>;
+  picker(field: () => HTMLTextAreaElement | null): preact.ComponentChildren;
+  note: preact.ComponentChildren;
+}
+
+export function useAttach(text: string, setText: (text: string) => void): Attach {
+  var _s = useState<AttachStatus | null>(null);
   var status = _s[0];
   var setStatus = _s[1];
   var latest = useRef(text);
   latest.current = text;
   var links = useContext(LinksContext);
-  var send = function (files, field) {
+  var send = function (files: FileList | null | undefined, field: HTMLTextAreaElement) {
     var list = Array.prototype.slice.call(files || []);
     if (!transport || list.length === 0) return false;
     var limit = links && links.limit;
@@ -35,14 +52,14 @@ export function useAttach(text, setText) {
     var from = field.selectionStart;
     var to = field.selectionEnd;
     setStatus({ busy: true, text: lib.m('ui.attach.sending') });
-    var snippets = [];
-    var last = null;
+    var snippets: string[] = [];
+    var last: { res: { id: string; size: number; bundle_size: number }; name: string; isImage: boolean } | null = null;
     var images = 0;
-    var chain = list.reduce(function (p, file) {
+    var chain = list.reduce<Promise<void>>(function (p, file: File) {
       return p.then(function () {
         var isImage = /^image\//.test(file.type);
         var name = file.name || (isImage ? 'image' : 'file');
-        return (isImage ? transport.upload(file) : transport.uploadFile(file, name)).then(function (res) {
+        return (isImage ? server().upload(file) : server().uploadFile(file, name)).then(function (res) {
           if (!res.ok) throw new Error(res.error || lib.m('ui.attach.failed'));
           if (isImage) images++;
           snippets.push(isImage ? lib.imageMarkdown(res.id) : lib.fileMarkdown(name, res.id));
@@ -53,6 +70,7 @@ export function useAttach(text, setText) {
     chain.then(function () {
       var put = lib.insertAt(latest.current, from, to, snippets.join('\n') + '\n');
       setText(put.text);
+      if (!last) return;
       var what = list.length > 1
         ? lib.mf('ui.attach.done_multi', { count: String(list.length) })
         : last.isImage ? lib.m('ui.attach.done_image') : lib.mf('ui.attach.done_file', { name: last.name });
@@ -61,7 +79,7 @@ export function useAttach(text, setText) {
         bundle_size: lib.formatSize(last.res.bundle_size),
       });
       setStatus({ text: what + status + (last.res.size > 5 * 1024 * 1024 ? lib.m('ui.attach.big_file_note') : '') });
-    }, function (err) {
+    }, function (err: Error) {
       setStatus({ failed: true, text: err.message });
     });
     return true;
@@ -89,16 +107,16 @@ export function useAttach(text, setText) {
     // note under it.
     picker: function (field) {
       if (!transport) return null;
-      var pick = function (ch) {
+      var pick = function (ch: string) {
         var box = field();
         if (!box) return;
         var put = lib.insertAt(latest.current, box.selectionStart, box.selectionEnd, ch);
         setText(put.text);
-        setTimeout(function () { box.focus(); box.setSelectionRange(put.cursor, put.cursor); }, 0);
+        setTimeout(function () { box!.focus(); box!.setSelectionRange(put.cursor, put.cursor); }, 0);
       };
       return <><EmojiButton onPick={pick} /><label class="diffnote-attach" title={lib.m('ui.attach.picker_title')}>{lib.m('ui.attach.button_label')}
         <input type="file" multiple data-diffnote-attach
-          onChange={function (e) { var f = field(); if (f) send(e.target.files, f); e.target.value = ''; }} /></label></>;
+          onChange={function (e) { var f = field(); if (f) send(e.currentTarget.files, f); e.currentTarget.value = ''; }} /></label></>;
     },
     note: status && <p class={'diffnote-attach__status' + (status.failed ? ' is-failed' : '')} data-diffnote-attach-status role="status">{status.text}</p>,
   };

@@ -5,9 +5,18 @@ import { useAutoGrow } from '../dom.ts';
 import { ActionsContext } from '../state/contexts.ts';
 import { Comment } from './Comment.jsx';
 import { useAttach } from './attach.jsx';
+import type { Placement, ThreadData } from '../model.ts';
+import type { Actions as ThreadActions, ChangeAnswer } from '../state/contexts.ts';
 
 // One thread as a card.
-export function Card(props) {
+interface CardProps {
+  thread: ThreadData;
+  placement?: Placement;
+  /** Which revision it is being shown in (0-based). */
+  rev: number;
+}
+
+export function Card(props: CardProps) {
   var t = props.thread;
   var p = props.placement;
   var actions = useContext(ActionsContext);
@@ -27,8 +36,7 @@ export function Card(props) {
     </summary>
     {absent && absent.was.length > 0 && <pre class="diffnote-deleted__snippet">{absent.was.join('\n') + '\n'}</pre>}
     {t.comments.map(function (c, i) {
-      return <Comment key={c.id} comment={c} actions={actions} threadId={t.id} first={i === 0} replies={t.comments.length - 1}
-        othersReplies={actions ? t.comments.slice(1).filter(function (x) { return x.author !== actions.author; }).length : 0} />;
+      return <Comment key={c.id} comment={c} actions={actions} threadId={t.id} first={i === 0} replies={t.comments.length - 1} />;
     })}
     {actions && <Actions thread={t} actions={actions} />}
   </details>;
@@ -37,34 +45,40 @@ export function Card(props) {
 // The reply box and the resolve button of a card on the served page. A
 // reply shows at once as a faded comment and is put right by the answer; if it
 // fails the words stay in the box, with what went wrong.
-function Actions(props) {
+interface ActionsProps {
+  thread: ThreadData;
+  actions: ThreadActions;
+}
+
+function Actions(props: ActionsProps) {
   var t = props.thread;
   var actions = props.actions;
   var _t = useState('');
   var text = _t[0];
   var setText = _t[1];
-  var _p = useState(null);
+  var _p = useState<string | null>(null);
   var pending = _p[0];
   var setPending = _p[1];
-  var _e = useState(null);
+  var _e = useState<string | null>(null);
   var error = _e[0];
   var setError = _e[1];
   var attach = useAttach(text, setText);
-  var field = useRef(null);
+  var field = useRef<HTMLTextAreaElement | null>(null);
   useAutoGrow(field, text);
   // A quotation asked for (from a comment of this thread) goes in the box.
   useEffect(function () {
-    var on = function (e) {
-      if (!e.detail || e.detail.thread !== t.id) return;
+    var on = function (e: Event) {
+      var quote = (e as CustomEvent<{ thread: string; text: string }>).detail;
+      if (!quote || quote.thread !== t.id) return;
       var box = field.current;
       if (!box) return;
-      var details = box.closest('details');
+      var details: HTMLDetailsElement | null = box.closest('details');
       if (details) details.open = true;
-      setText(function (cur) { return lib.appendQuote(cur, e.detail.text); });
+      setText(function (cur) { return lib.appendQuote(cur, quote.text); });
       setTimeout(function () {
-        box.focus();
-        box.setSelectionRange(box.value.length, box.value.length);
-        box.scrollIntoView({ block: 'nearest' });
+        box!.focus();
+        box!.setSelectionRange(box!.value.length, box!.value.length);
+        box!.scrollIntoView({ block: 'nearest' });
       }, 0);
     };
     document.addEventListener('diffnote:quote', on);
@@ -76,7 +90,7 @@ function Actions(props) {
     if (!body || pending !== null) return;
     setPending(body);
     setError(null);
-    actions.reply(t.id, body).then(function (res) {
+    actions!.reply(t.id, body).then(function (res: ChangeAnswer) {
       setPending(null);
       if (res.ok) setText('');
       else setError(res.error || lib.m('ui.save_failed'));
@@ -84,7 +98,7 @@ function Actions(props) {
   }
   function toggle() {
     setError(null);
-    actions.setResolved(t.id, !t.resolved).then(function (res) {
+    actions.setResolved(t.id, !t.resolved).then(function (res: ChangeAnswer) {
       if (!res.ok) setError(res.error || lib.m('ui.save_failed'));
     });
   }
@@ -95,9 +109,9 @@ function Actions(props) {
     </article>}<div class="diffnote-thread__actions">
       <form class="diffnote-reply" data-diffnote-thread={t.id} onSubmit={function (e) { e.preventDefault(); send(); }}>
         <div class="diffnote-attach-bar">{attach.picker(function () { return field.current; })}</div>
-        <textarea ref={field} rows="2" placeholder={lib.m('ui.comment.reply_placeholder')} value={text} disabled={pending !== null}
+        <textarea ref={field} rows={2} placeholder={lib.m('ui.comment.reply_placeholder')} value={text} disabled={pending !== null}
           {...attach.handlers}
-          onInput={function (e) { setText(e.target.value); }}
+          onInput={function (e) { setText(e.currentTarget.value); }}
           onKeyDown={function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }}></textarea>
         {attach.note}
         <div class="diffnote-reply__buttons">

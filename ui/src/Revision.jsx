@@ -7,8 +7,8 @@ import { File } from './diff/File.jsx';
 import { Tree } from './nav/Tree.tsx';
 import { FileList, ThreadList } from './nav/lists.tsx';
 import { OpenedContext, ViewedContext } from './state/contexts.ts';
-import { Card } from './thread/Card.jsx';
-import { Composer } from './thread/Composer.jsx';
+import { Card } from './thread/Card.tsx';
+import { Composer } from './thread/Composer.tsx';
 
 // One revision: the side lists and the files.
 export function Revision(props) {
