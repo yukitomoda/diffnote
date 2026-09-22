@@ -1,8 +1,8 @@
 // One revision: its diff, and everything beside it.
 import { useContext, useEffect, useMemo } from 'preact/hooks';
 import { lib } from './lib.ts';
-import { UserChip } from './UserChip.jsx';
-import { ViewMenu } from './ViewMenu.jsx';
+import { UserChip } from './UserChip.tsx';
+import { ViewMenu } from './ViewMenu.tsx';
 import { File } from './diff/File.jsx';
 import { Tree } from './nav/Tree.tsx';
 import { FileList, ThreadList } from './nav/lists.tsx';

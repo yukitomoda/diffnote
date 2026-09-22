@@ -4,7 +4,14 @@ import { lib } from './lib.ts';
 // The name comments are written under, at the foot of the side, like the
 // user who is signed in. Pressing it opens the user settings screen (like
 // the title opens the review's settings).
-export function UserChip(props) {
+interface UserChipProps {
+  name: string;
+  /** Whether its screen is the one open. */
+  open: boolean;
+  onToggle(): void;
+}
+
+export function UserChip(props: UserChipProps) {
   var name = props.name;
   var initial = Array.from(name.trim())[0] || '?';
   return <div class="diffnote-user" data-diffnote-user>
