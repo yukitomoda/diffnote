@@ -2,11 +2,10 @@
 import { useContext, useMemo, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { transport } from '../transport.ts';
-import { html } from '../html.ts';
-import { tokens } from '../markdown.js';
+import { tokens } from '../markdown.jsx';
 import { ComposeContext } from '../state/contexts.js';
-import { Card } from '../thread/Card.js';
-import { Composer } from '../thread/Composer.js';
+import { Card } from '../thread/Card.jsx';
+import { Composer } from '../thread/Composer.jsx';
 
 // What stands for the lines a diff leaves out: buttons to show some of them
 // (next to the hunk above, next to the hunk below) or all.
@@ -24,13 +23,13 @@ function Expander(props) {
   // Can they be had? Carried by the page (an export), or asked of the server.
   var can = m.x && (m.embedded || !!transport);
   if (!can) {
-    return html`<div class="diffnote-expand"><span class="diffnote-expand__label">${lib.mf('ui.expand.left_label', { n: String(m.left) })}</span>${m.x && !m.embedded && !transport && html`<span class="diffnote-expand__note">${lib.m('ui.expand.not_embedded_note')}</span>`}</div>`;
+    return <div class="diffnote-expand"><span class="diffnote-expand__label">{lib.mf('ui.expand.left_label', { n: String(m.left) })}</span>{m.x && !m.embedded && !transport && <span class="diffnote-expand__note">{lib.m('ui.expand.not_embedded_note')}</span>}</div>;
   }
-  return html`<div class="diffnote-expand">
-    ${m.left > step && m.prev && html`<button type="button" class="diffnote-expand__button" data-diffnote-expand="top" disabled=${busy} onClick=${function () { go('top'); }}>${lib.mf('ui.expand.up_button', { n: String(step) })}</button>`}
-    ${m.left > step && m.next && html`<button type="button" class="diffnote-expand__button" data-diffnote-expand="bottom" disabled=${busy} onClick=${function () { go('bottom'); }}>${lib.mf('ui.expand.down_button', { n: String(step) })}</button>`}
-    <button type="button" class="diffnote-expand__button diffnote-expand__all" data-diffnote-expand="all" disabled=${busy} onClick=${function () { go('all'); }}>${lib.mf('ui.expand.all_button', { n: String(m.left) })}</button>
-  </div>`;
+  return <div class="diffnote-expand">
+    {m.left > step && m.prev && <button type="button" class="diffnote-expand__button" data-diffnote-expand="top" disabled={busy} onClick={function () { go('top'); }}>{lib.mf('ui.expand.up_button', { n: String(step) })}</button>}
+    {m.left > step && m.next && <button type="button" class="diffnote-expand__button" data-diffnote-expand="bottom" disabled={busy} onClick={function () { go('bottom'); }}>{lib.mf('ui.expand.down_button', { n: String(step) })}</button>}
+    <button type="button" class="diffnote-expand__button diffnote-expand__all" data-diffnote-expand="all" disabled={busy} onClick={function () { go('all'); }}>{lib.mf('ui.expand.all_button', { n: String(m.left) })}</button>
+  </div>;
 }
 
 // The rows of one file's diff, with the cards of the threads on them.
@@ -58,10 +57,10 @@ export function DiffTable(props) {
   var out = [];
   file.hunks.forEach(function (hunk, hi) {
     if (hunk.marker) {
-      out.push(html`<tr class="diffnote-expand-row" key=${'g' + hi}><td colspan="3"><${Expander} marker=${hunk.marker} expand=${props.expand} /></td></tr>`);
+      out.push(<tr class="diffnote-expand-row" key={'g' + hi}><td colspan="3"><Expander marker={hunk.marker} expand={props.expand} /></td></tr>);
       return;
     }
-    if (!file.opened && !hunk.quiet) out.push(html`<tr class="diffnote-hunk-header" key=${'h' + hi}><td colspan="3">${hunk.header}</td></tr>`);
+    if (!file.opened && !hunk.quiet) out.push(<tr class="diffnote-hunk-header" key={'h' + hi}><td colspan="3">{hunk.header}</td></tr>);
     hunk.rows.forEach(function (row, ri) {
       var idx = flatIndex++;
       var picked = idx >= lo && idx <= hi_;
@@ -81,32 +80,32 @@ export function DiffTable(props) {
         e.preventDefault();
         compose.begin(ctx.rev, file.path, idx, e.shiftKey);
       };
-      out.push(html`<tr
-        class=${cls}
-        key=${hi + ':' + ri}
-        data-diffnote-old=${row.o != null ? row.o : undefined}
-        data-diffnote-new=${row.n != null ? row.n : undefined}
-        onMouseOver=${compose ? function () { compose.extend(idx); } : undefined}
-        data-diffnote-threads=${ids.length ? ids.join(' ') : undefined}
-        style=${ids.length ? '--diffnote-bars: ' + lib.bars(colors) : undefined}
+      out.push(<tr
+        class={cls}
+        key={hi + ':' + ri}
+        data-diffnote-old={row.o != null ? row.o : undefined}
+        data-diffnote-new={row.n != null ? row.n : undefined}
+        onMouseOver={compose ? function () { compose.extend(idx); } : undefined}
+        data-diffnote-threads={ids.length ? ids.join(' ') : undefined}
+        style={ids.length ? '--diffnote-bars: ' + lib.bars(colors) : undefined}
       >
-        <td class="diffnote-line__gutter-old" onMouseDown=${begin}>${row.o != null ? row.o : ''}</td>
-        <td class="diffnote-line__gutter-new" onMouseDown=${begin}>${row.n != null ? row.n : ''}</td>
-        <td class="diffnote-line__content"><code>${tokens(row.t, row.w)}</code></td>
-      </tr>`);
+        <td class="diffnote-line__gutter-old" onMouseDown={begin}>{row.o != null ? row.o : ''}</td>
+        <td class="diffnote-line__gutter-new" onMouseDown={begin}>{row.n != null ? row.n : ''}</td>
+        <td class="diffnote-line__content"><code>{tokens(row.t, row.w)}</code></td>
+      </tr>);
       if (sel && !compose.selecting && idx === hi_) {
         var c = lib.counters(flat, sel.anchor, sel.to);
-        out.push(html`<tr class="diffnote-composer-row" key="compose"><td colspan="3">
-          <${Composer} scope="lines" where=${lib.chosenLocation(file.path, c)} copy=${lib.chosenLocation(file.path, c) + '@' + (ctx.rev + 1)}
-            request=${ctx.compare ? { revision: ctx.rev, file: file.path, head: c.head } : { revision: ctx.rev, file: file.path, base: c.base, head: c.head }} />
-        </td></tr>`);
+        out.push(<tr class="diffnote-composer-row" key="compose"><td colspan="3">
+          <Composer scope="lines" where={lib.chosenLocation(file.path, c)} copy={lib.chosenLocation(file.path, c) + '@' + (ctx.rev + 1)}
+            request={ctx.compare ? { revision: ctx.rev, file: file.path, head: c.head } : { revision: ctx.rev, file: file.path, base: c.base, head: c.head }} />
+        </td></tr>);
       }
       lib.cardsOfRow(after, row).forEach(function (id) {
-        out.push(html`<tr class="diffnote-thread-row" key=${'c' + id}><td colspan="3"><${Card} rev=${ctx.rev} thread=${ctx.byId[id]} placement=${ctx.placements[id]} /></td></tr>`);
+        out.push(<tr class="diffnote-thread-row" key={'c' + id}><td colspan="3"><Card rev={ctx.rev} thread={ctx.byId[id]} placement={ctx.placements[id]} /></td></tr>);
       });
     });
   });
-  return html`<div class="diffnote-diff-scroll"><table class="diffnote-diff" data-diffnote-file=${file.path}><tbody>${out}</tbody></table></div>`;
+  return <div class="diffnote-diff-scroll"><table class="diffnote-diff" data-diffnote-file={file.path}><tbody>{out}</tbody></table></div>;
 }
 
 // The same rows side by side: what a file was on the left, what it is on the
@@ -167,10 +166,10 @@ export function SplitTable(props) {
   var out = [];
   file.hunks.forEach(function (hunk, hi) {
     if (hunk.marker) {
-      out.push(html`<tr class="diffnote-expand-row" key=${'g' + hi}><td colspan="4"><${Expander} marker=${hunk.marker} expand=${props.expand} /></td></tr>`);
+      out.push(<tr class="diffnote-expand-row" key={'g' + hi}><td colspan="4"><Expander marker={hunk.marker} expand={props.expand} /></td></tr>);
       return;
     }
-    if (!hunk.quiet) out.push(html`<tr class="diffnote-hunk-header" key=${'h' + hi}><td colspan="4">${hunk.header}</td></tr>`);
+    if (!hunk.quiet) out.push(<tr class="diffnote-hunk-header" key={'h' + hi}><td colspan="4">{hunk.header}</td></tr>);
     lib.pairRows(hunk.rows).forEach(function (pair, pi) {
       var l = pair.left;
       var r = pair.right;
@@ -186,34 +185,34 @@ export function SplitTable(props) {
       var kr = cellKind(r, 'new');
       var pl = pickedCell(l, 'old');
       var pr = pickedCell(r, 'new');
-      out.push(html`<tr class="diffnote-split-row" key=${hi + ':' + pi} data-diffnote-threads=${ids.length ? ids.join(' ') : undefined}
-        onMouseOver=${compose ? function () { compose.extend(function (side) { return side === 'old' ? idxOf(l) : idxOf(r); }); } : undefined}>
-        <td class=${'diffnote-line__gutter-old diffnote-cell--' + kl + (shownL ? ' diffnote-gutter--commented' : '') + pl} style=${shownL ? bars(idsL) : undefined}
-          data-diffnote-old=${l && l.o != null ? l.o : undefined} onMouseDown=${begin(l, 'old')}>${l && l.o != null ? l.o : ''}</td>
-        <td class=${'diffnote-line__content diffnote-cell--' + kl + pl}>${l && html`<code>${tokens(l.t, l.w)}</code>`}</td>
-        <td class=${'diffnote-line__gutter-new diffnote-cell--' + kr + (shownR ? ' diffnote-gutter--commented' : '') + pr} style=${shownR ? bars(idsR) : undefined}
-          data-diffnote-new=${r && r.n != null ? r.n : undefined} onMouseDown=${begin(r, 'new')}>${r && r.n != null ? r.n : ''}</td>
-        <td class=${'diffnote-line__content diffnote-cell--' + kr + pr}>${r && html`<code>${tokens(r.t, r.w)}</code>`}</td>
-      </tr>`);
+      out.push(<tr class="diffnote-split-row" key={hi + ':' + pi} data-diffnote-threads={ids.length ? ids.join(' ') : undefined}
+        onMouseOver={compose ? function () { compose.extend(function (side) { return side === 'old' ? idxOf(l) : idxOf(r); }); } : undefined}>
+        <td class={'diffnote-line__gutter-old diffnote-cell--' + kl + (shownL ? ' diffnote-gutter--commented' : '') + pl} style={shownL ? bars(idsL) : undefined}
+          data-diffnote-old={l && l.o != null ? l.o : undefined} onMouseDown={begin(l, 'old')}>{l && l.o != null ? l.o : ''}</td>
+        <td class={'diffnote-line__content diffnote-cell--' + kl + pl}>{l && <code>{tokens(l.t, l.w)}</code>}</td>
+        <td class={'diffnote-line__gutter-new diffnote-cell--' + kr + (shownR ? ' diffnote-gutter--commented' : '') + pr} style={shownR ? bars(idsR) : undefined}
+          data-diffnote-new={r && r.n != null ? r.n : undefined} onMouseDown={begin(r, 'new')}>{r && r.n != null ? r.n : ''}</td>
+        <td class={'diffnote-line__content diffnote-cell--' + kr + pr}>{r && <code>{tokens(r.t, r.w)}</code>}</td>
+      </tr>);
       // The box for the choice: under the pair that has its last row.
       var last = sel && !compose.selecting ? flat[hi_].row : null;
       if (last && (l === last || r === last)) {
         var c = lib.counters(flat, sel.anchor, sel.to, sel.side);
-        out.push(html`<tr class="diffnote-composer-row" key="compose"><td colspan="4">
-          <${Composer} scope="lines" where=${lib.chosenLocation(file.path, c)} copy=${lib.chosenLocation(file.path, c) + '@' + (ctx.rev + 1)}
-            request=${ctx.compare ? { revision: ctx.rev, file: file.path, head: c.head } : { revision: ctx.rev, file: file.path, base: c.base, head: c.head }} />
-        </td></tr>`);
+        out.push(<tr class="diffnote-composer-row" key="compose"><td colspan="4">
+          <Composer scope="lines" where={lib.chosenLocation(file.path, c)} copy={lib.chosenLocation(file.path, c) + '@' + (ctx.rev + 1)}
+            request={ctx.compare ? { revision: ctx.rev, file: file.path, head: c.head } : { revision: ctx.rev, file: file.path, base: c.base, head: c.head }} />
+        </td></tr>);
       }
       // The cards of the pair: those of its new-side line, then its old-side line.
       var cards = lib.cardsOfRow(after, r || {});
       if (l && l !== r) cards = cards.concat(lib.cardsOfRow(after, { o: l.o }));
       cards.forEach(function (id) {
-        out.push(html`<tr class="diffnote-thread-row" key=${'c' + id}><td colspan="4"><${Card} rev=${ctx.rev} thread=${ctx.byId[id]} placement=${ctx.placements[id]} /></td></tr>`);
+        out.push(<tr class="diffnote-thread-row" key={'c' + id}><td colspan="4"><Card rev={ctx.rev} thread={ctx.byId[id]} placement={ctx.placements[id]} /></td></tr>);
       });
     });
   });
-  return html`<div class="diffnote-diff-scroll"><table class="diffnote-diff diffnote-diff--split" data-diffnote-file=${file.path}>
+  return <div class="diffnote-diff-scroll"><table class="diffnote-diff diffnote-diff--split" data-diffnote-file={file.path}>
     <colgroup><col class="diffnote-col-gutter" /><col /><col class="diffnote-col-gutter" /><col /></colgroup>
-    <tbody>${out}</tbody>
-  </table></div>`;
+    <tbody>{out}</tbody>
+  </table></div>;
 }

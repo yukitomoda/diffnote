@@ -1,15 +1,14 @@
 // One revision: its diff, and everything beside it.
 import { useContext, useEffect, useMemo } from 'preact/hooks';
 import { lib } from './lib.ts';
-import { UserChip } from './UserChip.js';
-import { ViewMenu } from './ViewMenu.js';
-import { File } from './diff/File.js';
-import { html } from './html.ts';
-import { Tree } from './nav/Tree.js';
-import { FileList, ThreadList } from './nav/lists.js';
+import { UserChip } from './UserChip.jsx';
+import { ViewMenu } from './ViewMenu.jsx';
+import { File } from './diff/File.jsx';
+import { Tree } from './nav/Tree.jsx';
+import { FileList, ThreadList } from './nav/lists.jsx';
 import { OpenedContext, ViewedContext } from './state/contexts.js';
-import { Card } from './thread/Card.js';
-import { Composer } from './thread/Composer.js';
+import { Card } from './thread/Card.jsx';
+import { Composer } from './thread/Composer.jsx';
 
 // One revision: the side lists and the files.
 export function Revision(props) {
@@ -76,26 +75,26 @@ export function Revision(props) {
     return function () { io.disconnect(); };
   }, [rev, Object.keys(viewedPaths).join('\n')]);
 
-  return html`<section class="diffnote-revision is-current" id=${'rev-' + rev} data-diffnote-revision=${rev}>
-    <h2 class="diffnote-revision__title">${revision.label}</h2>
+  return <section class="diffnote-revision is-current" id={'rev-' + rev} data-diffnote-revision={rev}>
+    <h2 class="diffnote-revision__title">{revision.label}</h2>
     <aside class="diffnote-sidebar">
       <div class="diffnote-sidebar__lists">
-        <${FileList} ctx=${listOrder} />
-        ${model.threads.length > 0 && html`<${ThreadList} ctx=${listOrder} />`}
-        ${opened && html`<${Tree} rev=${rev} />`}
+        <FileList ctx={listOrder} />
+        {model.threads.length > 0 && <ThreadList ctx={listOrder} />}
+        {opened && <Tree rev={rev} />}
       </div>
-      ${props.author != null && props.onToggleUserSettings && html`<${UserChip} name=${props.author} open=${props.userSettingsOpen} onToggle=${props.onToggleUserSettings} />`}
+      {props.author != null && props.onToggleUserSettings && <UserChip name={props.author} open={props.userSettingsOpen} onToggle={props.onToggleUserSettings} />}
     </aside>
     <div class="diffnote-viewbar">
-      ${props.compose && html`<div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global"
-        onClick=${function () { props.compose.openScope('global', rev); }}>${lib.m('ui.compose.global_button')}</button></div>`}
-      ${props.override && html`<p class="diffnote-compare-note" data-diffnote-compare-note tabindex="0" title=${props.overrideNote.tip} aria-label=${props.overrideNote.short + '。' + props.overrideNote.tip}>${props.overrideNote.short}<span class="diffnote-compare-note__icon" aria-hidden="true">⚠</span></p>`}
-      <${ViewMenu} />
+      {props.compose && <div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global"
+        onClick={function () { props.compose.openScope('global', rev); }}>{lib.m('ui.compose.global_button')}</button></div>}
+      {props.override && <p class="diffnote-compare-note" data-diffnote-compare-note tabindex="0" title={props.overrideNote.tip} aria-label={props.overrideNote.short + '。' + props.overrideNote.tip}>{props.overrideNote.short}<span class="diffnote-compare-note__icon" aria-hidden="true">⚠</span></p>}
+      <ViewMenu />
     </div>
-    ${(globals.length > 0 || props.compose) && html`<section class="diffnote-global-comments" data-diffnote-global>
-      ${props.compose && props.compose.scope && props.compose.scope.kind === 'global' && props.compose.scope.rev === rev && html`<div class="diffnote-compose-wrap"><${Composer} scope="global" where=${lib.m('ui.compose.global_where')} request=${{ scope: 'global', revision: rev }} /></div>`}
-      ${globals.map(function (id) { return html`<${Card} key=${id} rev=${rev} thread=${byId[id]} placement=${revision.placements[id]} />`; })}
-    </section>`}
-    ${files.map(function (f) { return html`<${File} key=${rev + ':' + f.path} file=${f} ctx=${ctx} />`; })}
-  </section>`;
+    {(globals.length > 0 || props.compose) && <section class="diffnote-global-comments" data-diffnote-global>
+      {props.compose && props.compose.scope && props.compose.scope.kind === 'global' && props.compose.scope.rev === rev && <div class="diffnote-compose-wrap"><Composer scope="global" where={lib.m('ui.compose.global_where')} request={{ scope: 'global', revision: rev }} /></div>}
+      {globals.map(function (id) { return <Card key={id} rev={rev} thread={byId[id]} placement={revision.placements[id]} />; })}
+    </section>}
+    {files.map(function (f) { return <File key={rev + ':' + f.path} file={f} ctx={ctx} />; })}
+  </section>;
 }

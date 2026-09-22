@@ -2,9 +2,8 @@
 import { useContext, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { transport } from '../transport.ts';
-import { html } from '../html.ts';
 import { LinksContext } from '../state/contexts.js';
-import { EmojiButton } from './Reactions.js';
+import { EmojiButton } from './Reactions.jsx';
 
 // Pictures for a box that a comment is written in: pasted (a screenshot),
 // dropped, or chosen. Each goes to the server, and what stands for it in the
@@ -97,10 +96,10 @@ export function useAttach(text, setText) {
         setText(put.text);
         setTimeout(function () { box.focus(); box.setSelectionRange(put.cursor, put.cursor); }, 0);
       };
-      return html`<${EmojiButton} onPick=${pick} /><label class="diffnote-attach" title=${lib.m('ui.attach.picker_title')}>${lib.m('ui.attach.button_label')}
+      return <><EmojiButton onPick={pick} /><label class="diffnote-attach" title={lib.m('ui.attach.picker_title')}>{lib.m('ui.attach.button_label')}
         <input type="file" multiple data-diffnote-attach
-          onChange=${function (e) { var f = field(); if (f) send(e.target.files, f); e.target.value = ''; }} /></label>`;
+          onChange={function (e) { var f = field(); if (f) send(e.target.files, f); e.target.value = ''; }} /></label></>;
     },
-    note: status && html`<p class=${'diffnote-attach__status' + (status.failed ? ' is-failed' : '')} data-diffnote-attach-status role="status">${status.text}</p>`,
+    note: status && <p class={'diffnote-attach__status' + (status.failed ? ' is-failed' : '')} data-diffnote-attach-status role="status">{status.text}</p>,
   };
 }

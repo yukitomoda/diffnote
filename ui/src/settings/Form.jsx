@@ -1,7 +1,6 @@
 // 設定: what is saved in the review itself.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
-import { html } from '../html.ts';
 
 // 設定: the review's settings, as they are kept in the bundle. Changed here
 // and saved together: nothing is kept until 保存.
@@ -46,28 +45,28 @@ export function SettingsFormPane(props) {
       else setError(res.error || lib.m('ui.save_failed'));
     });
   };
-  return html`<form class="diffnote-settings__form" data-diffnote-settings-pane noValidate onSubmit=${submit}>
-    <h2>${lib.m('ui.settings.form_heading')}</h2>
-    <p class="diffnote-settings__note">${lib.m('ui.settings.form_note')}</p>
+  return <form class="diffnote-settings__form" data-diffnote-settings-pane noValidate onSubmit={submit}>
+    <h2>{lib.m('ui.settings.form_heading')}</h2>
+    <p class="diffnote-settings__note">{lib.m('ui.settings.form_note')}</p>
     <label class="diffnote-field">
-      <span>${lib.m('ui.settings.title_label')}</span>
-      <input ref=${first} type="text" maxlength="200" data-diffnote-setting-title value=${title} placeholder=${lib.m('ui.settings.title_placeholder')}
-        onInput=${function (e) { touched(setTitle)(e.target.value); }} />
+      <span>{lib.m('ui.settings.title_label')}</span>
+      <input ref={first} type="text" maxlength="200" data-diffnote-setting-title value={title} placeholder={lib.m('ui.settings.title_placeholder')}
+        onInput={function (e) { touched(setTitle)(e.target.value); }} />
     </label>
     <label class="diffnote-field diffnote-field--check">
-      <input type="checkbox" data-diffnote-setting-ignore checked=${ignore} onChange=${function (e) { touched(setIgnore)(e.target.checked); }} />
-      <span>${lib.m('ui.settings.ignore_ws_label')}<small>${lib.m('ui.settings.ignore_ws_hint')}</small></span>
+      <input type="checkbox" data-diffnote-setting-ignore checked={ignore} onChange={function (e) { touched(setIgnore)(e.target.checked); }} />
+      <span>{lib.m('ui.settings.ignore_ws_label')}<small>{lib.m('ui.settings.ignore_ws_hint')}</small></span>
     </label>
     <label class="diffnote-field">
-      <span>${lib.m('ui.settings.attach_limit_label')}</span>
-      <span class="diffnote-field__unit"><input type="number" step="any" data-diffnote-setting-limit value=${limit}
-        onInput=${function (e) { touched(setLimit)(e.target.value); }} /> MB</span>
+      <span>{lib.m('ui.settings.attach_limit_label')}</span>
+      <span class="diffnote-field__unit"><input type="number" step="any" data-diffnote-setting-limit value={limit}
+        onInput={function (e) { touched(setLimit)(e.target.value); }} /> MB</span>
     </label>
-    ${error && html`<p class="diffnote-error" role="alert">${error}</p>`}
+    {error && <p class="diffnote-error" role="alert">{error}</p>}
     <div class="diffnote-reply__buttons">
-      <button type="submit" class="diffnote-button diffnote-button--primary" data-diffnote-settings-save disabled=${busy || !dirty}>${lib.m('ui.save_button')}</button>
-      ${saved && html`<span class="diffnote-settings__saved" data-diffnote-settings-saved role="status">${lib.m('ui.settings.saved_notice')}</span>`}
-      ${dirty && !saved && html`<span class="diffnote-settings__dirty" data-diffnote-settings-dirty>${lib.m('ui.settings.dirty_notice')}</span>`}
+      <button type="submit" class="diffnote-button diffnote-button--primary" data-diffnote-settings-save disabled={busy || !dirty}>{lib.m('ui.save_button')}</button>
+      {saved && <span class="diffnote-settings__saved" data-diffnote-settings-saved role="status">{lib.m('ui.settings.saved_notice')}</span>}
+      {dirty && !saved && <span class="diffnote-settings__dirty" data-diffnote-settings-dirty>{lib.m('ui.settings.dirty_notice')}</span>}
     </div>
-  </form>`;
+  </form>;
 }

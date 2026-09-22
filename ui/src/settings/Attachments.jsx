@@ -2,7 +2,6 @@
 import { h } from 'preact';
 import { useMemo, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
-import { html } from '../html.ts';
 
 // 添付: what the comments have attached, and what uses it. Unused ones are
 // dropped at 終了 anyway; this is where to see them, save one, or take one
@@ -46,50 +45,49 @@ export function AttachmentsPane(props) {
     var ext = (a.media_type || '').split('/')[1];
     return 'diffnote-' + a.id.slice(0, 12) + (ext ? '.' + ext.replace('+xml', '') : '');
   };
-  return html`<div data-diffnote-attachments-pane>
-    <h2>${lib.m('ui.attachments.heading')}</h2>
-    <p class="diffnote-settings__note">${lib.m('ui.attachments.note')}</p>
-    ${listed.length === 0
-      ? html`<p class="diffnote-attached__empty">${lib.m('ui.attachments.empty')}</p>`
-      : html`<p class="diffnote-attached__total">${lib.mf('ui.attachments.total', { count: String(listed.length), size: lib.formatSize(total) })}</p>
-        <ul class="diffnote-attached">
-          ${order.map(function (a) {
+  return <div data-diffnote-attachments-pane>
+    <h2>{lib.m('ui.attachments.heading')}</h2>
+    <p class="diffnote-settings__note">{lib.m('ui.attachments.note')}</p>
+    {listed.length === 0
+      ? <p class="diffnote-attached__empty">{lib.m('ui.attachments.empty')}</p>
+      : <><p class="diffnote-attached__total">{lib.mf('ui.attachments.total', { count: String(listed.length), size: lib.formatSize(total) })}</p><ul class="diffnote-attached">
+          {order.map(function (a) {
             var used = uses[a.id] || [];
             var image = a.kind === 'image';
             var href = (image ? '/api/images/' : '/api/attachments/') + a.id
               + (image ? '' : '?name=' + encodeURIComponent(fileName(a)));
-            return html`<li key=${a.id} class="diffnote-attached__item" data-diffnote-attached=${a.id}>
-              <div class="diffnote-attached__thumb">${image
+            return <li key={a.id} class="diffnote-attached__item" data-diffnote-attached={a.id}>
+              <div class="diffnote-attached__thumb">{image
                 ? h('img', { src: '/api/images/' + a.id, alt: '' })
-                : html`<span aria-hidden="true">📎</span>`}</div>
+                : <span aria-hidden="true">📎</span>}</div>
               <div class="diffnote-attached__what">
-                <p class="diffnote-attached__name">${nameOf(a)}${used.length === 0 && html`<span class="diffnote-badge" data-diffnote-attached-unused>${lib.m('ui.attachments.unused')}</span>`}</p>
-                <p class="diffnote-attached__meta">${image ? lib.m('ui.attachments.image_kind') : lib.m('ui.attachments.file_kind')} ・ ${a.media_type || ''}${a.media_type ? ' ・ ' : ''}${lib.formatSize(a.size)}</p>
-                ${used.length > 0 && html`<p class="diffnote-attached__uses" data-diffnote-attached-uses>
-                  ${lib.mf('ui.attachments.used_by', { n: String(used.length) })}${used.map(function (u, i) {
-                    return html`<button key=${i} type="button" class="diffnote-attached__use" data-diffnote-attached-use=${u.thread}
-                      onClick=${function () { props.onShow(u.thread); }}>${lib.shortLocation(props.placementOf(u.thread))}</button>`;
+                <p class="diffnote-attached__name">{nameOf(a)}{used.length === 0 && <span class="diffnote-badge" data-diffnote-attached-unused>{lib.m('ui.attachments.unused')}</span>}</p>
+                <p class="diffnote-attached__meta">{image ? lib.m('ui.attachments.image_kind') : lib.m('ui.attachments.file_kind')} ・ {a.media_type || ''}{a.media_type ? ' ・ ' : ''}{lib.formatSize(a.size)}</p>
+                {used.length > 0 && <p class="diffnote-attached__uses" data-diffnote-attached-uses>
+                  {lib.mf('ui.attachments.used_by', { n: String(used.length) })}{used.map(function (u, i) {
+                    return <button key={i} type="button" class="diffnote-attached__use" data-diffnote-attached-use={u.thread}
+                      onClick={function () { props.onShow(u.thread); }}>{lib.shortLocation(props.placementOf(u.thread))}</button>;
                   })}
-                </p>`}
+                </p>}
               </div>
               <div class="diffnote-attached__buttons">
-                <a class="diffnote-button" data-diffnote-attached-download=${a.id} href=${href} download=${fileName(a)}>${lib.m('ui.attachments.download')}</a>
-                <button type="button" class="diffnote-button" data-diffnote-attached-delete=${a.id}
-                  onClick=${function () { setAsk(a.id); }}>${lib.m('ui.attachments.delete')}</button>
+                <a class="diffnote-button" data-diffnote-attached-download={a.id} href={href} download={fileName(a)}>{lib.m('ui.attachments.download')}</a>
+                <button type="button" class="diffnote-button" data-diffnote-attached-delete={a.id}
+                  onClick={function () { setAsk(a.id); }}>{lib.m('ui.attachments.delete')}</button>
               </div>
-              ${ask === a.id && html`<div class="diffnote-attached__warn" role="alert" data-diffnote-attached-warn>
-                <p>${used.length > 0
+              {ask === a.id && <div class="diffnote-attached__warn" role="alert" data-diffnote-attached-warn>
+                <p>{used.length > 0
                   ? lib.mf('ui.attachments.confirm_used', { name: nameOf(a) })
                   : lib.mf('ui.attachments.confirm_unused', { name: nameOf(a) })}</p>
                 <div class="diffnote-reply__buttons">
                   <button type="button" class="diffnote-button diffnote-button--danger" data-diffnote-attached-delete-ok
-                    onClick=${function () { remove(a); }}>${lib.m('ui.attachments.confirm_delete')}</button>
-                  <button type="button" class="diffnote-button" onClick=${function () { setAsk(null); }}>${lib.m('ui.confirm_cancel')}</button>
+                    onClick={function () { remove(a); }}>{lib.m('ui.attachments.confirm_delete')}</button>
+                  <button type="button" class="diffnote-button" onClick={function () { setAsk(null); }}>{lib.m('ui.confirm_cancel')}</button>
                 </div>
-              </div>`}
-            </li>`;
+              </div>}
+            </li>;
           })}
-        </ul>`}
-    ${error && html`<p class="diffnote-error" role="alert">${error}</p>`}
-  </div>`;
+        </ul></>}
+    {error && <p class="diffnote-error" role="alert">{error}</p>}
+  </div>;
 }

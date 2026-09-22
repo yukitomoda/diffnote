@@ -2,7 +2,6 @@
 import { h } from 'preact';
 import { EMOJI } from './emoji.ts';
 import { lib } from './lib.ts';
-import { html } from './html.ts';
 
 // A comment: the nodes of its Markdown (see `src/html/markdown.rs`) as
 // elements. Only what is known is drawn, so nothing a comment says can be
@@ -20,8 +19,8 @@ export function markdown(nodes, links, inLink) {
         if (typeof piece === 'string') return piece;
         var where = links.current === (piece.rev == null ? links.current : piece.rev - 1) ? lib.m('ui.link.here') : lib.mf('ui.link.revision', { rev: String(piece.rev) });
         if (piece.rev != null && piece.rev < links.revisions) where += lib.m('ui.link.not_latest');
-        return html`<a key=${j} href="#" class="diffnote-lineref" data-diffnote-lineref=${piece.path + ':' + (piece.side === 'old' ? 'L' : '') + piece.start + '-' + piece.end} title=${where}
-          onClick=${function (e) { e.preventDefault(); links.go(piece); }}>${piece.text}</a>`;
+        return <a key={j} href="#" class="diffnote-lineref" data-diffnote-lineref={piece.path + ':' + (piece.side === 'old' ? 'L' : '') + piece.start + '-' + piece.end} title={where}
+          onClick={function (e) { e.preventDefault(); links.go(piece); }}>{piece.text}</a>;
       });
     }
     var kids = markdown(n.c, links, inLink || n.t === 'a');
@@ -72,6 +71,6 @@ export function markdown(nodes, links, inLink) {
 export function tokens(pieces, changed) {
   return lib.markPieces(pieces, changed).map(function (p, i) {
     var cls = (p[0] ? 'tok tok-' + p[0] : '') + (p[2] ? (p[0] ? ' ' : '') + 'diffnote-word' : '');
-    return cls ? html`<span key=${i} class=${cls}>${p[1]}</span>` : p[1];
+    return cls ? <span key={i} class={cls}>{p[1]}</span> : p[1];
   });
 }

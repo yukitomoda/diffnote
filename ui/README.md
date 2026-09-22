@@ -17,9 +17,11 @@ looks at whether `dist/` is there and was built from the `src/` on disk (it
 compares the sum `build.mjs` writes into `dist/.sources`), and says to run
 `mise run build` if not. `DIFFNOTE_SKIP_UI_CHECK=1` turns that off.
 
-`esbuild` bundles `src/` into two plain scripts. They are minified, but only the
-spacing and the comments: the names are left alone, so the page can still be
-read in the browser's own tools, and there are no source maps to ship.
+`esbuild` bundles `src/` into two plain scripts: it strips the types (it never
+checks them -- `npm --prefix ui run typecheck` does) and turns the JSX into
+preact's own `h`. They are minified, but only the spacing and the comments: the
+names are left alone, so the page can still be read in the browser's own tools,
+and there are no source maps to ship.
 
 ## The two bundles
 
@@ -42,29 +44,35 @@ Each sets `window.Diffnote`, and the page calls `Diffnote.start()`.
 
 What the page may and may not contain is checked in two places: the rules about
 what we write are in `src/test/sources.test.js` (no `innerHTML`, no element
-written as markup, only `api.js` talks to the server), and the ones about the
+written as markup, only `api.ts` talks to the server), and the ones about the
 whole bundle, libraries and all, are in `src/html.rs`.
 
 ## The files
 
-- `src/lib.js` — pure helpers (locations, which lines a thread covers, side by
+- `src/lib.ts` — pure helpers (locations, which lines a thread covers, side by
   side pairing, preview text, ...). Tested with Node: `npm --prefix ui test`.
 - `src/interact.js` — the mouse and keyboard on the document: a thread's range
   while hovered or pinned, jumping from the thread list, copy buttons, the
   zoomed picture. Done directly on the document (marking a range touches only
   its lines), not through components.
-- `src/app.js` — the components and `start()`.
-- `src/api.js` — talking to the server; only the served bundle has it.
-- `src/emoji.js` — the emoji the page offers.
+- `src/app.jsx` — the page itself, with a file per part of it beside it:
+  `thread/`, `diff/`, `nav/`, `settings/`, and `state/` for what the page holds.
+- `src/model.ts` — the form of the data the page is drawn from, as types.
+- `src/api.ts` — talking to the server; only the served bundle has it.
+- `src/emoji.ts` — the emoji the page offers.
 - `src/style.css` — the style (shared by both pages).
+
+A file becomes TypeScript as its turn comes (`.jsx` is one that is still
+JavaScript); `checkJs` is off, so what is still JavaScript is carried along
+unchecked.
 
 The data the page is drawn from is worked out by Rust (`src/html/viewmodel.rs`;
 the format is documented there) and embedded in the page as JSON. Placement of
 threads (re-anchoring), the order of the thread list, colors, and comment HTML
 stay in Rust; the client only lays them out.
 
-The libraries (preact, its hooks, htm) come from npm and are bundled in; see
-`THIRD-PARTY.md`, since every binary and every exported page carries them.
+preact comes from npm and is bundled in; see `THIRD-PARTY.md`, since every
+binary and every exported page carries it.
 
 ## The served page
 
@@ -76,7 +84,7 @@ if they don't add up (the review changed under the page), or the window is looke
 at again and the log has grown, the whole model is fetched again.
 
 - Choosing lines (press, drag, Shift+click a line number) and the boxes for
-  new threads: `useCompose` in `src/app.js`; the counters of the chosen lines
+  new threads: `useCompose` in `src/state/compose.js`; the counters of the chosen lines
   are worked out by `lib.flatRows` / `lib.counters`.
 - Other files: the tree and opened files are read as data
   (`/api/files/{rev}/tree|open|more`); opened files are held by the page

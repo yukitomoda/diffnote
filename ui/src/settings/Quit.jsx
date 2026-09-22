@@ -3,7 +3,6 @@ import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { transport } from '../transport.ts';
-import { html } from '../html.ts';
 import { kept } from '../state/kept.ts';
 
 // 「終了」: the way to finish, big; and, behind the arrow, the way not to
@@ -36,19 +35,17 @@ export function QuitButton() {
       else setError(res.error || lib.m('ui.quit.shutdown_failed'));
     });
   };
-  return html`<span class="diffnote-quit" ref=${box}>
-    <button type="button" class="diffnote-quit__main" data-diffnote-shutdown title=${lib.m('ui.quit.main_title')}
-      onClick=${function () { quit(false); }}>${lib.m('ui.quit.main_button')}</button><button type="button" class="diffnote-quit__more" data-diffnote-quit-more aria-label=${lib.m('ui.quit.more_label')} aria-expanded=${open}
-      onClick=${function () { setOpen(!open); setSure(false); }}>▾</button>
-    ${open && html`<div class="diffnote-quit__menu" data-diffnote-quit-menu>
-      ${!sure
-        ? html`<button type="button" class="diffnote-quit__item" data-diffnote-discard onClick=${function () { setSure(true); }}>${lib.m('ui.quit.discard_button')}</button>`
-        : html`<p>${lib.m('ui.quit.confirm_note')}</p>
-          <button type="button" class="diffnote-quit__danger" data-diffnote-discard-confirm onClick=${function () { quit(true); }}>${lib.m('ui.quit.discard_confirm_button')}</button>
-          <button type="button" class="diffnote-quit__cancel" onClick=${function () { setSure(false); setOpen(false); }}>${lib.m('ui.confirm_cancel')}</button>`}
-      ${error && html`<p class="diffnote-error">${error}</p>`}
-    </div>`}
-  </span>`;
+  return <span class="diffnote-quit" ref={box}>
+    <button type="button" class="diffnote-quit__main" data-diffnote-shutdown title={lib.m('ui.quit.main_title')}
+      onClick={function () { quit(false); }}>{lib.m('ui.quit.main_button')}</button><button type="button" class="diffnote-quit__more" data-diffnote-quit-more aria-label={lib.m('ui.quit.more_label')} aria-expanded={open}
+      onClick={function () { setOpen(!open); setSure(false); }}>▾</button>
+    {open && <div class="diffnote-quit__menu" data-diffnote-quit-menu>
+      {!sure
+        ? <button type="button" class="diffnote-quit__item" data-diffnote-discard onClick={function () { setSure(true); }}>{lib.m('ui.quit.discard_button')}</button>
+        : <><p>{lib.m('ui.quit.confirm_note')}</p><button type="button" class="diffnote-quit__danger" data-diffnote-discard-confirm onClick={function () { quit(true); }}>{lib.m('ui.quit.discard_confirm_button')}</button><button type="button" class="diffnote-quit__cancel" onClick={function () { setSure(false); setOpen(false); }}>{lib.m('ui.confirm_cancel')}</button></>}
+      {error && <p class="diffnote-error">{error}</p>}
+    </div>}
+  </span>;
 }
 
 // What the tab shows once the server has stopped.

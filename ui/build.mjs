@@ -15,6 +15,9 @@ const shared = {
   // The page is a plain script, opened from a file: no modules, no requests.
   format: 'iife',
   target: 'es2020',
+  // The markup is JSX, turned into preact's own `h` by esbuild.
+  jsx: 'automatic',
+  jsxImportSource: 'preact',
   // Names are left alone, so that the page can still be read in the browser's
   // own tools; the comments and the spacing are what makes an export big.
   minifyWhitespace: true,
@@ -32,7 +35,7 @@ await esbuild.build({
   entryPoints: { export: 'src/entry-export.js', serve: 'src/entry-serve.js' },
   outdir: 'dist',
   banner: {
-    js: '/*! diffnote: preact (MIT), htm (Apache-2.0). See ui/THIRD-PARTY.md. */',
+    js: '/*! diffnote: preact (MIT). See ui/THIRD-PARTY.md. */',
   },
 });
 

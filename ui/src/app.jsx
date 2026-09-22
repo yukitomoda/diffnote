@@ -8,11 +8,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import { interact } from './interact.js';
 import { lib } from './lib.ts';
 import { transport } from './transport.ts';
-import { Revision } from './Revision.js';
+import { Revision } from './Revision.jsx';
 import { useWide } from './dom.ts';
-import { html } from './html.ts';
-import { QuitButton } from './settings/Quit.js';
-import { SettingsScreen } from './settings/Screen.js';
+import { QuitButton } from './settings/Quit.jsx';
+import { SettingsScreen } from './settings/Screen.jsx';
 import { useCompose } from './state/compose.js';
 import { ActionsContext, ComposeContext, LinksContext, OpenedContext, ViewContext, ViewedContext } from './state/contexts.js';
 import { keep, kept } from './state/kept.ts';
@@ -258,63 +257,63 @@ function App(props) {
     interact.reset();
   }, [hide, current, layout]);
 
-  return html`<article class="diffnote-review">
+  return <article class="diffnote-review">
     <div class="diffnote-topbar">
       <header class="diffnote-summary">
-        <h1>${review.actions
-          ? html`<button type="button" class="diffnote-title" data-diffnote-settings title=${lib.m('ui.settings.title_button')} aria-haspopup="dialog"
-              aria-pressed=${screen === 'general' || screen === 'settings'} onClick=${function () { setScreen(screen === 'general' ? null : 'general'); }}>${model.title || lib.m('html.default_title')}<span class="diffnote-title__icon" aria-hidden="true">⚙</span></button>`
+        <h1>{review.actions
+          ? <button type="button" class="diffnote-title" data-diffnote-settings title={lib.m('ui.settings.title_button')} aria-haspopup="dialog"
+              aria-pressed={screen === 'general' || screen === 'settings'} onClick={function () { setScreen(screen === 'general' ? null : 'general'); }}>{model.title || lib.m('html.default_title')}<span class="diffnote-title__icon" aria-hidden="true">⚙</span></button>
           : model.title || lib.m('html.default_title')}</h1>
-        ${model.base && html`<p data-diffnote-base class=${against != null ? 'is-changed' : ''} title=${against != null ? lib.m('ui.base.changed_title') : lib.m('ui.base.default_title')}>${lib.m('ui.base.label')}: ${review.actions && current > 0
-          ? html`<select class="diffnote-base__select" data-diffnote-base-select aria-label=${lib.m('ui.base.select_label')} value=${against == null ? '' : String(against)}
-              onChange=${function (e) { setAgainst(e.target.value === '' ? null : +e.target.value); }}>
-              <option value="">${model.base.kind === 'git' ? model.base.id : lib.formatTime(model.base.at)}</option>
-              ${model.revisions.slice(0, current).map(function (r, i) { return html`<option key=${i} value=${String(i)}>${r.label}</option>`; })}
-            </select>`
-          : model.base.kind === 'git' ? html`<code>${model.base.id}</code>` : lib.formatTime(model.base.at)}</p>`}
+        {model.base && <p data-diffnote-base class={against != null ? 'is-changed' : ''} title={against != null ? lib.m('ui.base.changed_title') : lib.m('ui.base.default_title')}>{lib.m('ui.base.label')}: {review.actions && current > 0
+          ? <select class="diffnote-base__select" data-diffnote-base-select aria-label={lib.m('ui.base.select_label')} value={against == null ? '' : String(against)}
+              onChange={function (e) { setAgainst(e.target.value === '' ? null : +e.target.value); }}>
+              <option value="">{model.base.kind === 'git' ? model.base.id : lib.formatTime(model.base.at)}</option>
+              {model.revisions.slice(0, current).map(function (r, i) { return <option key={i} value={String(i)}>{r.label}</option>; })}
+            </select>
+          : model.base.kind === 'git' ? <code>{model.base.id}</code> : lib.formatTime(model.base.at)}</p>}
       </header>
-      ${model.revisions.length > 0 && html`<nav class="diffnote-revisions" ref=${tabs} onWheel=${function (e) {
+      {model.revisions.length > 0 && <nav class="diffnote-revisions" ref={tabs} onWheel={function (e) {
         // The tabs scroll sideways (no bar is shown): the wheel does it too.
         if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.currentTarget.scrollLeft += e.deltaY; e.preventDefault(); }
       }}><ul>
-        ${model.revisions.map(function (r, i) {
-          return html`<li key=${i}><a href=${'#rev-' + i} data-diffnote-revision-link=${i} class=${i === current ? 'is-current' : ''}
-            onClick=${function (e) { e.preventDefault(); setScreen(null); setAt(null); setCurrent(i); }}>${r.label}</a></li>`;
+        {model.revisions.map(function (r, i) {
+          return <li key={i}><a href={'#rev-' + i} data-diffnote-revision-link={i} class={i === current ? 'is-current' : ''}
+            onClick={function (e) { e.preventDefault(); setScreen(null); setAt(null); setCurrent(i); }}>{r.label}</a></li>;
         })}
-      </ul></nav>`}
+      </ul></nav>}
       <div class="diffnote-topbar__actions">
-      <${TopbarNotices} items=${notices} />
-      ${model.interactive && html`<${QuitButton} />`}
+      <TopbarNotices items={notices} />
+      {model.interactive && <QuitButton />}
       </div>
     </div>
-    ${screen != null && review.actions && html`<${SettingsScreen} section=${screen} model=${model} pending=${review.pending} note=${note} onPull=${pull}
-      saveSettings=${review.actions.saveSettings} saveUserSettings=${review.actions.saveUserSettings}
-      removeAttached=${review.actions.removeAttached}
-      onShowThread=${function (id) { setScreen(null); links.go({ kind: 'thread', id: id }); }}
-      placementOf=${function (id) { return ((model.revisions[current] || {}).placements || {})[id]; }}
-      onSelect=${setScreen} onClose=${function () { setScreen(null); }} />`}
-    <div class="diffnote-review-body" hidden=${screen != null && !!review.actions}>
-    <${ViewContext.Provider} value=${viewOptions}>
-    <${ViewedContext.Provider} value=${viewed}>
-    <${LinksContext.Provider} value=${links}>
-    <${ActionsContext.Provider} value=${review.actions}>
-      <${ComposeContext.Provider} value=${compose}>
-        <${OpenedContext.Provider} value=${openedFiles}>
-          <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} ignoreSpace=${ignoreSpace} compose=${compose} override=${override}
-            overrideNote=${override ? {
+    {screen != null && review.actions && <SettingsScreen section={screen} model={model} pending={review.pending} note={note} onPull={pull}
+      saveSettings={review.actions.saveSettings} saveUserSettings={review.actions.saveUserSettings}
+      removeAttached={review.actions.removeAttached}
+      onShowThread={function (id) { setScreen(null); links.go({ kind: 'thread', id: id }); }}
+      placementOf={function (id) { return ((model.revisions[current] || {}).placements || {})[id]; }}
+      onSelect={setScreen} onClose={function () { setScreen(null); }} />}
+    <div class="diffnote-review-body" hidden={screen != null && !!review.actions}>
+    <ViewContext.Provider value={viewOptions}>
+    <ViewedContext.Provider value={viewed}>
+    <LinksContext.Provider value={links}>
+    <ActionsContext.Provider value={review.actions}>
+      <ComposeContext.Provider value={compose}>
+        <OpenedContext.Provider value={openedFiles}>
+          <Revision key={current} model={model} index={current} hideResolved={hide} layout={layout} ignoreSpace={ignoreSpace} compose={compose} override={override}
+            overrideNote={override ? {
               short: model.revisions[against].label.replace(/ \(.*$/, '') + ' .. ' + model.revisions[current].label.replace(/ \(.*$/, ''),
               tip: lib.m('ui.base.select_tip'),
             } : null}
-            author=${review.actions ? model.author : null} userSettingsOpen=${screen === 'user'}
-            onToggleUserSettings=${review.actions && function () { setScreen(screen === 'user' ? null : 'user'); }} />
-        <//>
-      <//>
-    <//>
-    <//>
-    <//>
-    <//>
+            author={review.actions ? model.author : null} userSettingsOpen={screen === 'user'}
+            onToggleUserSettings={review.actions && function () { setScreen(screen === 'user' ? null : 'user'); }} />
+        </OpenedContext.Provider>
+      </ComposeContext.Provider>
+    </ActionsContext.Provider>
+    </LinksContext.Provider>
+    </ViewedContext.Provider>
+    </ViewContext.Provider>
     </div>
-  </article>`;
+  </article>;
 }
 
 // Short, clickable messages at the top (today, only a pending pull makes
@@ -322,11 +321,11 @@ function App(props) {
 // topbar markup, each just {id, text, onClick}.
 function TopbarNotices(props) {
   if (!props.items || props.items.length === 0) return null;
-  return html`<div class="diffnote-notices">
-    ${props.items.map(function (n) {
-      return html`<button key=${n.id} type="button" class="diffnote-notice" data-diffnote-notice=${n.id} onClick=${n.onClick}>${n.text}</button>`;
+  return <div class="diffnote-notices">
+    {props.items.map(function (n) {
+      return <button key={n.id} type="button" class="diffnote-notice" data-diffnote-notice={n.id} onClick={n.onClick}>{n.text}</button>;
     })}
-  </div>`;
+  </div>;
 }
 
 export function start() {
@@ -334,5 +333,5 @@ export function start() {
   var model = JSON.parse(document.getElementById('diffnote-data').textContent);
   if (model.interactive) document.body.setAttribute('data-diffnote-api', '1');
   interact.install();
-  render(html`<${App} model=${model} />`, document.getElementById('app'));
+  render(<App model={model} />, document.getElementById('app'));
 }
