@@ -1478,6 +1478,36 @@ class BoxesGrowWithWhatIsWritten(ServedCase):
 
 
 class EmojiTable(ServedCase):
+    def test_the_table_hangs_over_the_page_and_the_file_under_it_does_not_move(self):
+        # A file's diff scrolls sideways, which makes it a box that clips
+        # both ways: a table opened inside it would be cut off, would give
+        # that file a scrollbar, and taking the cursor to the search box
+        # would scroll the file out from under the reader.
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        form = f"#{card} .diffnote-reply"
+        scroller = f"#{card}"
+        b.js(f"document.querySelector({json.dumps(form)}).scrollIntoView({{block: 'end'}})")
+        time.sleep(0.2)
+        room = lambda: b.js("(() => { const s = document.querySelector('%s').closest('.diffnote-diff-scroll');"
+                            " return s ? [s.scrollHeight - s.clientHeight, s.scrollTop] : null; })()" % scroller)
+        where = lambda: b.js("[window.scrollY, window.scrollX]")
+        before, page = room(), where()
+        b.click(f"{form} [data-diffnote-emoji-button]")
+        self.assertTrue(b.wait_exists("[data-diffnote-emoji-panel]"))
+        self.assertTrue(b.wait("document.activeElement === document.querySelector('[data-diffnote-emoji-search]')"))
+        self.assertEqual(where(), page, "nothing was scrolled to show it")
+        if before is not None:
+            self.assertEqual(room(), before, "and the file it is over gained no scrolling of its own")
+        # It is over the page, not inside the file, and all of it is in view.
+        fits = b.js("""(() => {
+          const p = document.querySelector('[data-diffnote-emoji-panel]').getBoundingClientRect();
+          return [getComputedStyle(document.querySelector('[data-diffnote-emoji-panel]')).position,
+                  p.top >= 0 && p.bottom <= innerHeight, p.left >= 0 && p.right <= innerWidth];
+        })()""")
+        self.assertEqual(fits, ["fixed", True, True], fits)
+
     def test_an_emoji_is_chosen_from_a_table_and_put_where_the_cursor_is(self):
         self.serve()
         b = self.b

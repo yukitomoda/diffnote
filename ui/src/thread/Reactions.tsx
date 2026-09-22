@@ -1,5 +1,5 @@
 // The emoji on a comment, and the table to pick one from.
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { EMOJI } from '../emoji.ts';
 import { lib } from '../lib.ts';
 import type { CommentData } from '../model.ts';
@@ -56,7 +56,40 @@ export function EmojiButton(props: EmojiButtonProps) {
   var setQuery = _q[1];
   var box = useRef<HTMLSpanElement | null>(null);
   var input = useRef<HTMLInputElement | null>(null);
-  useEffect(function () { if (open && input.current) input.current.focus(); }, [open]);
+  var panel = useRef<HTMLDivElement | null>(null);
+  // The table hangs over the page, not inside it: the diff of a file scrolls
+  // sideways, which makes it a box that clips (a box that scrolls one way
+  // scrolls both), and a table that opened inside it would be cut off and
+  // would give that file a scrollbar of its own.
+  var place = function () {
+    var button = box.current && box.current.firstElementChild;
+    var it = panel.current;
+    if (!button || !it) return;
+    var at = button.getBoundingClientRect();
+    var left = props.side === 'left' ? at.left : at.right - it.offsetWidth;
+    var top = at.bottom + 4;
+    // Above the button instead, when there is no room under it.
+    if (top + it.offsetHeight > window.innerHeight - 8) {
+      top = Math.max(8, at.top - 4 - it.offsetHeight);
+    }
+    it.style.left = Math.max(8, Math.min(left, window.innerWidth - it.offsetWidth - 8)) + 'px';
+    it.style.top = top + 'px';
+  };
+  useLayoutEffect(function () {
+    if (!open) return undefined;
+    place();
+    // It is placed against the button, so it follows whatever moves it.
+    var again = function () { place(); };
+    window.addEventListener('scroll', again, true);
+    window.addEventListener('resize', again);
+    return function () {
+      window.removeEventListener('scroll', again, true);
+      window.removeEventListener('resize', again);
+    };
+  }, [open, query]);
+  // Without `preventScroll`, taking the cursor to the search box scrolls
+  // whatever the button is inside to show it.
+  useEffect(function () { if (open && input.current) input.current.focus({ preventScroll: true }); }, [open]);
   useEffect(function () {
     if (!open) return undefined;
     var away = function (e: MouseEvent) { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
@@ -73,7 +106,7 @@ export function EmojiButton(props: EmojiButtonProps) {
   return <span class={'diffnote-emoji' + (props.side === 'left' ? ' diffnote-emoji--left' : '')} ref={box}>
     <button type="button" class={props.buttonClass || 'diffnote-attach diffnote-emoji__open'} data-diffnote-emoji-button={props.name || ''} aria-haspopup="true" aria-expanded={open}
       title={props.title || lib.m('ui.emoji.default_title')} onClick={function () { setOpen(!open); }}>{props.label || <Icon name="react" />}</button>
-    {open && <div class="diffnote-emoji__panel" data-diffnote-emoji-panel>
+    {open && <div class="diffnote-emoji__panel" data-diffnote-emoji-panel ref={panel}>
       <input ref={input} type="search" class="diffnote-emoji__search" data-diffnote-emoji-search placeholder={lib.m('ui.emoji.search_placeholder')} value={query}
         onInput={function (e) { setQuery(e.currentTarget.value); }}
         onKeyDown={function (e) { if (e.key === 'Enter') { e.preventDefault(); if (found[0]) pick(found[0][0]); } }} />
