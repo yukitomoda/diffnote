@@ -303,14 +303,6 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 .diffnote-farewell__list dd { margin: 0; word-break: break-all; }
 .diffnote-farewell__note { margin: 0; color: var(--diffnote-color-muted); font-size: 13px; }
 
-/* A value that can be changed on the spot (the title, the author). */
-.diffnote-inline { display: inline-flex; align-items: baseline; gap: 6px; }
-/* The box to write the new value in drops down from the top bar, so the bar keeps its shape. */
-.diffnote-inline--editing { position: absolute; top: calc(100% + 4px); z-index: 20; align-items: center; flex-wrap: wrap; gap: 8px; max-width: calc(100vw - 32px); padding: 10px 12px; background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 8px; box-shadow: 0 6px 20px rgba(31, 35, 40, 0.18); }
-.diffnote-inline__edit { font: inherit; font-size: 12px; line-height: 1; padding: 2px 4px; color: var(--diffnote-color-muted); background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; opacity: 0.6; }
-.diffnote-inline__edit:hover, .diffnote-inline__edit:focus { opacity: 1; border-color: var(--diffnote-color-border); background: var(--diffnote-color-bg); }
-.diffnote-inline input { font: inherit; font-size: 13px; min-width: 14em; padding: 2px 8px; border: 1px solid var(--diffnote-color-accent); border-radius: 6px; background: var(--diffnote-color-bg); color: var(--diffnote-color-fg); }
-
 /* The view menu, at the top right of the diff. */
 .diffnote-viewbar { grid-column: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; }
 .diffnote-viewbar .diffnote-add { padding: 0; }
@@ -325,11 +317,15 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 .diffnote-viewmenu__item::before { content: ""; display: inline-block; width: 1em; text-align: center; color: var(--diffnote-color-accent); font-weight: 700; }
 .diffnote-viewmenu__item.is-current::before { content: "✓"; }
 
-/* The name comments are written under, at the foot of the side. */
+/* The name comments are written under, at the foot of the side. Pressing it
+   opens the user settings screen (like the title does for the review's). */
 .diffnote-user { position: relative; flex: none; display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 8px 8px 4px; border-top: 1px solid var(--diffnote-color-border); font-size: 13px; }
 .diffnote-user__avatar { flex: none; width: 26px; height: 26px; line-height: 26px; text-align: center; font-weight: 700; color: #fff; background: var(--diffnote-color-accent); border-radius: 50%; }
-.diffnote-user strong { font-weight: 600; word-break: break-all; }
-.diffnote-user .diffnote-inline--editing { top: auto; bottom: calc(100% + 6px); left: 8px; right: auto; max-width: 20em; }
+.diffnote-user__button { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; font: inherit; font-size: 13px; color: inherit; background: none; border: 1px solid transparent; border-radius: 6px; padding: 1px 6px; margin-left: -6px; cursor: pointer; }
+.diffnote-user__button:hover, .diffnote-user__button:focus-visible { background: var(--diffnote-color-bg); border-color: var(--diffnote-color-border); }
+.diffnote-user__button[aria-pressed="true"] { background: var(--diffnote-color-bg); border-color: var(--diffnote-color-accent); }
+.diffnote-user__button strong { font-weight: 600; word-break: break-all; }
+.diffnote-user__icon { font-size: 12px; font-weight: 400; color: var(--diffnote-color-muted); }
 
 .diffnote-badge--viewed { background: transparent; color: #1a7f37; border: 1px solid #1a7f37; line-height: 16px; }
 

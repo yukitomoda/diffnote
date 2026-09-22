@@ -51,41 +51,46 @@ pub fn save(config: &UserConfig) -> Result<()> {
     Ok(())
 }
 
+/// テスト用: `DIFFNOTE_CONFIG_DIR` を一時ディレクトリに向けて `f` を呼び、
+/// 実行前の値に戻す。この crate のどのテストも(`serve` のテストのように、
+/// `load`/`save` を間接に呼ぶものも含め)、この関数越しでなければ触れては
+/// いけない -- そうでないと、このマシンの実際の設定ファイルを読み書きして
+/// しまう。環境変数はプロセス全体で共有なので、プロセス全体のロックを取る
+/// (テストどうしが並行に動いても競合しない)。
+#[cfg(test)]
+pub(crate) fn with_test_config_dir<T>(f: impl FnOnce(&std::path::Path) -> T) -> T {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let before = std::env::var_os("DIFFNOTE_CONFIG_DIR");
+    // SAFETY: the environment change is confined to this call by the lock above.
+    unsafe {
+        std::env::set_var("DIFFNOTE_CONFIG_DIR", dir.path());
+    }
+    let result = f(dir.path());
+    unsafe {
+        match &before {
+            Some(v) => std::env::set_var("DIFFNOTE_CONFIG_DIR", v),
+            None => std::env::remove_var("DIFFNOTE_CONFIG_DIR"),
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// `DIFFNOTE_CONFIG_DIR` を一時ディレクトリに向けて、実行時のもとに
-    /// 戻す(テストどうしが競合しないよう、プロセス全体のロックを取る)。
-    fn with_temp_dir<T>(f: impl FnOnce(&std::path::Path) -> T) -> T {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = tempfile::tempdir().unwrap();
-        let before = std::env::var_os("DIFFNOTE_CONFIG_DIR");
-        // SAFETY: 環境変数の変更は、上のロックでこのテストの間だけに限られる。
-        unsafe {
-            std::env::set_var("DIFFNOTE_CONFIG_DIR", dir.path());
-        }
-        let result = f(dir.path());
-        unsafe {
-            match &before {
-                Some(v) => std::env::set_var("DIFFNOTE_CONFIG_DIR", v),
-                None => std::env::remove_var("DIFFNOTE_CONFIG_DIR"),
-            }
-        }
-        result
-    }
-
     #[test]
     fn with_nothing_saved_yet_the_config_is_empty() {
-        with_temp_dir(|_| {
+        with_test_config_dir(|_| {
             assert_eq!(load(), UserConfig::default());
         });
     }
 
     #[test]
     fn what_is_saved_is_what_load_returns_next() {
-        with_temp_dir(|dir| {
+        with_test_config_dir(|dir| {
             save(&UserConfig {
                 author: Some("山田 太郎".into()),
             })
@@ -102,7 +107,7 @@ mod tests {
 
     #[test]
     fn a_broken_file_is_treated_as_no_config_rather_than_an_error() {
-        with_temp_dir(|dir| {
+        with_test_config_dir(|dir| {
             std::fs::write(dir.join("config.json"), b"not json").unwrap();
             assert_eq!(load(), UserConfig::default());
         });

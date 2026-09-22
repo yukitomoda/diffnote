@@ -323,48 +323,6 @@
     };
   }
 
-  function InlineEdit(props) {
-    var _e = useState(false);
-    var editing = _e[0];
-    var setEditing = _e[1];
-    var _t = useState('');
-    var text = _t[0];
-    var setText = _t[1];
-    var _b = useState(false);
-    var busy = _b[0];
-    var setBusy = _b[1];
-    var _r = useState('');
-    var error = _r[0];
-    var setError = _r[1];
-    var box = useRef(null);
-    useEffect(function () { if (editing && box.current) { box.current.focus(); box.current.select(); } }, [editing]);
-    var save = function (e) {
-      e.preventDefault();
-      if (busy) return;
-      setBusy(true);
-      setError('');
-      props.onSave(text).then(function (res) {
-        setBusy(false);
-        if (res.ok) setEditing(false);
-        else setError(res.error || '保存できませんでした');
-      });
-    };
-    if (!editing) {
-      return html`<span class="diffnote-inline">${props.children}<button type="button" class="diffnote-inline__edit"
-        data-diffnote-inline=${props.name} title=${props.label} aria-label=${props.label}
-        onClick=${function () { setText(props.value); setError(''); setEditing(true); }}>✎</button></span>`;
-    }
-    return html`<span class="diffnote-inline">${props.children}<form class=${'diffnote-inline diffnote-inline--editing diffnote-inline--' + props.name} onSubmit=${save}>
-      <input ref=${box} type="text" value=${text} maxlength=${props.max} placeholder=${props.placeholder} aria-label=${props.label}
-        data-diffnote-inline-input=${props.name}
-        onInput=${function (e) { setText(e.target.value); }}
-        onKeyDown=${function (e) { if (e.key === 'Escape') { e.stopPropagation(); setEditing(false); } }} />
-      <button type="submit" class="diffnote-button diffnote-button--primary" disabled=${busy}>保存</button>
-      <button type="button" class="diffnote-button" onClick=${function () { setEditing(false); }}>取消</button>
-      ${error && html`<span class="diffnote-error" role="alert">${error}</span>`}
-    </form></span>`;
-  }
-
   // One comment. One added since the server started has buttons to edit it and
   // to take it out (the first comment of a thread takes the whole thread out).
   function Comment(props) {
@@ -638,15 +596,75 @@
   }
 
   // The name comments are written under, at the foot of the side, like the
-  // user who is signed in.
+  // user who is signed in. Pressing it opens the user settings screen (like
+  // the title opens the review's settings).
   function UserChip(props) {
     var name = props.name;
     var initial = Array.from(name.trim())[0] || '?';
     return html`<div class="diffnote-user" data-diffnote-user>
       <span class="diffnote-user__avatar" aria-hidden="true">${initial.toUpperCase()}</span>
-      <${InlineEdit} name="author" value=${name} max="100" label="作者名を変える(この起動の間だけ)" placeholder="作者名"
-        onSave=${props.onSave}><strong data-diffnote-author>${name}</strong><//>
+      <button type="button" class="diffnote-user__button" data-diffnote-user-settings title="ユーザー設定(作者名など)" aria-haspopup="dialog"
+        aria-pressed=${props.open} onClick=${props.onToggle}><strong data-diffnote-author>${name}</strong><span class="diffnote-user__icon" aria-hidden="true">⚙</span></button>
     </div>`;
+  }
+
+  // This machine's user settings (`diffnote config`; today, just the author
+  // name): a screen of its own, like the review's settings -- but this is not
+  // part of the bundle, so it is kept separate (and applies to every review
+  // from now on, not only this one).
+  function UserSettingsPage(props) {
+    var model = props.model;
+    var configured = (model.user_settings && model.user_settings.author) || '';
+    var _a = useState(configured);
+    var author = _a[0];
+    var setAuthor = _a[1];
+    var _b = useState(false);
+    var busy = _b[0];
+    var setBusy = _b[1];
+    var _e = useState('');
+    var error = _e[0];
+    var setError = _e[1];
+    var _s = useState(false);
+    var saved = _s[0];
+    var setSaved = _s[1];
+    var first = useRef(null);
+    useEffect(function () { if (first.current) first.current.focus(); }, []);
+    useEffect(function () {
+      var key = function (e) { if (e.key === 'Escape') props.onClose(); };
+      document.addEventListener('keydown', key);
+      return function () { document.removeEventListener('keydown', key); };
+    }, []);
+    var dirty = author.trim() !== configured.trim();
+    var touched = function (v) { setAuthor(v); setSaved(false); setError(''); };
+    var submit = function (e) {
+      e.preventDefault();
+      if (busy) return;
+      setBusy(true);
+      setError('');
+      props.save(author).then(function (res) {
+        setBusy(false);
+        if (res.ok) setSaved(true);
+        else setError(res.error || '保存できませんでした');
+      });
+    };
+    return html`<main class="diffnote-settings" data-diffnote-user-settings-page>
+      <form class="diffnote-settings__form" noValidate onSubmit=${submit}>
+        <p><button type="button" class="diffnote-button" data-diffnote-user-settings-back onClick=${props.onClose}>← レビューに戻る</button></p>
+        <h2>ユーザー設定</h2>
+        <p class="diffnote-settings__note">ここでの設定は、このマシンの、このユーザーに保存されます。このレビューだけでなく、これから開くすべての diffnote のレビューに使われます。</p>
+        <label class="diffnote-field">
+          <span>作者名</span>
+          <input ref=${first} type="text" maxlength="100" data-diffnote-user-setting-author value=${author} placeholder="空にすると、git の設定などから決まります"
+            onInput=${function (e) { touched(e.target.value); }} />
+        </label>
+        ${error && html`<p class="diffnote-error" role="alert">${error}</p>`}
+        <div class="diffnote-reply__buttons">
+          <button type="submit" class="diffnote-button diffnote-button--primary" data-diffnote-user-settings-save disabled=${busy || !dirty}>保存</button>
+          ${saved && html`<span class="diffnote-settings__saved" data-diffnote-user-settings-saved role="status">保存しました</span>`}
+          ${dirty && !saved && html`<span class="diffnote-settings__dirty" data-diffnote-user-settings-dirty>保存していない変更があります(戻ると、失われます)</span>`}
+        </div>
+      </form>
+    </main>`;
   }
 
   // The review's settings, as they are kept in the bundle: a screen of its own
@@ -704,7 +722,7 @@
       <form class="diffnote-settings__form" noValidate onSubmit=${submit}>
         <p><button type="button" class="diffnote-button" data-diffnote-settings-back onClick=${props.onClose}>← レビューに戻る</button></p>
         <h2>レビューの設定</h2>
-        <p class="diffnote-settings__note">ここでの設定は、バンドルに保存され、このレビューを開く人みんなに、同じに働きます(作者の名前は、レビューの画面の左下で、この起動の間だけ変えられます)。</p>
+        <p class="diffnote-settings__note">ここでの設定は、バンドルに保存され、このレビューを開く人みんなに、同じに働きます(作者の名前は、レビューの画面の左下の「ユーザー設定」で変えられます。このマシンのすべてのレビューに使われます)。</p>
         <label class="diffnote-field">
           <span>タイトル</span>
           <input ref=${first} type="text" maxlength="200" data-diffnote-setting-title value=${title} placeholder="空にすると、既定の見出しに戻ります"
@@ -1418,7 +1436,7 @@
           ${model.threads.length > 0 && html`<${ThreadList} ctx=${listOrder} />`}
           ${opened && html`<${Tree} rev=${rev} />`}
         </div>
-        ${props.author != null && props.onAuthor && html`<${UserChip} name=${props.author} onSave=${props.onAuthor} />`}
+        ${props.author != null && props.onToggleUserSettings && html`<${UserChip} name=${props.author} open=${props.userSettingsOpen} onToggle=${props.onToggleUserSettings} />`}
       </aside>
       <div class="diffnote-viewbar">
         ${props.compose && html`<div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global"
@@ -1531,10 +1549,15 @@
         react: function (id, emoji) {
           return D.api.post('/api/comments/' + id + '/react', { emoji: emoji }).then(whole);
         },
-        // The review's settings (the ones given; the answer is the whole model),
-        // and, below, the name comments are written under for this session.
+        // The review's settings (the ones given; the answer is the whole model).
         saveSettings: function (settings) {
           return D.api.post('/api/settings', settings).then(whole);
+        },
+        // This machine's user settings (author name; kept for every review, not
+        // only this one): the answer is the whole model, with the name applied
+        // for the rest of this session too.
+        saveUserSettings: function (author) {
+          return D.api.post('/api/user-settings', { author: author }).then(whole);
         },
         // What was added to the target since the server started becomes a new
         // revision (the answer says what was done; the page keeps its place).
@@ -1544,12 +1567,6 @@
               setModel(res.model);
               setPending(false);
             }
-            return res;
-          });
-        },
-        setAuthor: function (name) {
-          return D.api.post('/api/author', { author: name }).then(function (res) {
-            if (res.ok) setModel(function (cur) { return Object.assign({}, cur, { author: res.author }); });
             return res;
           });
         },
@@ -1803,10 +1820,11 @@
         }),
       });
     }, [cmp, current, against, model]);
-    // The settings of the review, in a box of their own.
-    var _st = useState(false);
-    var settingsOpen = _st[0];
-    var setSettingsOpen = _st[1];
+    // The settings screen shown instead of the review, if any: the review's
+    // own (`'bundle'`), or this machine's user settings (`'user'`).
+    var _st = useState(null);
+    var screen = _st[0];
+    var setScreen = _st[1];
     // The tab that is shown is kept in view when there are more than fit.
     var tabs = useRef(null);
     useLayoutEffect(function () {
@@ -1913,7 +1931,7 @@
         <header class="diffnote-summary">
           <h1>${review.actions
             ? html`<button type="button" class="diffnote-title" data-diffnote-settings title="レビューの設定(タイトルなど)" aria-haspopup="dialog"
-                aria-pressed=${settingsOpen} onClick=${function () { setSettingsOpen(!settingsOpen); }}>${model.title || DEFAULT_TITLE}<span class="diffnote-title__icon" aria-hidden="true">⚙</span></button>`
+                aria-pressed=${screen === 'bundle'} onClick=${function () { setScreen(screen === 'bundle' ? null : 'bundle'); }}>${model.title || DEFAULT_TITLE}<span class="diffnote-title__icon" aria-hidden="true">⚙</span></button>`
             : model.title || DEFAULT_TITLE}</h1>
           ${model.base && html`<p data-diffnote-base class=${against != null ? 'is-changed' : ''} title=${against != null ? 'ベースの代わりに、このリビジョンと比べて表示しています(記録は変わりません)' : 'すべてのリビジョンは、これと比べた差分です'}>ベース: ${review.actions && current > 0
             ? html`<select class="diffnote-base__select" data-diffnote-base-select aria-label="比べる相手" value=${against == null ? '' : String(against)}
@@ -1929,7 +1947,7 @@
         }}><ul>
           ${model.revisions.map(function (r, i) {
             return html`<li key=${i}><a href=${'#rev-' + i} data-diffnote-revision-link=${i} class=${i === current ? 'is-current' : ''}
-              onClick=${function (e) { e.preventDefault(); setSettingsOpen(false); setCurrent(i); }}>${r.label}</a></li>`;
+              onClick=${function (e) { e.preventDefault(); setScreen(null); setCurrent(i); }}>${r.label}</a></li>`;
           })}
         </ul></nav>`}
         <div class="diffnote-topbar__actions">
@@ -1943,8 +1961,9 @@
         ${model.interactive && html`<${QuitButton} />`}
         </div>
       </div>
-      ${settingsOpen && review.actions && html`<${SettingsPage} model=${model} save=${review.actions.saveSettings} onClose=${function () { setSettingsOpen(false); }} />`}
-      <div class="diffnote-review-body" hidden=${settingsOpen && !!review.actions}>
+      ${screen === 'bundle' && review.actions && html`<${SettingsPage} model=${model} save=${review.actions.saveSettings} onClose=${function () { setScreen(null); }} />`}
+      ${screen === 'user' && review.actions && html`<${UserSettingsPage} model=${model} save=${review.actions.saveUserSettings} onClose=${function () { setScreen(null); }} />`}
+      <div class="diffnote-review-body" hidden=${screen != null && !!review.actions}>
       <${ViewContext.Provider} value=${viewOptions}>
       <${ViewedContext.Provider} value=${viewed}>
       <${LinksContext.Provider} value=${links}>
@@ -1956,7 +1975,8 @@
                 short: model.revisions[against].label.replace(/ \(.*$/, '') + ' .. ' + model.revisions[current].label.replace(/ \(.*$/, ''),
                 tip: 'ベースの代わりに、選んだリビジョンと比べた差分を表示しています(表示だけの切り替えです)。コメントは、これまでどおり、ベースとの差分に付きます。比べた相手にだけある、削除された行には、コメントを付けられません。',
               } : null}
-              author=${review.actions ? model.author : null} onAuthor=${review.actions && review.actions.setAuthor} />
+              author=${review.actions ? model.author : null} userSettingsOpen=${screen === 'user'}
+              onToggleUserSettings=${review.actions && function () { setScreen(screen === 'user' ? null : 'user'); }} />
           <//>
         <//>
       <//>

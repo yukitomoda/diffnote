@@ -290,10 +290,13 @@ class Served:
     """`diffnote serve` on a review."""
 
     def __init__(self, review, cwd=None, extra=(), author="tester"):
+        # author=None starts it with no --author at all (git config, then the
+        # DIFFNOTE_CONFIG_DIR user config, then the login name decide it).
         self.review = review
         env = dict(os.environ)
         env["DIFFNOTE_CONFIG_DIR"] = USER_CONFIG_DIR
-        self.proc = subprocess.Popen([BIN, "serve", "-f", review, "--no-open", "--author", author, *extra],
+        author_args = [] if author is None else ["--author", author]
+        self.proc = subprocess.Popen([BIN, "serve", "-f", review, "--no-open", *author_args, *extra],
                                      cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8")
         self.notices = []
         self.said = []

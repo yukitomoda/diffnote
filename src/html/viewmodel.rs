@@ -43,6 +43,12 @@ pub struct ViewModel {
     pub settings: Option<crate::model::Settings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bundle: Option<BundleInfo>,
+    /// This machine's user-level settings (`diffnote config`; today, just
+    /// `author`), for the page that changes them (served page only). Separate
+    /// from `settings`: this isn't kept in the bundle, and it applies to every
+    /// bundle on this machine, not only this one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_settings: Option<crate::user_config::UserConfig>,
     /// Whether the page may ask the server to take in what was added to the
     /// target since it started (served page only).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -304,6 +310,7 @@ pub fn view_model_with(
         author: None,
         settings: None,
         bundle: None,
+        user_settings: None,
         refreshable: false,
         base: loaded.revisions().next().map(|r| match &r.source {
             crate::model::Source::Git(g) => BaseData::Git {
@@ -363,6 +370,7 @@ pub fn served_model_json(
     model.refreshable = refreshable;
     model.settings = Some(loaded.settings.clone());
     model.bundle = Some(bundle_info(loaded, bundle_size, model.revisions.len()));
+    model.user_settings = Some(crate::user_config::load());
     model_json(&model)
 }
 

@@ -195,6 +195,10 @@ pub struct Server {
     /// The name comments are written under: `--author` or the default, and
     /// what the page sets for the rest of the session.
     author: std::sync::Mutex<String>,
+    /// `--author`, kept to recompute `author` if the user settings screen
+    /// clears the configured name (see `author::resolve`: `--author` still
+    /// wins over it).
+    explicit_author: Option<String>,
     token: String,
     port: u16,
     git: GitFiles,
@@ -312,6 +316,7 @@ impl Server {
             discarded: Default::default(),
             refresh: options.refresh.clone(),
             author: std::sync::Mutex::new(author::resolve(options.author.as_deref())),
+            explicit_author: options.author.clone(),
             token,
             port,
             git: GitFiles {
@@ -453,6 +458,7 @@ impl Server {
             .map(|m| m.len())
             .unwrap_or(0);
         model.bundle = Some(html::bundle_info(loaded, size, model.revisions.len()));
+        model.user_settings = Some(crate::user_config::load());
         Ok(model)
     }
 
@@ -1092,8 +1098,8 @@ impl Server {
             ["api", "threads", id, "reopen"] => {
                 self.with_thread(id, |thread| self.set_resolved(thread, false))
             }
-            ["api", "author"] => self.set_author(request.body),
             ["api", "settings"] => self.set_settings(request.body),
+            ["api", "user-settings"] => self.set_user_settings(request.body),
             ["api", "images"] => self.add_image(request.body),
             ["api", "attachments"] => self.add_attachment(request.target, request.body),
             ["api", "refresh"] => self.refresh(),
@@ -1139,24 +1145,38 @@ impl Server {
         ))
     }
 
-    /// Sets the name comments are written under, for the rest of this session.
-    fn set_author(&self, body: &[u8]) -> Result<Reply, Failure> {
+    /// Changes this machine's user settings (today, just `author`; see
+    /// `diffnote config`): saved to the OS config file, so every bundle's
+    /// `edit`/`init`/`serve` uses it from now on, not only this one. Also
+    /// updates the name comments are written under for the rest of this
+    /// session (an empty name clears the configured one: the session's name
+    /// falls back through `--author`, git, and the login name, as it would
+    /// at startup with nothing configured).
+    fn set_user_settings(&self, body: &[u8]) -> Result<Reply, Failure> {
         let value: serde_json::Value = serde_json::from_slice(body)
             .map_err(|_| Failure(400, "送られた内容を読めません".into()))?;
         let name = value
             .get("author")
             .and_then(|a| a.as_str())
-            .map(|a| a.split_whitespace().collect::<Vec<_>>().join(" "))
-            .filter(|a| !a.is_empty())
-            .ok_or_else(|| Failure(400, "作者名が空です".into()))?;
+            .ok_or_else(|| Failure(400, "author がありません".into()))?
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         if name.chars().count() > 100 {
             return Err(Failure(400, "作者名が長すぎます(100 文字まで)".into()));
         }
-        *self.author.lock().unwrap_or_else(|e| e.into_inner()) = name.clone();
-        Ok(Reply::json(
-            200,
-            &serde_json::json!({ "ok": true, "author": name }),
-        ))
+        let mut config = crate::user_config::load();
+        config.author = (!name.is_empty()).then(|| name.clone());
+        crate::user_config::save(&config).map_err(internal)?;
+        let effective = if name.is_empty() {
+            author::resolve(self.explicit_author.as_deref())
+        } else {
+            name
+        };
+        *self.author.lock().unwrap_or_else(|e| e.into_inner()) = effective;
+        let loaded = bundle::load(&self.review).map_err(internal)?;
+        let before = html::stamp(&loaded);
+        self.model_answer(&before, serde_json::json!({}))
     }
 
     /// Takes in what was added to the target since the server started, as a
@@ -2245,29 +2265,52 @@ mod tests {
     }
 
     #[test]
-    fn the_author_can_be_set_for_the_session_and_what_is_written_next_uses_it() {
-        let f = fixture();
-        let model = json(&f.request("GET", "/api/model", &[], ""));
-        assert_eq!(model["model"]["author"], "tester");
-        let set = json(&f.post("/api/author", r#"{"author":"  山田   太郎 "}"#));
-        assert_eq!(
-            (set["ok"].clone(), set["author"].clone()),
-            (true.into(), "山田 太郎".into())
-        );
-        let reply = json(&f.post(
-            &format!("/api/threads/{}/replies", f.thread),
-            r#"{"body":"hi"}"#,
-        ));
-        assert_eq!(reply["thread_data"]["comments"][1]["author"], "山田 太郎");
-        let model = json(&f.request("GET", "/api/model", &[], ""));
-        assert_eq!(model["model"]["author"], "山田 太郎");
-        // Blank or too long: refused, and the name stays.
-        assert_eq!(f.post("/api/author", r#"{"author":"   "}"#).status, 400);
-        assert_eq!(f.post("/api/author", r#"{}"#).status, 400);
-        let long = format!(r#"{{"author":"{}"}}"#, "あ".repeat(101));
-        assert_eq!(f.post("/api/author", &long).status, 400);
-        let model = json(&f.request("GET", "/api/model", &[], ""));
-        assert_eq!(model["model"]["author"], "山田 太郎");
+    fn the_user_settings_screen_sets_the_author_persistently_and_for_the_rest_of_the_session() {
+        crate::user_config::with_test_config_dir(|_| {
+            let f = fixture();
+            let model = json(&f.request("GET", "/api/model", &[], ""));
+            assert_eq!(model["model"]["author"], "tester");
+            assert_eq!(
+                model["model"]["user_settings"]["author"],
+                serde_json::Value::Null
+            );
+            let set = json(&f.post("/api/user-settings", r#"{"author":"  山田   太郎 "}"#));
+            assert_eq!(set["ok"], true, "{set}");
+            assert_eq!(set["model"]["author"], "山田 太郎");
+            assert_eq!(set["model"]["user_settings"]["author"], "山田 太郎");
+            // Kept on this machine, not only in memory: another server sees it too.
+            assert_eq!(
+                crate::user_config::load().author.as_deref(),
+                Some("山田 太郎")
+            );
+            let reply = json(&f.post(
+                &format!("/api/threads/{}/replies", f.thread),
+                r#"{"body":"hi"}"#,
+            ));
+            assert_eq!(reply["thread_data"]["comments"][1]["author"], "山田 太郎");
+            let model = json(&f.request("GET", "/api/model", &[], ""));
+            assert_eq!(model["model"]["author"], "山田 太郎");
+            // Too long: refused, and nothing changes.
+            let long = format!(r#"{{"author":"{}"}}"#, "あ".repeat(101));
+            assert_eq!(f.post("/api/user-settings", &long).status, 400);
+            assert_eq!(
+                f.post("/api/user-settings", r#"{}"#).status,
+                400,
+                "no author key at all"
+            );
+            let model = json(&f.request("GET", "/api/model", &[], ""));
+            assert_eq!(model["model"]["author"], "山田 太郎");
+            // Cleared: the session falls back to --author ("tester" here), and
+            // nothing is configured for the next bundle either.
+            let unset = json(&f.post("/api/user-settings", r#"{"author":"   "}"#));
+            assert_eq!(unset["ok"], true, "{unset}");
+            assert_eq!(unset["model"]["author"], "tester");
+            assert_eq!(
+                unset["model"]["user_settings"]["author"],
+                serde_json::Value::Null
+            );
+            assert_eq!(crate::user_config::load().author, None);
+        });
     }
 
     #[test]
@@ -2672,102 +2715,104 @@ mod tests {
 
     #[test]
     fn a_reaction_is_added_and_taken_back_kept_in_the_review_and_goes_with_its_comment() {
-        let f = fixture();
-        let old = last_comment_id(&f);
-        let react = |f: &Fixture, id: &str, emoji: &str| {
-            json(&f.post(
-                &format!("/api/comments/{id}/react"),
-                &format!(r#"{{"emoji":"{emoji}"}}"#),
-            ))
-        };
-        let reactions = |f: &Fixture| bundle::load(&f.path).unwrap().reactions;
-        let before = f.events().len();
-        let answer = react(&f, &old, "👍");
-        assert_eq!(answer["ok"], true, "{answer}");
-        assert_eq!(answer["reacted"], true);
-        // The model has them with the comment: who, in the order they came.
-        let comment = |a: &serde_json::Value| a["model"]["threads"][0]["comments"][0].clone();
-        assert_eq!(comment(&answer)["reactions"][0]["emoji"], "👍");
-        assert_eq!(
-            comment(&answer)["reactions"][0]["authors"],
-            serde_json::json!(["tester"])
-        );
-        assert_eq!(f.events().len(), before, "state, not an event");
-        // Another name adds to it; the same again takes it back.
-        f.post("/api/author", r#"{"author":"別の人"}"#);
-        let both = react(&f, &old, "👍");
-        assert_eq!(
-            comment(&both)["reactions"][0]["authors"],
-            serde_json::json!(["tester", "別の人"])
-        );
-        react(&f, &old, "🎉");
-        let back = react(&f, &old, "👍");
-        assert_eq!(back["reacted"], false);
-        assert_eq!(comment(&back)["reactions"].as_array().unwrap().len(), 2);
-        assert_eq!(reactions(&f)[&old][0].authors, ["tester"]);
-        // The stamp says the review changed.
-        let stamp = json(&f.request("GET", "/api/version", &[], ""))["stamp"].clone();
-        react(&f, &old, "🚀");
-        assert_ne!(
-            json(&f.request("GET", "/api/version", &[], ""))["stamp"],
-            stamp
-        );
-        // Refused: not an emoji, no such comment, a deleted one.
-        for bad in ["a", "ok", "", " ", "1", "👍 "] {
+        crate::user_config::with_test_config_dir(|_| {
+            let f = fixture();
+            let old = last_comment_id(&f);
+            let react = |f: &Fixture, id: &str, emoji: &str| {
+                json(&f.post(
+                    &format!("/api/comments/{id}/react"),
+                    &format!(r#"{{"emoji":"{emoji}"}}"#),
+                ))
+            };
+            let reactions = |f: &Fixture| bundle::load(&f.path).unwrap().reactions;
+            let before = f.events().len();
+            let answer = react(&f, &old, "👍");
+            assert_eq!(answer["ok"], true, "{answer}");
+            assert_eq!(answer["reacted"], true);
+            // The model has them with the comment: who, in the order they came.
+            let comment = |a: &serde_json::Value| a["model"]["threads"][0]["comments"][0].clone();
+            assert_eq!(comment(&answer)["reactions"][0]["emoji"], "👍");
+            assert_eq!(
+                comment(&answer)["reactions"][0]["authors"],
+                serde_json::json!(["tester"])
+            );
+            assert_eq!(f.events().len(), before, "state, not an event");
+            // Another name adds to it; the same again takes it back.
+            f.post("/api/user-settings", r#"{"author":"別の人"}"#);
+            let both = react(&f, &old, "👍");
+            assert_eq!(
+                comment(&both)["reactions"][0]["authors"],
+                serde_json::json!(["tester", "別の人"])
+            );
+            react(&f, &old, "🎉");
+            let back = react(&f, &old, "👍");
+            assert_eq!(back["reacted"], false);
+            assert_eq!(comment(&back)["reactions"].as_array().unwrap().len(), 2);
+            assert_eq!(reactions(&f)[&old][0].authors, ["tester"]);
+            // The stamp says the review changed.
+            let stamp = json(&f.request("GET", "/api/version", &[], ""))["stamp"].clone();
+            react(&f, &old, "🚀");
+            assert_ne!(
+                json(&f.request("GET", "/api/version", &[], ""))["stamp"],
+                stamp
+            );
+            // Refused: not an emoji, no such comment, a deleted one.
+            for bad in ["a", "ok", "", " ", "1", "👍 "] {
+                assert_eq!(
+                    f.post(
+                        &format!("/api/comments/{old}/react"),
+                        &format!(r#"{{"emoji":"{bad}"}}"#)
+                    )
+                    .status,
+                    400,
+                    "{bad:?}"
+                );
+            }
+            assert_eq!(
+                f.post(&format!("/api/comments/{old}/react"), "{}").status,
+                400
+            );
+            let nobody = Ulid::new();
             assert_eq!(
                 f.post(
-                    &format!("/api/comments/{old}/react"),
-                    &format!(r#"{{"emoji":"{bad}"}}"#)
+                    &format!("/api/comments/{nobody}/react"),
+                    r#"{"emoji":"👍"}"#
                 )
                 .status,
-                400,
-                "{bad:?}"
+                404
             );
-        }
-        assert_eq!(
-            f.post(&format!("/api/comments/{old}/react"), "{}").status,
-            400
-        );
-        let nobody = Ulid::new();
-        assert_eq!(
+            // A reply of its own; deleting it takes its reactions with it.
             f.post(
-                &format!("/api/comments/{nobody}/react"),
-                r#"{"emoji":"👍"}"#
-            )
-            .status,
-            404
-        );
-        // A reply of its own; deleting it takes its reactions with it.
-        f.post(
-            &format!("/api/threads/{}/replies", f.thread),
-            r#"{"body":"mine"}"#,
-        );
-        let mine = last_comment_id(&f);
-        react(&f, &mine, "❤️");
-        assert!(reactions(&f).contains_key(&mine));
-        f.post(&format!("/api/comments/{mine}/delete"), "{}");
-        assert!(!reactions(&f).contains_key(&mine), "gone with the comment");
-        // The first comment deleted and kept as a mark: nothing more to react to, and no reactions kept.
-        f.post(
-            &format!("/api/threads/{}/replies", f.thread),
-            r#"{"body":"another"}"#,
-        );
-        let other = last_comment_id(&f);
-        f.post(&format!("/api/comments/{old}/delete"), "{}");
-        assert!(!reactions(&f).contains_key(&old));
-        assert_eq!(
-            f.post(&format!("/api/comments/{old}/react"), r#"{"emoji":"👍"}"#)
-                .status,
-            409
-        );
-        assert_ne!(other, old);
-        // What was added counts in what is said when the server stops.
-        react(&f, &other, "🎉");
-        let told = json(&f.post("/api/shutdown", "{}"))["farewell"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        assert!(told.contains("リアクション"), "{told}");
+                &format!("/api/threads/{}/replies", f.thread),
+                r#"{"body":"mine"}"#,
+            );
+            let mine = last_comment_id(&f);
+            react(&f, &mine, "❤️");
+            assert!(reactions(&f).contains_key(&mine));
+            f.post(&format!("/api/comments/{mine}/delete"), "{}");
+            assert!(!reactions(&f).contains_key(&mine), "gone with the comment");
+            // The first comment deleted and kept as a mark: nothing more to react to, and no reactions kept.
+            f.post(
+                &format!("/api/threads/{}/replies", f.thread),
+                r#"{"body":"another"}"#,
+            );
+            let other = last_comment_id(&f);
+            f.post(&format!("/api/comments/{old}/delete"), "{}");
+            assert!(!reactions(&f).contains_key(&old));
+            assert_eq!(
+                f.post(&format!("/api/comments/{old}/react"), r#"{"emoji":"👍"}"#)
+                    .status,
+                409
+            );
+            assert_ne!(other, old);
+            // What was added counts in what is said when the server stops.
+            react(&f, &other, "🎉");
+            let told = json(&f.post("/api/shutdown", "{}"))["farewell"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            assert!(told.contains("リアクション"), "{told}");
+        });
     }
 
     #[test]

@@ -60,6 +60,21 @@ class ServedCase(BrowserCase):
             return `スレッド ${all} 件(解決済み ${done} 件)`;
         })()""")
 
+    def user_config_file(self):
+        return os.path.join(harness.USER_CONFIG_DIR, "config.json")
+
+    def set_author_via_user_settings(self, name):
+        """Opens the user settings screen from the sidebar chip, sets the
+        author name and saves, then goes back to the review."""
+        b = self.b
+        b.click("[data-diffnote-user-settings]")
+        self.assertTrue(b.wait_exists("[data-diffnote-user-settings-page]"))
+        b.set_value("[data-diffnote-user-setting-author]", name)
+        b.click("[data-diffnote-user-settings-save]")
+        self.assertTrue(b.wait_exists("[data-diffnote-user-settings-saved]"))
+        b.click("[data-diffnote-user-settings-back]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-user-settings-page]')"))
+
 
 class Replies(ServedCase):
     def test_a_reply_shows_at_once_and_is_kept(self):
@@ -465,25 +480,48 @@ class Replies(ServedCase):
         self.assertTrue(b.wait("!!document.querySelector('.is-failed[data-diffnote-attach-status]')"))
         self.assertIn("1 MB", b.text("[data-diffnote-attach-status]"))
 
-    def test_the_author_starts_from_the_default_and_can_be_changed_for_the_session(self):
+    def test_the_user_chip_opens_a_screen_that_sets_the_author_for_every_review(self):
         self.serve()
         b = self.b
+        self.addCleanup(lambda: os.path.exists(self.user_config_file()) and os.remove(self.user_config_file()))
         self.assertEqual(b.text("[data-diffnote-author]"), "検証者", "the --author it was started with")
-        b.click("[data-diffnote-inline=author]")
-        self.assertTrue(b.wait_exists("[data-diffnote-inline-input=author]"))
-        b.set_value("[data-diffnote-inline-input=author]", "別の人")
-        b.js("document.querySelector('[data-diffnote-inline-input=author]').form.requestSubmit()")
-        self.assertTrue(b.wait("document.querySelector('[data-diffnote-author]') && document.querySelector('[data-diffnote-author]').textContent==='別の人'"))
+        # Nothing configured yet: the field starts empty.
+        b.click("[data-diffnote-user-settings]")
+        self.assertTrue(b.wait_exists("[data-diffnote-user-settings-page]"))
+        self.assertEqual(b.value("[data-diffnote-user-setting-author]"), "")
+        self.assertTrue(b.js("document.activeElement === document.querySelector('[data-diffnote-user-setting-author]')"), "focused")
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-user-settings-save]').disabled"), "nothing changed yet")
+        b.click("[data-diffnote-user-settings-back]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-user-settings-page]')"))
+        self.set_author_via_user_settings("別の人")
+        self.assertEqual(b.text("[data-diffnote-author]"), "別の人", "used for the rest of this session too")
         card = self.card("mul の型")
         self.reply_to(card, "名前を変えたあとの返信")
         authors = b.js(f"Array.from(document.getElementById({card!r}).querySelectorAll('.diffnote-comment__author')).map(function(a){{return a.textContent}})")
         self.assertTrue(authors[-1].startswith("別の人"), authors)
-        # A blank name is refused, with a reason, and the name stays.
-        b.click("[data-diffnote-inline=author]")
-        b.set_value("[data-diffnote-inline-input=author]", "   ")
-        b.js("document.querySelector('[data-diffnote-inline-input=author]').form.requestSubmit()")
-        self.assertTrue(b.wait("!!document.querySelector('.diffnote-inline .diffnote-error')"))
-        b.escape()
+        # Kept on this machine: a new server, with no --author at all, starts with it.
+        self.server.stop()
+        self.server = harness.Served(self.review, author=None)
+        self.addCleanup(self.server.stop)
+        b.open(self.server.url, ready="!!document.querySelector('.diffnote-file')")
+        self.assertEqual(b.text("[data-diffnote-author]"), "別の人")
+
+    def test_too_long_an_author_name_is_refused_and_a_blank_one_clears_it(self):
+        self.serve()
+        b = self.b
+        self.addCleanup(lambda: os.path.exists(self.user_config_file()) and os.remove(self.user_config_file()))
+        self.set_author_via_user_settings("別の人")
+        b.click("[data-diffnote-user-settings]")
+        self.assertTrue(b.wait_exists("[data-diffnote-user-settings-page]"))
+        b.set_value("[data-diffnote-user-setting-author]", "あ" * 101)
+        b.click("[data-diffnote-user-settings-save]")
+        self.assertTrue(b.wait("!!document.querySelector('[data-diffnote-user-settings-page] .diffnote-error')"))
+        # A blank name clears the configured one (falls back to --author again).
+        b.set_value("[data-diffnote-user-setting-author]", "   ")
+        b.click("[data-diffnote-user-settings-save]")
+        self.assertTrue(b.wait_exists("[data-diffnote-user-settings-saved]"))
+        b.click("[data-diffnote-user-settings-back]")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-author]').textContent==='検証者'"))
 
     def test_quitting_without_saving_puts_the_review_back_as_it_was_when_the_server_started(self):
         self.serve()
@@ -542,11 +580,12 @@ class Replies(ServedCase):
         self.assertTrue(pos["inside"])
         self.assertEqual(b.text("[data-diffnote-user] [data-diffnote-author]"), "検証者")
         self.assertEqual(b.text(".diffnote-user__avatar"), "検")
-        # Its box opens upwards, staying in the window.
-        b.click("[data-diffnote-inline=author]")
-        box = b.js("(() => { const r = document.querySelector('.diffnote-inline--author').getBoundingClientRect(); const u = document.querySelector('[data-diffnote-user]').getBoundingClientRect(); return {above: r.bottom <= u.top + 1, top: r.top}; })()")
-        self.assertTrue(box["above"] and box["top"] >= 0, box)
+        # Pressing it opens the user settings screen (like the title does for
+        # the review's own settings).
+        b.click("[data-diffnote-user-settings]")
+        self.assertTrue(b.wait_exists("[data-diffnote-user-settings-page]"))
         b.escape()
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-user-settings-page]')"))
 
     def test_each_blank_line_in_a_comment_is_kept(self):
         self.serve()
@@ -1240,11 +1279,9 @@ class ReactionsToComments(ServedCase):
         self.add_through_the_table(comment, "+1")
         chip = f"{comment} [data-diffnote-reaction='👍']"
         self.assertTrue(b.wait_exists(chip))
-        # Signed in as another name (as the page lets one be for the session).
-        b.click("[data-diffnote-inline=author]")
-        b.set_value("[data-diffnote-inline-input=author]", "別の人")
-        b.js("document.querySelector('[data-diffnote-inline-input=author]').form.requestSubmit()")
-        self.assertTrue(b.wait("document.querySelector('[data-diffnote-author]') && document.querySelector('[data-diffnote-author]').textContent==='別の人'"))
+        # Signed in as another name (the user settings screen changes it).
+        self.set_author_via_user_settings("別の人")
+        self.addCleanup(lambda: os.path.exists(self.user_config_file()) and os.remove(self.user_config_file()))
         self.assertFalse(b.js(f"document.querySelector({json.dumps(chip)}).classList.contains('is-mine')"), "not this name's")
         b.click(chip)
         self.assertTrue(b.wait(f"document.querySelector({json.dumps(chip)}).textContent === '👍2'"))
