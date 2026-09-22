@@ -53,7 +53,8 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 /* At the foot of the column whether or not the lists are there to fill it. */
 .diffnote-sidebar__foot { flex: none; display: flex; align-items: center; gap: 8px; margin-top: auto; padding: 8px 0 4px; border-top: 1px solid var(--diffnote-color-border); }
 /* (Said of the foot, to beat `.diffnote-mini`'s own left margin.) */
-.diffnote-sidebar__foot .diffnote-sidebar__toggle { margin-left: auto; padding: 0 6px; font-size: 13px; line-height: 22px; }
+.diffnote-sidebar__foot .diffnote-sidebar__toggle { display: inline-flex; align-items: center; justify-content: center; margin-left: auto; padding: 4px 6px; }
+.diffnote-sidebar__toggle .diffnote-icon { width: 20px; height: 20px; }
 .diffnote-side > summary { cursor: pointer; font-weight: 600; font-size: 12px; color: var(--diffnote-color-muted); padding: 4px 8px; user-select: none; }
 .diffnote-side + .diffnote-side { margin-top: 8px; }
 .diffnote-threadlist ol { list-style: none; margin: 0; padding: 0; }
@@ -263,7 +264,7 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 .diffnote-diff--split[data-diffnote-copy-side] .diffnote-hunk-header, .diffnote-diff--split[data-diffnote-copy-side] .diffnote-thread-row { user-select: none; }
 /* What can be done to a comment. */
 .diffnote-comment__menu { position: relative; margin-left: auto; }
-.diffnote-comment__more { font: inherit; font-size: 16px; line-height: 1; padding: 0 7px 3px; color: var(--diffnote-color-muted); background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
+.diffnote-comment__more { display: inline-flex; align-items: center; justify-content: center; font: inherit; font-size: 16px; line-height: 1; padding: 2px 6px; color: var(--diffnote-color-muted); background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
 .diffnote-comment__more:hover, .diffnote-comment__more[aria-expanded="true"] { color: var(--diffnote-color-fg); background: var(--diffnote-color-gutter); border-color: var(--diffnote-color-border); }
 .diffnote-comment__panel { position: absolute; right: 0; top: calc(100% + 2px); z-index: 25; display: flex; flex-direction: column; min-width: 7em; padding: 4px; background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18); }
 .diffnote-comment__panel[hidden] { display: none; }
@@ -339,11 +340,11 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
    opens the user settings screen (like the title does for the review's). */
 .diffnote-user { position: relative; min-width: 0; display: flex; align-items: center; gap: 8px; padding-left: 8px; font-size: 13px; }
 .diffnote-user__avatar { flex: none; width: 26px; height: 26px; line-height: 26px; text-align: center; font-weight: 700; color: #fff; background: var(--diffnote-color-accent); border-radius: 50%; }
-.diffnote-user__button { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; font: inherit; font-size: 13px; color: inherit; background: none; border: 1px solid transparent; border-radius: 6px; padding: 1px 6px; margin-left: -6px; cursor: pointer; }
+.diffnote-user__button { display: inline-flex; align-items: center; gap: 5px; min-width: 0; font: inherit; font-size: 13px; color: inherit; background: none; border: 1px solid transparent; border-radius: 6px; padding: 1px 6px; margin-left: -6px; cursor: pointer; }
 .diffnote-user__button:hover, .diffnote-user__button:focus-visible { background: var(--diffnote-color-bg); border-color: var(--diffnote-color-border); }
 .diffnote-user__button[aria-pressed="true"] { background: var(--diffnote-color-bg); border-color: var(--diffnote-color-accent); }
 .diffnote-user__button strong { font-weight: 600; word-break: break-all; }
-.diffnote-user__icon { font-size: 12px; font-weight: 400; color: var(--diffnote-color-muted); }
+.diffnote-user__icon { width: 17px; height: 17px; color: var(--diffnote-color-muted); }
 
 .diffnote-badge--viewed { background: transparent; color: #1a7f37; border: 1px solid #1a7f37; line-height: 16px; }
 
@@ -377,9 +378,9 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline-offset: -2px; background: var(--diffnote-color-hunk-bg); }
 
 /* The title is the way into the review's settings. */
-.diffnote-title { display: inline-flex; align-items: baseline; gap: 6px; font: inherit; font-size: 15px; font-weight: 700; color: inherit; background: none; border: 1px solid transparent; border-radius: 6px; padding: 1px 6px; margin-left: -6px; cursor: pointer; }
+.diffnote-title { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 15px; font-weight: 700; color: inherit; background: none; border: 1px solid transparent; border-radius: 6px; padding: 1px 6px; margin-left: -6px; cursor: pointer; }
 .diffnote-title:hover, .diffnote-title:focus-visible { background: var(--diffnote-color-bg); border-color: var(--diffnote-color-border); }
-.diffnote-title__icon { font-size: 12px; font-weight: 400; color: var(--diffnote-color-muted); }
+.diffnote-title__icon { width: 18px; height: 18px; color: var(--diffnote-color-muted); }
 
 /* The settings screen: in place of the review. */
 .diffnote-review-body[hidden] { display: none; }
@@ -457,10 +458,10 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
 .diffnote-emoji__panel { position: absolute; right: 0; top: calc(100% + 4px); z-index: 45; width: 20em; max-width: calc(100vw - 32px); padding: 8px; background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22); }
 .diffnote-emoji__search { display: block; width: 100%; box-sizing: border-box; margin-bottom: 6px; font: inherit; font-size: 13px; padding: 3px 8px; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; }
 .diffnote-emoji__grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; max-height: 14em; overflow-y: auto; }
+.diffnote-emoji--left .diffnote-emoji__panel { right: auto; left: 0; }
 .diffnote-emoji__item { font-size: 18px; line-height: 1; padding: 4px 0; background: none; border: 0; border-radius: 6px; cursor: pointer; }
 .diffnote-emoji__item:hover, .diffnote-emoji__item:focus-visible { background: var(--diffnote-color-gutter); }
 .diffnote-emoji__none { margin: 6px 0 2px; font-size: 12.5px; color: var(--diffnote-color-muted); }
-.diffnote-emoji--left .diffnote-emoji__panel { right: auto; left: 0; }
 
 /* The reactions under a comment. */
 .diffnote-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 6px 0 2px; }
