@@ -410,6 +410,9 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
 .diffnote-attached__item { display: grid; grid-template-columns: 48px 1fr auto; gap: 12px; align-items: start; padding: 10px 0; border-top: 1px solid var(--diffnote-color-border); }
 .diffnote-attached__thumb { width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; background: var(--diffnote-color-gutter); border-radius: 6px; overflow: hidden; }
 .diffnote-attached__thumb img { max-width: 100%; max-height: 100%; }
+/* A thumbnail is too small to tell anything from: pressing it shows the
+   picture by itself, as pressing one in a comment does. */
+.diffnote-attached__zoom { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; padding: 0; background: none; border: 0; cursor: zoom-in; }
 .diffnote-attached__name { margin: 0; font-weight: 600; word-break: break-all; }
 .diffnote-attached__name .diffnote-badge { margin-left: 6px; font-weight: normal; }
 .diffnote-attached__meta { margin: 2px 0 0; font-size: 12.5px; color: var(--diffnote-color-muted); }

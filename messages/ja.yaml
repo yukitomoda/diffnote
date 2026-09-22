@@ -981,6 +981,8 @@ ui:
       未使用
     used_by: |-
       コメント {n} 件
+    zoom: |-
+      画像を拡大する
     download: |-
       ダウンロード
     delete: |-

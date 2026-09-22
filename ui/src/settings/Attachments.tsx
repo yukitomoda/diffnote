@@ -1,6 +1,7 @@
 // 添付: what is attached, what uses it, and taking one out.
 import { h } from 'preact';
 import { useMemo, useState } from 'preact/hooks';
+import { interact } from '../interact.ts';
 import { lib } from '../lib.ts';
 import type { AttachedData, Placement, ViewModel } from '../model.ts';
 import type { ChangeAnswer } from '../state/contexts.ts';
@@ -68,7 +69,11 @@ export function AttachmentsPane(props: AttachmentsProps) {
               + (image ? '' : '?name=' + encodeURIComponent(fileName(a)));
             return <li key={a.id} class="diffnote-attached__item" data-diffnote-attached={a.id}>
               <div class="diffnote-attached__thumb">{image
-                ? h('img', { src: '/api/images/' + a.id, alt: '' })
+                ? <button type="button" class="diffnote-attached__zoom" data-diffnote-attached-zoom={a.id}
+                    title={lib.m('ui.attachments.zoom')} aria-label={lib.m('ui.attachments.zoom')}
+                    onClick={function () { interact.zoom('/api/images/' + a.id, nameOf(a)); }}>
+                    {h('img', { src: '/api/images/' + a.id, alt: '' })}
+                  </button>
                 : <span aria-hidden="true">📎</span>}</div>
               <div class="diffnote-attached__what">
                 <p class="diffnote-attached__name">{nameOf(a)}{used.length === 0 && <span class="diffnote-badge" data-diffnote-attached-unused>{lib.m('ui.attachments.unused')}</span>}</p>

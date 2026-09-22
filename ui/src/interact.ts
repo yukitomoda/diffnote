@@ -145,7 +145,8 @@ function copyText(text: string, button: HTMLElement) {
 var installed = false;
 // An image of a comment, shown by itself over the page at its own size.
 // Built here rather than as a component, so it works the same in an exported
-// page (where the image is a `data:` address) as in a served one.
+// page (where the image is a `data:` address) as in a served one. The 添付
+// list opens it too, through `interact.zoom`.
 /** The picture shown by itself, what it was opened from, and what the page's
  * own scrolling was before it. */
 interface Zoomed {
@@ -163,17 +164,17 @@ function closeZoom() {
   zoomed = null;
   if (back && back.isConnected) back.focus();
 }
-function openZoom(image: HTMLImageElement) {
+function openZoom(src: string, alt: string) {
   closeZoom();
   var box = document.createElement('div');
   box.className = 'diffnote-zoom';
   box.setAttribute('data-diffnote-zoom', '');
   box.setAttribute('role', 'dialog');
   box.setAttribute('aria-modal', 'true');
-  if (image.alt) box.setAttribute('aria-label', image.alt);
+  if (alt) box.setAttribute('aria-label', alt);
   var full = document.createElement('img');
-  full.src = image.currentSrc || image.src;
-  full.alt = image.alt || '';
+  full.src = src;
+  full.alt = alt;
   full.setAttribute('data-diffnote-zoom-image', '');
   // Its own size; too big for the window, the box scrolls. Pressing it fits
   // it to the window instead, and again brings it back (the cursor says so).
@@ -214,8 +215,21 @@ function install() {
     var image = e.target instanceof Element ? e.target.closest<HTMLImageElement>('img.diffnote-image') : null;
     if (!image || image.closest('a')) return;
     e.preventDefault();
-    openZoom(image);
+    openZoom(image.currentSrc || image.src, image.alt || '');
   });
+  // While a picture is up, Escape is the picture's: it is taken here, in the
+  // capture phase, so that it never reaches whoever else listens for it (the
+  // settings screen closes on Escape, and the 添付 list is one of its
+  // sections).
+  document.addEventListener(
+    'keydown',
+    function (e) {
+      if (e.key !== 'Escape' || !zoomed) return;
+      e.stopPropagation();
+      closeZoom();
+    },
+    true
+  );
   document.addEventListener('mouseover', function (e) {
     // While lines are being chosen, no comment's range is shown.
     if (pinned || document.body.classList.contains('is-selecting')) return;
@@ -318,13 +332,6 @@ function install() {
   });
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
-    // An image shown by itself takes the key: closing it is what Escape
-    // means while it is up.
-    if (zoomed) {
-      e.stopPropagation();
-      closeZoom();
-      return;
-    }
     pinned = null;
     clear();
   });
@@ -332,6 +339,12 @@ function install() {
 
 export const interact = {
   install: install,
+  // Show a picture by itself over the page, as pressing one in a comment
+  // does. For a picture that isn't in a comment to begin with (the 添付 list
+  // shows thumbnails): `alt` is what a reader is told it is.
+  zoom: function (src: string, alt: string) {
+    openZoom(src, alt);
+  },
   // Let go of whatever is shown or pinned (the page is about to change).
   reset: function () {
     pinned = null;

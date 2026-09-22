@@ -1269,6 +1269,22 @@ class AttachmentsScreen(ServedCase):
             b.js(f"document.querySelector('[data-diffnote-attached-download=\"{saved}\"]').getAttribute('download')"),
             "ログ.zip", "a file keeps the name the comment gives it")
 
+    def test_an_image_can_be_looked_at_by_itself(self):
+        # The thumbnail is 48px: the only way to tell what it is is to open it.
+        self.serve()
+        b = self.b
+        shown = self.attach("image", "shot.png", PNG_1X1, "image/png", base64=True)
+        self.open_attachments(1)
+        b.click(f"[data-diffnote-attached-zoom='{shown}']")
+        self.assertTrue(b.wait_exists("[data-diffnote-zoom-image]"))
+        self.assertEqual(
+            b.js("document.querySelector('[data-diffnote-zoom-image]').src"),
+            b.js(f"document.querySelector('[data-diffnote-attached=\"{shown}\"] img').src"),
+            "the same picture the row shows")
+        b.escape()
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-zoom]')"))
+        self.assertTrue(b.exists("[data-diffnote-attachments-pane]"), "and the screen is still there")
+
     def test_a_use_goes_to_the_comment_that_shows_it(self):
         self.serve()
         b = self.b
