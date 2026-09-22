@@ -9,15 +9,34 @@ import { FileList, ThreadList } from './nav/lists.tsx';
 import { OpenedContext, ViewedContext } from './state/contexts.ts';
 import { Card } from './thread/Card.tsx';
 import { Composer } from './thread/Composer.tsx';
+import type { RevisionData, ThreadData, ViewModel } from './model.ts';
+import type { Compose, ListCtx, RevisionCtx, ShownFile } from './state/contexts.ts';
 
 // One revision: the side lists and the files.
-export function Revision(props) {
+interface RevisionProps {
+  model: ViewModel;
+  /** Which revision this is (0-based). */
+  index: number;
+  hideResolved: boolean;
+  ignoreSpace: boolean;
+  layout: 'unified' | 'split';
+  compose: Compose | null;
+  /** Shown against an earlier revision instead of the base, and what to say of it. */
+  override?: RevisionData | null;
+  overrideNote?: { short: string; tip: string } | null;
+  /** The name comments are written under, and its screen (the served page). */
+  author?: string | null;
+  userSettingsOpen?: boolean;
+  onToggleUserSettings?: (() => void) | false | null;
+}
+
+export function Revision(props: RevisionProps) {
   var model = props.model;
   var rev = props.index;
   // (Compared with an earlier revision instead of the base: another view of it.)
   var revision = props.override || model.revisions[rev];
   var byId = useMemo(function () {
-    var m = {};
+    var m: Record<string, ThreadData> = {};
     model.threads.forEach(function (t) { m[t.id] = t; });
     return m;
   }, [model]);
@@ -32,32 +51,33 @@ export function Revision(props) {
   var opened = useContext(OpenedContext);
   var files = useMemo(function () {
     var mine = (opened && opened.byRev[rev]) || [];
-    var seen = {};
-    var merged = revision.files.map(function (f) {
+    var seen: Record<string, boolean> = {};
+    var merged: ShownFile[] = revision.files.map(function (f): ShownFile {
       var o = mine.filter(function (x) { return x.path === f.path; })[0];
       if (!o) return f;
       seen[f.path] = true;
       return Object.assign({}, f, { hunks: o.hunks, opened: true, next: o.next, total: o.total });
     });
     mine.forEach(function (o) {
-      if (!seen[o.path]) merged.push({ path: o.path, old_path: null, status: 'context', hunks: o.hunks, opened: true, next: o.next, total: o.total });
+      if (!seen[o.path]) merged.push({ path: o.path, status: 'context', hunks: o.hunks, opened: true, next: o.next, total: o.total });
     });
     return merged;
   }, [revision, opened && opened.byRev[rev]]);
-  var ctx = {
+  var ctx: RevisionCtx = {
     model: model, rev: rev, revision: revision, byId: byId, order: order,
-    placements: revision.placements, hideResolved: props.hideResolved, layout: props.layout, ignoreSpace: props.ignoreSpace, compare: !!props.override,
+    placements: revision.placements, hideResolved: props.hideResolved, layout: props.layout, ignoreSpace: props.ignoreSpace,
+    compare: props.override ? 1 : null,
   };
   var globals = order.filter(function (id) { return revision.placements[id].kind === 'global'; });
   var viewed = useContext(ViewedContext);
-  var viewedPaths = {};
+  var viewedPaths: Record<string, boolean> = {};
   files.forEach(function (f) { if (viewed && viewed.is(f)) viewedPaths[f.path] = true; });
-  var listOrder = { diffFiles: revision.files, viewedPaths: viewedPaths, model: model, rev: rev, revision: Object.assign({}, revision, { files: files }), hideResolved: props.hideResolved, byId: byId, order: revision.order, placements: revision.placements };
+  var listOrder: ListCtx = { diffFiles: revision.files, model: model, rev: rev, revision: Object.assign({}, revision, { files: files }), hideResolved: props.hideResolved, byId: byId, order: revision.order, placements: revision.placements };
 
   // The file list marks the files that are on screen.
   useEffect(function () {
     if (!('IntersectionObserver' in window)) return undefined;
-    var links = {};
+    var links: Record<string, Element> = {};
     document.querySelectorAll('#rev-' + rev + ' .diffnote-filelist a').forEach(function (a) {
       links[(a.getAttribute('href') || '').slice(1)] = a;
       // Marked from nothing but what is observed below: a file that has
@@ -83,12 +103,12 @@ export function Revision(props) {
         {model.threads.length > 0 && <ThreadList ctx={listOrder} />}
         {opened && <Tree rev={rev} />}
       </div>
-      {props.author != null && props.onToggleUserSettings && <UserChip name={props.author} open={props.userSettingsOpen} onToggle={props.onToggleUserSettings} />}
+      {props.author != null && props.onToggleUserSettings && <UserChip name={props.author} open={!!props.userSettingsOpen} onToggle={props.onToggleUserSettings} />}
     </aside>
     <div class="diffnote-viewbar">
       {props.compose && <div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global"
-        onClick={function () { props.compose.openScope('global', rev); }}>{lib.m('ui.compose.global_button')}</button></div>}
-      {props.override && <p class="diffnote-compare-note" data-diffnote-compare-note tabindex="0" title={props.overrideNote.tip} aria-label={props.overrideNote.short + '。' + props.overrideNote.tip}>{props.overrideNote.short}<span class="diffnote-compare-note__icon" aria-hidden="true">⚠</span></p>}
+        onClick={function () { props.compose!.openScope('global', rev); }}>{lib.m('ui.compose.global_button')}</button></div>}
+      {props.override && <p class="diffnote-compare-note" data-diffnote-compare-note tabindex={0} title={props.overrideNote!.tip} aria-label={props.overrideNote!.short + '。' + props.overrideNote!.tip}>{props.overrideNote!.short}<span class="diffnote-compare-note__icon" aria-hidden="true">⚠</span></p>}
       <ViewMenu />
     </div>
     {(globals.length > 0 || props.compose) && <section class="diffnote-global-comments" data-diffnote-global>

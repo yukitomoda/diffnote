@@ -4,10 +4,10 @@ import { EMOJI } from '../emoji.ts';
 import { lib } from '../lib.ts';
 import { htmlId } from '../dom.ts';
 import { LinksContext, ViewedContext } from '../state/contexts.ts';
-import type { RevisionCtx } from '../state/contexts.ts';
+import type { ListCtx } from '../state/contexts.ts';
 
 interface ListProps {
-  ctx: RevisionCtx;
+  ctx: ListCtx;
 }
 
 export function FileList(props: ListProps) {

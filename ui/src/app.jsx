@@ -8,7 +8,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import { interact } from './interact.js';
 import { lib } from './lib.ts';
 import { transport } from './transport.ts';
-import { Revision } from './Revision.jsx';
+import { Revision } from './Revision.tsx';
 import { useWide } from './dom.ts';
 import { QuitButton } from './settings/Quit.tsx';
 import { SettingsScreen } from './settings/Screen.tsx';

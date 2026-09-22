@@ -174,8 +174,6 @@ export interface RevisionCtx {
   rev: number;
   model: ViewModel;
   revision: RevisionData;
-  /** The files of the diff, without the ones only opened to look at. */
-  diffFiles: ShownFile[];
   /** The thread ids in the order of the list, where each is, and each thread. */
   order: string[];
   placements: Record<string, Placement>;
@@ -185,6 +183,23 @@ export interface RevisionCtx {
   layout: 'unified' | 'split';
   /** What this revision is being compared against, where that is not the base. */
   compare?: number | null;
+}
+
+/**
+ * What the lists beside the diff are drawn from. Not the same as `RevisionCtx`:
+ * they count the files of the diff (`diffFiles`, without the ones only opened
+ * to look at) and know nothing of how the diff is laid out.
+ */
+export interface ListCtx {
+  rev: number;
+  model: ViewModel;
+  /** The revision, with the files opened to look at among its own. */
+  revision: RevisionData;
+  diffFiles: ShownFile[];
+  order: string[];
+  placements: Record<string, Placement>;
+  byId: Record<string, ThreadData>;
+  hideResolved: boolean;
 }
 
 export const ActionsContext = createContext<Actions | null>(null);
