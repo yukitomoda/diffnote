@@ -518,6 +518,24 @@ class Replies(ServedCase):
         self.assertTrue(b.wait("!!document.querySelector('.is-failed[data-diffnote-attach-status]')"))
         self.assertIn("1 MB", b.text("[data-diffnote-attach-status]"))
 
+    def test_the_whole_chip_is_the_button_the_picture_of_the_name_included(self):
+        self.serve()
+        b = self.b
+        got = b.js("""(() => {
+          const button = document.querySelector('[data-diffnote-user-settings]');
+          const avatar = document.querySelector('.diffnote-user__avatar');
+          const r = button.getBoundingClientRect(), a = avatar.getBoundingClientRect();
+          const middle = document.elementFromPoint((a.left + a.right) / 2, (a.top + a.bottom) / 2);
+          return { inside: button.contains(avatar),
+                   covered: a.left >= r.left - 1 && a.right <= r.right + 1 && a.top >= r.top - 1 && a.bottom <= r.bottom + 1,
+                   pressed: middle.closest('[data-diffnote-user-settings]') !== null };
+        })()""")
+        self.assertEqual(got, {"inside": True, "covered": True, "pressed": True}, got)
+        # And pressing it there opens the screen, as pressing the name does.
+        b.click(".diffnote-user__avatar")
+        self.assertTrue(b.wait_exists("[data-diffnote-user-setting-author]"))
+        self.assertEqual(self.settings_section(), "user")
+
     def test_the_user_chip_opens_a_screen_that_sets_the_author_for_every_review(self):
         self.serve()
         b = self.b

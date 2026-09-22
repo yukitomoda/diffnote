@@ -15,9 +15,11 @@ interface UserChipProps {
 export function UserChip(props: UserChipProps) {
   var name = props.name;
   var initial = Array.from(name.trim())[0] || '?';
+  // The whole chip is the button, the picture of the name included: it is one
+  // thing to press, and a small target beside an unpressable one is a miss
+  // waiting to happen.
   return <div class="diffnote-user" data-diffnote-user>
-    <span class="diffnote-user__avatar" aria-hidden="true">{initial.toUpperCase()}</span>
     <button type="button" class="diffnote-user__button" data-diffnote-user-settings title={lib.m('ui.user.settings_title')} aria-haspopup="dialog"
-      aria-pressed={props.open} onClick={props.onToggle}><strong data-diffnote-author>{name}</strong><Icon name="settings" class="diffnote-user__icon" /></button>
+      aria-pressed={props.open} onClick={props.onToggle}><span class="diffnote-user__avatar" aria-hidden="true">{initial.toUpperCase()}</span><strong data-diffnote-author>{name}</strong><Icon name="settings" class="diffnote-user__icon" /></button>
   </div>;
 }
