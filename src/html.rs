@@ -119,7 +119,7 @@ fn revision_views<'a>(shown: &'a [Shown<'a>]) -> Vec<RevisionView<'a>> {
 ///
 /// There are two, and what tells them apart is what they were built from: only
 /// the served page talks to the server, so the exported page's bundle holds
-/// none of the code that would (`ui/src/entry-export.js`).
+/// none of the code that would (`ui/src/entry-export.ts`).
 const CLIENT_EXPORT: &str = include_str!("../ui/dist/export.js");
 const CLIENT_SERVE: &str = include_str!("../ui/dist/serve.js");
 

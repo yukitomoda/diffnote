@@ -37,8 +37,8 @@ Which is why there are two entries, and not one bundle with a switch in it:
 
 | entry | bundle | for |
 |---|---|---|
-| `src/entry-export.js` | `dist/export.js` | the exported page: it imports no `api.js`, so none of the code that would make a request is in it at all |
-| `src/entry-serve.js` | `dist/serve.js` | the served page: it puts `api.js` in `transport.js`, which the app asks for |
+| `src/entry-export.ts` | `dist/export.js` | the exported page: it imports no `api.ts`, so none of the code that would make a request is in it at all |
+| `src/entry-serve.ts` | `dist/serve.js` | the served page: it puts `api.ts` in `transport.ts`, which the app asks for |
 
 Each sets `window.Diffnote`, and the page calls `Diffnote.start()`.
 

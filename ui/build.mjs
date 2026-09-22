@@ -3,7 +3,7 @@
 // before anything that carries it: `mise run build`.
 //
 // Two bundles, because an exported page must not carry the code that talks to
-// a server: `entry-export.js` never imports `api.js`, so none of it is in that
+// a server: `entry-export.ts` never imports `api.ts`, so none of it is in that
 // bundle at all (a test in `src/html.rs` checks the bundle for it).
 import * as esbuild from 'esbuild';
 import { createHash } from 'node:crypto';
@@ -32,7 +32,7 @@ const shared = {
 
 await esbuild.build({
   ...shared,
-  entryPoints: { export: 'src/entry-export.js', serve: 'src/entry-serve.js' },
+  entryPoints: { export: 'src/entry-export.ts', serve: 'src/entry-serve.ts' },
   outdir: 'dist',
   banner: {
     js: '/*! diffnote: preact (MIT). See ui/THIRD-PARTY.md. */',
