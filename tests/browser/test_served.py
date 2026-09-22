@@ -360,17 +360,6 @@ class Replies(ServedCase):
         self.assertNotEqual(self.counts(), threads)
         self.assertNotIn("やっぱり要らない全体コメント", show(self.review))
 
-    def test_a_title_given_when_serving_is_the_title(self):
-        self.review = os.path.join(self.fresh("review"), "r.diffnote")
-        shutil.copy(self.calc, self.review)
-        self.server = Served(self.review, author="検証者", extra=["--title", "起動時のタイトル"])
-        self.addCleanup(self.server.stop)
-        self.assertTrue(any("タイトルを設定しました" in l for l in self.server.said), self.server.said)
-        self.b = self.browser
-        self.b.open(self.server.url)
-        self.assertIn("起動時のタイトル", self.b.text(".diffnote-summary h1"))
-        self.assertIn("起動時のタイトル", show(self.review))
-
     def test_two_servers_at_once_keep_working_in_the_same_browser(self):
         self.serve()
         first = self.server
@@ -1696,8 +1685,8 @@ class ServeAddsTheLatestDiff(ServedCase):
         assert harness.diffnote("init", "-f", review, "c1", cwd=self.repo).returncode == 0
         with open(review, "rb") as f:
             before = f.read()
-        self.open_page(Served(review, cwd=self.repo, extra=["--title", "付けたタイトル"]))
-        self.assertGreater(entries(review), 2, "the difference and the title were added")
+        self.open_page(Served(review, cwd=self.repo))
+        self.assertGreater(entries(review), 2, "the difference was added")
         self.discard_all()
         with open(review, "rb") as f:
             self.assertEqual(f.read(), before, "as if serve had not run")

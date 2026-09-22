@@ -134,8 +134,6 @@ enum Cmd {
         port: u16,
         #[arg(long, help = m("cli.serve.no_open"))]
         no_open: bool,
-        #[arg(long, value_name = "TITLE", help = m("cli.serve.title"))]
-        title: Option<String>,
         #[arg(long, value_name = "DIR", help = m("cli.serve.repo"))]
         repo: Option<PathBuf>,
         #[arg(value_name = "REV|DIR", help = m("cli.serve.target"))]
@@ -250,7 +248,6 @@ fn main() -> Result<()> {
             review,
             port,
             no_open,
-            title,
             repo,
             target,
             base,
@@ -260,7 +257,6 @@ fn main() -> Result<()> {
             review,
             port,
             no_open,
-            title,
             repo,
             Compare {
                 target,
@@ -550,7 +546,6 @@ fn cmd_serve(
     review: PathBuf,
     port: u16,
     no_open: bool,
-    title: Option<String>,
     repo: Option<PathBuf>,
     compare: Compare,
 ) -> Result<()> {
@@ -613,15 +608,6 @@ fn cmd_serve(
     }
     if !review.exists() {
         anyhow::bail!(m("main.serve.no_diff_at_all"));
-    }
-    if let Some(title) = title.as_deref() {
-        let mut loaded = bundle::load(&review)?;
-        if review::set_title(&mut loaded.settings, title) {
-            let events = loaded.events.clone();
-            let none = bundle::Additions::default();
-            bundle::save(&review, &loaded, &events, &none)?;
-            println!("{}", m("main.title_set"));
-        }
     }
     if bundle::load(&review)
         .ok()
