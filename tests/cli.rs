@@ -1567,6 +1567,97 @@ fn edit_after_a_git_init_reviews_what_changed_since_and_then_reopens_that() {
 }
 
 #[test]
+fn reopen_replies_to_the_last_revision_without_diffing_even_after_head_moves() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    env.ok(&repo, &[], &["init", "-f", review_arg, "c2"]);
+    env.ok(
+        &repo,
+        &[("+d", "d を追加した理由は?")],
+        &["edit", "-f", review_arg],
+    );
+    assert_eq!(git_sources(&review).len(), 2);
+    // A commit is made after the review, and the repository itself is
+    // removed: `--reopen` still works, because it never looks at either.
+    std::fs::write(repo.join("calc.txt"), "a\nB\nc\nd\ne\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c4"]);
+    std::fs::remove_dir_all(repo.join(".git")).unwrap();
+    let out = env.ok(
+        &repo,
+        &[(">#d を追加した理由は?", "サイズの都合です")],
+        &["edit", "-f", review_arg, "--reopen"],
+    );
+    assert!(out.contains("コメント 1 件"), "{out}");
+    // No new revision: what was recorded stays exactly as it was.
+    assert_eq!(git_sources(&review).len(), 2);
+    let loaded = bundle::load(&review).unwrap();
+    assert_eq!(
+        comment_bodies(&loaded),
+        ["d を追加した理由は?", "サイズの都合です"]
+    );
+}
+
+#[test]
+fn reopen_refuses_a_comparison_target_and_a_bundle_with_no_revision_yet() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    // No bundle at all yet: nothing to reopen.
+    let out = env.run(&repo, &[], &["edit", "-f", review_arg, "--reopen"]);
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("保存されたリビジョン"),
+        "{out:?}"
+    );
+    env.ok(&repo, &[], &["init", "-f", review_arg, "c2"]);
+    // A comparison target makes no sense together with --reopen.
+    let out = env.run(&repo, &[], &["edit", "-f", review_arg, "--reopen", "c3"]);
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--reopen"),
+        "{out:?}"
+    );
+    let out = env.run(
+        &repo,
+        &[],
+        &["serve", "-f", review_arg, "--reopen", "--no-open", "c3"],
+    );
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--reopen"),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn reopen_works_for_a_directory_review_too() {
+    let env = Env::new();
+    let dir = env.path("project");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    env.ok(&dir, &[], &["init", "-f", review_arg, "."]);
+    std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+    env.ok(&dir, &[("+two", "first")], &["edit", "-f", review_arg, "."]);
+    let revisions_before = bundle::load(&review).unwrap().revisions().count();
+    // The directory changes again, but --reopen ignores it entirely.
+    std::fs::write(dir.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    let out = env.ok(
+        &dir,
+        &[(">#first", "second")],
+        &["edit", "-f", review_arg, "--reopen"],
+    );
+    assert!(out.contains("コメント 1 件"), "{out}");
+    let loaded = bundle::load(&review).unwrap();
+    assert_eq!(loaded.revisions().count(), revisions_before);
+    assert_eq!(comment_bodies(&loaded), ["first", "second"]);
+}
+
+#[test]
 fn edit_with_nothing_changed_since_a_git_init_says_so_and_writes_nothing() {
     let env = Env::new();
     let repo = git_repo(&env);

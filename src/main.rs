@@ -117,6 +117,9 @@ enum Cmd {
         /// コメントなどの作者名。省略時は git の user.name、なければ user.email、なければ環境のユーザー名。
         #[arg(long, value_name = "NAME")]
         author: Option<String>,
+        /// 新しく差分を計算せず、保存済みの最後のリビジョンを開き直す(コメントを足すためのもの)。比較対象(REV|DIR)や `--base`、`--files`、`--snapshot`、`--show` とは一緒に指定できない。
+        #[arg(long)]
+        reopen: bool,
     },
     /// レビューをブラウザで開き、返信や解決をその画面で行う(自分のパソコンからだけ接続できる)。
     Serve {
@@ -152,6 +155,9 @@ enum Cmd {
         /// git のリポジトリの中でも、ディレクトリのレビューにする(まだバンドルがないときだけ意味があります)。
         #[arg(long)]
         files: bool,
+        /// 新しく差分を計算せず、保存済みの最後のリビジョンだけを開く(コメントを足すためのもの)。起動時に差分を追加せず、「新しいコミットがあります」の通知も「最新を取り込む」ボタンも出さない。比較対象(REV|DIR)や `--base`、`--files` とは一緒に指定できない。
+        #[arg(long)]
+        reopen: bool,
     },
     /// レビューバンドルに保存されたスレッドと返信を表示する。
     Show {
@@ -211,12 +217,14 @@ fn main() -> Result<()> {
             show,
             title,
             author,
+            reopen,
         } => cmd_edit(
             review,
             Compare {
                 target,
                 base,
                 files,
+                reopen,
             },
             repo,
             snapshot,
@@ -235,6 +243,7 @@ fn main() -> Result<()> {
             target,
             base,
             files,
+            reopen,
         } => cmd_serve(
             review,
             port,
@@ -246,6 +255,7 @@ fn main() -> Result<()> {
                 target,
                 base,
                 files,
+                reopen,
             },
         ),
         Cmd::Export {
@@ -421,6 +431,9 @@ struct Compare {
     target: Option<String>,
     base: Option<String>,
     files: bool,
+    /// Skip the diff entirely: reopen the last recorded revision as-is
+    /// (`--reopen`), so nothing new is added.
+    reopen: bool,
 }
 
 fn cmd_serve(
@@ -436,34 +449,57 @@ fn cmd_serve(
         target,
         base,
         files,
+        reopen,
     } = compare;
-    let explicit = target.is_some() || base.is_some();
-    if !review.exists() && !explicit {
+    if reopen && (target.is_some() || base.is_some() || files) {
         anyhow::bail!(
-            "{} がありません。先に `diffnote init` か `diffnote edit` でレビューを作るか、レビューするコミットを指定してください(例: `diffnote serve HEAD`)",
-            review.display()
+            "--reopen は、比較対象(REV|DIR)や --base、--files とは一緒に指定できません(何の差分も計算しないためです)"
         );
+    }
+    let explicit = target.is_some() || base.is_some();
+    if !review.exists() {
+        if reopen {
+            anyhow::bail!(
+                "{} がありません。--reopen は、すでにあるレビューの、保存済みの最後のリビジョンを開くためのものです",
+                review.display()
+            );
+        }
+        if !explicit {
+            anyhow::bail!(
+                "{} がありません。先に `diffnote init` か `diffnote edit` でレビューを作るか、レビューするコミットを指定してください(例: `diffnote serve HEAD`)",
+                review.display()
+            );
+        }
     }
     // What was asked for is added to the review, so it can be reviewed here (a
     // failure to do what was asked stops; one to do what was not, only says so).
     let git = repo_of(repo.clone())?;
     // As the review was before any of this: what「保存せずに終了」goes back to.
     let before = std::fs::read(&review).ok();
-    match add_revision(
-        &review,
-        &git,
-        base.as_deref(),
-        target.as_deref(),
-        files,
-        true,
-    ) {
-        Ok(said) => {
-            if let Some(said) = said {
-                println!("{said}");
-            }
+    if reopen {
+        if bundle::load(&review)?.revisions().next().is_none() {
+            anyhow::bail!(
+                "{} に、まだ保存されたリビジョンがありません",
+                review.display()
+            );
         }
-        Err(e) if explicit => return Err(e),
-        Err(e) => println!("注意: 最新の差分を記録できませんでした: {e}"),
+    } else {
+        match add_revision(
+            &review,
+            &git,
+            base.as_deref(),
+            target.as_deref(),
+            files,
+            true,
+        ) {
+            Ok(said) => {
+                if let Some(said) = said {
+                    println!("{said}");
+                }
+            }
+            Err(e) if explicit => return Err(e),
+            Err(e) => println!("注意: 最新の差分を記録できませんでした: {e}"),
+        }
     }
     if !review.exists() {
         anyhow::bail!("レビューする差分がありません(バンドルは作りませんでした)");
@@ -487,18 +523,21 @@ fn cmd_serve(
     }
     // The page's button: what was added to the target since (the base is
     // already the review's; a named commit doesn't move, `HEAD` does).
-    let refresher: diffnote::serve::Refresher = {
+    // `--reopen` has none: nothing should be added in this session at all.
+    let refresher: Option<diffnote::serve::Refresher> = if reopen {
+        None
+    } else {
         let (review, git, target) = (review.clone(), git.clone(), target.clone());
-        std::sync::Arc::new(move |apply| {
+        Some(std::sync::Arc::new(move |apply| {
             add_revision(&review, &git, None, target.as_deref(), files, apply)
-        })
+        }))
     };
     let options = diffnote::serve::Options {
         review,
         port,
         author,
         repo,
-        refresh: Some(refresher),
+        refresh: refresher,
         before: Some(before),
     };
     diffnote::serve::run(&options, |url, notices| {
@@ -743,6 +782,36 @@ fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Resu
     })
 }
 
+/// `--reopen`: the last recorded revision, exactly as stored, with nothing
+/// diffed and nothing read from git or the filesystem. Its digest already
+/// matches that revision, so `record_session` adds no new one -- only, if
+/// this session's comments reach a file that revision didn't need, a `Pin`
+/// for it (read from what the bundle already has).
+fn reopen_input(loaded: &bundle::Loaded) -> Result<Input> {
+    let rev = loaded.revisions().last().context(
+        "まだ保存されたリビジョンがありません。先に `diffnote init` か `diffnote edit` でレビューを作ってください",
+    )?;
+    let diff_text = loaded.revision_diff(rev).unwrap_or_default();
+    let tree = loaded.tree_of(rev);
+    let all_tree = tree.clone();
+    Ok(Input {
+        digest: rev.digest.clone(),
+        tree_size: 0,
+        source: rev.source.clone(),
+        files: rev.files.clone(),
+        new_files: Default::default(),
+        base_files: Default::default(),
+        head_some: Box::new(move |paths| {
+            Ok(paths
+                .iter()
+                .filter_map(|p| Some((p.clone(), tree.get(p)?.clone())))
+                .collect())
+        }),
+        head_all: Box::new(move || Ok(all_tree.clone().into_iter().collect())),
+        diff_text,
+    })
+}
+
 /// `--base DIR` for a bundle that has a base already: it is fine if it is the
 /// same content (the bundle's base can't change), an error if not.
 fn check_files_base(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Result<()> {
@@ -931,7 +1000,23 @@ fn cmd_edit(
         target,
         base,
         files,
+        reopen,
     } = compare;
+    if reopen && (target.is_some() || base.is_some() || files) {
+        anyhow::bail!(
+            "--reopen は、比較対象(REV|DIR)や --base、--files とは一緒に指定できません(何の差分も計算しないためです)"
+        );
+    }
+    if reopen && snapshot_override.is_some() {
+        anyhow::bail!(
+            "--reopen は --snapshot とは一緒に指定できません(新しく保存するものがないためです)"
+        );
+    }
+    if reopen && !show_specs.is_empty() {
+        anyhow::bail!(
+            "--reopen は --show とは一緒に指定できません(まだ記録されていないファイルは読み出せません)"
+        );
+    }
     let shows: Vec<diffnote::show::Show> = show_specs
         .iter()
         .map(|spec| diffnote::show::parse(spec).map_err(|e| anyhow::anyhow!("--show {spec}: {e}")))
@@ -946,7 +1031,9 @@ fn cmd_edit(
         Some(diffnote::model::Source::Git(_)) => false,
         None => files_mode(&repo, files),
     };
-    let input = if directory_review {
+    let input = if reopen {
+        reopen_input(&loaded)?
+    } else if directory_review {
         if snapshot_override == Some(bundle::SnapshotMode::Changed) {
             anyhow::bail!(
                 "ディレクトリのレビューでは `--snapshot changed` は指定できません。git のように\

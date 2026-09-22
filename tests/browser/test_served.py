@@ -1708,5 +1708,73 @@ class ServeAddsTheLatestDiff(ServedCase):
         self.assertEqual(entries(self.review), before)
 
 
+class Reopen(ServedCase):
+    """`serve --reopen`: the last saved revision only, with no pull button and
+    a later commit changing nothing it shows."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.repo = harness.make_gaps_review(cls.root, name="reopen-refuse")[1]
+
+    def start_reopened(self, repo, review):
+        self.repo = repo
+        self.review = review
+        self.server = Served(review, cwd=repo, extra=["--reopen"], author="検証者")
+        self.addCleanup(self.server.stop)
+        self.b = self.browser
+        ready = "!!document.querySelector('.diffnote-file')"
+        self.b.open(self.server.url, ready=ready)
+
+    def test_nothing_is_added_at_start_and_no_pull_button_is_offered(self):
+        repo = harness.make_gaps_review(self.root, name="reopen1")[1]
+        review = os.path.join(self.fresh("review"), "reopen1.diffnote")
+        assert harness.diffnote("init", "-f", review, "c1", cwd=repo).returncode == 0
+        out = harness.diffnote("edit", "-f", review, "--author", "reviewer", "c2", cwd=repo, comments=[
+            ("+TWENTY", "20 行目を変えました。"),
+        ])
+        assert out.returncode == 0, out.stdout + out.stderr
+        before = entries(review)
+        # A further commit, made after the review: --reopen never looks at it.
+        harness.write(repo, "long.txt", "x\n")
+        harness.git(repo, "commit", "-q", "-am", "c3")
+        self.start_reopened(repo, review)
+        b = self.b
+        self.assertEqual(entries(review), before, "nothing recorded at startup")
+        self.assertEqual(b.js("document.querySelectorAll('[data-diffnote-revision-link]').length"), 1)
+        self.assertFalse(b.exists("[data-diffnote-pull]"), "no way to pull: reopen adds nothing, ever")
+        b.js("window.dispatchEvent(new Event('focus'))")
+        time.sleep(0.3)
+        self.assertFalse(b.exists("[data-diffnote-pending]"), "not even told about it")
+
+    def test_a_reply_can_still_be_added_and_no_new_revision_appears(self):
+        repo = harness.make_gaps_review(self.root, name="reopen2")[1]
+        review = os.path.join(self.fresh("review"), "reopen2.diffnote")
+        assert harness.diffnote("init", "-f", review, "c1", cwd=repo).returncode == 0
+        out = harness.diffnote("edit", "-f", review, "--author", "reviewer", "c2", cwd=repo, comments=[
+            ("+TWENTY", "20 行目を変えました。"),
+        ])
+        assert out.returncode == 0, out.stdout + out.stderr
+        harness.write(repo, "long.txt", "x\n")
+        harness.git(repo, "commit", "-q", "-am", "c3")
+        self.start_reopened(repo, review)
+        b = self.b
+        b.js("localStorage.setItem('diffnote-layout','unified')")
+        b.reload(ready="!!document.querySelector('.diffnote-file')")
+        card = self.card("20 行目を変えました。")
+        self.reply_to(card, "了解です")
+        self.assertIn("了解です", show(review))
+        self.assertEqual(b.js("document.querySelectorAll('[data-diffnote-revision-link]').length"), 1,
+                         "the reply didn't add a revision")
+
+    def test_reopen_with_a_comparison_target_is_refused_before_the_server_starts(self):
+        review = os.path.join(self.fresh("review"), "refused.diffnote")
+        out = subprocess.run([harness.BIN, "serve", "-f", review, "--no-open", "--reopen", "c2"],
+                             cwd=self.repo, capture_output=True, text=True, encoding="utf-8", timeout=20)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("--reopen", out.stderr)
+        self.assertFalse(os.path.exists(review))
+
+
 if __name__ == "__main__":
     unittest.main()
