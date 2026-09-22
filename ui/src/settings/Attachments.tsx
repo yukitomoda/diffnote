@@ -74,7 +74,7 @@ export function AttachmentsPane(props: AttachmentsProps) {
                     onClick={function () { interact.zoom('/api/images/' + a.id, nameOf(a)); }}>
                     {h('img', { src: '/api/images/' + a.id, alt: '' })}
                   </button>
-                : <span aria-hidden="true">📎</span>}</div>
+                : <span class="diffnote-attached__clip" aria-hidden="true">📎</span>}</div>
               <div class="diffnote-attached__what">
                 <p class="diffnote-attached__name">{nameOf(a)}{used.length === 0 && <span class="diffnote-badge" data-diffnote-attached-unused>{lib.m('ui.attachments.unused')}</span>}</p>
                 <p class="diffnote-attached__meta">{image ? lib.m('ui.attachments.image_kind') : lib.m('ui.attachments.file_kind')} ・ {a.media_type || ''}{a.media_type ? ' ・ ' : ''}{lib.formatSize(a.size)}</p>
