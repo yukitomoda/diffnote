@@ -484,7 +484,7 @@ class Replies(ServedCase):
         self.serve()
         b = self.b
         self.addCleanup(lambda: os.path.exists(self.user_config_file()) and os.remove(self.user_config_file()))
-        self.assertEqual(b.text("[data-diffnote-author]"), "検証者", "the --author it was started with")
+        self.assertEqual(b.text("[data-diffnote-author]"), "検証者", "what serve() started it with")
         # Nothing configured yet: the field starts empty.
         b.click("[data-diffnote-user-settings]")
         self.assertTrue(b.wait_exists("[data-diffnote-user-settings-page]"))
@@ -499,7 +499,7 @@ class Replies(ServedCase):
         self.reply_to(card, "名前を変えたあとの返信")
         authors = b.js(f"Array.from(document.getElementById({card!r}).querySelectorAll('.diffnote-comment__author')).map(function(a){{return a.textContent}})")
         self.assertTrue(authors[-1].startswith("別の人"), authors)
-        # Kept on this machine: a new server, with no --author at all, starts with it.
+        # Kept on this machine: a new server, with nothing else set, starts with it.
         self.server.stop()
         self.server = harness.Served(self.review, author=None)
         self.addCleanup(self.server.stop)
@@ -516,12 +516,15 @@ class Replies(ServedCase):
         b.set_value("[data-diffnote-user-setting-author]", "あ" * 101)
         b.click("[data-diffnote-user-settings-save]")
         self.assertTrue(b.wait("!!document.querySelector('[data-diffnote-user-settings-page] .diffnote-error')"))
-        # A blank name clears the configured one (falls back to --author again).
+        # A blank name clears the configured one (falls back to git's, or the login name --
+        # whichever it is here, it is not "別の人" any more, and `config get` says so too).
         b.set_value("[data-diffnote-user-setting-author]", "   ")
         b.click("[data-diffnote-user-settings-save]")
         self.assertTrue(b.wait_exists("[data-diffnote-user-settings-saved]"))
         b.click("[data-diffnote-user-settings-back]")
-        self.assertTrue(b.wait("document.querySelector('[data-diffnote-author]').textContent==='検証者'"))
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-author]').textContent!=='別の人'"))
+        got = harness.diffnote("config", "get", "author").stdout
+        self.assertIn("設定されていません", got, got)
 
     def test_quitting_without_saving_puts_the_review_back_as_it_was_when_the_server_started(self):
         self.serve()
@@ -1768,7 +1771,8 @@ class Reopen(ServedCase):
         repo = harness.make_gaps_review(self.root, name="reopen1")[1]
         review = os.path.join(self.fresh("review"), "reopen1.diffnote")
         assert harness.diffnote("init", "-f", review, "c1", cwd=repo).returncode == 0
-        out = harness.diffnote("edit", "-f", review, "--author", "reviewer", "c2", cwd=repo, comments=[
+        harness.set_user_author("reviewer")
+        out = harness.diffnote("edit", "-f", review, "c2", cwd=repo, comments=[
             ("+TWENTY", "20 行目を変えました。"),
         ])
         assert out.returncode == 0, out.stdout + out.stderr
@@ -1789,7 +1793,8 @@ class Reopen(ServedCase):
         repo = harness.make_gaps_review(self.root, name="reopen2")[1]
         review = os.path.join(self.fresh("review"), "reopen2.diffnote")
         assert harness.diffnote("init", "-f", review, "c1", cwd=repo).returncode == 0
-        out = harness.diffnote("edit", "-f", review, "--author", "reviewer", "c2", cwd=repo, comments=[
+        harness.set_user_author("reviewer")
+        out = harness.diffnote("edit", "-f", review, "c2", cwd=repo, comments=[
             ("+TWENTY", "20 行目を変えました。"),
         ])
         assert out.returncode == 0, out.stdout + out.stderr

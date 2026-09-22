@@ -1274,61 +1274,6 @@ fn without_a_git_name_the_email_is_the_author() {
 }
 
 #[test]
-fn author_overrides_git_and_applies_to_every_event_of_the_session() {
-    let env = Env::new();
-    let repo = git_repo(&env);
-    git(&repo, &["config", "user.name", "山田 太郎"]);
-    let review = env.path("review.diffnote");
-    let arg = review.to_str().unwrap();
-    env.ok(
-        &repo,
-        &[("+B", "why?")],
-        &[
-            "edit",
-            "-f",
-            arg,
-            "--author",
-            "レビュアーA",
-            "--base",
-            "c1",
-            "c2",
-        ],
-    );
-    env.ok(
-        &repo,
-        &[(" a", "and here")],
-        &["edit", "-f", arg, "--base", "c1", "c2"],
-    );
-    // The override is per session, not remembered.
-    assert_eq!(authors(&review), ["レビュアーA", "山田 太郎"]);
-    let html = exported(&env, &repo, &review);
-    assert!(html.contains("レビュアーA") && html.contains("山田 太郎"));
-}
-
-#[test]
-fn a_blank_author_is_ignored() {
-    let env = Env::new();
-    let repo = git_repo(&env);
-    git(&repo, &["config", "user.name", "山田 太郎"]);
-    let review = env.path("review.diffnote");
-    env.ok(
-        &repo,
-        &[("+B", "why?")],
-        &[
-            "edit",
-            "-f",
-            review.to_str().unwrap(),
-            "--author",
-            "  ",
-            "--base",
-            "c1",
-            "c2",
-        ],
-    );
-    assert_eq!(authors(&review), ["山田 太郎"]);
-}
-
-#[test]
 fn a_configured_author_is_remembered_across_bundles_and_beats_git() {
     let env = Env::new();
     let repo = git_repo(&env);
@@ -1367,7 +1312,9 @@ fn a_configured_author_is_remembered_across_bundles_and_beats_git() {
         ],
     );
     assert_eq!(authors(&review_b), ["鈴木 花子"]);
-    // `--author` still overrides it for that one run.
+    // Unset: git's name takes over again.
+    let unset = env.ok(&repo, &[], &["config", "unset", "author"]);
+    assert!(unset.contains("取り消しました"), "{unset}");
     let review_c = env.path("c.diffnote");
     env.ok(
         &repo,
@@ -1376,31 +1323,12 @@ fn a_configured_author_is_remembered_across_bundles_and_beats_git() {
             "edit",
             "-f",
             review_c.to_str().unwrap(),
-            "--author",
-            "レビュアーA",
             "--base",
             "c1",
             "c2",
         ],
     );
-    assert_eq!(authors(&review_c), ["レビュアーA"]);
-    // Unset: git's name takes over again.
-    let unset = env.ok(&repo, &[], &["config", "unset", "author"]);
-    assert!(unset.contains("取り消しました"), "{unset}");
-    let review_d = env.path("d.diffnote");
-    env.ok(
-        &repo,
-        &[("+B", "why?")],
-        &[
-            "edit",
-            "-f",
-            review_d.to_str().unwrap(),
-            "--base",
-            "c1",
-            "c2",
-        ],
-    );
-    assert_eq!(authors(&review_d), ["山田 太郎"]);
+    assert_eq!(authors(&review_c), ["山田 太郎"]);
 }
 
 #[test]

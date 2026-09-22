@@ -254,6 +254,14 @@ class Browser:
 
 # ---- diffnote ----------------------------------------------------------------
 
+def set_user_author(name):
+    """Sets the author name `edit`/`serve` fall back to when none is given
+    (the replacement for the removed `--author` flag: `diffnote config`,
+    isolated to USER_CONFIG_DIR like every diffnote() call here)."""
+    out = diffnote("config", "set", "author", name)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
 def diffnote(*args, cwd=None, env=None, comments=None):
     """Run `diffnote`; `comments` are (after-line, text) pairs for the fake editor."""
     full_env = dict(os.environ)
@@ -290,13 +298,21 @@ class Served:
     """`diffnote serve` on a review."""
 
     def __init__(self, review, cwd=None, extra=(), author="tester"):
-        # author=None starts it with no --author at all (git config, then the
-        # DIFFNOTE_CONFIG_DIR user config, then the login name decide it).
+        # `serve` has no --author of its own any more (diffnote config does
+        # its job): author=None starts it with whatever is already configured
+        # (or, with nothing configured, git config then the login name);
+        # otherwise it is set into the (isolated) user config first, for this
+        # process to pick up at startup -- and then taken out again (a `Served`
+        # this test didn't ask for shouldn't leave its name configured for
+        # whatever runs next; the session itself already has it, resolved once
+        # at startup, regardless of the file).
         self.review = review
+        config_file = os.path.join(USER_CONFIG_DIR, "config.json")
+        if author is not None:
+            set_user_author(author)
         env = dict(os.environ)
         env["DIFFNOTE_CONFIG_DIR"] = USER_CONFIG_DIR
-        author_args = [] if author is None else ["--author", author]
-        self.proc = subprocess.Popen([BIN, "serve", "-f", review, "--no-open", *author_args, *extra],
+        self.proc = subprocess.Popen([BIN, "serve", "-f", review, "--no-open", *extra],
                                      cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8")
         self.notices = []
         self.said = []
@@ -310,6 +326,8 @@ class Served:
                 self.url = m.group(1)
                 break
         assert self.url, "diffnote serve did not start"
+        if author is not None and os.path.exists(config_file):
+            os.remove(config_file)
 
     def said_more(self):
         """What the server has said since it started: waits for it to stop, then reads the rest."""
@@ -364,7 +382,8 @@ def make_gaps_review(root, name="gaps"):
     git(repo, "commit", "-q", "-am", "c2")
     git(repo, "tag", "c2")
     review = os.path.join(root, name + ".diffnote")
-    out = diffnote("edit", "-f", review, "--author", "reviewer", "--base", "c1", "c2", cwd=repo, comments=[
+    set_user_author("reviewer")
+    out = diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo, comments=[
         ("+TWENTY", "20 行目を変えました。"),
     ])
     assert out.returncode == 0, out.stdout + out.stderr
@@ -391,7 +410,8 @@ def make_indent_review(root):
     git(repo, "commit", "-q", "-am", "c2")
     git(repo, "tag", "c2")
     review = os.path.join(root, "indent.diffnote")
-    out = diffnote("edit", "-f", review, "--author", "reviewer", "--base", "c1", "c2", cwd=repo, comments=[
+    set_user_author("reviewer")
+    out = diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo, comments=[
         ("+    c = 4", "c を変えました。"),
     ])
     assert out.returncode == 0, out.stdout + out.stderr
@@ -418,14 +438,15 @@ def make_calc_review(root):
     git(repo, "commit", "-q", "-am", "c3")
     git(repo, "tag", "c3")
     review = os.path.join(root, "calc.diffnote")
-    out = diffnote("edit", "-f", review, "--author", "reviewer", "--base", "c1", "c2", cwd=repo, comments=[
+    set_user_author("reviewer")
+    out = diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo, comments=[
         ("GLOBAL", "全体として、テストが追加されていないのが気になります。"),
         ("+        return None", "None を返すと呼び出し側が気づけません。"),
         ("@raw:+        return None", ">!resolve"),
         ("+    return a * b", "mul の型を確認してください。"),
     ])
     assert out.returncode == 0, out.stdout + out.stderr
-    out = diffnote("edit", "-f", review, "--author", "reviewer", "--base", "c1", "c3", cwd=repo, comments=[
+    out = diffnote("edit", "-f", review, "--base", "c1", "c3", cwd=repo, comments=[
         ("+\"\"\"calc\"\"\"", "docstring は 1 行でよいです。"),
     ])
     assert out.returncode == 0, out.stdout + out.stderr
@@ -473,7 +494,8 @@ def make_login_review(root, snapshot=None, name="login"):
     git(repo, "tag", "c2")
     review = os.path.join(root, name + ".diffnote")
     extra = ["--snapshot", snapshot] if snapshot else []
-    out = diffnote("edit", "-f", review, "--author", "reviewer", *extra, "--base", "c1", "c2", cwd=repo, comments=[
+    set_user_author("reviewer")
+    out = diffnote("edit", "-f", review, *extra, "--base", "c1", "c2", cwd=repo, comments=[
         ("+import { compare } from './crypto'", "`hash` は使っていません。"),
     ])
     assert out.returncode == 0, out.stdout + out.stderr

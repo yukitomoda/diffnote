@@ -120,9 +120,6 @@ enum Cmd {
         /// レビューのタイトルを設定する。エクスポートの見出しに使われる。すでにあるタイトルを変えるときにも使い、空文字列(`--title ""`)で取り消す。
         #[arg(long, value_name = "TITLE")]
         title: Option<String>,
-        /// コメントなどの作者名。省略時は git の user.name、なければ user.email、なければ環境のユーザー名。
-        #[arg(long, value_name = "NAME")]
-        author: Option<String>,
         /// 新しく差分を計算せず、保存済みの最後のリビジョンを開き直す(コメントを足すためのもの)。比較対象(REV|DIR)や `--base`、`--files`、`--snapshot`、`--show` とは一緒に指定できない。
         #[arg(long)]
         reopen: bool,
@@ -143,9 +140,6 @@ enum Cmd {
         /// ブラウザを自動で開かない(URL だけを表示する)。
         #[arg(long)]
         no_open: bool,
-        /// 返信などの作者名の既定値。省略時は git の user.name、なければ user.email、なければ環境のユーザー名。画面でも変えられます(その起動の間だけ)。
-        #[arg(long, value_name = "NAME")]
-        author: Option<String>,
         /// レビューのタイトルを設定する(`edit --title` と同じ)。画面でも変えられます。
         #[arg(long, value_name = "TITLE")]
         title: Option<String>,
@@ -232,7 +226,7 @@ enum ConfigAction {
 /// `diffnote config` で扱える設定項目(今のところ `author` のみ)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum ConfigKey {
-    /// コメントなどの作者名の既定値。`--author` や git の設定より決めかたは下だが、git より上(すべてのバンドルで一貫させるためのもの)。
+    /// コメントなどの作者名の既定値。git の設定より決めかたは上(すべてのバンドルで一貫させるためのもの)。
     Author,
 }
 
@@ -259,7 +253,6 @@ fn main() -> Result<()> {
             snapshot,
             show,
             title,
-            author,
             reopen,
         } => cmd_edit(
             review,
@@ -273,14 +266,12 @@ fn main() -> Result<()> {
             snapshot,
             show,
             title,
-            author,
         ),
         Cmd::Show { review } => cmd_show(review),
         Cmd::Serve {
             review,
             port,
             no_open,
-            author,
             title,
             repo,
             target,
@@ -291,7 +282,6 @@ fn main() -> Result<()> {
             review,
             port,
             no_open,
-            author,
             title,
             repo,
             Compare {
@@ -554,7 +544,6 @@ fn cmd_serve(
     review: PathBuf,
     port: u16,
     no_open: bool,
-    author: Option<String>,
     title: Option<String>,
     repo: Option<PathBuf>,
     compare: Compare,
@@ -649,7 +638,7 @@ fn cmd_serve(
     let options = diffnote::serve::Options {
         review,
         port,
-        author,
+        author: None,
         repo,
         refresh: refresher,
         before: Some(before),
@@ -1108,7 +1097,6 @@ fn cmd_edit(
     snapshot_override: Option<bundle::SnapshotMode>,
     show_specs: Vec<String>,
     title: Option<String>,
-    author: Option<String>,
 ) -> Result<()> {
     let Compare {
         target,
@@ -1185,7 +1173,7 @@ fn cmd_edit(
         head_some,
         head_all,
     } = input;
-    let author = diffnote::author::resolve(author.as_deref());
+    let author = diffnote::author::resolve(None);
     let title_set = title
         .as_deref()
         .is_some_and(|t| review::set_title(&mut loaded.settings, t));
