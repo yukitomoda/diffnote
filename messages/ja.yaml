@@ -340,3 +340,161 @@ main:
     ignore_hint: |-
       レビューに不要なものは `.diffnoteignore` で除外してください。
     confirm_prompt: "代わりに `changed`(この差分が触れるファイルだけ)にしますか? [y/N] "
+
+# --- 実行時のメッセージ(serve.rs、ブラウザの画面が受け取るもの) -----------
+serve:
+  not_found: |-
+    見つかりません
+  internal_failed: |-
+    処理に失敗しました: {error}
+  body_unreadable: |-
+    送られた内容を読めません
+  comment_body_empty: |-
+    コメントの本文が空です
+  reply_body_empty: |-
+    返信の本文が空です
+  comment_missing: |-
+    そのコメントはありません
+  comment_id_invalid: |-
+    コメントの ID が不正です
+
+  stats:
+    threads: |-
+      スレッド {n} 件
+    replies: |-
+      返信 {n} 件
+    images: |-
+      画像 {n} 件
+    files: |-
+      ファイル {n} 件
+    reactions: |-
+      リアクション {n} 件
+    separator: |-
+      ・
+    added: |-
+      {items}を追加
+    resolved_label: |-
+      解決
+    reopened_label: |-
+      再開
+    edited_label: |-
+      編集
+    deleted_label: |-
+      削除
+    titled_label: |-
+      タイトル変更
+    settings_label: |-
+      設定変更
+    count: |-
+      {what} {n} 件
+    none: |-
+      変更はありませんでした
+    list_separator: |-
+      、
+
+  git_read_failed: |-
+    git から読めませんでした: {error}
+  git_read_failed_unknown: |-
+    git から読めませんでした
+
+  farewell:
+    discarded_created: |-
+      保存せずに終了しました
+      {path} は、この起動で作ったので、削除しました
+    discarded_kept: |-
+      保存せずに終了しました
+      {path} は、起動する前の内容のままです
+    saved_counts: |-
+      {path} に保存しました(スレッド {threads} 件・コメント {comments} 件)
+    summary: |-
+      今回の変更: {changes}
+      {kept}
+
+  notice:
+    no_repo: |-
+      git リポジトリの中で起動していないため、バンドルに保存されていないファイルは開けません(`--repo` でリポジトリの場所を指定できます)
+    missing_commits: |-
+      このレビューのコミットが、このリポジトリに {missing} 件ありません。保存されていないファイルは開けません(`--repo` で、レビューを作ったリポジトリを指定してください)
+
+  forbidden_host: |-
+    このサーバーのアドレス以外からの要求は受け付けません
+  forbidden_no_token: |-
+    アクセスできません。diffnote を起動した画面に表示された URL から開いてください。
+  forbidden_operation: |-
+    この操作は許可されていません
+  page_error: |-
+    レビューを表示できません: {error}
+  export_failed: |-
+    書き出せませんでした: {error}
+  download_failed: |-
+    読み込めませんでした: {error}
+  image_missing: |-
+    その画像はありません
+  image_unsupported: |-
+    その画像は表示できません
+  attachment_too_big: |-
+    添付できる大きさ({limit})を超えています(このファイルは {size})
+  attachment_empty: |-
+    ファイルが空です
+  attachment_missing: |-
+    そのファイルはありません
+  compare_missing_revisions: |-
+    比べるリビジョンが指定されていません
+  revision_missing: |-
+    そのリビジョンはありません
+  revision_missing_param: |-
+    リビジョンが指定されていません
+  range_missing: |-
+    行の範囲が指定されていません
+  range_invalid: |-
+    行の範囲が不正です
+  line_number_starts_at_1: |-
+    行番号は 1 から始まります
+  file_missing_param: |-
+    ファイルが指定されていません
+  no_lines_selected: |-
+    行が選ばれていません
+  bad_comment_kind: |-
+    コメントの種類が不正です
+  file_not_in_diff: |-
+    そのファイルはこのリビジョンの差分にありません
+  body_too_big: |-
+    送られた内容が大きすぎます
+  thread_id_invalid: |-
+    スレッドの ID が不正です
+  thread_missing: |-
+    そのスレッドはありません
+  author_missing: |-
+    author がありません
+  author_too_long: |-
+    作者名が長すぎます(100 文字まで)
+  refresh_unavailable: |-
+    この起動では、取り込めません
+  refresh_failed: |-
+    取り込めませんでした: {error}
+  refresh_nothing: |-
+    新しい変更はありません
+  title_not_string: |-
+    タイトルが文字ではありません
+  title_too_long: |-
+    タイトルが長すぎます(200 文字まで)
+  ignore_whitespace_invalid: |-
+    空白の設定が正しくありません
+  attachment_limit_invalid: |-
+    添付の上限が正しくありません
+  attachment_limit_range: |-
+    添付の上限は、{min} から {max} の間で指定してください
+  emoji_invalid: |-
+    絵文字が正しくありません
+  reaction_on_deleted: |-
+    削除されたコメントには、付けられません
+  reaction_kind_limit: |-
+    1 つのコメントに付けられる絵文字は、30 種類までです
+  edit_deleted_refused: |-
+    削除されたコメントは、編集できません
+
+  run:
+    listen_failed: |-
+      ポート {port} で待ち受けを始められませんでした
+    port_unknown: |-
+      待ち受けているポートを調べられませんでした

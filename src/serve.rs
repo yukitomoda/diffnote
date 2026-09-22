@@ -17,6 +17,7 @@
 
 use crate::annotation::{AnchorScope, LineSpan};
 use crate::git::Repo;
+use crate::messages::{m, mf};
 use crate::model::Event;
 use crate::{anchor, author, bundle, create, html, review};
 use anyhow::{Context, Result};
@@ -230,42 +231,49 @@ struct Stats {
 impl Stats {
     /// In words, roughly: "スレッド 2 件・返信 1 件を追加、解決 1 件".
     fn describe(&self) -> String {
+        let count = |key: &str, n: u32| mf(key, &[("n", &n.to_string())]);
         let mut added = Vec::new();
         if self.threads > 0 {
-            added.push(format!("スレッド {} 件", self.threads));
+            added.push(count("serve.stats.threads", self.threads));
         }
         if self.replies > 0 {
-            added.push(format!("返信 {} 件", self.replies));
+            added.push(count("serve.stats.replies", self.replies));
         }
         if self.images > 0 {
-            added.push(format!("画像 {} 件", self.images));
+            added.push(count("serve.stats.images", self.images));
         }
         if self.files > 0 {
-            added.push(format!("ファイル {} 件", self.files));
+            added.push(count("serve.stats.files", self.files));
         }
         if self.reactions > 0 {
-            added.push(format!("リアクション {} 件", self.reactions));
+            added.push(count("serve.stats.reactions", self.reactions));
         }
         let mut parts = Vec::new();
         if !added.is_empty() {
-            parts.push(format!("{}を追加", added.join("・")));
+            parts.push(mf(
+                "serve.stats.added",
+                &[("items", &added.join(m("serve.stats.separator")))],
+            ));
         }
         for (n, what) in [
-            (self.resolved, "解決"),
-            (self.reopened, "再開"),
-            (self.edited, "編集"),
-            (self.deleted, "削除"),
-            (self.titled, "タイトル変更"),
-            (self.settings, "設定変更"),
+            (self.resolved, m("serve.stats.resolved_label")),
+            (self.reopened, m("serve.stats.reopened_label")),
+            (self.edited, m("serve.stats.edited_label")),
+            (self.deleted, m("serve.stats.deleted_label")),
+            (self.titled, m("serve.stats.titled_label")),
+            (self.settings, m("serve.stats.settings_label")),
         ] {
             if n > 0 {
-                parts.push(format!("{what} {n} 件"));
+                parts.push(mf(
+                    "serve.stats.count",
+                    &[("what", what), ("n", &n.to_string())],
+                ));
             }
         }
         if parts.is_empty() {
-            "変更はありませんでした".to_string()
+            m("serve.stats.none").to_string()
         } else {
-            parts.join("、")
+            parts.join(m("serve.stats.list_separator"))
         }
     }
 }
@@ -296,9 +304,9 @@ impl html::CommitFiles for GitFiles {
     fn read(&self, entry: &crate::git::TreeEntry) -> Result<Vec<u8>, String> {
         self.repo
             .read_blobs(&[entry.oid.as_str()])
-            .map_err(|e| format!("git から読めませんでした: {e}"))?
+            .map_err(|e| mf("serve.git_read_failed", &[("error", &e.to_string())]))?
             .pop()
-            .ok_or_else(|| "git から読めませんでした".to_string())
+            .ok_or_else(|| m("serve.git_read_failed_unknown").to_string())
     }
 }
 
@@ -394,21 +402,28 @@ impl Server {
         if self.was_discarded() {
             let path = parts["path"].as_str().unwrap_or("");
             return if self.original.is_none() {
-                format!("保存せずに終了しました\n{path} は、この起動で作ったので、削除しました")
+                mf("serve.farewell.discarded_created", &[("path", path)])
             } else {
-                format!("保存せずに終了しました\n{path} は、起動する前の内容のままです")
+                mf("serve.farewell.discarded_kept", &[("path", path)])
             };
         }
         let kept = match (parts["threads"].as_u64(), parts["comments"].as_u64()) {
-            (Some(t), Some(c)) => format!(
-                "{} に保存しました(スレッド {t} 件・コメント {c} 件)",
-                parts["path"].as_str().unwrap_or("")
+            (Some(t), Some(c)) => mf(
+                "serve.farewell.saved_counts",
+                &[
+                    ("path", parts["path"].as_str().unwrap_or("")),
+                    ("threads", &t.to_string()),
+                    ("comments", &c.to_string()),
+                ],
             ),
             _ => parts["path"].as_str().unwrap_or("").to_string(),
         };
-        format!(
-            "今回の変更: {}\n{kept}",
-            parts["changes"].as_str().unwrap_or("")
+        mf(
+            "serve.farewell.summary",
+            &[
+                ("changes", parts["changes"].as_str().unwrap_or("")),
+                ("kept", &kept),
+            ],
         )
     }
 
@@ -484,17 +499,16 @@ impl Server {
             return Vec::new();
         }
         if !self.git.repo.exists() {
-            return vec![
-                "git リポジトリの中で起動していないため、バンドルに保存されていないファイルは開けません(`--repo` でリポジトリの場所を指定できます)".to_string(),
-            ];
+            return vec![m("serve.notice.no_repo").to_string()];
         }
         let missing = heads
             .iter()
             .filter(|h| !self.git.repo.has_commit(h))
             .count();
         if missing > 0 {
-            return vec![format!(
-                "このレビューのコミットが、このリポジトリに {missing} 件ありません。保存されていないファイルは開けません(`--repo` で、レビューを作ったリポジトリを指定してください)"
+            return vec![mf(
+                "serve.notice.missing_commits",
+                &[("missing", &missing.to_string())],
             )];
         }
         Vec::new()
@@ -511,7 +525,7 @@ impl Server {
 
     pub fn handle(&self, request: &Request) -> Reply {
         if !self.host_is_ours(request) {
-            return Reply::error(403, "このサーバーのアドレス以外からの要求は受け付けません");
+            return Reply::error(403, m("serve.forbidden_host"));
         }
         let (path, query) = request
             .target
@@ -539,8 +553,11 @@ impl Server {
         if !self.has_token(request) {
             return Reply::html(
                 403,
-                "<!DOCTYPE html><meta charset=\"utf-8\"><title>diffnote</title>\
-                 <p>アクセスできません。diffnote を起動した画面に表示された URL から開いてください。",
+                format!(
+                    "<!DOCTYPE html><meta charset=\"utf-8\"><title>diffnote</title>\
+                     <p>{}",
+                    m("serve.forbidden_no_token")
+                ),
             );
         }
 
@@ -562,11 +579,11 @@ impl Server {
                 // A page from another site can't set this header without
                 // asking the server first (which it doesn't allow).
                 if request.header("x-diffnote") != Some("1") || !self.origin_is_ours(request) {
-                    return Reply::error(403, "この操作は許可されていません");
+                    return Reply::error(403, m("serve.forbidden_operation"));
                 }
                 self.post(path, request)
             }
-            _ => Reply::error(404, "見つかりません"),
+            _ => Reply::error(404, m("serve.not_found")),
         }
     }
 
@@ -590,11 +607,17 @@ impl Server {
                 500,
                 format!(
                     "<!DOCTYPE html><meta charset=\"utf-8\"><title>diffnote</title>\
-                     <p>レビューを表示できません: {}",
-                    e.to_string()
-                        .replace('&', "&amp;")
-                        .replace('<', "&lt;")
-                        .replace('>', "&gt;")
+                     <p>{}",
+                    mf(
+                        "serve.page_error",
+                        &[(
+                            "error",
+                            &e.to_string()
+                                .replace('&', "&amp;")
+                                .replace('<', "&lt;")
+                                .replace('>', "&gt;")
+                        )]
+                    )
                 ),
             ),
         }
@@ -606,7 +629,12 @@ impl Server {
         let page = bundle::load(&self.review).and_then(|l| html::render_export(&l));
         let page = match page {
             Ok(page) => page,
-            Err(e) => return Reply::error(500, &format!("書き出せませんでした: {e}")),
+            Err(e) => {
+                return Reply::error(
+                    500,
+                    &mf("serve.export_failed", &[("error", &e.to_string())]),
+                );
+            }
         };
         let stem = self
             .review
@@ -649,7 +677,12 @@ impl Server {
     fn download(&self) -> Reply {
         let bytes = match std::fs::read(&self.review) {
             Ok(bytes) => bytes,
-            Err(e) => return Reply::error(500, &format!("読み込めませんでした: {e}")),
+            Err(e) => {
+                return Reply::error(
+                    500,
+                    &mf("serve.download_failed", &[("error", &e.to_string())]),
+                );
+            }
         };
         let name = self
             .review
@@ -679,7 +712,12 @@ impl Server {
     fn model(&self) -> Reply {
         let loaded = match bundle::load(&self.review) {
             Ok(l) => l,
-            Err(e) => return Reply::error(500, &format!("処理に失敗しました: {e}")),
+            Err(e) => {
+                return Reply::error(
+                    500,
+                    &mf("serve.internal_failed", &[("error", &e.to_string())]),
+                );
+            }
         };
         match self.model_of(&loaded) {
             Ok(model) => Reply::json(200, &serde_json::json!({ "ok": true, "model": model })),
@@ -691,13 +729,13 @@ impl Server {
     /// nothing else if it is opened by itself (an SVG runs nothing).
     fn image(&self, id: &str) -> Reply {
         if !crate::image::is_id(id) {
-            return Reply::error(404, "見つかりません");
+            return Reply::error(404, m("serve.not_found"));
         }
         let Some(bytes) = bundle::read_image(&self.review, id) else {
-            return Reply::error(404, "その画像はありません");
+            return Reply::error(404, m("serve.image_missing"));
         };
         let Ok(mime) = crate::image::kind(&bytes) else {
-            return Reply::error(404, "その画像は表示できません");
+            return Reply::error(404, m("serve.image_unsupported"));
         };
         let mut reply = Reply::new(200, mime, bytes);
         reply.headers = vec![
@@ -756,10 +794,12 @@ impl Server {
         if size as u64 > limit {
             return Err(Failure(
                 413,
-                format!(
-                    "添付できる大きさ({})を超えています(このファイルは {})",
-                    size_words(limit),
-                    size_words(size as u64)
+                mf(
+                    "serve.attachment_too_big",
+                    &[
+                        ("limit", &size_words(limit)),
+                        ("size", &size_words(size as u64)),
+                    ],
                 ),
             ));
         }
@@ -770,7 +810,7 @@ impl Server {
     /// page calls it: it is asked for again when the file is fetched).
     fn add_attachment(&self, target: &str, bytes: &[u8]) -> Result<Reply, Failure> {
         if bytes.is_empty() {
-            return Err(Failure(400, "ファイルが空です".into()));
+            return Err(Failure(400, m("serve.attachment_empty").into()));
         }
         self.within_limit(bytes.len())?;
         let id = crate::image::id_of(bytes);
@@ -806,10 +846,10 @@ impl Server {
     /// A file attached to a comment, to be saved: never shown by itself.
     fn attachment(&self, id: &str, query: &str) -> Reply {
         if !crate::image::is_id(id) {
-            return Reply::error(404, "見つかりません");
+            return Reply::error(404, m("serve.not_found"));
         }
         let Some(bytes) = bundle::read_attachment(&self.review, id) else {
-            return Reply::error(404, "そのファイルはありません");
+            return Reply::error(404, m("serve.attachment_missing"));
         };
         let name = crate::image::file_name(&query_param(query, "name").unwrap_or_default());
         let mut reply = Reply::new(200, "application/octet-stream", bytes);
@@ -873,11 +913,16 @@ impl Server {
     fn compare(&self, query: &str) -> Reply {
         let number = |key: &str| query_param(query, key).and_then(|v| v.parse::<usize>().ok());
         let (Some(to), Some(from)) = (number("rev"), number("from")) else {
-            return Reply::error(400, "比べるリビジョンが指定されていません");
+            return Reply::error(400, m("serve.compare_missing_revisions"));
         };
         let loaded = match bundle::load(&self.review) {
             Ok(l) => l,
-            Err(e) => return Reply::error(500, &format!("処理に失敗しました: {e}")),
+            Err(e) => {
+                return Reply::error(
+                    500,
+                    &mf("serve.internal_failed", &[("error", &e.to_string())]),
+                );
+            }
         };
         match html::compare_data(&loaded, to, from) {
             Ok(revision) => Reply::json(
@@ -901,7 +946,10 @@ impl Server {
                     "pending": self.refresh.as_ref().is_some_and(|r| r(false).ok().flatten().is_some()),
                 }),
             ),
-            Err(e) => Reply::error(500, &format!("処理に失敗しました: {e}")),
+            Err(e) => Reply::error(
+                500,
+                &mf("serve.internal_failed", &[("error", &e.to_string())]),
+            ),
         }
     }
 
@@ -910,14 +958,19 @@ impl Server {
     fn files(&self, what: &str, query: &str) -> Reply {
         let loaded = match bundle::load(&self.review) {
             Ok(l) => l,
-            Err(e) => return Reply::error(500, &format!("処理に失敗しました: {e}")),
+            Err(e) => {
+                return Reply::error(
+                    500,
+                    &mf("serve.internal_failed", &[("error", &e.to_string())]),
+                );
+            }
         };
         let param = |key: &str| query_param(query, key).unwrap_or_default();
         let Some((revision, action)) = what
             .split_once('/')
             .and_then(|(r, a)| Some((r.parse::<usize>().ok()?, a)))
         else {
-            return Reply::error(404, "見つかりません");
+            return Reply::error(404, m("serve.not_found"));
         };
         let refused = |message: String| Reply::error(400, &message);
         match action {
@@ -927,7 +980,7 @@ impl Server {
                         list["ok"] = true.into();
                         Reply::json(200, &list)
                     }
-                    None => Reply::error(404, "そのリビジョンはありません"),
+                    None => Reply::error(404, m("serve.revision_missing")),
                 }
             }
             // Lines of a file the diff leaves out: `count` from line `from`.
@@ -962,7 +1015,7 @@ impl Server {
                     Err(message) => refused(message),
                 }
             }
-            _ => Reply::error(404, "見つかりません"),
+            _ => Reply::error(404, m("serve.not_found")),
         }
     }
 
@@ -970,19 +1023,19 @@ impl Server {
     /// review. The page says which lines as counters on each side (see
     /// `lib.counters` in `ui/client`).
     fn create_thread(&self, body: &[u8]) -> Result<Reply, Failure> {
-        let bad = |m: &str| Failure(400, m.to_string());
+        let bad = |key: &str| Failure(400, m(key).to_string());
         let value: serde_json::Value =
-            serde_json::from_slice(body).map_err(|_| bad("送られた内容を読めません"))?;
+            serde_json::from_slice(body).map_err(|_| bad("serve.body_unreadable"))?;
         let text = value
             .get("body")
             .and_then(|b| b.as_str())
             .map(str::trim)
             .filter(|b| !b.is_empty())
-            .ok_or_else(|| bad("コメントの本文が空です"))?;
+            .ok_or_else(|| bad("serve.comment_body_empty"))?;
         let revision = value
             .get("revision")
             .and_then(|r| r.as_u64())
-            .ok_or_else(|| bad("リビジョンが指定されていません"))? as usize;
+            .ok_or_else(|| bad("serve.revision_missing_param"))? as usize;
         // What the thread is about: lines (the default), a whole file, or the
         // whole review.
         let kind = value
@@ -991,28 +1044,26 @@ impl Server {
             .unwrap_or("lines");
         let file = value.get("file").and_then(|f| f.as_str());
         let span = |side: &str| -> Result<LineSpan, Failure> {
-            let part = value
-                .get(side)
-                .ok_or_else(|| bad("行の範囲が指定されていません"))?;
+            let part = value.get(side).ok_or_else(|| bad("serve.range_missing"))?;
             let number = |key: &str| {
                 part.get(key)
                     .and_then(|n| n.as_u64())
                     .filter(|n| *n <= 100_000_000)
                     .map(|n| n as u32)
-                    .ok_or_else(|| bad("行の範囲が不正です"))
+                    .ok_or_else(|| bad("serve.range_invalid"))
             };
             let (start, len) = (number("start")?, number("len")?);
             // A side with no lines may sit at 0: a file that is new has no old
             // side, and a deleted one has no new side.
             if start == 0 && len > 0 {
-                return Err(bad("行番号は 1 から始まります"));
+                return Err(bad("serve.line_number_starts_at_1"));
             }
             Ok(LineSpan { start, len })
         };
         let mut derive_base = false;
         let mut scope = match kind {
             "lines" => {
-                let file = file.ok_or_else(|| bad("ファイルが指定されていません"))?;
+                let file = file.ok_or_else(|| bad("serve.file_missing_param"))?;
                 let head = span("head")?;
                 // The page says the lines of the new side only (as it does when it
                 // shows the revision against another one): where they are on the
@@ -1025,7 +1076,7 @@ impl Server {
                 };
                 if (base.len == 0 && head.len == 0) && !derive_base || derive_base && head.len == 0
                 {
-                    return Err(bad("行が選ばれていません"));
+                    return Err(bad("serve.no_lines_selected"));
                 }
                 AnchorScope::Span {
                     file: file.to_string(),
@@ -1035,23 +1086,23 @@ impl Server {
             }
             "file" => AnchorScope::File {
                 file: file
-                    .ok_or_else(|| bad("ファイルが指定されていません"))?
+                    .ok_or_else(|| bad("serve.file_missing_param"))?
                     .to_string(),
             },
             "global" => AnchorScope::Global,
-            _ => return Err(bad("コメントの種類が不正です")),
+            _ => return Err(bad("serve.bad_comment_kind")),
         };
 
         let loaded = bundle::load(&self.review).map_err(internal)?;
         let view = html::anchor_view(&loaded, revision, file, self.git())
-            .ok_or_else(|| Failure(404, "そのリビジョンはありません".into()))?;
+            .ok_or_else(|| Failure(404, m("serve.revision_missing").into()))?;
         let (rev, diff, files) = (&view.revision, &view.diff, &view.files);
         // Lines and files are those of the page's diff (of the revision, and
         // the files it doesn't touch that threads have brought in).
         if let AnchorScope::Span { file, .. } | AnchorScope::File { file } = &scope
             && anchor::find_file(diff, file).is_none()
         {
-            return Err(bad("そのファイルはこのリビジョンの差分にありません"));
+            return Err(bad("serve.file_not_in_diff"));
         }
         if derive_base && let AnchorScope::Span { file, base, head } = &mut scope {
             *base = base_span_for(anchor::find_file(diff, file), *head);
@@ -1098,7 +1149,7 @@ impl Server {
 
     fn post(&self, path: &str, request: &Request) -> Reply {
         if request.body.len() > MAX_BODY && path != "/api/images" && path != "/api/attachments" {
-            return Reply::error(413, "送られた内容が大きすぎます");
+            return Reply::error(413, m("serve.body_too_big"));
         }
         if path == "/api/shutdown" {
             let discard = serde_json::from_slice::<serde_json::Value>(request.body)
@@ -1138,7 +1189,7 @@ impl Server {
             ["api", "comments", id, "edit"] => self.edit_comment(id, request.body),
             ["api", "comments", id, "delete"] => self.delete_comment(id),
             ["api", "comments", id, "react"] => self.react(id, request.body),
-            _ => return Reply::error(404, "見つかりません"),
+            _ => return Reply::error(404, m("serve.not_found")),
         };
         match result {
             Ok(reply) => reply,
@@ -1154,12 +1205,12 @@ impl Server {
         action: impl FnOnce(&review::Thread) -> Result<(), Failure>,
     ) -> Result<Reply, Failure> {
         let id =
-            Ulid::from_string(id).map_err(|_| Failure(400, "スレッドの ID が不正です".into()))?;
+            Ulid::from_string(id).map_err(|_| Failure(400, m("serve.thread_id_invalid").into()))?;
         let loaded = bundle::load(&self.review).map_err(internal)?;
         let thread = review::build_threads(&loaded.events)
             .into_iter()
             .find(|t| t.root_id == id)
-            .ok_or_else(|| Failure(404, "そのスレッドはありません".into()))?;
+            .ok_or_else(|| Failure(404, m("serve.thread_missing").into()))?;
         let before = html::stamp(&loaded);
         action(&thread)?;
         let loaded = bundle::load(&self.review).map_err(internal)?;
@@ -1186,16 +1237,16 @@ impl Server {
     /// at startup with nothing configured).
     fn set_user_settings(&self, body: &[u8]) -> Result<Reply, Failure> {
         let value: serde_json::Value = serde_json::from_slice(body)
-            .map_err(|_| Failure(400, "送られた内容を読めません".into()))?;
+            .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
         let name = value
             .get("author")
             .and_then(|a| a.as_str())
-            .ok_or_else(|| Failure(400, "author がありません".into()))?
+            .ok_or_else(|| Failure(400, m("serve.author_missing").into()))?
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
         if name.chars().count() > 100 {
-            return Err(Failure(400, "作者名が長すぎます(100 文字まで)".into()));
+            return Err(Failure(400, m("serve.author_too_long").into()));
         }
         let mut config = crate::user_config::load();
         config.author = (!name.is_empty()).then(|| name.clone());
@@ -1215,12 +1266,17 @@ impl Server {
     /// new revision (the page is told, and keeps showing what it showed).
     fn refresh(&self) -> Result<Reply, Failure> {
         let Some(refresh) = &self.refresh else {
-            return Err(Failure(400, "この起動では、取り込めません".into()));
+            return Err(Failure(400, m("serve.refresh_unavailable").into()));
         };
         let before = html::stamp(&bundle::load(&self.review).map_err(internal)?);
-        let said = refresh(true).map_err(|e| Failure(500, format!("取り込めませんでした: {e}")))?;
+        let said = refresh(true).map_err(|e| {
+            Failure(
+                500,
+                mf("serve.refresh_failed", &[("error", &e.to_string())]),
+            )
+        })?;
         let added = said.is_some();
-        let message = said.unwrap_or_else(|| "新しい変更はありません".into());
+        let message = said.unwrap_or_else(|| m("serve.refresh_nothing").into());
         self.model_answer(
             &before,
             serde_json::json!({ "message": message, "added": added }),
@@ -1232,19 +1288,19 @@ impl Server {
     /// review.
     fn set_settings(&self, body: &[u8]) -> Result<Reply, Failure> {
         let value: serde_json::Value = serde_json::from_slice(body)
-            .map_err(|_| Failure(400, "送られた内容を読めません".into()))?;
-        let bad = |m: &str| Failure(400, m.to_string());
+            .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
+        let bad = |key: &str| Failure(400, m(key).to_string());
         let title = match value.get("title") {
             None | Some(serde_json::Value::Null) => None,
             Some(t) => {
                 let title = t
                     .as_str()
-                    .ok_or_else(|| bad("タイトルが文字ではありません"))?
+                    .ok_or_else(|| bad("serve.title_not_string"))?
                     .split_whitespace()
                     .collect::<Vec<_>>()
                     .join(" ");
                 if title.chars().count() > 200 {
-                    return Err(bad("タイトルが長すぎます(200 文字まで)"));
+                    return Err(bad("serve.title_too_long"));
                 }
                 Some(title)
             }
@@ -1253,7 +1309,7 @@ impl Server {
             None => None,
             Some(v) => Some(
                 v.as_bool()
-                    .ok_or_else(|| bad("空白の設定が正しくありません"))?,
+                    .ok_or_else(|| bad("serve.ignore_whitespace_invalid"))?,
             ),
         };
         let limit = match value.get("attachment_limit") {
@@ -1261,13 +1317,18 @@ impl Server {
             Some(v) => {
                 let bytes = v
                     .as_u64()
-                    .ok_or_else(|| bad("添付の上限が正しくありません"))?;
+                    .ok_or_else(|| bad("serve.attachment_limit_invalid"))?;
                 if !(1024..=crate::image::CEILING as u64).contains(&bytes) {
-                    return Err(bad(&format!(
-                        "添付の上限は、{} から {} の間で指定してください",
-                        size_words(1024),
-                        size_words(crate::image::CEILING as u64)
-                    )));
+                    return Err(Failure(
+                        400,
+                        mf(
+                            "serve.attachment_limit_range",
+                            &[
+                                ("min", &size_words(1024)),
+                                ("max", &size_words(crate::image::CEILING as u64)),
+                            ],
+                        ),
+                    ));
                 }
                 Some(bytes)
             }
@@ -1298,7 +1359,7 @@ impl Server {
 
     /// The id a comment is asked for by.
     fn comment_id(id: &str) -> Result<Ulid, Failure> {
-        Ulid::from_string(id).map_err(|_| Failure(400, "コメントの ID が不正です".into()))
+        Ulid::from_string(id).map_err(|_| Failure(400, m("serve.comment_id_invalid").into()))
     }
 
     /// The signed-in name reacting to a comment with an emoji: taken back if it
@@ -1306,12 +1367,12 @@ impl Server {
     fn react(&self, id: &str, body: &[u8]) -> Result<Reply, Failure> {
         let id = Self::comment_id(id)?;
         let value: serde_json::Value = serde_json::from_slice(body)
-            .map_err(|_| Failure(400, "送られた内容を読めません".into()))?;
+            .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
         let emoji = value
             .get("emoji")
             .and_then(|e| e.as_str())
             .filter(|e| is_emoji(e))
-            .ok_or_else(|| Failure(400, "絵文字が正しくありません".into()))?;
+            .ok_or_else(|| Failure(400, m("serve.emoji_invalid").into()))?;
         let mut loaded = bundle::load(&self.review).map_err(internal)?;
         let before = html::stamp(&loaded);
         let deleted = loaded.events.iter().find_map(|e| match e {
@@ -1319,12 +1380,9 @@ impl Server {
             _ => None,
         });
         match deleted {
-            None => return Err(Failure(404, "そのコメントはありません".into())),
+            None => return Err(Failure(404, m("serve.comment_missing").into())),
             Some(true) => {
-                return Err(Failure(
-                    409,
-                    "削除されたコメントには、付けられません".into(),
-                ));
+                return Err(Failure(409, m("serve.reaction_on_deleted").into()));
             }
             Some(false) => {}
         }
@@ -1334,10 +1392,7 @@ impl Server {
             .get(&key)
             .is_none_or(|list| !list.iter().any(|r| r.emoji == emoji));
         if new_kind && loaded.reactions.get(&key).is_some_and(|l| l.len() >= 30) {
-            return Err(Failure(
-                409,
-                "1 つのコメントに付けられる絵文字は、30 種類までです".into(),
-            ));
+            return Err(Failure(409, m("serve.reaction_kind_limit").into()));
         }
         let now = review::toggle_reaction(&mut loaded.reactions, &key, emoji, &self.author());
         let events = loaded.events.clone();
@@ -1356,13 +1411,13 @@ impl Server {
     fn edit_comment(&self, id: &str, body: &[u8]) -> Result<Reply, Failure> {
         let id = Self::comment_id(id)?;
         let value: serde_json::Value = serde_json::from_slice(body)
-            .map_err(|_| Failure(400, "送られた内容を読めません".into()))?;
+            .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
         let text = value
             .get("body")
             .and_then(|b| b.as_str())
             .map(str::trim)
             .filter(|b| !b.is_empty())
-            .ok_or_else(|| Failure(400, "コメントの本文が空です".into()))?;
+            .ok_or_else(|| Failure(400, m("serve.comment_body_empty").into()))?;
         let loaded = bundle::load(&self.review).map_err(internal)?;
         let before = html::stamp(&loaded);
         let mut events = loaded.events.clone();
@@ -1372,9 +1427,9 @@ impl Server {
                 Event::Comment { id: c, body, .. } if *c == id => Some(body),
                 _ => None,
             })
-            .ok_or_else(|| Failure(404, "そのコメントはありません".into()))?;
+            .ok_or_else(|| Failure(404, m("serve.comment_missing").into()))?;
         if target.is_empty() {
-            return Err(Failure(409, "削除されたコメントは、編集できません".into()));
+            return Err(Failure(409, m("serve.edit_deleted_refused").into()));
         }
         *target = text.to_string();
         self.save(&loaded, &events)?;
@@ -1401,7 +1456,7 @@ impl Server {
             _ => None,
         });
         let Some(parent) = found else {
-            return Err(Failure(404, "そのコメントはありません".into()));
+            return Err(Failure(404, m("serve.comment_missing").into()));
         };
         let replies_of = |root: Ulid, except: Option<Ulid>| {
             loaded
@@ -1504,13 +1559,13 @@ impl Server {
 
     fn reply(&self, thread: &review::Thread, body: &[u8]) -> Result<(), Failure> {
         let value: serde_json::Value = serde_json::from_slice(body)
-            .map_err(|_| Failure(400, "送られた内容を読めません".into()))?;
+            .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
         let text = value
             .get("body")
             .and_then(|b| b.as_str())
             .map(str::trim)
             .filter(|b| !b.is_empty())
-            .ok_or_else(|| Failure(400, "返信の本文が空です".into()))?;
+            .ok_or_else(|| Failure(400, m("serve.reply_body_empty").into()))?;
         let id = Ulid::new();
         self.append(Event::Comment {
             id,
@@ -1592,7 +1647,10 @@ impl Server {
 struct Failure(u16, String);
 
 fn internal(e: anyhow::Error) -> Failure {
-    Failure(500, format!("処理に失敗しました: {e}"))
+    Failure(
+        500,
+        mf("serve.internal_failed", &[("error", &e.to_string())]),
+    )
 }
 
 /// The value of `key` in a query string, with `%XX` and `+` decoded.
@@ -1641,16 +1699,24 @@ pub fn run(options: &Options, on_ready: impl FnOnce(&str, &[String])) -> Result<
     if let Some(dir) = &options.repo
         && !Repo::at(dir).exists()
     {
-        anyhow::bail!("{} は git リポジトリではありません", dir.display());
+        anyhow::bail!(mf(
+            "main.repo_of.not_a_repo",
+            &[("dir", &dir.display().to_string())]
+        ));
     }
     let http = tiny_http::Server::http(("127.0.0.1", options.port))
         .map_err(|e| anyhow::anyhow!("{e}"))
-        .with_context(|| format!("ポート {} で待ち受けを始められませんでした", options.port))?;
+        .with_context(|| {
+            mf(
+                "serve.run.listen_failed",
+                &[("port", &options.port.to_string())],
+            )
+        })?;
     let port = http
         .server_addr()
         .to_ip()
         .map(|a| a.port())
-        .context("待ち受けているポートを調べられませんでした")?;
+        .context(m("serve.run.port_unknown"))?;
     let server = Server::new(options, port);
     on_ready(&server.url(), &server.notices());
     for mut request in http.incoming_requests() {
