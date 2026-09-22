@@ -6,12 +6,18 @@
 (function (D) {
   'use strict';
 
-  var unreachable = { ok: false, error: 'サーバーに接続できませんでした' };
-  var unreadable = { ok: false, error: '応答を読めませんでした' };
+  // Functions, not constants: built lazily, since the message table (see
+  // lib.js) is only loaded once `D.start()` runs, after this file does.
+  var unreachable = function () {
+    return { ok: false, error: D.lib.m('ui.api.unreachable') };
+  };
+  var unreadable = function () {
+    return { ok: false, error: D.lib.m('ui.api.unreadable') };
+  };
 
   function read(response) {
     return response.json().catch(function () {
-      return unreadable;
+      return unreadable();
     });
   }
 
@@ -25,7 +31,7 @@
         credentials: 'same-origin',
         body: JSON.stringify(data || {}),
       }).then(read, function () {
-        return unreachable;
+        return unreachable();
       });
     },
     // An image (a file or a pasted picture): its bytes, as they are.
@@ -36,7 +42,7 @@
         credentials: 'same-origin',
         body: blob,
       }).then(read, function () {
-        return unreachable;
+        return unreachable();
       });
     },
     // A file that is not a picture: its bytes, and what it is called.
@@ -47,12 +53,12 @@
         credentials: 'same-origin',
         body: blob,
       }).then(read, function () {
-        return unreachable;
+        return unreachable();
       });
     },
     get: function (path) {
       return fetch(path, { credentials: 'same-origin' }).then(read, function () {
-        return unreachable;
+        return unreachable();
       });
     },
   };

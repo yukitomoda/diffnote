@@ -3,6 +3,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const lib = require('../lib.js');
 
+// The handful of messages/ja.yaml keys this test file's assertions rely on
+// (these tests exercise lib.js's own formatting, not the wording itself).
+lib.setMessages({
+  'ui.location.whole_review': '全体',
+  'ui.image_alt_fallback': '[画像]',
+  'ui.image_markdown': '![画像](diffnote-image:{id})',
+});
+
 const line = (file, start, end, extra) => Object.assign({ kind: 'line', file, side: 'new', start, end, color: 0 }, extra);
 
 test('a location is the path, with the lines of a thread on lines', () => {

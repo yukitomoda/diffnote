@@ -723,3 +723,383 @@ html:
 record:
   full_snapshot_warning: |-
     レビュー対象のツリーの `full` スナップショットは約 {size} MB になります
+
+# --- WebUI(ui/client/*.js)の文言 -------------------------------------------
+ui:
+  location:
+    whole_review: |-
+      全体
+  image_alt_fallback: |-
+    [画像]
+  image_markdown: |-
+    ![画像](diffnote-image:{id})
+  copied: |-
+    コピーしました
+  list_separator: |-
+    、
+  save_failed: |-
+    保存できませんでした
+  save_button: |-
+    保存
+  cancel_button: |-
+    キャンセル
+  confirm_cancel: |-
+    やめる
+  copy_button: |-
+    コピー
+
+  api:
+    unreachable: |-
+      サーバーに接続できませんでした
+    unreadable: |-
+      応答を読めませんでした
+
+  absence:
+    deleted: " (削除された行)"
+    not-yet: " (この版にはまだない行)"
+    unknown: " (この版にない行)"
+
+  binary_change:
+    added: |-
+      追加
+    deleted: |-
+      削除
+    renamed: |-
+      名前変更
+    modified: |-
+      変更
+
+  comment:
+    saving: |-
+      保存中…
+    reply_placeholder: |-
+      返信を書く(Ctrl+Enter で送信)
+    reply_button: |-
+      返信
+    delete_failed: |-
+      削除できませんでした
+    whose: |-
+      「{author}」さんが書いたコメントです(あなたは「{me}」)。
+    delete_reason_replies: |-
+      このコメントだけが削除されます。返信 {n} 件は残り、このコメントは「削除されました」の表示になります。
+    delete_reason_thread: |-
+      スレッドが削除されます。
+    delete_reason_reply: |-
+      この返信が削除されます。
+    delete_button: |-
+      削除する
+    edit_button: |-
+      編集する
+    deleted_notice: |-
+      このコメントは削除されました
+    quote_button: |-
+      ❝ 引用して返信
+    menu_label: |-
+      コメントの操作
+    menu_quote: |-
+      引用して返信
+    menu_edit: |-
+      編集
+    menu_delete: |-
+      削除
+
+  thread:
+    reopen_button: |-
+      再開する
+    resolve_button: |-
+      解決にする
+    resolved: |-
+      解決済み
+    unresolved: |-
+      未解決
+    unplaced_heading: |-
+      未配置のコメント
+    open_count_title: |-
+      未解決のスレッドが {n} 件あります
+    summary: |-
+      スレッド
+    summary_title: |-
+      未解決 / 全部
+    jump_title_fallback: |-
+      差分全体
+    deleted_preview: |-
+      (削除されました)
+
+  reaction:
+    tip: |-
+      {authors} が {emoji} で反応しました
+    add_title: |-
+      リアクションを付けます
+
+  emoji:
+    default_title: |-
+      絵文字を入れます
+    search_placeholder: |-
+      絵文字を探す(例: ok、バグ)
+    none_found: |-
+      見つかりません
+
+  attach:
+    file_fallback: |-
+      ファイル
+    too_big: |-
+      「{name}」({size})は、添付できる大きさ({limit})を超えています
+    sending: |-
+      送っています…
+    failed: |-
+      添付できませんでした
+    done_multi: |-
+      {count} 件を添付しました
+    done_image: |-
+      画像を追加しました
+    done_file: |-
+      「{name}」を添付しました
+    status_bundle_size: |-
+      ({size})。バンドルの大きさ: {bundle_size}
+    big_file_note: |-
+      。大きなファイルです
+    picker_title: |-
+      ファイルや画像を添付します(貼り付けや、ドラッグ&ドロップでも追加できます)
+    button_label: |-
+      📎 添付
+
+  copy:
+    location_title: |-
+      ファイルパスと行(とリビジョン)のリンクをコピー
+    range_title: |-
+      この範囲へのリンク(リビジョンつき)をコピー
+    path_title: |-
+      パスをコピー
+
+  compose:
+    placeholder: |-
+      コメントを書く(Ctrl+Enter で送信)
+    submit: |-
+      コメントする
+    file_where: |-
+      {path} へのコメント
+    global_button: |-
+      レビュー全体にコメントする
+    global_where: |-
+      レビュー全体へのコメント
+
+  viewmenu:
+    button: |-
+      ⚙ 表示 ▾
+    layout_label: |-
+      レイアウト
+    layout_unified: |-
+      統合
+    layout_split: |-
+      横並び
+    ignore_space_title: |-
+      行の中の空白だけが違う変更を、変更なしとして表示します
+    ignore_space_label: |-
+      空白の違いを無視
+    hide_resolved_label: |-
+      解決済みを隠す
+
+  user:
+    settings_title: |-
+      ユーザー設定(作者名など)
+
+  settings:
+    nav_label: |-
+      設定
+    general_tab: |-
+      全般
+    settings_tab: |-
+      設定
+    user_tab: |-
+      ユーザー設定
+    general_heading: |-
+      全般
+    pull_button: |-
+      最新を取り込む
+    pull_note: |-
+      起動したあとに増えたコミットなど、対象の新しい変更を、新しいリビジョンとして取り込み、それを表示します。
+    download_button: |-
+      ダウンロード
+    download_note: |-
+      今のバンドル(.diffnote)を、そのままファイルとして保存します。
+    export_button: |-
+      エクスポート
+    export_note: |-
+      今の内容を、誰でも開ける HTML として保存します。
+    bundle_info_heading: |-
+      このバンドルの内容(読み取りのみ)
+    bundle_size_label: |-
+      大きさ
+    bundle_revisions_label: |-
+      リビジョン
+    bundle_revisions_value: |-
+      {n} 件
+    bundle_images_label: |-
+      画像
+    bundle_count_with_size: |-
+      {count} 件({size})
+    bundle_files_label: |-
+      ほかの添付
+    attachment_limit_not_number: |-
+      添付の上限は、数字(MB)で入力してください
+    attachment_limit_out_of_range: |-
+      添付の上限は、1 KB から 100 MB の間で指定してください
+    form_heading: |-
+      設定
+    form_note: |-
+      ここでの設定は、バンドルに保存され、このレビューを開く人みんなに、同じに働きます(作者の名前は、「ユーザー設定」で変えられます。このマシンのすべてのレビューに使われます)。
+    title_label: |-
+      タイトル
+    title_placeholder: |-
+      空にすると、既定の見出しに戻ります
+    ignore_ws_label: |-
+      開いたとき、空白の違いを無視して表示する
+    ignore_ws_hint: |-
+      (初期状態です。画面の「表示」メニューでの切り替えは、保存されません)
+    attach_limit_label: |-
+      添付できるファイルの大きさの上限(1 つあたり)
+    saved_notice: |-
+      保存しました
+    dirty_notice: |-
+      保存していない変更があります(戻ると、失われます)
+    back_button: |-
+      ← レビューに戻る
+    title_button: |-
+      設定(タイトル、ダウンロードなど)
+
+  user_settings:
+    heading: |-
+      ユーザー設定
+    note: |-
+      ここでの設定は、このマシンの、このユーザーに保存されます。このレビューだけでなく、これから開くすべての diffnote のレビューに使われます。
+    author_label: |-
+      作者名
+    author_placeholder: |-
+      空にすると、git の設定などから決まります
+
+  quit:
+    shutdown_failed: |-
+      終了できませんでした
+    main_title: |-
+      今の内容で保存して、サーバーを止めます
+    main_button: |-
+      終了
+    more_label: |-
+      ほかの終了のしかた
+    discard_button: |-
+      保存せずに終了…
+    confirm_note: |-
+      この起動で行ったことを、すべて取り消して終了します(取り込んだ差分やタイトルも含みます)。バンドルは起動する前の状態に戻り、この起動で作ったバンドルなら、削除されます。
+    discard_confirm_button: |-
+      破棄して終了
+
+  farewell:
+    discarded_title: |-
+      保存せずに終了しました
+    done_title: |-
+      終了しました
+    changes_label: |-
+      今回の変更
+    discarded_value: |-
+      破棄しました
+    path_label: |-
+      保存先
+    removed_suffix: |-
+      (この起動で作ったので、削除しました)
+    kept_suffix: |-
+      (起動する前の内容のままです)
+    summary_label: |-
+      いまの内容
+    summary_value: |-
+      スレッド {threads} 件・コメント {comments} 件
+    note: |-
+      このタブは閉じてかまいません。
+
+  link:
+    here: |-
+      この行へ移ります
+    revision: |-
+      リビジョン #{rev} の行へ移ります
+    not_latest: |-
+      (最新のリビジョンではありません)
+
+  expand:
+    left_label: |-
+      {n} 行省略
+    not_embedded_note: |-
+      (この HTML には含まれていません)
+    up_button: |-
+      ↓ {n} 行
+    down_button: |-
+      ↑ {n} 行
+    all_button: |-
+      {n} 行をすべて表示
+
+  file:
+    viewed_title: |-
+      確認済みにして、表示をたたみます(左の一覧から戻せます)
+    viewed_button: |-
+      ✓ 確認済み
+    stat_title: |-
+      追加 {added} 行、削除 {removed} 行
+    binary_suffix_named: " (バイナリ・{change})"
+    binary_suffix_plain: " (バイナリ)"
+    renamed_suffix: " (名前変更)"
+    close_title: |-
+      この表示を閉じる(記録には残りません)
+    close_button: |-
+      閉じる
+    add_comment_title: |-
+      このファイルにコメントする
+    add_comment_button: |-
+      コメント
+    missing_note: |-
+      このファイルは指定したdiffに含まれていません(コメント作成時点と異なるdiffを指定している可能性があります)。
+    binary_note: |-
+      バイナリファイルのため、内容は表示しません。
+    more_button: |-
+      続きを表示({from}〜 / 全 {total} 行)
+    mark_viewed_title: |-
+      確認済みにします
+    unmark_viewed_title: |-
+      確認済みを解除して、表示に戻します
+    open_failed: |-
+      開けませんでした
+
+  tree:
+    files_summary: |-
+      ファイル
+    viewed_count_title: |-
+      確認済みにしたファイル / ファイル数
+    loading: |-
+      読み込み中…
+    load_failed: |-
+      読み込めませんでした
+    more_note: |-
+      ほか {n} 件(検索で絞り込んでください)
+    others_summary: |-
+      その他のファイル
+    search_placeholder: |-
+      ファイルを検索
+    search_label: |-
+      ファイルを検索
+
+  topbar:
+    pull_note_loading: |-
+      取り込んでいます…
+    pull_failed: |-
+      取り込めませんでした
+    new_commits_notice: |-
+      新しいコミットがあります
+
+  base:
+    default_title: |-
+      すべてのリビジョンは、これと比べた差分です
+    changed_title: |-
+      ベースの代わりに、このリビジョンと比べて表示しています(記録は変わりません)
+    label: |-
+      ベース
+    select_label: |-
+      比べる相手
+    select_tip: |-
+      ベースの代わりに、選んだリビジョンと比べた差分を表示しています(表示だけの切り替えです)。コメントは、これまでどおり、ベースとの差分に付きます。比べた相手にだけある、削除された行には、コメントを付けられません。

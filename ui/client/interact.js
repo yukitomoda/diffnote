@@ -105,7 +105,7 @@
   function copyText(text, button) {
     function done() {
       var before = button.textContent;
-      button.textContent = 'コピーしました';
+      button.textContent = D.lib.m('ui.copied');
       button.classList.add('is-done');
       setTimeout(function () {
         button.textContent = before;

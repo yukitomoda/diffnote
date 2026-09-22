@@ -6,6 +6,29 @@
   'use strict';
   var lib = (D.lib = D.lib || {});
 
+  // The page's text (see messages/ja.yaml, embedded as JSON by the server/
+  // exporter into #diffnote-messages; `D.start` loads it with setMessages
+  // before anything renders). A flat key -> string table; `mf` fills in
+  // `{name}` placeholders.
+  lib.messages = {};
+  lib.setMessages = function (table) {
+    lib.messages = table || {};
+  };
+  lib.m = function (key) {
+    var v = lib.messages[key];
+    if (v === undefined) throw new Error('diffnote: missing message: ' + key);
+    return v;
+  };
+  lib.mf = function (key, params) {
+    var out = lib.m(key);
+    for (var name in params) {
+      if (Object.prototype.hasOwnProperty.call(params, name)) {
+        out = out.split('{' + name + '}').join(params[name]);
+      }
+    }
+    return out;
+  };
+
   // The colors of threads (a placement carries the number of its color).
   lib.PALETTE = ['#1f77b4', '#ff7f0e', '#9467bd', '#8c564b', '#e377c2', '#17becf', '#bcbd22', '#7f7f7f'];
 
@@ -31,7 +54,7 @@
 
   // The same with only the file's name, for the narrow thread list.
   lib.shortLocation = function (p) {
-    if (!p || p.kind === 'global') return '全体';
+    if (!p || p.kind === 'global') return lib.m('ui.location.whole_review');
     var name = lib.baseName(p.file);
     if (p.kind === 'line') return name + ':' + (p.side === 'old' ? 'L' : '') + (p.end > p.start ? p.start + '-' + p.end : p.start);
     return name;
@@ -173,7 +196,7 @@
       } else if (n.t === 'br') {
         out += '\n';
       } else if (n.t === 'image') {
-        out += n.alt || '[画像]';
+        out += n.alt || lib.m('ui.image_alt_fallback');
       } else if (n.t === 'code' || n.t === 'pre') {
         out += (n.s || '') + (n.t === 'pre' ? '\n' : '');
       } else {
@@ -550,7 +573,7 @@
 
   // What a comment says for an image of the review, to put in its text.
   lib.imageMarkdown = function (id) {
-    return '![画像](diffnote-image:' + id + ')';
+    return lib.mf('ui.image_markdown', { id: id });
   };
 
   // What a comment says for another file of the review: a link to save it,

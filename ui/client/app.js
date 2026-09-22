@@ -35,9 +35,6 @@
   // How the diff is shown, and the ways to change it (the view menu).
   var ViewContext = preact.createContext(null);
 
-  var DEFAULT_TITLE = 'diffnote レビュー';
-  var BINARY_CHANGES = { added: '追加', deleted: '削除', renamed: '名前変更', modified: '変更' };
-
   // What is kept between visits, where the browser lets us.
   function kept(key, fallback) {
     try {
@@ -64,12 +61,6 @@
     var t = new Date(props.at);
     return html`<time class="diffnote-comment__time" datetime=${props.at} title=${isNaN(t.getTime()) ? props.at : t.toLocaleString()}>${lib.formatTime(props.at)}</time>`;
   }
-
-  var ABSENCE = {
-    deleted: ' (削除された行)',
-    'not-yet': ' (この版にはまだない行)',
-    unknown: ' (この版にない行)',
-  };
 
   // The reply box and the resolve button of a card on the served page. A
   // reply shows at once as a faded comment and is put right by the answer; if it
@@ -116,31 +107,31 @@
       actions.reply(t.id, body).then(function (res) {
         setPending(null);
         if (res.ok) setText('');
-        else setError(res.error || '保存できませんでした');
+        else setError(res.error || lib.m('ui.save_failed'));
       });
     }
     function toggle() {
       setError(null);
       actions.setResolved(t.id, !t.resolved).then(function (res) {
-        if (!res.ok) setError(res.error || '保存できませんでした');
+        if (!res.ok) setError(res.error || lib.m('ui.save_failed'));
       });
     }
     var action = t.resolved ? 'reopen' : 'resolve';
     return html`${pending !== null && html`<article class="diffnote-comment is-pending">
-        <p class="diffnote-comment__author">保存中…</p>
+        <p class="diffnote-comment__author">${lib.m('ui.comment.saving')}</p>
         <div class="diffnote-comment__body">${pending}</div>
       </article>`}
       <div class="diffnote-thread__actions">
         <form class="diffnote-reply" data-diffnote-thread=${t.id} onSubmit=${function (e) { e.preventDefault(); send(); }}>
           <div class="diffnote-attach-bar">${attach.picker(function () { return field.current; })}</div>
-          <textarea ref=${field} rows="2" placeholder="返信を書く(Ctrl+Enter で送信)" value=${text} disabled=${pending !== null}
+          <textarea ref=${field} rows="2" placeholder=${lib.m('ui.comment.reply_placeholder')} value=${text} disabled=${pending !== null}
             ...${attach.handlers}
             onInput=${function (e) { setText(e.target.value); }}
             onKeyDown=${function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }}></textarea>
           ${attach.note}
           <div class="diffnote-reply__buttons">
-            <button type="submit" class="diffnote-button diffnote-button--primary">返信</button>
-            <button type="button" class="diffnote-button" data-diffnote-action=${action} data-diffnote-thread=${t.id} onClick=${toggle}>${t.resolved ? '再開する' : '解決にする'}</button>
+            <button type="submit" class="diffnote-button diffnote-button--primary">${lib.m('ui.comment.reply_button')}</button>
+            <button type="button" class="diffnote-button" data-diffnote-action=${action} data-diffnote-thread=${t.id} onClick=${toggle}>${t.resolved ? lib.m('ui.thread.reopen_button') : lib.m('ui.thread.resolve_button')}</button>
           </div>
           ${error && html`<p class="diffnote-error">${error}</p>`}
         </form>
@@ -183,13 +174,13 @@
     return html`<div class="diffnote-reactions" data-diffnote-reactions>
       ${list.map(function (r) {
         var mine = me != null && r.authors.indexOf(me) >= 0;
-        var tip = r.authors.join('、') + ' が ' + r.emoji + ' で反応しました';
+        var tip = lib.mf('ui.reaction.tip', { authors: r.authors.join(lib.m('ui.list_separator')), emoji: r.emoji });
         return actions
           ? html`<button type="button" key=${r.emoji} class=${'diffnote-reaction' + (mine ? ' is-mine' : '')} data-diffnote-reaction=${r.emoji}
               aria-pressed=${mine} title=${tip} onClick=${function () { actions.react(c.id, r.emoji); }}>${r.emoji}<span>${r.authors.length}</span></button>`
           : html`<span key=${r.emoji} class="diffnote-reaction" data-diffnote-reaction=${r.emoji} title=${tip}>${r.emoji}<span>${r.authors.length}</span></span>`;
       })}
-      ${actions && html`<${EmojiButton} side="left" name="react" label="＋" title="リアクションを付けます" buttonClass="diffnote-reaction diffnote-reaction--add"
+      ${actions && html`<${EmojiButton} side="left" name="react" label="＋" title=${lib.m('ui.reaction.add_title')} buttonClass="diffnote-reaction diffnote-reaction--add"
         onPick=${function (emoji) { actions.react(c.id, emoji); }} />`}
     </div>`;
   }
@@ -221,9 +212,9 @@
     var pick = function (ch) { setOpen(false); setQuery(''); props.onPick(ch); };
     return html`<span class=${'diffnote-emoji' + (props.side === 'left' ? ' diffnote-emoji--left' : '')} ref=${box}>
       <button type="button" class=${props.buttonClass || 'diffnote-attach diffnote-emoji__open'} data-diffnote-emoji-button=${props.name || ''} aria-haspopup="true" aria-expanded=${open}
-        title=${props.title || '絵文字を入れます'} onClick=${function () { setOpen(!open); }}>${props.label || '😀'}</button>
+        title=${props.title || lib.m('ui.emoji.default_title')} onClick=${function () { setOpen(!open); }}>${props.label || '😀'}</button>
       ${open && html`<div class="diffnote-emoji__panel" data-diffnote-emoji-panel>
-        <input ref=${input} type="search" class="diffnote-emoji__search" data-diffnote-emoji-search placeholder="絵文字を探す(例: ok、バグ)" value=${query}
+        <input ref=${input} type="search" class="diffnote-emoji__search" data-diffnote-emoji-search placeholder=${lib.m('ui.emoji.search_placeholder')} value=${query}
           onInput=${function (e) { setQuery(e.target.value); }}
           onKeyDown=${function (e) { if (e.key === 'Enter') { e.preventDefault(); if (found[0]) pick(found[0][0]); } }} />
         <div class="diffnote-emoji__grid">
@@ -232,7 +223,7 @@
               onClick=${function () { pick(e[0]); }}>${e[0]}</button>`;
           })}
         </div>
-        ${found.length === 0 && html`<p class="diffnote-emoji__none">見つかりません</p>`}
+        ${found.length === 0 && html`<p class="diffnote-emoji__none">${lib.m('ui.emoji.none_found')}</p>`}
       </div>`}
     </span>`;
   }
@@ -254,12 +245,19 @@
       // Too big: said here, before anything is sent.
       var big = limit && list.filter(function (f) { return f.size > limit; })[0];
       if (big) {
-        setStatus({ failed: true, text: '「' + (big.name || 'ファイル') + '」(' + lib.formatSize(big.size) + ')は、添付できる大きさ(' + lib.formatSize(limit) + ')を超えています' });
+        setStatus({
+          failed: true,
+          text: lib.mf('ui.attach.too_big', {
+            name: big.name || lib.m('ui.attach.file_fallback'),
+            size: lib.formatSize(big.size),
+            limit: lib.formatSize(limit),
+          }),
+        });
         return true;
       }
       var from = field.selectionStart;
       var to = field.selectionEnd;
-      setStatus({ busy: true, text: '送っています…' });
+      setStatus({ busy: true, text: lib.m('ui.attach.sending') });
       var snippets = [];
       var last = null;
       var images = 0;
@@ -268,7 +266,7 @@
           var isImage = /^image\//.test(file.type);
           var name = file.name || (isImage ? 'image' : 'file');
           return (isImage ? D.api.upload(file) : D.api.uploadFile(file, name)).then(function (res) {
-            if (!res.ok) throw new Error(res.error || '添付できませんでした');
+            if (!res.ok) throw new Error(res.error || lib.m('ui.attach.failed'));
             if (isImage) images++;
             snippets.push(isImage ? lib.imageMarkdown(res.id) : lib.fileMarkdown(name, res.id));
             last = { res: res, name: name, isImage: isImage };
@@ -278,8 +276,14 @@
       chain.then(function () {
         var put = lib.insertAt(latest.current, from, to, snippets.join('\n') + '\n');
         setText(put.text);
-        var what = list.length > 1 ? list.length + ' 件を添付しました' : last.isImage ? '画像を追加しました' : '「' + last.name + '」を添付しました';
-        setStatus({ text: what + '(' + lib.formatSize(last.res.size) + ')。バンドルの大きさ: ' + lib.formatSize(last.res.bundle_size) + (last.res.size > 5 * 1024 * 1024 ? '。大きなファイルです' : '') });
+        var what = list.length > 1
+          ? lib.mf('ui.attach.done_multi', { count: String(list.length) })
+          : last.isImage ? lib.m('ui.attach.done_image') : lib.mf('ui.attach.done_file', { name: last.name });
+        var status = lib.mf('ui.attach.status_bundle_size', {
+          size: lib.formatSize(last.res.size),
+          bundle_size: lib.formatSize(last.res.bundle_size),
+        });
+        setStatus({ text: what + status + (last.res.size > 5 * 1024 * 1024 ? lib.m('ui.attach.big_file_note') : '') });
       }, function (err) {
         setStatus({ failed: true, text: err.message });
       });
@@ -315,7 +319,7 @@
           setText(put.text);
           setTimeout(function () { box.focus(); box.setSelectionRange(put.cursor, put.cursor); }, 0);
         };
-        return html`<${EmojiButton} onPick=${pick} /><label class="diffnote-attach" title="ファイルや画像を添付します(貼り付けや、ドラッグ&ドロップでも追加できます)">📎 添付
+        return html`<${EmojiButton} onPick=${pick} /><label class="diffnote-attach" title=${lib.m('ui.attach.picker_title')}>${lib.m('ui.attach.button_label')}
           <input type="file" multiple data-diffnote-attach
             onChange=${function (e) { var f = field(); if (f) send(e.target.files, f); e.target.value = ''; }} /></label>`;
       },
@@ -398,7 +402,7 @@
       actions.edit(c.id, text).then(function (res) {
         setBusy(false);
         if (res.ok) setEditing(false);
-        else setError(res.error || '保存できませんでした');
+        else setError(res.error || lib.m('ui.save_failed'));
       });
     };
     var doRemove = function () {
@@ -407,24 +411,24 @@
       setError('');
       actions.remove(c.id).then(function (res) {
         setBusy(false);
-        if (!res.ok) setError(res.error || '削除できませんでした');
+        if (!res.ok) setError(res.error || lib.m('ui.comment.delete_failed'));
       });
     };
     var startEdit = function () { setText(c.body || ''); setError(''); setAsk(null); setEditing(true); };
     // A comment somebody else wrote is asked about first (whoever is signed in as
     // another name), so that it isn't changed by mistake; so is any delete.
     var others = actions && actions.author != null && c.author !== actions.author;
-    var whose = others ? '「' + c.author + '」さんが書いたコメントです(あなたは「' + actions.author + '」)。' : '';
+    var whose = others ? lib.mf('ui.comment.whose', { author: c.author, me: actions.author }) : '';
     var change = function (kind) {
       var reasons = [];
       if (others) reasons.push(whose);
       if (kind === 'delete') {
         if (props.first && props.replies > 0) {
-          reasons.push('このコメントだけが削除されます。返信 ' + props.replies + ' 件は残り、このコメントは「削除されました」の表示になります。');
+          reasons.push(lib.mf('ui.comment.delete_reason_replies', { n: String(props.replies) }));
         } else if (props.first) {
-          reasons.push('スレッドが削除されます。');
+          reasons.push(lib.m('ui.comment.delete_reason_thread'));
         } else {
-          reasons.push('この返信が削除されます。');
+          reasons.push(lib.m('ui.comment.delete_reason_reply'));
         }
       }
       if (reasons.length === 0) { startEdit(); return; }
@@ -437,8 +441,8 @@
         ${ask.reasons.map(function (r, i) { return html`<p key=${i}>${r}</p>`; })}
         <div class="diffnote-reply__buttons">
           <button type="button" class=${'diffnote-button ' + (ask.kind === 'delete' ? 'diffnote-button--danger' : 'diffnote-button--primary')} data-diffnote-warn-ok
-            onClick=${function () { if (ask.kind === 'delete') doRemove(); else startEdit(); }}>${ask.kind === 'delete' ? '削除する' : '編集する'}</button>
-          <button type="button" class="diffnote-button" data-diffnote-warn-cancel onClick=${function () { setAsk(null); }}>やめる</button>
+            onClick=${function () { if (ask.kind === 'delete') doRemove(); else startEdit(); }}>${ask.kind === 'delete' ? lib.m('ui.comment.delete_button') : lib.m('ui.comment.edit_button')}</button>
+          <button type="button" class="diffnote-button" data-diffnote-warn-cancel onClick=${function () { setAsk(null); }}>${lib.m('ui.confirm_cancel')}</button>
         </div>
       </div>`}
       ${editing
@@ -451,16 +455,16 @@
               }}></textarea>
             ${attach.note}
             <div class="diffnote-reply__buttons">
-              <button type="submit" class="diffnote-button diffnote-button--primary" disabled=${busy}>保存</button>
-              <button type="button" class="diffnote-button" onClick=${function () { setEditing(false); }}>キャンセル</button>
+              <button type="submit" class="diffnote-button diffnote-button--primary" disabled=${busy}>${lib.m('ui.save_button')}</button>
+              <button type="button" class="diffnote-button" onClick=${function () { setEditing(false); }}>${lib.m('ui.cancel_button')}</button>
             </div>
             ${error && html`<p class="diffnote-error">${error}</p>`}
           </form>`
         : c.deleted
-          ? html`<p class="diffnote-comment__deleted" data-diffnote-deleted>このコメントは削除されました</p>`
+          ? html`<p class="diffnote-comment__deleted" data-diffnote-deleted>${lib.m('ui.comment.deleted_notice')}</p>`
           : html`<div class="diffnote-comment__body" ref=${body} onMouseUp=${function () { setTimeout(look, 0); }} onKeyUp=${look}>${markdown(c.doc, links)}</div>${error && html`<p class="diffnote-error">${error}</p>`}<${Reactions} comment=${c} actions=${actions} />`}
       ${quote && html`<button type="button" class="diffnote-quote-button" data-diffnote-quote-selection style=${'top:' + quote.top + 'px;left:' + quote.left + 'px'}
-        onMouseDown=${function (e) { e.preventDefault(); }} onClick=${function () { quoteIt(quote.text); }}>❝ 引用して返信</button>`}
+        onMouseDown=${function (e) { e.preventDefault(); }} onClick=${function () { quoteIt(quote.text); }}>${lib.m('ui.comment.quote_button')}</button>`}
     </article>`;
   }
 
@@ -483,15 +487,15 @@
       };
     }, [open]);
     return html`<span class="diffnote-comment__menu" ref=${box}>
-      <button type="button" class="diffnote-comment__more" data-diffnote-comment-menu aria-label="コメントの操作" aria-haspopup="true" aria-expanded=${open}
+      <button type="button" class="diffnote-comment__more" data-diffnote-comment-menu aria-label=${lib.m('ui.comment.menu_label')} aria-haspopup="true" aria-expanded=${open}
         onClick=${function () { setOpen(!open); }}>⋮</button>
       <span class="diffnote-comment__panel" hidden=${!open}>
         <button type="button" class="diffnote-comment__item" data-diffnote-quote
-          onClick=${function () { setOpen(false); props.onQuote(); }}>引用して返信</button>
+          onClick=${function () { setOpen(false); props.onQuote(); }}>${lib.m('ui.comment.menu_quote')}</button>
         ${props.canChange && html`<button type="button" class="diffnote-comment__item" data-diffnote-edit disabled=${props.busy}
-          onClick=${function () { setOpen(false); props.onEdit(); }}>編集</button>
+          onClick=${function () { setOpen(false); props.onEdit(); }}>${lib.m('ui.comment.menu_edit')}</button>
         <button type="button" class="diffnote-comment__item diffnote-comment__item--danger" data-diffnote-delete disabled=${props.busy}
-          onClick=${function () { setOpen(false); props.onDelete(); }}>削除</button>`}
+          onClick=${function () { setOpen(false); props.onDelete(); }}>${lib.m('ui.comment.menu_delete')}</button>`}
       </span>
     </span>`;
   }
@@ -512,8 +516,8 @@
       open=${!t.resolved}
     >
       <summary>
-        ${color && html`<span class="diffnote-thread__swatch" style=${'background:' + color}></span>`}${t.resolved ? '解決済み' : '未解決'}${loc && html` <span class="diffnote-thread__where">${loc}</span>`}${absent && ABSENCE[absent.absence]}${loc &&
-        html`<button type="button" class="diffnote-copy" data-diffnote-copy=${loc + '@' + (props.rev + 1)} title="ファイルパスと行(とリビジョン)のリンクをコピー">コピー</button>`}
+        ${color && html`<span class="diffnote-thread__swatch" style=${'background:' + color}></span>`}${t.resolved ? lib.m('ui.thread.resolved') : lib.m('ui.thread.unresolved')}${loc && html` <span class="diffnote-thread__where">${loc}</span>`}${absent && lib.m('ui.absence.' + absent.absence)}${loc &&
+        html`<button type="button" class="diffnote-copy" data-diffnote-copy=${loc + '@' + (props.rev + 1)} title=${lib.m('ui.copy.location_title')}>${lib.m('ui.copy_button')}</button>`}
       </summary>
       ${absent && absent.was.length > 0 && html`<pre class="diffnote-deleted__snippet">${absent.was.join('\n') + '\n'}</pre>`}
       ${t.comments.map(function (c, i) {
@@ -536,19 +540,19 @@
     return html`<div>
       <form class="diffnote-compose" data-diffnote-scope=${props.scope} style=${c.pending ? 'display:none' : undefined}
         onSubmit=${function (e) { e.preventDefault(); send(); }}>
-        <div class="diffnote-compose__head"><div class="diffnote-compose__where">${props.where}</div>${props.copy && html`<button type="button" class="diffnote-copy" data-diffnote-copy=${props.copy} title="この範囲へのリンク(リビジョンつき)をコピー">コピー</button>`}<span class="diffnote-attach-bar">${attach.picker(function () { return box.current; })}</span></div>
-        <textarea ref=${box} rows="3" placeholder="コメントを書く(Ctrl+Enter で送信)" value=${c.draft} ...${attach.handlers}
+        <div class="diffnote-compose__head"><div class="diffnote-compose__where">${props.where}</div>${props.copy && html`<button type="button" class="diffnote-copy" data-diffnote-copy=${props.copy} title=${lib.m('ui.copy.range_title')}>${lib.m('ui.copy_button')}</button>`}<span class="diffnote-attach-bar">${attach.picker(function () { return box.current; })}</span></div>
+        <textarea ref=${box} rows="3" placeholder=${lib.m('ui.compose.placeholder')} value=${c.draft} ...${attach.handlers}
           onInput=${function (e) { c.setDraft(e.target.value); }}
           onKeyDown=${function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }}></textarea>
         ${attach.note}
         <div class="diffnote-reply__buttons">
-          <button type="submit" class="diffnote-button diffnote-button--primary">コメントする</button>
-          <button type="button" class="diffnote-button" data-diffnote-cancel onClick=${c.close}>キャンセル</button>
+          <button type="submit" class="diffnote-button diffnote-button--primary">${lib.m('ui.compose.submit')}</button>
+          <button type="button" class="diffnote-button" data-diffnote-cancel onClick=${c.close}>${lib.m('ui.cancel_button')}</button>
         </div>
         ${c.error && html`<p class="diffnote-error">${c.error}</p>`}
       </form>
       ${c.pending && html`<article class="diffnote-comment is-pending">
-        <p class="diffnote-comment__author">保存中…</p>
+        <p class="diffnote-comment__author">${lib.m('ui.comment.saving')}</p>
         <div class="diffnote-comment__body">${c.draft}</div>
       </article>`}
     </div>`;
@@ -575,21 +579,22 @@
     // (The panel is in the page while it is closed, only not shown.)
     return html`<div class="diffnote-viewmenu" ref=${box}>
       <button type="button" class="diffnote-button" data-diffnote-view-menu aria-haspopup="true" aria-expanded=${open}
-        onClick=${function () { setOpen(!open); }}>⚙ 表示 ▾</button>
+        onClick=${function () { setOpen(!open); }}>${lib.m('ui.viewmenu.button')}</button>
       <div class="diffnote-viewmenu__panel" hidden=${!open} data-diffnote-view-panel>
-        ${v.wide && html`<div class="diffnote-layout" role="group" aria-label="レイアウト">
-          <p class="diffnote-viewmenu__head">レイアウト</p>
-          ${[['unified', '統合'], ['split', '横並び']].map(function (o) {
-            return html`<button type="button" key=${o[0]} class=${'diffnote-viewmenu__item diffnote-layout__button' + (o[0] === v.layout ? ' is-current' : '')} data-diffnote-layout=${o[0]}
-              onClick=${function () { v.setLayout(o[0]); }}>${o[1]}</button>`;
+        ${v.wide && html`<div class="diffnote-layout" role="group" aria-label=${lib.m('ui.viewmenu.layout_label')}>
+          <p class="diffnote-viewmenu__head">${lib.m('ui.viewmenu.layout_label')}</p>
+          ${['unified', 'split'].map(function (kind) {
+            var label = kind === 'unified' ? lib.m('ui.viewmenu.layout_unified') : lib.m('ui.viewmenu.layout_split');
+            return html`<button type="button" key=${kind} class=${'diffnote-viewmenu__item diffnote-layout__button' + (kind === v.layout ? ' is-current' : '')} data-diffnote-layout=${kind}
+              onClick=${function () { v.setLayout(kind); }}>${label}</button>`;
           })}
           <hr />
         </div>`}
-        <label class=${'diffnote-viewmenu__item' + (v.ignoreSpace ? ' is-current' : '')} title="行の中の空白だけが違う変更を、変更なしとして表示します">
-          <input type="checkbox" data-diffnote-ignore-space checked=${v.ignoreSpace} onChange=${function (e) { v.toggleSpace(e.target.checked); }} />空白の違いを無視
+        <label class=${'diffnote-viewmenu__item' + (v.ignoreSpace ? ' is-current' : '')} title=${lib.m('ui.viewmenu.ignore_space_title')}>
+          <input type="checkbox" data-diffnote-ignore-space checked=${v.ignoreSpace} onChange=${function (e) { v.toggleSpace(e.target.checked); }} />${lib.m('ui.viewmenu.ignore_space_label')}
         </label>
         ${(v.resolved > 0 || v.interactive) && html`<label class=${'diffnote-viewmenu__item' + (v.hide ? ' is-current' : '')}>
-          <input type="checkbox" data-diffnote-hide-resolved checked=${v.hide} onChange=${function (e) { v.setHide(e.target.checked); }} />解決済みを隠す<span class="diffnote-toggle__count" data-diffnote-resolved-count>${'(' + v.resolved + ')'}</span>
+          <input type="checkbox" data-diffnote-hide-resolved checked=${v.hide} onChange=${function (e) { v.setHide(e.target.checked); }} />${lib.m('ui.viewmenu.hide_resolved_label')}<span class="diffnote-toggle__count" data-diffnote-resolved-count>${'(' + v.resolved + ')'}</span>
         </label>`}
       </div>
     </div>`;
@@ -603,20 +608,23 @@
     var initial = Array.from(name.trim())[0] || '?';
     return html`<div class="diffnote-user" data-diffnote-user>
       <span class="diffnote-user__avatar" aria-hidden="true">${initial.toUpperCase()}</span>
-      <button type="button" class="diffnote-user__button" data-diffnote-user-settings title="ユーザー設定(作者名など)" aria-haspopup="dialog"
+      <button type="button" class="diffnote-user__button" data-diffnote-user-settings title=${lib.m('ui.user.settings_title')} aria-haspopup="dialog"
         aria-pressed=${props.open} onClick=${props.onToggle}><strong data-diffnote-author>${name}</strong><span class="diffnote-user__icon" aria-hidden="true">⚙</span></button>
     </div>`;
   }
 
   // The left-hand nav of the settings screen: which of its sections is shown.
-  var SETTINGS_SECTIONS = [['general', '全般'], ['settings', '設定'], ['user', 'ユーザー設定']];
+  var SETTINGS_SECTIONS = ['general', 'settings', 'user'];
+  function sectionLabel(key) {
+    return lib.m('ui.settings.' + key + '_tab');
+  }
   function SettingsNav(props) {
-    return html`<nav class="diffnote-settings-nav" aria-label="設定">
+    return html`<nav class="diffnote-settings-nav" aria-label=${lib.m('ui.settings.nav_label')}>
       <ul>
-        ${SETTINGS_SECTIONS.map(function (s) {
-          return html`<li key=${s[0]}><button type="button" class=${'diffnote-settings-nav__item' + (props.current === s[0] ? ' is-current' : '')}
-            aria-current=${props.current === s[0] ? 'page' : undefined} data-diffnote-settings-nav=${s[0]}
-            onClick=${function () { props.onSelect(s[0]); }}>${s[1]}</button></li>`;
+        ${SETTINGS_SECTIONS.map(function (key) {
+          return html`<li key=${key}><button type="button" class=${'diffnote-settings-nav__item' + (props.current === key ? ' is-current' : '')}
+            aria-current=${props.current === key ? 'page' : undefined} data-diffnote-settings-nav=${key}
+            onClick=${function () { props.onSelect(key); }}>${sectionLabel(key)}</button></li>`;
         })}
       </ul>
     </nav>`;
@@ -629,27 +637,27 @@
     var bundle = model.bundle;
     var row = function (label, value) { return html`<div><dt>${label}</dt><dd>${value}</dd></div>`; };
     return html`<div data-diffnote-general-pane>
-      <h2>全般</h2>
+      <h2>${lib.m('ui.settings.general_heading')}</h2>
       ${model.refreshable && html`<div class="diffnote-settings__action">
         <button type="button" class=${'diffnote-button' + (props.pending ? ' diffnote-button--primary' : '')} data-diffnote-pull
-          disabled=${!!(props.note && props.note.busy)} onClick=${props.onPull}>最新を取り込む</button>
-        <p class="diffnote-settings__action-note">起動したあとに増えたコミットなど、対象の新しい変更を、新しいリビジョンとして取り込み、それを表示します。</p>
+          disabled=${!!(props.note && props.note.busy)} onClick=${props.onPull}>${lib.m('ui.settings.pull_button')}</button>
+        <p class="diffnote-settings__action-note">${lib.m('ui.settings.pull_note')}</p>
         ${props.note && html`<p class=${'diffnote-pull__note' + (props.note.failed ? ' is-failed' : '')} data-diffnote-pull-note role="status">${props.note.text}</p>`}
       </div>`}
       <div class="diffnote-settings__action">
-        <a class="diffnote-button" data-diffnote-download href="/download">ダウンロード</a>
-        <p class="diffnote-settings__action-note">今のバンドル(.diffnote)を、そのままファイルとして保存します。</p>
+        <a class="diffnote-button" data-diffnote-download href="/download">${lib.m('ui.settings.download_button')}</a>
+        <p class="diffnote-settings__action-note">${lib.m('ui.settings.download_note')}</p>
       </div>
       <div class="diffnote-settings__action">
-        <a class="diffnote-button" data-diffnote-export href="/export">エクスポート</a>
-        <p class="diffnote-settings__action-note">今の内容を、誰でも開ける HTML として保存します。</p>
+        <a class="diffnote-button" data-diffnote-export href="/export">${lib.m('ui.settings.export_button')}</a>
+        <p class="diffnote-settings__action-note">${lib.m('ui.settings.export_note')}</p>
       </div>
       ${bundle && html`<dl class="diffnote-settings__info" data-diffnote-bundle-info>
-        <h3>このバンドルの内容(読み取りのみ)</h3>
-        ${row('大きさ', lib.formatSize(bundle.size))}
-        ${row('リビジョン', bundle.revisions + ' 件')}
-        ${row('画像', bundle.images.count + ' 件(' + lib.formatSize(bundle.images.bytes) + ')')}
-        ${row('ほかの添付', bundle.files.count + ' 件(' + lib.formatSize(bundle.files.bytes) + ')')}
+        <h3>${lib.m('ui.settings.bundle_info_heading')}</h3>
+        ${row(lib.m('ui.settings.bundle_size_label'), lib.formatSize(bundle.size))}
+        ${row(lib.m('ui.settings.bundle_revisions_label'), lib.mf('ui.settings.bundle_revisions_value', { n: String(bundle.revisions) }))}
+        ${row(lib.m('ui.settings.bundle_images_label'), lib.mf('ui.settings.bundle_count_with_size', { count: String(bundle.images.count), size: lib.formatSize(bundle.images.bytes) }))}
+        ${row(lib.m('ui.settings.bundle_files_label'), lib.mf('ui.settings.bundle_count_with_size', { count: String(bundle.files.count), size: lib.formatSize(bundle.files.bytes) }))}
       </dl>`}
     </div>`;
   }
@@ -687,38 +695,38 @@
       e.preventDefault();
       if (busy) return;
       var bytes = lib.mbToBytes(limit);
-      if (bytes == null) { setError('添付の上限は、数字(MB)で入力してください'); return; }
-      if (bytes < 1024 || bytes > 100 * 1024 * 1024) { setError('添付の上限は、1 KB から 100 MB の間で指定してください'); return; }
+      if (bytes == null) { setError(lib.m('ui.settings.attachment_limit_not_number')); return; }
+      if (bytes < 1024 || bytes > 100 * 1024 * 1024) { setError(lib.m('ui.settings.attachment_limit_out_of_range')); return; }
       setBusy(true);
       setError('');
       props.save({ title: title, ignore_whitespace: ignore, attachment_limit: bytes }).then(function (res) {
         setBusy(false);
         if (res.ok) setSaved(true);
-        else setError(res.error || '保存できませんでした');
+        else setError(res.error || lib.m('ui.save_failed'));
       });
     };
     return html`<form class="diffnote-settings__form" data-diffnote-settings-pane noValidate onSubmit=${submit}>
-      <h2>設定</h2>
-      <p class="diffnote-settings__note">ここでの設定は、バンドルに保存され、このレビューを開く人みんなに、同じに働きます(作者の名前は、「ユーザー設定」で変えられます。このマシンのすべてのレビューに使われます)。</p>
+      <h2>${lib.m('ui.settings.form_heading')}</h2>
+      <p class="diffnote-settings__note">${lib.m('ui.settings.form_note')}</p>
       <label class="diffnote-field">
-        <span>タイトル</span>
-        <input ref=${first} type="text" maxlength="200" data-diffnote-setting-title value=${title} placeholder="空にすると、既定の見出しに戻ります"
+        <span>${lib.m('ui.settings.title_label')}</span>
+        <input ref=${first} type="text" maxlength="200" data-diffnote-setting-title value=${title} placeholder=${lib.m('ui.settings.title_placeholder')}
           onInput=${function (e) { touched(setTitle)(e.target.value); }} />
       </label>
       <label class="diffnote-field diffnote-field--check">
         <input type="checkbox" data-diffnote-setting-ignore checked=${ignore} onChange=${function (e) { touched(setIgnore)(e.target.checked); }} />
-        <span>開いたとき、空白の違いを無視して表示する<small>(初期状態です。画面の「表示」メニューでの切り替えは、保存されません)</small></span>
+        <span>${lib.m('ui.settings.ignore_ws_label')}<small>${lib.m('ui.settings.ignore_ws_hint')}</small></span>
       </label>
       <label class="diffnote-field">
-        <span>添付できるファイルの大きさの上限(1 つあたり)</span>
+        <span>${lib.m('ui.settings.attach_limit_label')}</span>
         <span class="diffnote-field__unit"><input type="number" step="any" data-diffnote-setting-limit value=${limit}
           onInput=${function (e) { touched(setLimit)(e.target.value); }} /> MB</span>
       </label>
       ${error && html`<p class="diffnote-error" role="alert">${error}</p>`}
       <div class="diffnote-reply__buttons">
-        <button type="submit" class="diffnote-button diffnote-button--primary" data-diffnote-settings-save disabled=${busy || !dirty}>保存</button>
-        ${saved && html`<span class="diffnote-settings__saved" data-diffnote-settings-saved role="status">保存しました</span>`}
-        ${dirty && !saved && html`<span class="diffnote-settings__dirty" data-diffnote-settings-dirty>保存していない変更があります(戻ると、失われます)</span>`}
+        <button type="submit" class="diffnote-button diffnote-button--primary" data-diffnote-settings-save disabled=${busy || !dirty}>${lib.m('ui.save_button')}</button>
+        ${saved && html`<span class="diffnote-settings__saved" data-diffnote-settings-saved role="status">${lib.m('ui.settings.saved_notice')}</span>`}
+        ${dirty && !saved && html`<span class="diffnote-settings__dirty" data-diffnote-settings-dirty>${lib.m('ui.settings.dirty_notice')}</span>`}
       </div>
     </form>`;
   }
@@ -753,22 +761,22 @@
       props.save(author).then(function (res) {
         setBusy(false);
         if (res.ok) setSaved(true);
-        else setError(res.error || '保存できませんでした');
+        else setError(res.error || lib.m('ui.save_failed'));
       });
     };
     return html`<form class="diffnote-settings__form" data-diffnote-settings-pane noValidate onSubmit=${submit}>
-      <h2>ユーザー設定</h2>
-      <p class="diffnote-settings__note">ここでの設定は、このマシンの、このユーザーに保存されます。このレビューだけでなく、これから開くすべての diffnote のレビューに使われます。</p>
+      <h2>${lib.m('ui.user_settings.heading')}</h2>
+      <p class="diffnote-settings__note">${lib.m('ui.user_settings.note')}</p>
       <label class="diffnote-field">
-        <span>作者名</span>
-        <input ref=${first} type="text" maxlength="100" data-diffnote-user-setting-author value=${author} placeholder="空にすると、git の設定などから決まります"
+        <span>${lib.m('ui.user_settings.author_label')}</span>
+        <input ref=${first} type="text" maxlength="100" data-diffnote-user-setting-author value=${author} placeholder=${lib.m('ui.user_settings.author_placeholder')}
           onInput=${function (e) { touched(e.target.value); }} />
       </label>
       ${error && html`<p class="diffnote-error" role="alert">${error}</p>`}
       <div class="diffnote-reply__buttons">
-        <button type="submit" class="diffnote-button diffnote-button--primary" data-diffnote-user-settings-save disabled=${busy || !dirty}>保存</button>
-        ${saved && html`<span class="diffnote-settings__saved" data-diffnote-user-settings-saved role="status">保存しました</span>`}
-        ${dirty && !saved && html`<span class="diffnote-settings__dirty" data-diffnote-user-settings-dirty>保存していない変更があります(戻ると、失われます)</span>`}
+        <button type="submit" class="diffnote-button diffnote-button--primary" data-diffnote-user-settings-save disabled=${busy || !dirty}>${lib.m('ui.save_button')}</button>
+        ${saved && html`<span class="diffnote-settings__saved" data-diffnote-user-settings-saved role="status">${lib.m('ui.settings.saved_notice')}</span>`}
+        ${dirty && !saved && html`<span class="diffnote-settings__dirty" data-diffnote-user-settings-dirty>${lib.m('ui.settings.dirty_notice')}</span>`}
       </div>
     </form>`;
   }
@@ -783,7 +791,7 @@
       return function () { document.removeEventListener('keydown', key); };
     }, []);
     return html`<main class="diffnote-settings" data-diffnote-settings-page data-diffnote-settings-section=${props.section}>
-      <p class="diffnote-settings__top"><button type="button" class="diffnote-button" data-diffnote-settings-back onClick=${props.onClose}>← レビューに戻る</button></p>
+      <p class="diffnote-settings__top"><button type="button" class="diffnote-button" data-diffnote-settings-back onClick=${props.onClose}>${lib.m('ui.settings.back_button')}</button></p>
       <div class="diffnote-settings__layout">
         <${SettingsNav} current=${props.section} onSelect=${props.onSelect} />
         <div class="diffnote-settings__pane">
@@ -834,19 +842,19 @@
     var quit = function (discard) {
       D.api.post('/api/shutdown', discard ? { discard: true } : undefined).then(function (res) {
         if (res.ok) stopped(res.summary);
-        else setError(res.error || '終了できませんでした');
+        else setError(res.error || lib.m('ui.quit.shutdown_failed'));
       });
     };
     return html`<span class="diffnote-quit" ref=${box}>
-      <button type="button" class="diffnote-quit__main" data-diffnote-shutdown title="今の内容で保存して、サーバーを止めます"
-        onClick=${function () { quit(false); }}>終了</button><button type="button" class="diffnote-quit__more" data-diffnote-quit-more aria-label="ほかの終了のしかた" aria-expanded=${open}
+      <button type="button" class="diffnote-quit__main" data-diffnote-shutdown title=${lib.m('ui.quit.main_title')}
+        onClick=${function () { quit(false); }}>${lib.m('ui.quit.main_button')}</button><button type="button" class="diffnote-quit__more" data-diffnote-quit-more aria-label=${lib.m('ui.quit.more_label')} aria-expanded=${open}
         onClick=${function () { setOpen(!open); setSure(false); }}>▾</button>
       ${open && html`<div class="diffnote-quit__menu" data-diffnote-quit-menu>
         ${!sure
-          ? html`<button type="button" class="diffnote-quit__item" data-diffnote-discard onClick=${function () { setSure(true); }}>保存せずに終了…</button>`
-          : html`<p>この起動で行ったことを、すべて取り消して終了します(取り込んだ差分やタイトルも含みます)。バンドルは起動する前の状態に戻り、この起動で作ったバンドルなら、削除されます。</p>
-            <button type="button" class="diffnote-quit__danger" data-diffnote-discard-confirm onClick=${function () { quit(true); }}>破棄して終了</button>
-            <button type="button" class="diffnote-quit__cancel" onClick=${function () { setSure(false); setOpen(false); }}>やめる</button>`}
+          ? html`<button type="button" class="diffnote-quit__item" data-diffnote-discard onClick=${function () { setSure(true); }}>${lib.m('ui.quit.discard_button')}</button>`
+          : html`<p>${lib.m('ui.quit.confirm_note')}</p>
+            <button type="button" class="diffnote-quit__danger" data-diffnote-discard-confirm onClick=${function () { quit(true); }}>${lib.m('ui.quit.discard_confirm_button')}</button>
+            <button type="button" class="diffnote-quit__cancel" onClick=${function () { setSure(false); setOpen(false); }}>${lib.m('ui.confirm_cancel')}</button>`}
         ${error && html`<p class="diffnote-error">${error}</p>`}
       </div>`}
     </span>`;
@@ -864,13 +872,13 @@
     var card = make('div', 'diffnote-farewell__card');
     var discarded = !!(summary && summary.discarded);
     card.appendChild(make('div', 'diffnote-farewell__mark', discarded ? '↩' : '✓'));
-    card.appendChild(make('h1', 'diffnote-farewell__title', discarded ? '保存せずに終了しました' : '終了しました'));
+    card.appendChild(make('h1', 'diffnote-farewell__title', discarded ? lib.m('ui.farewell.discarded_title') : lib.m('ui.farewell.done_title')));
     if (discarded) {
       var kept = make('dl', 'diffnote-farewell__list');
-      kept.appendChild(make('dt', '', '今回の変更'));
-      kept.appendChild(make('dd', '', '破棄しました'));
-      kept.appendChild(make('dt', '', '保存先'));
-      kept.appendChild(make('dd', '', summary.path + (summary.removed ? '(この起動で作ったので、削除しました)' : '(起動する前の内容のままです)')));
+      kept.appendChild(make('dt', '', lib.m('ui.farewell.changes_label')));
+      kept.appendChild(make('dd', '', lib.m('ui.farewell.discarded_value')));
+      kept.appendChild(make('dt', '', lib.m('ui.farewell.path_label')));
+      kept.appendChild(make('dd', '', summary.path + (summary.removed ? lib.m('ui.farewell.removed_suffix') : lib.m('ui.farewell.kept_suffix'))));
       card.appendChild(kept);
     } else if (summary) {
       var list = make('dl', 'diffnote-farewell__list');
@@ -878,12 +886,14 @@
         list.appendChild(make('dt', '', label));
         list.appendChild(make('dd', '', value));
       };
-      row('今回の変更', summary.changes);
-      row('保存先', summary.path);
-      if (summary.threads != null) row('いまの内容', 'スレッド ' + summary.threads + ' 件・コメント ' + summary.comments + ' 件');
+      row(lib.m('ui.farewell.changes_label'), summary.changes);
+      row(lib.m('ui.farewell.path_label'), summary.path);
+      if (summary.threads != null) {
+        row(lib.m('ui.farewell.summary_label'), lib.mf('ui.farewell.summary_value', { threads: String(summary.threads), comments: String(summary.comments) }));
+      }
       card.appendChild(list);
     }
-    card.appendChild(make('p', 'diffnote-farewell__note', 'このタブは閉じてかまいません。'));
+    card.appendChild(make('p', 'diffnote-farewell__note', lib.m('ui.farewell.note')));
     var page = make('div', 'diffnote-farewell');
     page.appendChild(card);
     document.body.replaceChildren(page);
@@ -902,8 +912,8 @@
         // `src/a.ts:10-13` in the text goes to those lines.
         return lib.lineRefs(n, links.has, links.revisions).map(function (piece, j) {
           if (typeof piece === 'string') return piece;
-          var where = links.current === (piece.rev == null ? links.current : piece.rev - 1) ? 'この行へ移ります' : 'リビジョン #' + piece.rev + ' の行へ移ります';
-          if (piece.rev != null && piece.rev < links.revisions) where += '(最新のリビジョンではありません)';
+          var where = links.current === (piece.rev == null ? links.current : piece.rev - 1) ? lib.m('ui.link.here') : lib.mf('ui.link.revision', { rev: String(piece.rev) });
+          if (piece.rev != null && piece.rev < links.revisions) where += lib.m('ui.link.not_latest');
           return html`<a key=${j} href="#" class="diffnote-lineref" data-diffnote-lineref=${piece.path + ':' + (piece.side === 'old' ? 'L' : '') + piece.start + '-' + piece.end} title=${where}
             onClick=${function (e) { e.preventDefault(); links.go(piece); }}>${piece.text}</a>`;
         });
@@ -932,7 +942,7 @@
         case 'image': {
           // An image of the review, drawn only as an <img>: nothing else is loaded.
           var src = links && links.image ? links.image(n.id) : '';
-          return src ? h('img', { key: i, class: 'diffnote-image', src: src, alt: n.alt || '' }) : h('span', { key: i }, n.alt || '[画像]');
+          return src ? h('img', { key: i, class: 'diffnote-image', src: src, alt: n.alt || '' }) : h('span', { key: i }, n.alt || lib.m('ui.image_alt_fallback'));
         }
         case 'file': {
           // Another file of the review: only ever to be saved.
@@ -976,12 +986,12 @@
     // Can they be had? Carried by the page (an export), or asked of the server.
     var can = m.x && (m.embedded || !!D.api);
     if (!can) {
-      return html`<div class="diffnote-expand"><span class="diffnote-expand__label">${m.left} 行省略</span>${m.x && !m.embedded && !D.api && html`<span class="diffnote-expand__note">(この HTML には含まれていません)</span>`}</div>`;
+      return html`<div class="diffnote-expand"><span class="diffnote-expand__label">${lib.mf('ui.expand.left_label', { n: String(m.left) })}</span>${m.x && !m.embedded && !D.api && html`<span class="diffnote-expand__note">${lib.m('ui.expand.not_embedded_note')}</span>`}</div>`;
     }
     return html`<div class="diffnote-expand">
-      ${m.left > step && m.prev && html`<button type="button" class="diffnote-expand__button" data-diffnote-expand="top" disabled=${busy} onClick=${function () { go('top'); }}>↓ ${step} 行</button>`}
-      ${m.left > step && m.next && html`<button type="button" class="diffnote-expand__button" data-diffnote-expand="bottom" disabled=${busy} onClick=${function () { go('bottom'); }}>↑ ${step} 行</button>`}
-      <button type="button" class="diffnote-expand__button diffnote-expand__all" data-diffnote-expand="all" disabled=${busy} onClick=${function () { go('all'); }}>${m.left} 行をすべて表示</button>
+      ${m.left > step && m.prev && html`<button type="button" class="diffnote-expand__button" data-diffnote-expand="top" disabled=${busy} onClick=${function () { go('top'); }}>${lib.mf('ui.expand.up_button', { n: String(step) })}</button>`}
+      ${m.left > step && m.next && html`<button type="button" class="diffnote-expand__button" data-diffnote-expand="bottom" disabled=${busy} onClick=${function () { go('bottom'); }}>${lib.mf('ui.expand.down_button', { n: String(step) })}</button>`}
+      <button type="button" class="diffnote-expand__button diffnote-expand__all" data-diffnote-expand="all" disabled=${busy} onClick=${function () { go('all'); }}>${lib.mf('ui.expand.all_button', { n: String(m.left) })}</button>
     </div>`;
   }
 
@@ -1232,40 +1242,43 @@
     return html`<section class=${'diffnote-file' + (kind === 'added' || kind === 'deleted' ? ' diffnote-file--' + kind : '')} id=${'r' + ctx.rev + '-file-' + htmlId(file.path)} data-diffnote-file=${file.path}>
       <details ref=${details} open=${startsOpen} onToggle=${function (e) { if (e.target.open && !opened) setOpened(true); }}>
         <summary>
-          ${viewed && html`<button type="button" class="diffnote-mini diffnote-mini--check" data-diffnote-viewed=${file.path} title="確認済みにして、表示をたたみます(左の一覧から戻せます)"
-            onClick=${function (e) { e.preventDefault(); e.stopPropagation(); viewed.toggle(file); }}>✓ 確認済み</button>`}
-          ${file.status !== 'binary' && stat.added + stat.removed > 0 && html`<span class="diffnote-stat" data-diffnote-stat title=${'追加 ' + stat.added + ' 行、削除 ' + stat.removed + ' 行'}>
+          ${viewed && html`<button type="button" class="diffnote-mini diffnote-mini--check" data-diffnote-viewed=${file.path} title=${lib.m('ui.file.viewed_title')}
+            onClick=${function (e) { e.preventDefault(); e.stopPropagation(); viewed.toggle(file); }}>${lib.m('ui.file.viewed_button')}</button>`}
+          ${file.status !== 'binary' && stat.added + stat.removed > 0 && html`<span class="diffnote-stat" data-diffnote-stat title=${lib.mf('ui.file.stat_title', { added: String(stat.added), removed: String(stat.removed) })}>
             <span class="diffnote-stat__add">+${stat.added}</span> <span class="diffnote-stat__del">−${stat.removed}</span>
             <span class="diffnote-stat__blocks" aria-hidden="true">${lib.diffBlocks(stat.added, stat.removed).map(function (k, i) { return html`<i key=${i} class=${'is-' + k}></i>`; })}</span>
           </span>`}
-          <h2>${file.path}${file.status === 'binary' ? ' (バイナリ' + (BINARY_CHANGES[file.change] ? '・' + BINARY_CHANGES[file.change] : '') + ')' : ''}${file.status === 'renamed' ? ' (名前変更)' : ''}</h2>
-          <button type="button" class="diffnote-copy" data-diffnote-copy=${file.path} title="パスをコピー">コピー</button>
-          ${file.opened && files && html`<button type="button" class="diffnote-mini" data-diffnote-close title="この表示を閉じる(記録には残りません)"
+          <h2>${file.path}${file.status === 'binary' ? (function () {
+            var change = lib.messages['ui.binary_change.' + file.change];
+            return change ? lib.mf('ui.file.binary_suffix_named', { change: change }) : lib.m('ui.file.binary_suffix_plain');
+          })() : ''}${file.status === 'renamed' ? lib.m('ui.file.renamed_suffix') : ''}</h2>
+          <button type="button" class="diffnote-copy" data-diffnote-copy=${file.path} title=${lib.m('ui.copy.path_title')}>${lib.m('ui.copy_button')}</button>
+          ${file.opened && files && html`<button type="button" class="diffnote-mini" data-diffnote-close title=${lib.m('ui.file.close_title')}
             onClick=${function (e) {
               e.preventDefault();
               e.stopPropagation();
               if (compose && compose.scope && compose.scope.path === file.path) compose.close();
               if (compose && compose.sel && compose.sel.path === file.path) compose.close();
               files.close(ctx.rev, file.path);
-            }}>閉じる</button>`}
-          ${compose && (file.opened || file.status !== 'context' || mine.length > 0) && html`<button type="button" class="diffnote-mini" data-diffnote-add="file" title="このファイルにコメントする"
+            }}>${lib.m('ui.file.close_button')}</button>`}
+          ${compose && (file.opened || file.status !== 'context' || mine.length > 0) && html`<button type="button" class="diffnote-mini" data-diffnote-add="file" title=${lib.m('ui.file.add_comment_title')}
             onClick=${function (e) {
               e.preventDefault();
               e.stopPropagation();
               details.current.open = true;
               setOpened(true);
               compose.openScope('file', ctx.rev, file.path);
-            }}>コメント</button>`}
+            }}>${lib.m('ui.file.add_comment_button')}</button>`}
         </summary>
-        ${composing && html`<div class="diffnote-compose-wrap"><${Composer} scope="file" where=${file.path + ' へのコメント'} request=${{ scope: 'file', revision: ctx.rev, file: file.path }} /></div>`}
+        ${composing && html`<div class="diffnote-compose-wrap"><${Composer} scope="file" where=${lib.mf('ui.compose.file_where', { path: file.path })} request=${{ scope: 'file', revision: ctx.rev, file: file.path }} /></div>`}
         ${fileThreads.map(function (id) { return html`<${Card} key=${id} rev=${ctx.rev} thread=${ctx.byId[id]} placement=${ctx.placements[id]} />`; })}
-        ${missing && html`<p class="diffnote-file__missing">このファイルは指定したdiffに含まれていません(コメント作成時点と異なるdiffを指定している可能性があります)。</p>`}
-        ${file.status === 'binary' && html`<p class="diffnote-file__binary" data-diffnote-binary>バイナリファイルのため、内容は表示しません。</p>`}
+        ${missing && html`<p class="diffnote-file__missing">${lib.m('ui.file.missing_note')}</p>`}
+        ${file.status === 'binary' && html`<p class="diffnote-file__binary" data-diffnote-binary>${lib.m('ui.file.binary_note')}</p>`}
         ${opened && file.hunks.length > 0 && (ctx.layout === 'split' ? html`<${SplitTable} file=${view} ctx=${ctx} expand=${expand} />` : html`<${DiffTable} file=${view} ctx=${ctx} expand=${expand} />`)}
         ${opened && file.opened && file.next && html`<div class="diffnote-more-row"><button type="button" class="diffnote-button" data-diffnote-more
-          onClick=${function (e) { e.target.disabled = true; files.more(ctx.rev, file.path).then(function () { e.target.disabled = false; }); }}>続きを表示(${file.next}〜 / 全 ${file.total} 行)</button></div>`}
+          onClick=${function (e) { e.target.disabled = true; files.more(ctx.rev, file.path).then(function () { e.target.disabled = false; }); }}>${lib.mf('ui.file.more_button', { from: String(file.next), total: String(file.total) })}</button></div>`}
         ${unplaced.length > 0 && html`<section class="diffnote-outdated">
-          <h3>未配置のコメント</h3>
+          <h3>${lib.m('ui.thread.unplaced_heading')}</h3>
           ${unplaced.map(function (id) {
             var p = ctx.placements[id];
             return html`<div class="diffnote-outdated__entry" key=${id}>
@@ -1285,7 +1298,7 @@
     // The files of the diff (not those opened to look at) are what is counted.
     var files = ctx.diffFiles;
     return html`<details class="diffnote-side" open>
-      <summary>ファイル${viewed && files.length > 0 && html` <span class="diffnote-badge diffnote-badge--viewed" data-diffnote-viewed-count title="確認済みにしたファイル / ファイル数">✓ ${files.filter(viewed.is).length}/${files.length}</span>`}</summary>
+      <summary>${lib.m('ui.tree.files_summary')}${viewed && files.length > 0 && html` <span class="diffnote-badge diffnote-badge--viewed" data-diffnote-viewed-count title=${lib.m('ui.tree.viewed_count_title')}>✓ ${files.filter(viewed.is).length}/${files.length}</span>`}</summary>
       <nav class="diffnote-filelist"><ul>
         ${ctx.revision.files.map(function (f) {
           var done = !!(viewed && viewed.is(f));
@@ -1298,7 +1311,7 @@
           var open = ids.filter(function (id) { return !ctx.byId[id].resolved; }).length;
           return html`<li key=${f.path} class=${done ? 'is-viewed' : ''}>
             ${viewed && html`<button type="button" class="diffnote-check" data-diffnote-check=${f.path} aria-pressed=${done}
-              title=${done ? '確認済みを解除して、表示に戻します' : '確認済みにします'} onClick=${function () { viewed.toggle(f); }}>${done ? '✓' : ''}</button>`}
+              title=${done ? lib.m('ui.file.unmark_viewed_title') : lib.m('ui.file.mark_viewed_title')} onClick=${function () { viewed.toggle(f); }}>${done ? '✓' : ''}</button>`}
             <a href=${'#r' + ctx.rev + '-file-' + htmlId(f.path)} data-diffnote-file-link=${f.path}
               onClick=${function (e) {
                 // A file that was looked at comes back; one that was folded opens; and it is marked.
@@ -1306,7 +1319,7 @@
                 links.go({ kind: 'file', path: f.path });
               }}>${f.path}</a>
             ${done
-              ? open > 0 && html`<span class="diffnote-badge" data-diffnote-open-count title=${'未解決のスレッドが ' + open + ' 件あります'}>${open}</span>`
+              ? open > 0 && html`<span class="diffnote-badge" data-diffnote-open-count title=${lib.mf('ui.thread.open_count_title', { n: String(open) })}>${open}</span>`
               : n > 0 && html` <span class="diffnote-badge">${n}</span>`}
           </li>`;
         })}
@@ -1319,16 +1332,16 @@
     var links = useContext(LinksContext);
     var open = ctx.model.threads.filter(function (t) { return !t.resolved; }).length;
     return html`<details class="diffnote-side" open>
-      <summary>スレッド <span class="diffnote-badge" title="未解決 / 全部">${open} / ${ctx.model.threads.length}</span></summary>
+      <summary>${lib.m('ui.thread.summary')} <span class="diffnote-badge" title=${lib.m('ui.thread.summary_title')}>${open} / ${ctx.model.threads.length}</span></summary>
       <nav class="diffnote-threadlist"><ol>
         ${ctx.order.map(function (id) {
           var t = ctx.byId[id];
           var p = ctx.placements[id];
           var color = p && p.kind === 'line' ? lib.color(p.color) : '#8b949e';
           return html`<li key=${id} class=${t.resolved ? 'is-resolved' : ''}>
-            <a href=${'#r' + ctx.rev + '-thread-' + id} data-diffnote-jump=${id} title=${lib.location(p) || '差分全体'}
+            <a href=${'#r' + ctx.rev + '-thread-' + id} data-diffnote-jump=${id} title=${lib.location(p) || lib.m('ui.thread.jump_title_fallback')}
               onClick=${function (e) { e.preventDefault(); links.go({ kind: 'thread', id: id }); }}>
-              <span class="diffnote-thread__swatch" style=${'background:' + color}></span><span class="diffnote-threadlist__where">${lib.shortLocation(p)}</span>${t.resolved && html`<span class="diffnote-threadlist__state">解決済み</span>`}<span class="diffnote-threadlist__preview">${lib.withShortcodes(D.emoji || [], lib.preview((t.comments.filter(function (c) { return !c.deleted; })[0] || t.comments[0]).doc)) || '(削除されました)'}</span>
+              <span class="diffnote-thread__swatch" style=${'background:' + color}></span><span class="diffnote-threadlist__where">${lib.shortLocation(p)}</span>${t.resolved && html`<span class="diffnote-threadlist__state">${lib.m('ui.thread.resolved')}</span>`}<span class="diffnote-threadlist__preview">${lib.withShortcodes(D.emoji || [], lib.preview((t.comments.filter(function (c) { return !c.deleted; })[0] || t.comments[0]).doc)) || lib.m('ui.thread.deleted_preview')}</span>
             </a>
           </li>`;
         })}
@@ -1350,8 +1363,8 @@
       });
       return function () { stale = true; };
     }, [props.rev, props.dir, props.query]);
-    if (!data) return html`<p class="diffnote-tree__empty">読み込み中…</p>`;
-    if (!data.ok) return html`<p class="diffnote-tree__empty">${data.error || '読み込めませんでした'}</p>`;
+    if (!data) return html`<p class="diffnote-tree__empty">${lib.m('ui.tree.loading')}</p>`;
+    if (!data.ok) return html`<p class="diffnote-tree__empty">${data.error || lib.m('ui.tree.load_failed')}</p>`;
     return html`<${preact.Fragment}>
       ${data.message && html`<p class="diffnote-tree__empty">${data.message}</p>`}
       ${data.entries.length > 0 && html`<ul class="diffnote-tree__list">
@@ -1363,7 +1376,7 @@
         })}
       </ul>`}
       ${data.note && html`<p class="diffnote-tree__empty">${data.note}</p>`}
-      ${data.more > 0 && html`<p class="diffnote-tree__empty">ほか ${data.more} 件(検索で絞り込んでください)</p>`}
+      ${data.more > 0 && html`<p class="diffnote-tree__empty">${lib.mf('ui.tree.more_note', { n: String(data.more) })}</p>`}
     <//>`;
   }
 
@@ -1400,12 +1413,12 @@
     }, [typed]);
     var open = function (path) {
       setError('');
-      files.open(props.rev, path).then(function (res) { if (!res.ok) setError(res.error || '開けませんでした'); });
+      files.open(props.rev, path).then(function (res) { if (!res.ok) setError(res.error || lib.m('ui.file.open_failed')); });
     };
     return html`<details class="diffnote-side diffnote-side--quiet" data-diffnote-tree onToggle=${function (e) { if (e.target === e.currentTarget && e.target.open) setShown(true); }}>
-      <summary>その他のファイル</summary>
+      <summary>${lib.m('ui.tree.others_summary')}</summary>
       <div class="diffnote-tree">
-        <input type="search" class="diffnote-tree__search" placeholder="ファイルを検索" aria-label="ファイルを検索" value=${typed}
+        <input type="search" class="diffnote-tree__search" placeholder=${lib.m('ui.tree.search_placeholder')} aria-label=${lib.m('ui.tree.search_label')} value=${typed}
           onInput=${function (e) { setTyped(e.target.value); }} />
         <div data-diffnote-tree-list>${shown && html`<${TreeList} rev=${props.rev} dir="" query=${query} onOpen=${open} />`}</div>
         ${error && html`<p class="diffnote-error">${error}</p>`}
@@ -1486,12 +1499,12 @@
       </aside>
       <div class="diffnote-viewbar">
         ${props.compose && html`<div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global"
-          onClick=${function () { props.compose.openScope('global', rev); }}>レビュー全体にコメントする</button></div>`}
+          onClick=${function () { props.compose.openScope('global', rev); }}>${lib.m('ui.compose.global_button')}</button></div>`}
         ${props.override && html`<p class="diffnote-compare-note" data-diffnote-compare-note tabindex="0" title=${props.overrideNote.tip} aria-label=${props.overrideNote.short + '。' + props.overrideNote.tip}>${props.overrideNote.short}<span class="diffnote-compare-note__icon" aria-hidden="true">⚠</span></p>`}
         <${ViewMenu} />
       </div>
       ${(globals.length > 0 || props.compose) && html`<section class="diffnote-global-comments" data-diffnote-global>
-        ${props.compose && props.compose.scope && props.compose.scope.kind === 'global' && props.compose.scope.rev === rev && html`<div class="diffnote-compose-wrap"><${Composer} scope="global" where="レビュー全体へのコメント" request=${{ scope: 'global', revision: rev }} /></div>`}
+        ${props.compose && props.compose.scope && props.compose.scope.kind === 'global' && props.compose.scope.rev === rev && html`<div class="diffnote-compose-wrap"><${Composer} scope="global" where=${lib.m('ui.compose.global_where')} request=${{ scope: 'global', revision: rev }} /></div>`}
         ${globals.map(function (id) { return html`<${Card} key=${id} rev=${rev} thread=${byId[id]} placement=${revision.placements[id]} />`; })}
       </section>`}
       ${files.map(function (f) { return html`<${File} key=${rev + ':' + f.path} file=${f} ctx=${ctx} />`; })}
@@ -1748,7 +1761,7 @@
           actions.create(Object.assign({}, request, { body: text })).then(function (res) {
             setPending(false);
             if (res.ok) close();
-            else setError(res.error || '保存できませんでした');
+            else setError(res.error || lib.m('ui.save_failed'));
           });
         },
       };
@@ -2001,9 +2014,9 @@
     var note = _n[0];
     var setNote = _n[1];
     var pull = function () {
-      setNote({ text: '取り込んでいます…', busy: true });
+      setNote({ text: lib.m('ui.topbar.pull_note_loading'), busy: true });
       review.actions.refresh().then(function (res) {
-        setNote({ text: res.ok ? res.message : (res.error || '取り込めませんでした'), failed: !res.ok });
+        setNote({ text: res.ok ? res.message : (res.error || lib.m('ui.topbar.pull_failed')), failed: !res.ok });
         // What was taken in is what to look at now.
         if (res.ok && res.added) setCurrent(res.model.revisions.length - 1);
       });
@@ -2015,7 +2028,7 @@
     if (review.actions && model.refreshable && review.pending) {
       notices.push({
         id: 'pending',
-        text: '新しいコミットがあります',
+        text: lib.m('ui.topbar.new_commits_notice'),
         onClick: function () { setScreen('general'); },
       });
     }
@@ -2050,11 +2063,11 @@
       <div class="diffnote-topbar">
         <header class="diffnote-summary">
           <h1>${review.actions
-            ? html`<button type="button" class="diffnote-title" data-diffnote-settings title="設定(タイトル、ダウンロードなど)" aria-haspopup="dialog"
-                aria-pressed=${screen === 'general' || screen === 'settings'} onClick=${function () { setScreen(screen === 'general' ? null : 'general'); }}>${model.title || DEFAULT_TITLE}<span class="diffnote-title__icon" aria-hidden="true">⚙</span></button>`
-            : model.title || DEFAULT_TITLE}</h1>
-          ${model.base && html`<p data-diffnote-base class=${against != null ? 'is-changed' : ''} title=${against != null ? 'ベースの代わりに、このリビジョンと比べて表示しています(記録は変わりません)' : 'すべてのリビジョンは、これと比べた差分です'}>ベース: ${review.actions && current > 0
-            ? html`<select class="diffnote-base__select" data-diffnote-base-select aria-label="比べる相手" value=${against == null ? '' : String(against)}
+            ? html`<button type="button" class="diffnote-title" data-diffnote-settings title=${lib.m('ui.settings.title_button')} aria-haspopup="dialog"
+                aria-pressed=${screen === 'general' || screen === 'settings'} onClick=${function () { setScreen(screen === 'general' ? null : 'general'); }}>${model.title || lib.m('html.default_title')}<span class="diffnote-title__icon" aria-hidden="true">⚙</span></button>`
+            : model.title || lib.m('html.default_title')}</h1>
+          ${model.base && html`<p data-diffnote-base class=${against != null ? 'is-changed' : ''} title=${against != null ? lib.m('ui.base.changed_title') : lib.m('ui.base.default_title')}>${lib.m('ui.base.label')}: ${review.actions && current > 0
+            ? html`<select class="diffnote-base__select" data-diffnote-base-select aria-label=${lib.m('ui.base.select_label')} value=${against == null ? '' : String(against)}
                 onChange=${function (e) { setAgainst(e.target.value === '' ? null : +e.target.value); }}>
                 <option value="">${model.base.kind === 'git' ? model.base.id : lib.formatTime(model.base.at)}</option>
                 ${model.revisions.slice(0, current).map(function (r, i) { return html`<option key=${i} value=${String(i)}>${r.label}</option>`; })}
@@ -2087,7 +2100,7 @@
             <${Revision} key=${current} model=${model} index=${current} hideResolved=${hide} layout=${layout} ignoreSpace=${ignoreSpace} compose=${compose} override=${override}
               overrideNote=${override ? {
                 short: model.revisions[against].label.replace(/ \(.*$/, '') + ' .. ' + model.revisions[current].label.replace(/ \(.*$/, ''),
-                tip: 'ベースの代わりに、選んだリビジョンと比べた差分を表示しています(表示だけの切り替えです)。コメントは、これまでどおり、ベースとの差分に付きます。比べた相手にだけある、削除された行には、コメントを付けられません。',
+                tip: lib.m('ui.base.select_tip'),
               } : null}
               author=${review.actions ? model.author : null} userSettingsOpen=${screen === 'user'}
               onToggleUserSettings=${review.actions && function () { setScreen(screen === 'user' ? null : 'user'); }} />
@@ -2102,6 +2115,7 @@
   }
 
   D.start = function () {
+    D.lib.setMessages(JSON.parse(document.getElementById('diffnote-messages').textContent));
     var model = JSON.parse(document.getElementById('diffnote-data').textContent);
     if (model.interactive) document.body.setAttribute('data-diffnote-api', '1');
     D.interact.install();

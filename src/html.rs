@@ -202,12 +202,14 @@ fn client_page(
 <body>
 <div id="app"></div>
 <script type="application/json" id="diffnote-data">{data}</script>
+<script type="application/json" id="diffnote-messages">{messages}</script>
 {scripts}<script>Diffnote.start();</script>
 </body>
 </html>
 "#,
         title = escape_html(title),
         css = STYLE,
+        messages = crate::messages::as_json(),
     ))
 }
 
