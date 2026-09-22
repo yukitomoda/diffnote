@@ -47,24 +47,28 @@ what we write are in `src/test/sources.test.js` (no `innerHTML`, no element
 written as markup, only `api.ts` talks to the server), and the ones about the
 whole bundle, libraries and all, are in `src/html.rs`.
 
+`src/model.ts` is the form of the data the page is drawn from, as types (Rust
+writes it: `src/html/viewmodel.rs`), and `src/state/contexts.ts` is what the
+parts of the page hand each other.
+
 ## The files
 
 - `src/lib.ts` — pure helpers (locations, which lines a thread covers, side by
   side pairing, preview text, ...). Tested with Node: `npm --prefix ui test`.
-- `src/interact.js` — the mouse and keyboard on the document: a thread's range
+- `src/interact.ts` — the mouse and keyboard on the document: a thread's range
   while hovered or pinned, jumping from the thread list, copy buttons, the
   zoomed picture. Done directly on the document (marking a range touches only
   its lines), not through components.
-- `src/app.jsx` — the page itself, with a file per part of it beside it:
+- `src/app.tsx` — the page itself, with a file per part of it beside it:
   `thread/`, `diff/`, `nav/`, `settings/`, and `state/` for what the page holds.
 - `src/model.ts` — the form of the data the page is drawn from, as types.
 - `src/api.ts` — talking to the server; only the served bundle has it.
 - `src/emoji.ts` — the emoji the page offers.
 - `src/style.css` — the style (shared by both pages).
 
-A file becomes TypeScript as its turn comes (`.jsx` is one that is still
-JavaScript); `checkJs` is off, so what is still JavaScript is carried along
-unchecked.
+All of it is TypeScript; only its tests are plain JavaScript (they are run by
+`node --test` as they are, and what they check is the code, not their own
+fixtures). `.tsx` is a file with markup in it.
 
 The data the page is drawn from is worked out by Rust (`src/html/viewmodel.rs`;
 the format is documented there) and embedded in the page as JSON. Placement of

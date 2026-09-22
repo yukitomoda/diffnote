@@ -37,6 +37,8 @@ export type ChangeAnswer = Answer<{
   /** How long the log is now, and how much this change added to it. */
   events?: number;
   added?: number;
+  /** What a pull did, in a line. */
+  message?: string;
 }>;
 
 /** The lines a new thread is about, on one side. */

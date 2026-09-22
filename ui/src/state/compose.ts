@@ -1,7 +1,7 @@
 // Choosing lines, and the box for a new thread.
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Actions, Compose, Scope, Selection } from './contexts.ts';
-import { interact } from '../interact.js';
+import { interact } from '../interact.ts';
 import { lib } from '../lib.ts';
 
 // Lines being chosen (pressing a line number, dragging, Shift+click), or a

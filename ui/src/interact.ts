@@ -10,22 +10,29 @@ import { lib } from './lib.ts';
 var slice = Array.prototype.slice;
 var THREAD = '[data-diffnote-thread-id]';
 var LINE = 'tr[data-diffnote-threads]';
-var active = null;
-var pinned = null;
+/** The thread whose range is marked just now, and the one pinned by a click. */
+interface Marked {
+  id: string;
+  scope: ParentNode;
+  rows: HTMLElement[];
+  card: HTMLElement | null;
+}
+var active: Marked | null = null;
+var pinned: string | null = null;
 
-function scopeOf(el) {
+function scopeOf(el: Element): ParentNode {
   return el.closest('.diffnote-revision') || document;
 }
-function cardOf(scope, id) {
+function cardOf(scope: ParentNode, id: string): HTMLElement | null {
   return scope.querySelector('[data-diffnote-thread-id="' + id + '"]');
 }
-function rowsOf(scope, id) {
+function rowsOf(scope: ParentNode, id: string): HTMLElement[] {
   return slice.call(scope.querySelectorAll('tr[data-diffnote-threads~="' + id + '"]'));
 }
 
 function clear() {
   if (!active) return;
-  active.rows.forEach(function (r) {
+  active.rows.forEach(function (r: HTMLElement) {
     r.classList.remove('diffnote-range', 'diffnote-range-first', 'diffnote-range-last');
     r.style.removeProperty('--rc');
   });
@@ -36,13 +43,13 @@ function clear() {
   active = null;
 }
 
-function activate(scope, id) {
+function activate(scope: ParentNode, id: string) {
   if (active && active.id === id && active.scope === scope) return;
   clear();
   var rows = rowsOf(scope, id);
   var card = cardOf(scope, id);
   var color = (card && card.getAttribute('data-diffnote-color')) || '#0969da';
-  rows.forEach(function (r, k) {
+  rows.forEach(function (r: HTMLElement, k: number) {
     r.classList.add('diffnote-range');
     r.style.setProperty('--rc', color);
     if (k === 0) r.classList.add('diffnote-range-first');
@@ -56,7 +63,7 @@ function activate(scope, id) {
 }
 
 // A line can be in several ranges: take the smallest, the most specific.
-function pick(scope, el) {
+function pick(scope: ParentNode, el: Element) {
   var own = el.getAttribute('data-diffnote-thread-id');
   if (own) return own;
   var ids = (el.getAttribute('data-diffnote-threads') || '').split(' ').filter(Boolean);
@@ -79,30 +86,30 @@ function pick(scope, el) {
   return best;
 }
 
-function target(node) {
-  return node && node.closest ? node.closest(THREAD + ', ' + LINE) : null;
+function target(node: EventTarget | null): Element | null {
+  return node instanceof Element ? node.closest(THREAD + ', ' + LINE) : null;
 }
 
 // A thread in the list: open its card, bring it to the middle of the screen
 // and keep its range shown.
-function jump(link) {
-  jumpTo(link.getAttribute('href').slice(1));
+function jump(link: Element) {
+  jumpTo((link.getAttribute('href') || '').slice(1));
 }
 
-function jumpTo(id) {
+function jumpTo(id: string) {
   var card = document.getElementById(id);
   if (!card) return;
-  for (var n = card; n; n = n.parentElement) {
-    if (n.tagName === 'DETAILS') n.open = true;
+  for (var n: HTMLElement | null = card; n; n = n.parentElement) {
+    if (n instanceof HTMLDetailsElement) n.open = true;
   }
   card.scrollIntoView({ block: 'center' });
   pinned = card.getAttribute('data-diffnote-thread-id');
-  activate(scopeOf(card), pinned);
+  if (pinned) activate(scopeOf(card), pinned);
 }
 
 // Copy buttons (file paths, thread locations). Handled before anything else
 // sees the click, since they sit inside <summary> elements.
-function copyText(text, button) {
+function copyText(text: string, button: HTMLElement) {
   function done() {
     var before = button.textContent;
     button.textContent = lib.m('ui.copied');
@@ -139,7 +146,15 @@ var installed = false;
 // An image of a comment, shown by itself over the page at its own size.
 // Built here rather than as a component, so it works the same in an exported
 // page (where the image is a `data:` address) as in a served one.
-var zoomed = null;
+/** The picture shown by itself, what it was opened from, and what the page's
+ * own scrolling was before it. */
+interface Zoomed {
+  box: HTMLElement;
+  image: HTMLImageElement;
+  back: HTMLElement | null;
+  overflow: string;
+}
+var zoomed: Zoomed | null = null;
 function closeZoom() {
   if (!zoomed) return;
   var back = zoomed.back;
@@ -148,7 +163,7 @@ function closeZoom() {
   zoomed = null;
   if (back && back.isConnected) back.focus();
 }
-function openZoom(image) {
+function openZoom(image: HTMLImageElement) {
   closeZoom();
   var box = document.createElement('div');
   box.className = 'diffnote-zoom';
@@ -185,7 +200,7 @@ function openZoom(image) {
   box.addEventListener('click', closeZoom);
   box.appendChild(full);
   box.appendChild(close);
-  zoomed = { box: box, back: document.activeElement, overflow: document.body.style.overflow };
+  zoomed = { box: box, image: full, back: document.activeElement as HTMLElement | null, overflow: document.body.style.overflow };
   document.body.style.overflow = 'hidden';
   document.body.appendChild(box);
   close.focus();
@@ -196,7 +211,7 @@ function install() {
   installed = true;
   document.addEventListener('click', function (e) {
     // Not one that is itself a link: that click belongs to the link.
-    var image = e.target.closest ? e.target.closest('img.diffnote-image') : null;
+    var image = e.target instanceof Element ? e.target.closest<HTMLImageElement>('img.diffnote-image') : null;
     if (!image || image.closest('a')) return;
     e.preventDefault();
     openZoom(image);
@@ -224,16 +239,16 @@ function install() {
   document.addEventListener(
     'click',
     function (e) {
-      var button = e.target.closest ? e.target.closest('[data-diffnote-copy]') : null;
+      var button = e.target instanceof Element ? e.target.closest<HTMLElement>('[data-diffnote-copy]') : null;
       if (!button) return;
       e.preventDefault();
       e.stopPropagation();
-      copyText(button.getAttribute('data-diffnote-copy'), button);
+      copyText(button.getAttribute('data-diffnote-copy') || '', button);
     },
     true
   );
   document.addEventListener('click', function (e) {
-    var link = e.target.closest ? e.target.closest('a[data-diffnote-jump]') : null;
+    var link = e.target instanceof Element ? e.target.closest('a[data-diffnote-jump]') : null;
     if (link) {
       e.preventDefault();
       jump(link);
@@ -242,7 +257,7 @@ function install() {
     // A line number on the served page starts a choice of lines, not a pin.
     if (
       document.body.hasAttribute('data-diffnote-api') &&
-      e.target.closest &&
+      e.target instanceof Element &&
       e.target.closest('.diffnote-line__gutter-old, .diffnote-line__gutter-new')
     )
       return;
@@ -269,10 +284,10 @@ function install() {
   document.addEventListener('mousedown', function (e) {
     var tables = document.querySelectorAll('[data-diffnote-copy-side]');
     for (var i = 0; i < tables.length; i++) tables[i].removeAttribute('data-diffnote-copy-side');
-    var cell = e.target.closest ? e.target.closest('.diffnote-diff--split .diffnote-split-row > td.diffnote-line__content') : null;
+    var cell = e.target instanceof Element ? e.target.closest('.diffnote-diff--split .diffnote-split-row > td.diffnote-line__content') : null;
     if (!cell) return;
-    var index = Array.prototype.indexOf.call(cell.parentNode.children, cell);
-    cell.closest('table').setAttribute('data-diffnote-copy-side', index === 1 ? 'old' : 'new');
+    var index = Array.prototype.indexOf.call(cell.parentNode!.children, cell);
+    cell.closest('table')!.setAttribute('data-diffnote-copy-side', index === 1 ? 'old' : 'new');
   });
   // The text copied is of that side only, worked out here rather than left to
   // the browser (which is not consistent about text that can't be selected):
@@ -324,7 +339,7 @@ export const interact = {
   },
   // Show a file: open it, scroll to it and mark it for a moment (once the page
   // has drawn it, if it is being brought back).
-  showFile: function (rev, path) {
+  showFile: function (rev: number, path: string) {
     var tries = 0;
     var look = function () {
       var section = Array.prototype.filter.call(
@@ -349,7 +364,7 @@ export const interact = {
   // Show lines of a file (as the side, `old` or `new`, numbers them): open the file, scroll
   // to them and mark them for a moment. Lines the diff leaves out are not on
   // the page: the nearest that are shown stand for them.
-  showLines: function (rev, path, side, start, end) {
+  showLines: function (rev: number, path: string, side: string, start: number, end: number) {
     var attr = side === 'old' ? 'data-diffnote-old' : 'data-diffnote-new';
     var tries = 0;
     var look = function () {
@@ -372,17 +387,24 @@ export const interact = {
         return;
       }
       for (var d = section.querySelector('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true;
-      var inside = [];
-      var before = null;
-      var after = null;
-      Array.prototype.forEach.call(cells, function (c) {
-        var v = +c.getAttribute(attr);
+      var inside: Element[] = [];
+      var before: Element | null = null;
+      var after: Element | null = null;
+      Array.prototype.forEach.call(cells, function (c: Element) {
+        var v = +(c.getAttribute(attr) || '');
         if (v >= start && v <= end) inside.push(c);
         else if (v < start) before = c;
         else if (!after) after = c;
       });
-      var marked = inside.length ? inside : [after || before];
-      var rows = marked.map(function (c) { return c.closest('tr'); });
+      // Nothing in the range: the line before it, or the one after.
+      var nearest: Element | null = after || before;
+      var marked: Element[] = inside.length ? inside : nearest ? [nearest] : [];
+      var rows: HTMLElement[] = [];
+      marked.forEach(function (c) {
+        var row = c.closest('tr');
+        if (row) rows.push(row);
+      });
+      if (rows.length === 0) return;
       rows.forEach(function (r) { r.classList.add('diffnote-linked'); });
       setTimeout(function () { rows.forEach(function (r) { r.classList.remove('diffnote-linked'); }); }, 2600);
       rows[0].scrollIntoView({ block: 'center' });
@@ -391,7 +413,7 @@ export const interact = {
   },
   // Go to the element with this id once the page has drawn it (it is being
   // brought back), looking for it for a moment.
-  jumpWhenShown: function (id) {
+  jumpWhenShown: function (id: string) {
     var tries = 0;
     var look = function () {
       if (document.getElementById(id)) jumpTo(id);

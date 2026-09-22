@@ -2,12 +2,12 @@
 // `src/html/viewmodel.rs` for its form).
 //
 // The markup (class names, data attributes) is what `ui/src/style.css` styles
-// and what `ui/src/interact.js` and the browser tests look for.
+// and what `ui/src/interact.ts` and the browser tests look for.
 import { render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { interact } from './interact.js';
+import { interact } from './interact.ts';
 import { lib } from './lib.ts';
-import { transport } from './transport.ts';
+import { server } from './transport.ts';
 import { Revision } from './Revision.tsx';
 import { useWide } from './dom.ts';
 import { QuitButton } from './settings/Quit.tsx';
@@ -17,8 +17,13 @@ import { ActionsContext, ComposeContext, LinksContext, OpenedContext, ViewContex
 import { keep, kept } from './state/kept.ts';
 import { useOpened } from './state/opened.ts';
 import { useReview } from './state/review.ts';
+import type { At } from './lib.ts';
+import type { FileData, RevisionData, ViewModel } from './model.ts';
+import type { Links, View, Viewed } from './state/contexts.ts';
+import type { PullNote } from './settings/General.tsx';
+import type { Section } from './settings/Screen.tsx';
 
-function App(props) {
+function App(props: { model: ViewModel }) {
   var review = useReview(props.model);
   var openedFiles = useOpened(props.model.interactive);
   var model = review.model;
@@ -46,7 +51,7 @@ function App(props) {
   var _a = useState(initialHash ? initialHash.against : null);
   var against = _a[0];
   var setAgainst = _a[1];
-  var _k = useState(null);
+  var _k = useState<{ rev: number; from: number; data: RevisionData } | null>(null);
   var cmp = _k[0];
   var setCmp = _k[1];
   useEffect(function () {
@@ -55,9 +60,9 @@ function App(props) {
   useEffect(function () {
     if (!review.actions || against == null || against >= current) { setCmp(null); return undefined; }
     var stale = false;
-    transport.get('/api/compare?rev=' + current + '&from=' + against).then(function (res) {
+    server().get<{ revision: RevisionData }>('/api/compare?rev=' + current + '&from=' + against).then(function (res) {
       if (stale) return;
-      if (res.ok) setCmp({ rev: current, from: against, data: res.revision });
+      if (res.ok) setCmp({ rev: current, from: against!, data: res.revision });
       else { setCmp(null); setAgainst(null); }
     });
     return function () { stale = true; };
@@ -66,7 +71,7 @@ function App(props) {
   // is marked as looked at is the same one (its text is this revision's).
   var override = useMemo(function () {
     if (!cmp || cmp.rev !== current || cmp.from !== against) return null;
-    var sigs = {};
+    var sigs: Record<string, string | undefined> = {};
     model.revisions[current].files.forEach(function (f) { sigs[f.path] = f.sig; });
     return Object.assign({}, cmp.data, {
       files: cmp.data.files.map(function (f) {
@@ -76,7 +81,7 @@ function App(props) {
   }, [cmp, current, against, model]);
   // The settings screen shown instead of the review, if any: the review's
   // own (`'bundle'`), or this machine's user settings (`'user'`).
-  var _st = useState(initialHash ? initialHash.screen : null);
+  var _st = useState<Section | null>((initialHash ? initialHash.screen : null) as Section | null);
   var screen = _st[0];
   var setScreen = _st[1];
   // 添付 lists what the bundle holds, and an upload's answer says only how
@@ -92,21 +97,21 @@ function App(props) {
   var at = _at[0];
   var setAt = _at[1];
   // The tab that is shown is kept in view when there are more than fit.
-  var tabs = useRef(null);
+  var tabs = useRef<HTMLElement | null>(null);
   useLayoutEffect(function () {
     var nav = tabs.current;
-    var here = nav && nav.querySelector('a.is-current');
-    if (here) nav.scrollLeft = here.offsetLeft - (nav.clientWidth - here.offsetWidth) / 2;
+    var shown = nav && nav.querySelector<HTMLElement>('a.is-current');
+    if (nav && shown) nav.scrollLeft = shown.offsetLeft - (nav.clientWidth - shown.offsetWidth) / 2;
   }, [current, model.revisions.length]);
   // The files marked as looked at, by path, with what the file was then.
-  var _v = useState({});
+  var _v = useState<Record<string, string>>({});
   var seen = _v[0];
   var setSeen = _v[1];
-  var viewed = useMemo(function () {
-    var is = function (f) { return Object.prototype.hasOwnProperty.call(seen, f.path) && seen[f.path] === (f.sig || ''); };
+  var viewed: Viewed = useMemo(function (): Viewed {
+    var is = function (f: FileData) { return Object.prototype.hasOwnProperty.call(seen, f.path) && seen[f.path] === (f.sig || ''); };
     return {
       is: is,
-      toggle: function (f) {
+      toggle: function (f: FileData) {
         setSeen(function (cur) {
           var next = Object.assign({}, cur);
           if (Object.prototype.hasOwnProperty.call(cur, f.path) && cur[f.path] === (f.sig || '')) delete next[f.path];
@@ -116,18 +121,18 @@ function App(props) {
       },
     };
   }, [seen]);
-  var here = model.revisions[current] ? model.revisions[current].files : [];
-  var links = useMemo(function () {
+  var links: Links = useMemo(function (): Links {
     // A path is a place if some revision has the file.
-    var known = {};
+    var known: Record<string, boolean> = {};
     model.revisions.forEach(function (r) { r.files.forEach(function (f) { known[f.path] = true; }); });
     // Opens a file, some of its lines, or a thread, in revision `rev` (bringing
     // back a file marked "viewed" first, since it would otherwise be hidden).
     // Used for a live jump, and to retrace one from the address alike.
-    var jump = function (rev, place) {
+    var jump = function (rev: number, place: At) {
       var revision = model.revisions[rev];
       if (!revision) return;
-      var path = place.kind === 'thread' ? ((revision.placements[place.id] || {}).file || null) : place.path;
+      var of = place.kind === 'thread' ? revision.placements[place.id] : null;
+      var path = place.kind === 'thread' ? (of && 'file' in of ? of.file : null) : place.path;
       var file = path && revision.files.filter(function (f) { return f.path === path; })[0];
       if (file && viewed.is(file)) viewed.toggle(file);
       if (place.kind === 'file') interact.showFile(rev, place.path);
@@ -156,8 +161,12 @@ function App(props) {
       // as `lib.lineRefs` gives them), or `{kind:'file'|'thread', ...}`. Also
       // remembered, so the browser's back/forward can retrace the jump.
       go: function (ref) {
-        var index = ref.rev == null ? current : ref.rev - 1;
-        var place = ref.kind ? ref : { kind: 'lines', path: ref.path, side: ref.side, start: ref.start, end: ref.end };
+        // A line reference names its revision as the tabs do (1-based), or not
+        // at all; a place already says what kind it is.
+        var index = 'kind' in ref ? current : ref.rev == null ? current : ref.rev - 1;
+        var place: At = 'kind' in ref
+          ? ref
+          : { kind: 'lines', path: ref.path, side: ref.side, start: ref.start, end: ref.end };
         if (index !== current) setCurrent(index);
         setAt(place);
         jump(index, place);
@@ -179,7 +188,7 @@ function App(props) {
       navigating.current = true;
       var index = parsed.rev - 1;
       setCurrent(index);
-      setScreen(parsed.screen);
+      setScreen(parsed.screen as Section | null);
       setAgainst(parsed.against);
       setAt(parsed.at);
       if (parsed.at) links.jump(index, parsed.at);
@@ -206,23 +215,23 @@ function App(props) {
   var _w = useState(!!model.ignore_whitespace);
   var ignoreSpace = _w[0];
   var setIgnoreSpace = _w[1];
-  var toggleSpace = function (on) { setIgnoreSpace(on); };
+  var toggleSpace = function (on: boolean) { setIgnoreSpace(on); };
   // What pressing 「最新を取り込む」 did, said next to it.
-  var _n = useState(null);
+  var _n = useState<PullNote | null>(null);
   var note = _n[0];
   var setNote = _n[1];
   var pull = function () {
     setNote({ text: lib.m('ui.topbar.pull_note_loading'), busy: true });
-    review.actions.refresh().then(function (res) {
-      setNote({ text: res.ok ? res.message : (res.error || lib.m('ui.topbar.pull_failed')), failed: !res.ok });
+    review.actions!.refresh().then(function (res) {
+      setNote({ text: (res.ok ? res.message : res.error) || lib.m('ui.topbar.pull_failed'), failed: !res.ok });
       // What was taken in is what to look at now.
-      if (res.ok && res.added) setCurrent(res.model.revisions.length - 1);
+      if (res.ok && res.added && res.model) setCurrent(res.model.revisions.length - 1);
     });
   };
   // Short messages at the top of the page (see TopbarNotices): today, only
   // a pull waiting to be taken in makes one, and it opens 全般 (where the
   // button now lives) rather than acting by itself.
-  var notices = [];
+  var notices: Notice[] = [];
   if (review.actions && model.refreshable && review.pending) {
     notices.push({
       id: 'pending',
@@ -233,7 +242,7 @@ function App(props) {
   // Side by side, if chosen and there is room for two columns. What was chosen
   // before is kept; without a choice the page starts side by side if the
   // window is wide (only when it opens: resizing the window doesn't change it).
-  var _l = useState(function () {
+  var _l = useState<View['layout']>(function () {
     var stored = kept('diffnote-layout', '');
     if (stored === 'split' || stored === 'unified') return stored;
     return window.matchMedia('(min-width: 1200px)').matches ? 'split' : 'unified';
@@ -241,8 +250,8 @@ function App(props) {
   var chosen = _l[0];
   var setChosen = _l[1];
   var wide = useWide();
-  var layout = chosen === 'split' && wide ? 'split' : 'unified';
-  var viewOptions = {
+  var layout: View['layout'] = chosen === 'split' && wide ? 'split' : 'unified';
+  var viewOptions: View = {
     wide: wide, layout: layout, resolved: counts.resolved, interactive: !!model.interactive,
     hide: hide, ignoreSpace: ignoreSpace, toggleSpace: toggleSpace,
     setLayout: function (o) { keep('diffnote-layout', o); setChosen(o); },
@@ -266,7 +275,7 @@ function App(props) {
           : model.title || lib.m('html.default_title')}</h1>
         {model.base && <p data-diffnote-base class={against != null ? 'is-changed' : ''} title={against != null ? lib.m('ui.base.changed_title') : lib.m('ui.base.default_title')}>{lib.m('ui.base.label')}: {review.actions && current > 0
           ? <select class="diffnote-base__select" data-diffnote-base-select aria-label={lib.m('ui.base.select_label')} value={against == null ? '' : String(against)}
-              onChange={function (e) { setAgainst(e.target.value === '' ? null : +e.target.value); }}>
+              onChange={function (e) { setAgainst(e.currentTarget.value === '' ? null : +e.currentTarget.value); }}>
               <option value="">{model.base.kind === 'git' ? model.base.id : lib.formatTime(model.base.at)}</option>
               {model.revisions.slice(0, current).map(function (r, i) { return <option key={i} value={String(i)}>{r.label}</option>; })}
             </select>
@@ -301,7 +310,7 @@ function App(props) {
         <OpenedContext.Provider value={openedFiles}>
           <Revision key={current} model={model} index={current} hideResolved={hide} layout={layout} ignoreSpace={ignoreSpace} compose={compose} override={override}
             overrideNote={override ? {
-              short: model.revisions[against].label.replace(/ \(.*$/, '') + ' .. ' + model.revisions[current].label.replace(/ \(.*$/, ''),
+              short: model.revisions[against!].label.replace(/ \(.*$/, '') + ' .. ' + model.revisions[current].label.replace(/ \(.*$/, ''),
               tip: lib.m('ui.base.select_tip'),
             } : null}
             author={review.actions ? model.author : null} userSettingsOpen={screen === 'user'}
@@ -319,19 +328,28 @@ function App(props) {
 // Short, clickable messages at the top (today, only a pending pull makes
 // one): built generic so another source can add its own later without new
 // topbar markup, each just {id, text, onClick}.
-function TopbarNotices(props) {
+interface Notice {
+  id: string;
+  text: string;
+  onClick(): void;
+}
+
+function TopbarNotices(props: { items: Notice[] }) {
   if (!props.items || props.items.length === 0) return null;
   return <div class="diffnote-notices">
-    {props.items.map(function (n) {
+    {props.items.map(function (n: Notice) {
       return <button key={n.id} type="button" class="diffnote-notice" data-diffnote-notice={n.id} onClick={n.onClick}>{n.text}</button>;
     })}
   </div>;
 }
 
 export function start() {
-  lib.setMessages(JSON.parse(document.getElementById('diffnote-messages').textContent));
-  var model = JSON.parse(document.getElementById('diffnote-data').textContent);
+  var read = function (id: string) {
+    return JSON.parse(document.getElementById(id)!.textContent || '{}');
+  };
+  lib.setMessages(read('diffnote-messages'));
+  var model: ViewModel = read('diffnote-data');
   if (model.interactive) document.body.setAttribute('data-diffnote-api', '1');
   interact.install();
-  render(<App model={model} />, document.getElementById('app'));
+  render(<App model={model} />, document.getElementById('app')!);
 }
