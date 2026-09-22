@@ -4,22 +4,28 @@
 // The markup (class names, data attributes) is what `ui/src/style.css` styles
 // and what `ui/src/interact.ts` and the browser tests look for.
 import { render } from 'preact';
+import { useStore } from '@nanostores/preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { interact } from './interact.ts';
 import { lib } from './lib.ts';
 import { server } from './transport.ts';
 import { Revision } from './Revision.tsx';
-import { useWide } from './dom.ts';
 import { QuitButton } from './settings/Quit.tsx';
 import { SettingsScreen } from './settings/Screen.tsx';
 import { useCompose } from './state/compose.ts';
-import { ActionsContext, ComposeContext, LinksContext, OpenedContext, ViewContext, ViewedContext } from './state/contexts.ts';
-import { keep, kept } from './state/kept.ts';
+import { ActionsContext, ComposeContext, LinksContext, OpenedContext, ViewedContext } from './state/contexts.ts';
 import { useOpened } from './state/opened.ts';
 import { useReview } from './state/review.ts';
+import {
+  hideResolved,
+  ignoreWhitespace,
+  layout as shownLayout,
+  startView,
+  watchWidth,
+} from './state/view.ts';
 import type { At } from './lib.ts';
 import type { FileData, RevisionData, ViewModel } from './model.ts';
-import type { Links, View, Viewed } from './state/contexts.ts';
+import type { Links, Viewed } from './state/contexts.ts';
 import type { PullNote } from './settings/General.tsx';
 import type { Section } from './settings/Screen.tsx';
 
@@ -42,10 +48,6 @@ function App(props: { model: ViewModel }) {
   // the address (so the effect that writes it back doesn't write it again).
   var navigating = useRef(false);
   // Resolved threads are hidden unless that was turned off before.
-  var _h = useState(kept('diffnote-hide-resolved', '1') !== '0');
-  var hide = _h[0];
-  var setHide = _h[1];
-  var counts = lib.counts(model.threads);
   // The revision is looked at against an earlier one (chosen at the base) instead
   // of against the base: the number of that one, or `null`. Only for looking.
   var _a = useState(initialHash ? initialHash.against : null);
@@ -212,10 +214,6 @@ function App(props: { model: ViewModel }) {
   }, [current, screen, against, at]);
   // Differences that are only in white space ignored: the review says how the page
   // starts (a default kept in it), and changing it here is for this page only.
-  var _w = useState(!!model.ignore_whitespace);
-  var ignoreSpace = _w[0];
-  var setIgnoreSpace = _w[1];
-  var toggleSpace = function (on: boolean) { setIgnoreSpace(on); };
   // What pressing 「最新を取り込む」 did, said next to it.
   var _n = useState<PullNote | null>(null);
   var note = _n[0];
@@ -239,24 +237,11 @@ function App(props: { model: ViewModel }) {
       onClick: function () { setScreen('general'); },
     });
   }
-  // Side by side, if chosen and there is room for two columns. What was chosen
-  // before is kept; without a choice the page starts side by side if the
-  // window is wide (only when it opens: resizing the window doesn't change it).
-  var _l = useState<View['layout']>(function () {
-    var stored = kept('diffnote-layout', '');
-    if (stored === 'split' || stored === 'unified') return stored;
-    return window.matchMedia('(min-width: 1200px)').matches ? 'split' : 'unified';
-  });
-  var chosen = _l[0];
-  var setChosen = _l[1];
-  var wide = useWide();
-  var layout: View['layout'] = chosen === 'split' && wide ? 'split' : 'unified';
-  var viewOptions: View = {
-    wide: wide, layout: layout, resolved: counts.resolved, interactive: !!model.interactive,
-    hide: hide, ignoreSpace: ignoreSpace, toggleSpace: toggleSpace,
-    setLayout: function (o) { keep('diffnote-layout', o); setChosen(o); },
-    setHide: function (on) { keep('diffnote-hide-resolved', on ? '1' : '0'); setHide(on); },
-  };
+  var hide = useStore(hideResolved);
+  var ignoreSpace = useStore(ignoreWhitespace);
+  var layout = useStore(shownLayout);
+  // Two columns need the room, for as long as the page is open.
+  useEffect(watchWidth, []);
   // What was chosen or written belongs to the revision and layout it was in.
   var compose = useCompose(review.actions, current + ':' + layout);
 
@@ -302,7 +287,6 @@ function App(props: { model: ViewModel }) {
       placementOf={function (id) { return ((model.revisions[current] || {}).placements || {})[id]; }}
       onSelect={setScreen} onClose={function () { setScreen(null); }} />}
     <div class="diffnote-review-body" hidden={screen != null && !!review.actions}>
-    <ViewContext.Provider value={viewOptions}>
     <ViewedContext.Provider value={viewed}>
     <LinksContext.Provider value={links}>
     <ActionsContext.Provider value={review.actions}>
@@ -320,7 +304,6 @@ function App(props: { model: ViewModel }) {
     </ActionsContext.Provider>
     </LinksContext.Provider>
     </ViewedContext.Provider>
-    </ViewContext.Provider>
     </div>
   </article>;
 }
@@ -349,6 +332,7 @@ export function start() {
   };
   lib.setMessages(read('diffnote-messages'));
   var model: ViewModel = read('diffnote-data');
+  startView(!!model.ignore_whitespace);
   if (model.interactive) document.body.setAttribute('data-diffnote-api', '1');
   interact.install();
   render(<App model={model} />, document.getElementById('app')!);

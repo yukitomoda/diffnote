@@ -109,7 +109,7 @@ export function Revision(props: RevisionProps) {
       {props.compose && <div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global"
         onClick={function () { props.compose!.openScope('global', rev); }}>{lib.m('ui.compose.global_button')}</button></div>}
       {props.override && <p class="diffnote-compare-note" data-diffnote-compare-note tabindex={0} title={props.overrideNote!.tip} aria-label={props.overrideNote!.short + '。' + props.overrideNote!.tip}>{props.overrideNote!.short}<span class="diffnote-compare-note__icon" aria-hidden="true">⚠</span></p>}
-      <ViewMenu />
+      <ViewMenu resolved={lib.counts(model.threads).resolved} interactive={!!model.interactive} />
     </div>
     {(globals.length > 0 || props.compose) && <section class="diffnote-global-comments" data-diffnote-global>
       {props.compose && props.compose.scope && props.compose.scope.kind === 'global' && props.compose.scope.rev === rev && <div class="diffnote-compose-wrap"><Composer scope="global" where={lib.m('ui.compose.global_where')} request={{ scope: 'global', revision: rev }} /></div>}
