@@ -122,12 +122,35 @@ class Cdp:
 
     def wait(self, expression, timeout=8):
         """Wait until `expression` is truthy. (A DOM node does not come back
-        by value: wrap it in `!!`.)"""
+        by value: wrap it in `!!`.)
+
+        A wait that runs out says what it saw instead, and what it sees a
+        second later -- which is what tells a page that was only slow from one
+        that was never going to get there.
+        """
         end = time.time() + timeout
+        seen = None
+        first = True
         while time.time() < end:
-            if self.js(expression):
+            try:
+                seen = self.js(expression)
+            except RuntimeError:
+                # A page in the middle of drawing itself: what a condition
+                # reads can be missing for a moment. Only the first look
+                # throwing is the expression's own fault.
+                if first:
+                    raise
+                seen = None
+            first = False
+            if seen:
                 return True
             time.sleep(0.03)
+        try:
+            later = repr(self.js(expression))
+        except RuntimeError as e:
+            later = "threw %s" % e
+        print("\n[wait: %ss was not enough] %s\n  saw: %r\n  a second later: %s"
+              % (timeout, expression, seen, later), file=sys.stderr)
         return False
 
     def mouse(self, kind, x, y, buttons=0, modifiers=0):
