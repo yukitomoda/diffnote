@@ -115,7 +115,14 @@ jobs:
           path: ui/dist
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-python@v5
+        with:
+          # The same Python `mise.toml` pins, so a failure here is one that
+          # happens at home too. The tests use the standard library only.
+          python-version: "3.12"
+
       - name: Build
         run: cargo build --locked
       - name: Test the page
-        run: python3 -m unittest discover -s tests/browser -v
+        run: python -m unittest discover -s tests/browser -v
