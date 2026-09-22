@@ -4,6 +4,9 @@ rust = "latest"
 # The page's scripts are bundled with node (see ui/README.md). 24 or newer, so
 # that a test written in TypeScript runs under `node --test` as it is.
 node = "24"
+# The page is tested in a real browser by tests/browser, which is Python and
+# nothing else (the standard library talks to Chrome; see its README).
+python = "3.12"
 
 # The page is built with node, the binary with cargo, in that order (the binary
 # carries the page). These tasks are how to do it: whichever half you changed,

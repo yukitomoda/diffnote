@@ -11,7 +11,7 @@ mise run build          # 画面を node で、実行ファイルを cargo で�
 cargo install --path .
 ```
 
-画面(`ui/`)のビルドに node が必要です(`mise install` で入ります)。ビルド済みの実行ファイルを使うなら要りません。
+画面(`ui/`)のビルドに node が必要です(`mise install` で入ります。ブラウザのテストには Python も使います。どちらも `mise.toml` に書いてあります)。ビルド済みの実行ファイルを使うなら要りません。
 
 ビルド済みの実行ファイル(Linux x86_64 の静的版、Windows x86_64、macOS Apple Silicon)は、GitHub の Releases から取れます。`SHA256SUMS` で、ダウンロードしたファイルを確かめられます。
 

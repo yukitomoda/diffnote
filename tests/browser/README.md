@@ -12,7 +12,8 @@ fake editor: `fake_editor.py`); nothing is checked in as a fixture.
     mise run build
     python3 -m unittest discover -s tests/browser -v
 
-Needs Python 3, Chrome or Chromium (`CHROME=/path/to/chrome` to name it) and
+Needs Python 3 (`mise.toml` pins it; the standard library is all it uses),
+Chrome or Chromium (`CHROME=/path/to/chrome` to name it) and
 `unzip`, and a built binary (`DIFFNOTE_BIN=...`, default `target/debug/diffnote`)
 -- built after the page it carries, which is what `mise run build` does (see
 ui/README.md).
