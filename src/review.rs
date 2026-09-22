@@ -9,6 +9,7 @@
 //! plus its ordered replies, with `resolve`/`reopen`/`reanchor` folded in),
 //! which both the HTML exporter and round-trip annotation rendering need.
 
+use crate::messages::mf;
 use crate::model::{Anchor, Event, Reaction, Reactions, Settings};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -182,16 +183,24 @@ pub fn parse_jsonl(text: &str, source_label: &str) -> Result<Vec<Event>> {
         if line.trim().is_empty() {
             continue;
         }
-        let event: Event = serde_json::from_str(line)
-            .with_context(|| format!("{source_label}:{}: イベントの形式が不正です", i + 1))?;
+        let event: Event = serde_json::from_str(line).with_context(|| {
+            mf(
+                "review.bad_event",
+                &[("source", source_label), ("line", &(i + 1).to_string())],
+            )
+        })?;
         events.push(event);
     }
     Ok(events)
 }
 
 pub fn load(path: &Path) -> Result<Vec<Event>> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("{} を開けませんでした", path.display()))?;
+    let text = std::fs::read_to_string(path).with_context(|| {
+        mf(
+            "review.open_failed",
+            &[("path", &path.display().to_string())],
+        )
+    })?;
     parse_jsonl(&text, &path.display().to_string())
 }
 

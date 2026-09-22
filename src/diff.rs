@@ -7,7 +7,7 @@
 //! format layers `>`-prefixed lines on top of this same line structure, but
 //! has its own parser in the `annotation` module.
 
-use thiserror::Error;
+use crate::messages::{m, mf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineKind {
@@ -56,11 +56,26 @@ pub struct UnifiedDiff {
     pub files: Vec<FileDiff>,
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ParseError {
-    #[error("{line} 行目: {message}")]
     Malformed { line: usize, message: String },
 }
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let ParseError::Malformed { line, message } = self;
+        write!(
+            f,
+            "{}",
+            mf(
+                "parse.error_line",
+                &[("line", &line.to_string()), ("message", message)]
+            )
+        )
+    }
+}
+
+impl std::error::Error for ParseError {}
 
 impl ParseError {
     pub fn line(&self) -> usize {
@@ -183,7 +198,7 @@ pub fn parse(text: &str) -> Result<UnifiedDiff, ParseError> {
         if let Some(rest) = raw_line.strip_prefix("+++ ") {
             let file = current_file
                 .as_mut()
-                .ok_or_else(|| err(line_no, "ファイルヘッダの外に '+++' 行があります"))?;
+                .ok_or_else(|| err(line_no, m("diff.file_header_stray_plus")))?;
             file.new_path = parse_path(rest);
             continue;
         }
@@ -191,7 +206,7 @@ pub fn parse(text: &str) -> Result<UnifiedDiff, ParseError> {
         if raw_line.starts_with("@@ ") || raw_line == "@@" {
             finish_hunk(&mut current_file, &mut current_hunk);
             if current_file.is_none() {
-                return Err(err(line_no, "ファイルの外にハンクヘッダがあります"));
+                return Err(err(line_no, m("diff.hunk_header_outside_file")));
             }
             let (old_start, old_lines, new_start, new_lines, section_heading) =
                 parse_hunk_header(raw_line, line_no)?;
@@ -212,7 +227,7 @@ pub fn parse(text: &str) -> Result<UnifiedDiff, ParseError> {
             let _ = marker; // "\ No newline at end of file"
             let hunk = current_hunk
                 .as_mut()
-                .ok_or_else(|| err(line_no, "ハンクの外に '\\' マーカーがあります"))?;
+                .ok_or_else(|| err(line_no, m("diff.backslash_outside_hunk")))?;
             if let Some(last) = hunk.lines.last_mut() {
                 last.no_newline_at_eof = true;
             }
@@ -236,7 +251,7 @@ pub fn parse(text: &str) -> Result<UnifiedDiff, ParseError> {
         let content = chars.as_str();
         let hunk = current_hunk
             .as_mut()
-            .ok_or_else(|| err(line_no, "ハンクの外に差分の内容があります"))?;
+            .ok_or_else(|| err(line_no, m("diff.content_outside_hunk")))?;
         let line = match prefix_char {
             ' ' => {
                 let line = DiffLine {
@@ -275,7 +290,7 @@ pub fn parse(text: &str) -> Result<UnifiedDiff, ParseError> {
             other => {
                 return Err(err(
                     line_no,
-                    format!("差分の行頭が認識できません: {other:?}"),
+                    mf("diff.bad_line_prefix", &[("char", &format!("{other:?}"))]),
                 ));
             }
         };
@@ -324,10 +339,10 @@ pub(crate) fn parse_hunk_header(
 ) -> Result<(u32, u32, u32, u32, Option<String>), ParseError> {
     let rest = line
         .strip_prefix("@@ ")
-        .ok_or_else(|| err(line_no, "ハンクヘッダが不正です"))?;
+        .ok_or_else(|| err(line_no, m("diff.bad_hunk_header")))?;
     let (ranges, heading) = rest
         .split_once(" @@")
-        .ok_or_else(|| err(line_no, "ハンクヘッダが不正です(閉じの '@@' がありません)"))?;
+        .ok_or_else(|| err(line_no, m("diff.bad_hunk_header_unclosed")))?;
     let heading = {
         let h = heading.trim_start();
         if h.is_empty() {
@@ -340,10 +355,10 @@ pub(crate) fn parse_hunk_header(
     let mut parts = ranges.split_whitespace();
     let old_range = parts
         .next()
-        .ok_or_else(|| err(line_no, "ハンクヘッダが不正です(旧側の範囲がありません)"))?;
+        .ok_or_else(|| err(line_no, m("diff.bad_hunk_header_no_old_range")))?;
     let new_range = parts
         .next()
-        .ok_or_else(|| err(line_no, "ハンクヘッダが不正です(新側の範囲がありません)"))?;
+        .ok_or_else(|| err(line_no, m("diff.bad_hunk_header_no_new_range")))?;
 
     let (old_start, old_lines) = parse_range(old_range, '-', line_no)?;
     let (new_start, new_lines) = parse_range(new_range, '+', line_no)?;
@@ -351,21 +366,39 @@ pub(crate) fn parse_hunk_header(
 }
 
 fn parse_range(s: &str, prefix: char, line_no: usize) -> Result<(u32, u32), ParseError> {
-    let s = s
-        .strip_prefix(prefix)
-        .ok_or_else(|| err(line_no, format!("ハンクの範囲が不正です: {s:?}")))?;
+    let s = s.strip_prefix(prefix).ok_or_else(|| {
+        err(
+            line_no,
+            mf("diff.bad_hunk_range", &[("value", &format!("{s:?}"))]),
+        )
+    })?;
     if let Some((start, len)) = s.split_once(',') {
-        let start = start
-            .parse()
-            .map_err(|_| err(line_no, format!("ハンクの範囲の開始が不正です: {start:?}")))?;
-        let len = len
-            .parse()
-            .map_err(|_| err(line_no, format!("ハンクの範囲の長さが不正です: {len:?}")))?;
+        let start = start.parse().map_err(|_| {
+            err(
+                line_no,
+                mf(
+                    "diff.bad_hunk_range_start",
+                    &[("value", &format!("{start:?}"))],
+                ),
+            )
+        })?;
+        let len = len.parse().map_err(|_| {
+            err(
+                line_no,
+                mf(
+                    "diff.bad_hunk_range_length",
+                    &[("value", &format!("{len:?}"))],
+                ),
+            )
+        })?;
         Ok((start, len))
     } else {
-        let start = s
-            .parse()
-            .map_err(|_| err(line_no, format!("ハンクの範囲が不正です: {s:?}")))?;
+        let start = s.parse().map_err(|_| {
+            err(
+                line_no,
+                mf("diff.bad_hunk_range", &[("value", &format!("{s:?}"))]),
+            )
+        })?;
         Ok((start, 1))
     }
 }

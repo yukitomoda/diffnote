@@ -6,6 +6,7 @@
 //! (`DIFFNOTE_CONFIG_DIR` を設定すれば、そのディレクトリを使う。テストや、
 //! 置き場所を変えたい場合のため)。
 
+use crate::messages::{m, mf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -39,15 +40,22 @@ pub fn load() -> UserConfig {
 
 /// 保存する。設定ディレクトリがなければ作る。
 pub fn save(config: &UserConfig) -> Result<()> {
-    let path =
-        path().context("設定を保存する場所が決められませんでした(HOME が設定されていないなど)")?;
+    let path = path().context(m("user_config.save_dir_failed"))?;
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)
-            .with_context(|| format!("{} を作れませんでした", dir.display()))?;
+        std::fs::create_dir_all(dir).with_context(|| {
+            mf(
+                "user_config.create_dir_failed",
+                &[("path", &dir.display().to_string())],
+            )
+        })?;
     }
-    let json = serde_json::to_vec_pretty(config).context("設定を書き出せませんでした")?;
-    std::fs::write(&path, json)
-        .with_context(|| format!("{} に書き込めませんでした", path.display()))?;
+    let json = serde_json::to_vec_pretty(config).context(m("user_config.encode_failed"))?;
+    std::fs::write(&path, json).with_context(|| {
+        mf(
+            "user_config.write_failed",
+            &[("path", &path.display().to_string())],
+        )
+    })?;
     Ok(())
 }
 

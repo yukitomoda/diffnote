@@ -7,6 +7,7 @@
 //! downstream (annotation, anchors, HTML) is shared between the two.
 
 use crate::digest::digest;
+use crate::messages::{m, mf};
 use crate::model::FileDigest;
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
@@ -50,7 +51,7 @@ pub fn read_tree(root: &Path, exclude: &[PathBuf]) -> Result<Tree> {
 
     let mut tree = Tree::new();
     for entry in builder.build() {
-        let entry = entry.context("ディレクトリをたどれませんでした")?;
+        let entry = entry.context(m("files.walk_failed"))?;
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
@@ -61,8 +62,12 @@ pub fn read_tree(root: &Path, exclude: &[PathBuf]) -> Result<Tree> {
         let Ok(rel) = path.strip_prefix(root) else {
             continue;
         };
-        let bytes = std::fs::read(path)
-            .with_context(|| format!("{} を読めませんでした", path.display()))?;
+        let bytes = std::fs::read(path).with_context(|| {
+            mf(
+                "files.read_failed",
+                &[("path", &path.display().to_string())],
+            )
+        })?;
         tree.insert(rel.to_string_lossy().replace('\\', "/"), bytes);
     }
     Ok(tree)

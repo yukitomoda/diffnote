@@ -50,10 +50,10 @@ use crate::diff::{
     self, DiffLine, FileDiff, Hunk, LineKind, ParseError as DiffParseError, UnifiedDiff,
 };
 use crate::expand;
+use crate::messages::{m, mf};
 use crate::model::Side;
 use crate::review::Thread;
 use std::collections::HashMap;
-use thiserror::Error;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use ulid::Ulid;
@@ -141,11 +141,26 @@ pub struct Parsed {
     pub warnings: Vec<String>,
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum AnnotationError {
-    #[error("{line} 行目: {message}")]
     Malformed { line: usize, message: String },
 }
+
+impl std::fmt::Display for AnnotationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let AnnotationError::Malformed { line, message } = self;
+        write!(
+            f,
+            "{}",
+            mf(
+                "parse.error_line",
+                &[("line", &line.to_string()), ("message", message)]
+            )
+        )
+    }
+}
+
+impl std::error::Error for AnnotationError {}
 
 fn err(line: usize, message: impl Into<String>) -> AnnotationError {
     AnnotationError::Malformed {
@@ -253,7 +268,10 @@ fn validate_range_id(id: &str, line_no: usize) -> Result<(), AnnotationError> {
     {
         Ok(())
     } else {
-        Err(err(line_no, format!("範囲の ID が不正です: {id:?}")))
+        Err(err(
+            line_no,
+            mf("annotation.bad_range_id", &[("id", &format!("{id:?}"))]),
+        ))
     }
 }
 
@@ -273,16 +291,14 @@ fn parse_directive(
         ("reanchor", Target::New, Some(id)) if !id.is_empty() => {
             Ok(Directive::Reanchor(id.to_string()))
         }
-        ("reanchor", Target::New, None) => {
-            Err(err(line_no, "'reanchor' にはスレッド ID の引数が必要です"))
-        }
-        ("reanchor", Target::Reply, _) => Err(err(
-            line_no,
-            "'reanchor' は '>>!reanchor' ではなく '>!reanchor <id>' と書いてください",
-        )),
+        ("reanchor", Target::New, None) => Err(err(line_no, m("annotation.reanchor_needs_id"))),
+        ("reanchor", Target::Reply, _) => Err(err(line_no, m("annotation.reanchor_wrong_syntax"))),
         _ => Err(err(
             line_no,
-            format!("ディレクティブが未知か、書式が不正です: {rest:?}"),
+            mf(
+                "annotation.bad_directive",
+                &[("value", &format!("{rest:?}"))],
+            ),
         )),
     }
 }
@@ -328,12 +344,8 @@ fn flush_pending(
             *last_thread = Some(ThreadRef::New(id));
         }
         Target::Reply => {
-            let target = last_thread.ok_or_else(|| {
-                err(
-                    p.start_line,
-                    "'>>' の返信先になるスレッド(新規または表示済み)が直前にありません",
-                )
-            })?;
+            let target =
+                last_thread.ok_or_else(|| err(p.start_line, m("annotation.reply_no_target")))?;
             items.push(Item::Reply {
                 target,
                 body,
@@ -396,12 +408,15 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                     )?;
                     validate_range_id(id, line_no)?;
                     if open_ranges.contains_key(id) {
-                        return Err(err(line_no, format!("範囲 '{id}' はすでに開いています")));
+                        return Err(err(
+                            line_no,
+                            mf("annotation.range_already_open", &[("id", id)]),
+                        ));
                     }
                     let file = current_file
                         .as_ref()
                         .map(file_label)
-                        .ok_or_else(|| err(line_no, "ファイルの外に範囲マーカーがあります"))?;
+                        .ok_or_else(|| err(line_no, m("annotation.range_marker_outside_file")))?;
                     open_ranges.insert(
                         id.to_string(),
                         RangeStart {
@@ -418,15 +433,15 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                         &mut next_thread_id,
                         &mut last_thread,
                     )?;
-                    let start = open_ranges
-                        .remove(id)
-                        .ok_or_else(|| err(line_no, format!("範囲 '{id}' は開かれていません")))?;
+                    let start = open_ranges.remove(id).ok_or_else(|| {
+                        err(line_no, mf("annotation.range_not_open", &[("id", id)]))
+                    })?;
                     warn_unused_range(&mut unused_range, &mut warnings);
                     unused_range = Some((id.to_string(), line_no));
                     let base = LineSpan::new(start.start_old_line, old_no - start.start_old_line);
                     let head = LineSpan::new(start.start_new_line, new_no - start.start_new_line);
                     if base.len == 0 && head.len == 0 {
-                        return Err(err(line_no, format!("範囲 '{id}' が空です")));
+                        return Err(err(line_no, mf("annotation.range_empty", &[("id", id)])));
                     }
                     current_scope = AnchorScope::Span {
                         file: start.file,
@@ -445,24 +460,22 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                     // the thread of the `>#@<id>` or `>#]<id>` before it.
                     let ulid = if header.is_empty() || header.starts_with(char::is_whitespace) {
                         if !follows_rendered {
-                            warnings.push(format!(
-                                "{line_no} 行目: ID のない '>#@' ヘッダが、'>#]<id>' の行や \
-                                他の '>#' の行の直後にありません。'>#]' の行を消していませんか? \
-                                このヘッダは、直前に読んだスレッドのものとして扱います"
+                            warnings.push(mf(
+                                "annotation.header_no_id_warning",
+                                &[("line", &line_no.to_string())],
                             ));
                         }
-                        last_rendered.ok_or_else(|| {
-                            err(
-                                line_no,
-                                "ID のない '>#@' ヘッダの前に、対象のスレッドがありません('>#]<id>' の行を消していませんか?)",
-                            )
-                        })?
+                        last_rendered
+                            .ok_or_else(|| err(line_no, m("annotation.header_no_target")))?
                     } else {
                         let id_token = header.split_whitespace().next().unwrap_or("");
                         Ulid::from_string(id_token).map_err(|_| {
                             err(
                                 line_no,
-                                format!("'>#@' ヘッダのスレッド ID が不正です: {id_token:?}"),
+                                mf(
+                                    "annotation.header_bad_id",
+                                    &[("id", &format!("{id_token:?}"))],
+                                ),
                             )
                         })?
                     };
@@ -489,9 +502,9 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
                         Some(at) => {
                             open_markers.remove(at);
                         }
-                        None => warnings.push(format!(
-                            "{line_no} 行目: '>#]{ulid}' に対応する '>#[{ulid}' がありません。\
-                            範囲の開始の行を消していませんか?"
+                        None => warnings.push(mf(
+                            "annotation.close_without_open_warning",
+                            &[("line", &line_no.to_string()), ("ulid", &ulid.to_string())],
                         )),
                     }
                     last_rendered = Some(ulid);
@@ -643,7 +656,7 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
         if let Some(rest) = raw_line.strip_prefix("+++ ") {
             let file = current_file
                 .as_mut()
-                .ok_or_else(|| err(line_no, "ファイルヘッダの外に '+++' 行があります"))?;
+                .ok_or_else(|| err(line_no, m("diff.file_header_stray_plus")))?;
             file.new_path = diff::parse_path(rest);
             current_scope = AnchorScope::File {
                 file: file_label(file),
@@ -655,7 +668,7 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
             diff::finish_hunk(&mut current_file, &mut current_hunk);
             let file = current_file
                 .as_ref()
-                .ok_or_else(|| err(line_no, "ファイルの外にハンクヘッダがあります"))?;
+                .ok_or_else(|| err(line_no, m("diff.hunk_header_outside_file")))?;
             let file_lbl = file_label(file);
             let (old_start, old_lines, new_start, new_lines, section_heading) =
                 diff::parse_hunk_header(raw_line, line_no).map_err(from_diff_err)?;
@@ -684,7 +697,7 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
         if raw_line.strip_prefix('\\').is_some() {
             let hunk = current_hunk
                 .as_mut()
-                .ok_or_else(|| err(line_no, "ハンクの外に '\\' マーカーがあります"))?;
+                .ok_or_else(|| err(line_no, m("diff.backslash_outside_hunk")))?;
             if let Some(last) = hunk.lines.last_mut() {
                 last.no_newline_at_eof = true;
             }
@@ -697,10 +710,10 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
         let file_lbl = current_file
             .as_ref()
             .map(file_label)
-            .ok_or_else(|| err(line_no, "ファイルの外に差分の内容があります"))?;
+            .ok_or_else(|| err(line_no, m("annotation.content_outside_file")))?;
         let hunk = current_hunk
             .as_mut()
-            .ok_or_else(|| err(line_no, "ハンクの外に差分の内容があります"))?;
+            .ok_or_else(|| err(line_no, m("diff.content_outside_hunk")))?;
         let line = match prefix_char {
             ' ' => {
                 let l = DiffLine {
@@ -754,7 +767,7 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
             other => {
                 return Err(err(
                     line_no,
-                    format!("差分の行頭が認識できません: {other:?}"),
+                    mf("diff.bad_line_prefix", &[("char", &format!("{other:?}"))]),
                 ));
             }
         };
@@ -771,15 +784,15 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
 
     warn_unused_range(&mut unused_range, &mut warnings);
     for (ulid, line) in open_markers {
-        warnings.push(format!(
-            "{line} 行目: '>#[{ulid}' に対応する '>#]{ulid}' がありません。'>#]' の行を消すと、\
-            続くコメントの返信先が別のスレッドになるおそれがあります"
+        warnings.push(mf(
+            "annotation.open_without_close_warning",
+            &[("line", &line.to_string()), ("ulid", &ulid.to_string())],
         ));
     }
     if let Some(id) = open_ranges.into_keys().next() {
         return Err(err(
             last_line_no + 1,
-            format!("範囲 '{id}' が閉じられていません"),
+            mf("annotation.range_unclosed", &[("id", &id)]),
         ));
     }
 
@@ -793,12 +806,13 @@ pub fn parse(text: &str) -> Result<Parsed, AnnotationError> {
 fn warn_unused_range(unused: &mut Option<(String, usize)>, warnings: &mut Vec<String>) {
     if let Some((id, line)) = unused.take() {
         let name = if id.is_empty() {
-            "範囲".to_string()
+            m("annotation.range_label_generic").to_string()
         } else {
-            format!("範囲 '{id}'")
+            mf("annotation.range_label_named", &[("id", &id)])
         };
-        warnings.push(format!(
-            "{line} 行目: {name} は閉じられていますが、コメントがないため何も記録されません"
+        warnings.push(mf(
+            "annotation.range_unused_warning",
+            &[("line", &line.to_string()), ("name", &name)],
         ));
     }
 }
@@ -917,9 +931,7 @@ pub fn render_for_edit(
 
     let mut out = String::new();
     if !outdated.is_empty() {
-        out.push_str(
-            ">#--- 現在の差分に配置できなかった既存コメントです。>!reanchor <id> で位置を指定できます ---\n",
-        );
+        out.push_str(m("annotation.reanchor_header"));
         for ts in outdated.values() {
             for t in ts {
                 render_thread_block(&mut out, t, None, true);
@@ -1118,13 +1130,13 @@ fn render_thread_block(
 ) {
     let mut tags = String::new();
     if t.resolved {
-        tags.push_str(" [解決済み]");
+        tags.push_str(m("annotation.resolved_tag"));
     }
     if let Some((_, kind)) = absent {
         tags.push_str(match kind {
-            Absence::Deleted => " [削除済み]",
-            Absence::NotYet => " [まだない]",
-            Absence::Unknown => " [不在]",
+            Absence::Deleted => m("annotation.absence_deleted_tag"),
+            Absence::NotYet => m("annotation.absence_not_yet_tag"),
+            Absence::Unknown => m("annotation.absence_unknown_tag"),
         });
     }
     let quoted: Vec<String> = absent

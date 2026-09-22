@@ -6,6 +6,7 @@
 
 use crate::annotation::{AnchorScope, LineSpan};
 use crate::diff::UnifiedDiff;
+use crate::messages::mf;
 use crate::model::{Anchor, FileDigest, FileRef, LineRange, Side};
 
 /// `revisions` are the (base, head) ids of the reviewed change; `files` the
@@ -50,7 +51,7 @@ pub fn build_anchor(
                     f.new_path.as_deref() == Some(file) || f.old_path.as_deref() == Some(file)
                 })
                 .ok_or_else(|| {
-                    anyhow::anyhow!("内部エラー: ファイル '{file}' が解析済みの差分にありません")
+                    anyhow::anyhow!(mf("create.internal_file_missing", &[("file", file)]))
                 })?;
             let range = |which: Side, path: Option<&String>, span: &LineSpan| {
                 path.map(|path| LineRange {

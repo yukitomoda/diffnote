@@ -102,6 +102,8 @@ cli:
       出力する HTML のパス。例: `-o out.html`。
     output_pos: |-
       -o/--output の代わりに位置引数で渡す出力パス。例: `diffnote export out.html`。
+    expand_limit_value_name: |-
+      行数|all
     expand_limit: |-
       差分が省略している行を、HTML に埋め込む行数の上限(全ファイル・全リビジョンの合計)。
       埋め込んだ分は、HTML を開いたあとで展開できます。`0` で埋め込まず、`all` で全部埋め込みます。
@@ -498,3 +500,226 @@ serve:
       ポート {port} で待ち受けを始められませんでした
     port_unknown: |-
       待ち受けているポートを調べられませんでした
+
+# --- 実行時のメッセージ(画像/添付、bundle 読み込み、ディレクトリ読み込み) --
+image:
+  empty: |-
+    画像が空です
+  unsupported_format: |-
+    この形式の画像は添付できません(PNG、JPEG、GIF、WebP、SVG)
+  svg_runs: |-
+    スクリプトなどを含む SVG は添付できません
+  svg_external_ref: |-
+    外部を参照する SVG は添付できません
+
+create:
+  internal_file_missing: |-
+    内部エラー: ファイル '{file}' が解析済みの差分にありません
+
+review:
+  bad_event: |-
+    {source}:{line}: イベントの形式が不正です
+  open_failed: |-
+    {path} を開けませんでした
+
+files:
+  walk_failed: |-
+    ディレクトリをたどれませんでした
+  read_failed: |-
+    {path} を読めませんでした
+
+parse:
+  error_line: |-
+    {line} 行目: {message}
+
+diff:
+  file_header_stray_plus: |-
+    ファイルヘッダの外に '+++' 行があります
+  hunk_header_outside_file: |-
+    ファイルの外にハンクヘッダがあります
+  backslash_outside_hunk: |-
+    ハンクの外に '\' マーカーがあります
+  content_outside_hunk: |-
+    ハンクの外に差分の内容があります
+  bad_line_prefix: |-
+    差分の行頭が認識できません: {char}
+  bad_hunk_header: |-
+    ハンクヘッダが不正です
+  bad_hunk_header_unclosed: |-
+    ハンクヘッダが不正です(閉じの '@@' がありません)
+  bad_hunk_header_no_old_range: |-
+    ハンクヘッダが不正です(旧側の範囲がありません)
+  bad_hunk_header_no_new_range: |-
+    ハンクヘッダが不正です(新側の範囲がありません)
+  bad_hunk_range: |-
+    ハンクの範囲が不正です: {value}
+  bad_hunk_range_start: |-
+    ハンクの範囲の開始が不正です: {value}
+  bad_hunk_range_length: |-
+    ハンクの範囲の長さが不正です: {value}
+
+annotation:
+  bad_range_id: |-
+    範囲の ID が不正です: {id}
+  reanchor_needs_id: |-
+    'reanchor' にはスレッド ID の引数が必要です
+  reanchor_wrong_syntax: |-
+    'reanchor' は '>>!reanchor' ではなく '>!reanchor <id>' と書いてください
+  bad_directive: |-
+    ディレクティブが未知か、書式が不正です: {value}
+  reply_no_target: |-
+    '>>' の返信先になるスレッド(新規または表示済み)が直前にありません
+  range_already_open: |-
+    範囲 '{id}' はすでに開いています
+  range_marker_outside_file: |-
+    ファイルの外に範囲マーカーがあります
+  range_not_open: |-
+    範囲 '{id}' は開かれていません
+  range_empty: |-
+    範囲 '{id}' が空です
+  header_no_id_warning: |-
+    {line} 行目: ID のない '>#@' ヘッダが、'>#]<id>' の行や他の '>#' の行の直後にありません。'>#]' の行を消していませんか? このヘッダは、直前に読んだスレッドのものとして扱います
+  header_no_target: |-
+    ID のない '>#@' ヘッダの前に、対象のスレッドがありません('>#]<id>' の行を消していませんか?)
+  header_bad_id: |-
+    '>#@' ヘッダのスレッド ID が不正です: {id}
+  close_without_open_warning: |-
+    {line} 行目: '>#]{ulid}' に対応する '>#[{ulid}' がありません。範囲の開始の行を消していませんか?
+  content_outside_file: |-
+    ファイルの外に差分の内容があります
+  open_without_close_warning: |-
+    {line} 行目: '>#[{ulid}' に対応する '>#]{ulid}' がありません。'>#]' の行を消すと、続くコメントの返信先が別のスレッドになるおそれがあります
+  range_unclosed: |-
+    範囲 '{id}' が閉じられていません
+  range_label_generic: |-
+    範囲
+  range_label_named: |-
+    範囲 '{id}'
+  range_unused_warning: |-
+    {line} 行目: {name} は閉じられていますが、コメントがないため何も記録されません
+  reanchor_header: |
+    >#--- 現在の差分に配置できなかった既存コメントです。>!reanchor <id> で位置を指定できます ---
+  resolved_tag: " [解決済み]"
+  absence_deleted_tag: " [削除済み]"
+  absence_not_yet_tag: " [まだない]"
+  absence_unknown_tag: " [不在]"
+
+git:
+  exec_failed: |-
+    git を実行できませんでした(インストールされていて PATH に通っていますか)
+  exec_failed_short: |-
+    git を実行できませんでした
+  no_output: |-
+    (出力なし)
+  failed: |-
+    git が失敗しました: {message}
+  output_not_utf8: |-
+    git の出力が UTF-8 ではありません
+  bad_rev_flag: |-
+    '{rev}' はコミットの指定として使えません
+  commit_not_found: |-
+    '{rev}' というコミットが見つかりません(ブランチ名、タグ、コミット ID などで指定してください)
+  commit_unresolved: |-
+    '{rev}' をコミットとして解決できませんでした
+  cat_file_failed: |-
+    git cat-file を実行できませんでした
+  blob_read_failed: |-
+    git cat-file が blob {oid} を読めませんでした: {header}
+  cat_file_bad_size: |-
+    git cat-file が不正なサイズを返しました
+
+bundle:
+  open_failed: |-
+    {path} を開けませんでした
+  not_a_bundle: |-
+    {path} は .diffnote バンドルではないようです(zip ではありません)
+  entry_read_failed: |-
+    {path} の {index} 番目のエントリを読めませんでした
+  member_read_failed: |-
+    {path} から {name} を読めませんでした
+  review_not_utf8: |-
+    {path} の review.jsonl が UTF-8 ではありません
+  review_label: |-
+    {path} の review.jsonl
+  reactions_read_failed: |-
+    {path} の reactions.json を読めませんでした
+  settings_read_failed: |-
+    {path} の settings.json を読めませんでした
+  dir_create_failed: |-
+    {path} を作れませんでした
+  temp_file_failed: |-
+    バンドル用の一時ファイルを作れませんでした
+  event_json_failed: |-
+    イベントを JSON にできませんでした
+  settings_json_failed: |-
+    設定を JSON にできませんでした
+  reactions_json_failed: |-
+    リアクションを JSON にできませんでした
+  zip_finish_failed: |-
+    バンドルの zip を完成できませんでした
+  save_failed: |-
+    {path} を保存できませんでした
+
+show:
+  no_filename: |-
+    ファイル名がありません
+  outside_tree: |-
+    {path} はレビュー対象のツリー内のパスではありません(絶対パスや `..` は使えません)
+  bad_range: |-
+    {value} は行番号でも行の範囲でもありません
+  line_starts_at_1: |-
+    行番号は 1 から始まります
+  range_end_before_start: |-
+    {value} は終わりが始まりより前です
+  deleted_in_diff: |-
+    {path}: この差分で削除されているので、head 側に表示するものがありません
+  not_in_head: |-
+    {path}: このレビューの head にそのファイルはありません
+  not_text: |-
+    {path}: テキストファイルではありません(または内容を取得できません)
+  file_empty: |-
+    {path}: ファイルが空なので、表示するものがありません
+  past_end: |-
+    {path}: ファイルは {total} 行ですが、{start} 行目は末尾を過ぎています
+
+user_config:
+  save_dir_failed: |-
+    設定を保存する場所が決められませんでした(HOME が設定されていないなど)
+  create_dir_failed: |-
+    {path} を作れませんでした
+  encode_failed: |-
+    設定を書き出せませんでした
+  write_failed: |-
+    {path} に書き込めませんでした
+
+html:
+  dir_label: |-
+    ディレクトリ
+  no_diff_recorded: |-
+    バンドルに記録された差分がありません
+  no_repo_notice: |-
+    このバンドルの git リポジトリが見つからないため、保存済みのファイルだけを表示しています
+  nothing_else_openable: |-
+    ほかに開けるファイルはありません
+  not_found: |-
+    見つかりません
+  revision_missing: |-
+    そのリビジョンはありません
+  file_not_stored: |-
+    そのファイルはこのレビューに保存されていません
+  no_repo_for_file: |-
+    このバンドルの git リポジトリが見つからないため、このファイルは開けません
+  not_in_commit: |-
+    そのファイルはこのコミットにありません
+  too_big: |-
+    大きすぎるため開けません({size} MB。上限は {limit} MB)
+  not_text: |-
+    テキストファイルではないため、表示できません
+  default_title: |-
+    diffnote レビュー
+  compare_missing_revisions: |-
+    比べるリビジョンが正しくありません
+
+record:
+  full_snapshot_warning: |-
+    レビュー対象のツリーの `full` スナップショットは約 {size} MB になります

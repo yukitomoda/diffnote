@@ -619,7 +619,7 @@ pub fn compare_data(
 ) -> anyhow::Result<RevisionData> {
     let shown = shown_revisions(loaded)?;
     if from >= to || to >= shown.len() {
-        anyhow::bail!("比べるリビジョンが正しくありません");
+        anyhow::bail!(m("html.compare_missing_revisions"));
     }
     let (before, after) = (&shown[from], &shown[to]);
     let blobs = loaded.blobs();

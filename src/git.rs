@@ -8,6 +8,7 @@
 //! resolves anything git itself accepts (`HEAD~4^2`, `main@{yesterday}`,
 //! `A...B`, ...), and only its resolved output is interpreted.
 
+use crate::messages::{m, mf};
 use crate::model::GitSource;
 use anyhow::{Context, Result, bail};
 use std::io::{Read, Write};
@@ -39,22 +40,20 @@ fn base_command(dir: &Path) -> Command {
 }
 
 fn run(mut cmd: Command) -> Result<Vec<u8>> {
-    let output = cmd
-        .output()
-        .context("git を実行できませんでした(インストールされていて PATH に通っていますか)")?;
+    let output = cmd.output().context(m("git.exec_failed"))?;
     if !output.status.success() {
         let first_line = String::from_utf8_lossy(&output.stderr)
             .lines()
             .next()
-            .unwrap_or("(出力なし)")
+            .unwrap_or(m("git.no_output"))
             .to_string();
-        bail!("git が失敗しました: {first_line}");
+        bail!(mf("git.failed", &[("message", &first_line)]));
     }
     Ok(output.stdout)
 }
 
 fn run_text(cmd: Command) -> Result<String> {
-    String::from_utf8(run(cmd)?).context("git の出力が UTF-8 ではありません")
+    String::from_utf8(run(cmd)?).context(m("git.output_not_utf8"))
 }
 
 fn is_object_id(s: &str) -> bool {
@@ -106,7 +105,7 @@ impl Repo {
                 Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
             }
             Ok(_) => self.empty_tree(),
-            Err(e) => Err(e).context("git を実行できませんでした"),
+            Err(e) => Err(e).context(m("git.exec_failed_short")),
         }
     }
 
@@ -119,7 +118,7 @@ impl Repo {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .context("git を実行できませんでした")?;
+            .context(m("git.exec_failed_short"))?;
         drop(child.stdin.take());
         let mut out = String::new();
         child.stdout.take().unwrap().read_to_string(&mut out)?;
@@ -130,17 +129,16 @@ impl Repo {
     /// The full id of the commit `rev` names (`HEAD`, a branch, a tag, an id).
     pub fn commit_id(&self, rev: &str) -> Result<String> {
         if rev.starts_with('-') {
-            bail!("'{rev}' はコミットの指定として使えません");
+            bail!(mf("git.bad_rev_flag", &[("rev", rev)]));
         }
         let mut cmd = self.git();
         cmd.args(["rev-parse", "--verify", "--quiet"])
             .arg(format!("{rev}^{{commit}}"));
-        let out = run_text(cmd).map_err(|_| {
-            anyhow::anyhow!("'{rev}' というコミットが見つかりません(ブランチ名、タグ、コミット ID などで指定してください)")
-        })?;
+        let out = run_text(cmd)
+            .map_err(|_| anyhow::anyhow!(mf("git.commit_not_found", &[("rev", rev)])))?;
         let id = out.trim().to_string();
         if !is_object_id(&id) {
-            bail!("'{rev}' をコミットとして解決できませんでした");
+            bail!(mf("git.commit_unresolved", &[("rev", rev)]));
         }
         Ok(id)
     }
@@ -229,7 +227,7 @@ impl Repo {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .context("git cat-file を実行できませんでした")?;
+            .context(m("git.cat_file_failed"))?;
         let mut stdin = child.stdin.take().unwrap();
         let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
 
@@ -249,14 +247,12 @@ impl Repo {
                 let (Some(_), Some("blob"), Some(size)) =
                     (fields.next(), fields.next(), fields.next())
                 else {
-                    bail!(
-                        "git cat-file が blob {oid} を読めませんでした: {}",
-                        header.trim()
-                    );
+                    bail!(mf(
+                        "git.blob_read_failed",
+                        &[("oid", oid), ("header", header.trim())]
+                    ));
                 };
-                let size: usize = size
-                    .parse()
-                    .context("git cat-file が不正なサイズを返しました")?;
+                let size: usize = size.parse().context(m("git.cat_file_bad_size"))?;
                 let mut content = vec![0u8; size + 1]; // + trailing newline
                 stdout.read_exact(&mut content)?;
                 content.pop();

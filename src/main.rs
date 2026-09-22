@@ -172,7 +172,7 @@ enum Cmd {
         output: Option<PathBuf>,
         #[arg(index = 1, value_name = "OUTPUT", help = m("cli.export.output_pos"))]
         output_pos: Option<PathBuf>,
-        #[arg(long, value_name = "行数|all", default_value = "5000", value_parser = parse_expand_limit, help = m("cli.export.expand_limit"))]
+        #[arg(long, value_name = m("cli.export.expand_limit_value_name"), default_value = "5000", value_parser = parse_expand_limit, help = m("cli.export.expand_limit"))]
         expand_limit: diffnote::html::ExpandLimit,
     },
     #[command(about = m("cli.config.about"))]

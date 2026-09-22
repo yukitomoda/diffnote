@@ -13,6 +13,7 @@
 use crate::bundle::{Additions, Loaded};
 use crate::digest::digest;
 use crate::files::Tree;
+use crate::messages::mf;
 use crate::model::{Anchor, Event, FileDigest, Revision, SnapshotMode, Source, TreeFile};
 use anyhow::Result;
 use std::collections::{BTreeSet, HashSet};
@@ -63,9 +64,9 @@ pub fn pick_snapshot_mode(
 /// kept, if it is big enough to mention.
 pub fn full_snapshot_warning(bytes: u64) -> Option<String> {
     (bytes >= FULL_SNAPSHOT_WARN_BYTES).then(|| {
-        format!(
-            "レビュー対象のツリーの `full` スナップショットは約 {:.1} MB になります",
-            bytes as f64 / (1024.0 * 1024.0)
+        mf(
+            "record.full_snapshot_warning",
+            &[("size", &format!("{:.1}", bytes as f64 / (1024.0 * 1024.0)))],
         )
     })
 }

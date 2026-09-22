@@ -20,6 +20,7 @@
 use crate::anchor::{self, Placement};
 use crate::diff::{FileDiff, Hunk, LineKind, UnifiedDiff};
 use crate::expand;
+use crate::messages::{m, mf};
 use crate::model::Side;
 use crate::review::{Thread, build_threads};
 use std::collections::HashMap;
@@ -79,7 +80,7 @@ fn shown_revisions(loaded: &crate::bundle::Loaded) -> anyhow::Result<Vec<Shown<'
             // The commit, not what it was called (`HEAD` and branches move).
             // The base is the same for every revision, and is said apart.
             crate::model::Source::Git(g) => g.head.chars().take(7).collect(),
-            crate::model::Source::Files { .. } => "ディレクトリ".to_string(),
+            crate::model::Source::Files { .. } => m("html.dir_label").to_string(),
         };
         let label = format!(
             "#{} {source} ({})",
@@ -94,7 +95,7 @@ fn shown_revisions(loaded: &crate::bundle::Loaded) -> anyhow::Result<Vec<Shown<'
         });
     }
     if shown.is_empty() {
-        anyhow::bail!("バンドルに記録された差分がありません");
+        anyhow::bail!(m("html.no_diff_recorded"));
     }
     Ok(shown)
 }
@@ -176,7 +177,7 @@ fn client_page(
     } else {
         view_model_json(loaded, limit)?
     };
-    let title = crate::review::title(&loaded.settings).unwrap_or(DEFAULT_TITLE);
+    let title = crate::review::title(&loaded.settings).unwrap_or(m("html.default_title"));
     let mut scripts: Vec<&str> = CLIENT_LIBS.to_vec();
     if interactive {
         scripts.push(CLIENT_API);
@@ -368,9 +369,6 @@ pub struct TreeData {
     pub more: usize,
 }
 
-const NOTE_NO_REPOSITORY: &str =
-    "このバンドルの git リポジトリが見つからないため、保存済みのファイルだけを表示しています";
-
 /// The files for the "other files" section of the page: the entries of
 /// directory `dir` (sub-directories are listed when opened), or, with a
 /// `query`, the files whose path contains it.
@@ -387,20 +385,20 @@ pub fn tree_data(
         let shown = shown_revisions(loaded).ok()?;
         let rev = shown.get(revision)?.revision;
         match head_commit(rev) {
-            Some(c) if git.and_then(|g| g.tree(c)).is_none() => Some(NOTE_NO_REPOSITORY),
+            Some(c) if git.and_then(|g| g.tree(c)).is_none() => Some(m("html.no_repo_notice")),
             _ => None,
         }
     };
-    let message = |m| TreeData {
+    let message = |text| TreeData {
         items: Vec::new(),
-        message: Some(m),
+        message: Some(text),
         note: None,
         more: 0,
     };
     if files.is_empty() {
         return Some(TreeData {
             note,
-            ..message("ほかに開けるファイルはありません")
+            ..message(m("html.nothing_else_openable"))
         });
     }
     let mut items = Vec::new();
@@ -411,7 +409,7 @@ pub fn tree_data(
             .filter(|f| f.to_lowercase().contains(&query))
             .collect();
         if matching.is_empty() {
-            return Some(message("見つかりません"));
+            return Some(message(m("html.not_found")));
         }
         let more = matching.len().saturating_sub(TREE_LIMIT);
         for f in matching.into_iter().take(TREE_LIMIT) {
@@ -482,7 +480,7 @@ fn file_content(
     let shown = shown_revisions(loaded).map_err(|e| e.to_string())?;
     let rev = shown
         .get(revision)
-        .ok_or("そのリビジョンはありません")?
+        .ok_or_else(|| m("html.revision_missing").to_string())?
         .revision;
     if let Some(entry) = loaded.manifest(rev).into_iter().find(|f| f.path == path)
         && let Some(bytes) = loaded.blob(&entry.digest)
@@ -493,20 +491,25 @@ fn file_content(
         });
     }
     // Not stored: from the commit, if the repository is there and has it.
-    let git = git.ok_or("そのファイルはこのレビューに保存されていません")?;
-    let commit = head_commit(rev).ok_or("そのファイルはこのレビューに保存されていません")?;
+    let git = git.ok_or_else(|| m("html.file_not_stored").to_string())?;
+    let commit = head_commit(rev).ok_or_else(|| m("html.file_not_stored").to_string())?;
     let tree = git
         .tree(commit)
-        .ok_or("このバンドルの git リポジトリが見つからないため、このファイルは開けません")?;
+        .ok_or_else(|| m("html.no_repo_for_file").to_string())?;
     let entry = tree
         .iter()
         .find(|e| e.path == path)
-        .ok_or("そのファイルはこのコミットにありません")?;
+        .ok_or_else(|| m("html.not_in_commit").to_string())?;
     if entry.size > MAX_FILE_BYTES {
-        return Err(format!(
-            "大きすぎるため開けません({:.1} MB。上限は {} MB)",
-            entry.size as f64 / (1024.0 * 1024.0),
-            MAX_FILE_BYTES / (1024 * 1024)
+        return Err(mf(
+            "html.too_big",
+            &[
+                (
+                    "size",
+                    &format!("{:.1}", entry.size as f64 / (1024.0 * 1024.0)),
+                ),
+                ("limit", &(MAX_FILE_BYTES / (1024 * 1024)).to_string()),
+            ],
         ));
     }
     Ok(FileContent {
@@ -523,7 +526,7 @@ fn stored_text(
     git: Option<&dyn CommitFiles>,
 ) -> Result<String, String> {
     String::from_utf8(file_content(loaded, revision, path, git)?.bytes)
-        .map_err(|_| "テキストファイルではないため、表示できません".to_string())
+        .map_err(|_| m("html.not_text").to_string())
 }
 
 /// `OPEN_CHUNK` lines of `text` from line `from` (1-based) as a hunk of
@@ -754,9 +757,6 @@ fn escape_html(s: &str) -> String {
     }
     out
 }
-
-/// What the page is called when the review has no title.
-const DEFAULT_TITLE: &str = "diffnote レビュー";
 
 const STYLE: &str = include_str!("../ui/style.css");
 

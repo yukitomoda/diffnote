@@ -9,6 +9,7 @@
 use crate::anchor::ViewVersions;
 use crate::digest::Blobs;
 use crate::expand::Want;
+use crate::messages::{m, mf};
 use crate::model::Side;
 
 /// One `--show` request.
@@ -45,29 +46,30 @@ pub fn parse(spec: &str) -> Result<Show, String> {
     };
     let path = path.strip_prefix("./").unwrap_or(path);
     if path.is_empty() {
-        return Err("ファイル名がありません".to_string());
+        return Err(m("show.no_filename").to_string());
     }
     if path.starts_with('/') || path.split('/').any(|c| c == "..") {
-        return Err(format!(
-            "{path:?} はレビュー対象のツリー内のパスではありません(絶対パスや `..` は使えません)"
-        ));
+        return Err(mf("show.outside_tree", &[("path", &format!("{path:?}"))]));
     }
     let lines = match range {
         None => None,
         Some(r) => {
             let number = |s: &str| {
                 s.parse::<u32>()
-                    .map_err(|_| format!("{r:?} は行番号でも行の範囲でもありません"))
+                    .map_err(|_| mf("show.bad_range", &[("value", &format!("{r:?}"))]))
             };
             let (start, end) = match r.split_once('-') {
                 Some((a, b)) => (number(a)?, number(b)?),
                 None => (number(r)?, number(r)?),
             };
             if start == 0 {
-                return Err("行番号は 1 から始まります".to_string());
+                return Err(m("show.line_starts_at_1").to_string());
             }
             if end < start {
-                return Err(format!("{r:?} は終わりが始まりより前です"));
+                return Err(mf(
+                    "show.range_end_before_start",
+                    &[("value", &format!("{r:?}"))],
+                ));
             }
             Some((start, end))
         }
@@ -90,36 +92,28 @@ pub fn wants(shows: &[Show], view: &ViewVersions, blobs: &Blobs) -> Result<Vec<W
                 .iter()
                 .any(|f| f.old_path.as_deref() == Some(show.path.as_str()) && f.new.is_none());
             return Err(if deleted {
-                format!(
-                    "{}: この差分で削除されているので、head 側に表示するものがありません",
-                    show.path
-                )
+                mf("show.deleted_in_diff", &[("path", &show.path)])
             } else {
-                format!(
-                    "{}: このレビューの head にそのファイルはありません",
-                    show.path
-                )
+                mf("show.not_in_head", &[("path", &show.path)])
             });
         };
         let Some(text) = blobs.text(digest) else {
-            return Err(format!(
-                "{}: テキストファイルではありません(または内容を取得できません)",
-                show.path
-            ));
+            return Err(mf("show.not_text", &[("path", &show.path)]));
         };
         let total = text.lines().count() as u32;
         if total == 0 {
-            return Err(format!(
-                "{}: ファイルが空なので、表示するものがありません",
-                show.path
-            ));
+            return Err(mf("show.file_empty", &[("path", &show.path)]));
         }
         let (start, end) = match show.lines {
             None => (1, total),
             Some((start, _)) if start > total => {
-                return Err(format!(
-                    "{}: ファイルは {total} 行ですが、{start} 行目は末尾を過ぎています",
-                    show.path
+                return Err(mf(
+                    "show.past_end",
+                    &[
+                        ("path", &show.path),
+                        ("total", &total.to_string()),
+                        ("start", &start.to_string()),
+                    ],
                 ));
             }
             Some((start, end)) => (start, end.min(total)),

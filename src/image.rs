@@ -7,6 +7,8 @@
 //! anything), and the server sends it with a policy that stops it from doing
 //! anything if it is opened by itself.
 
+use crate::messages::m;
+
 /// What a comment's link to an image starts with.
 pub const SCHEME: &str = "diffnote-image:";
 
@@ -76,7 +78,7 @@ pub fn file_name(asked: &str) -> String {
 /// may not.
 pub fn kind(bytes: &[u8]) -> Result<&'static str, String> {
     if bytes.is_empty() {
-        return Err("画像が空です".into());
+        return Err(m("image.empty").into());
     }
     if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
         return Ok("image/png");
@@ -96,13 +98,13 @@ pub fn kind(bytes: &[u8]) -> Result<&'static str, String> {
             return safe_svg(&lower).map(|_| "image/svg+xml");
         }
     }
-    Err("この形式の画像は添付できません(PNG、JPEG、GIF、WebP、SVG)".into())
+    Err(m("image.unsupported_format").into())
 }
 
 /// An SVG is refused (not changed) if anything in it could run, or load
 /// something from elsewhere. `lower` is its text in lower case.
 fn safe_svg(lower: &str) -> Result<(), String> {
-    const RUNS: &str = "スクリプトなどを含む SVG は添付できません";
+    let runs = || m("image.svg_runs").to_string();
     for bad in [
         "<script",
         "<foreignobject",
@@ -115,7 +117,7 @@ fn safe_svg(lower: &str) -> Result<(), String> {
         "vbscript:",
     ] {
         if lower.contains(bad) {
-            return Err(RUNS.into());
+            return Err(runs());
         }
     }
     // Addresses: the namespaces are the ones it may name, and nothing else (a
@@ -127,7 +129,7 @@ fn safe_svg(lower: &str) -> Result<(), String> {
         .iter()
         .any(|a| without_namespaces.contains(a))
     {
-        return Err("外部を参照する SVG は添付できません".into());
+        return Err(m("image.svg_external_ref").into());
     }
     // An event handler: ` onload=`, `"onclick =` ...
     let bytes = lower.as_bytes();
@@ -149,7 +151,7 @@ fn safe_svg(lower: &str) -> Result<(), String> {
                 j += 1;
             }
             if j < bytes.len() && bytes[j] == b'=' {
-                return Err(RUNS.into());
+                return Err(runs());
             }
         }
     }

@@ -29,6 +29,7 @@
 //! enough that this is simple and safe (no risk of a half-written zip from
 //! an in-place edit), at the cost of not scaling to huge bundles.
 
+use crate::messages::{m, mf};
 pub use crate::model::SnapshotMode;
 use crate::model::{Event, Reactions, Revision, Settings, Source, TreeFile};
 use anyhow::{Context, Result};
@@ -177,12 +178,16 @@ pub fn load(path: &Path) -> Result<Loaded> {
         });
     }
 
-    let file = std::fs::File::open(path)
-        .with_context(|| format!("{} を開けませんでした", path.display()))?;
+    let file = std::fs::File::open(path).with_context(|| {
+        mf(
+            "bundle.open_failed",
+            &[("path", &path.display().to_string())],
+        )
+    })?;
     let mut archive = ZipArchive::new(file).with_context(|| {
-        format!(
-            "{} は .diffnote バンドルではないようです(zip ではありません)",
-            path.display()
+        mf(
+            "bundle.not_a_bundle",
+            &[("path", &path.display().to_string())],
         )
     })?;
 
@@ -194,27 +199,48 @@ pub fn load(path: &Path) -> Result<Loaded> {
 
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).with_context(|| {
-            format!("{} の {i} 番目のエントリを読めませんでした", path.display())
+            mf(
+                "bundle.entry_read_failed",
+                &[
+                    ("path", &path.display().to_string()),
+                    ("index", &i.to_string()),
+                ],
+            )
         })?;
         let name = entry.name().to_string();
         let mut bytes = Vec::new();
-        entry
-            .read_to_end(&mut bytes)
-            .with_context(|| format!("{} から {name} を読めませんでした", path.display()))?;
+        entry.read_to_end(&mut bytes).with_context(|| {
+            mf(
+                "bundle.member_read_failed",
+                &[("path", &path.display().to_string()), ("name", &name)],
+            )
+        })?;
 
         if name == "review.jsonl" {
             let text = String::from_utf8(bytes).with_context(|| {
-                format!("{} の review.jsonl が UTF-8 ではありません", path.display())
+                mf(
+                    "bundle.review_not_utf8",
+                    &[("path", &path.display().to_string())],
+                )
             })?;
-            events =
-                crate::review::parse_jsonl(&text, &format!("{} の review.jsonl", path.display()))?;
+            let label = mf(
+                "bundle.review_label",
+                &[("path", &path.display().to_string())],
+            );
+            events = crate::review::parse_jsonl(&text, &label)?;
         } else if name == "reactions.json" {
             reactions = serde_json::from_slice(&bytes).with_context(|| {
-                format!("{} の reactions.json を読めませんでした", path.display())
+                mf(
+                    "bundle.reactions_read_failed",
+                    &[("path", &path.display().to_string())],
+                )
             })?;
         } else if name == "settings.json" {
             from_file = Some(serde_json::from_slice(&bytes).with_context(|| {
-                format!("{} の settings.json を読めませんでした", path.display())
+                mf(
+                    "bundle.settings_read_failed",
+                    &[("path", &path.display().to_string())],
+                )
             })?);
         } else {
             carried_entries.push((name, bytes));
@@ -368,11 +394,15 @@ pub fn save_with(
 ) -> Result<()> {
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
     if let Some(parent) = parent {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("{} を作れませんでした", parent.display()))?;
+        std::fs::create_dir_all(parent).with_context(|| {
+            mf(
+                "bundle.dir_create_failed",
+                &[("path", &parent.display().to_string())],
+            )
+        })?;
     }
     let temp = tempfile::NamedTempFile::new_in(parent.unwrap_or_else(|| Path::new(".")))
-        .context("バンドル用の一時ファイルを作れませんでした")?;
+        .context(m("bundle.temp_file_failed"))?;
 
     {
         let mut writer = ZipWriter::new(temp.as_file());
@@ -381,8 +411,7 @@ pub fn save_with(
 
         writer.start_file("review.jsonl", options)?;
         for event in events {
-            let line =
-                serde_json::to_string(event).context("イベントを JSON にできませんでした")?;
+            let line = serde_json::to_string(event).context(m("bundle.event_json_failed"))?;
             writer.write_all(line.as_bytes())?;
             writer.write_all(b"\n")?;
         }
@@ -392,7 +421,7 @@ pub fn save_with(
             writer.start_file("settings.json", options)?;
             writer.write_all(
                 serde_json::to_string_pretty(&loaded.settings)
-                    .context("設定を JSON にできませんでした")?
+                    .context(m("bundle.settings_json_failed"))?
                     .as_bytes(),
             )?;
         }
@@ -401,7 +430,7 @@ pub fn save_with(
             writer.start_file("reactions.json", options)?;
             writer.write_all(
                 serde_json::to_string_pretty(&loaded.reactions)
-                    .context("リアクションを JSON にできませんでした")?
+                    .context(m("bundle.reactions_json_failed"))?
                     .as_bytes(),
             )?;
         }
@@ -463,13 +492,15 @@ pub fn save_with(
             }
         }
 
-        writer
-            .finish()
-            .context("バンドルの zip を完成できませんでした")?;
+        writer.finish().context(m("bundle.zip_finish_failed"))?;
     }
 
-    temp.persist(path)
-        .with_context(|| format!("{} を保存できませんでした", path.display()))?;
+    temp.persist(path).with_context(|| {
+        mf(
+            "bundle.save_failed",
+            &[("path", &path.display().to_string())],
+        )
+    })?;
     Ok(())
 }
 
