@@ -89,6 +89,8 @@ export type Placement =
 
 export interface RevisionData {
   label: string;
+  /** When it was recorded (RFC 3339): the page says it in the reader's time. */
+  at: string;
   /** The diff's files, then the ones only threads bring in. */
   files: FileData[];
   placements: Record<string, Placement>;

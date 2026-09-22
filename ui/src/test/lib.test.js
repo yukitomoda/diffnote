@@ -142,6 +142,14 @@ test('a time is shown as date and minutes in the local zone', () => {
   assert.equal(lib.formatTime('not a time'), 'not a time');
 });
 
+test('a revision is stamped with the day and the time, in the local zone', () => {
+  // No year: a tab is narrow, and a review is read over days, not years.
+  const d = new Date(2026, 8, 20, 9, 5);
+  assert.equal(lib.formatRecorded(d.toISOString()), '9/20 09:05');
+  assert.equal(lib.formatRecorded(new Date(2026, 10, 3, 18, 42).toISOString()), '11/03 18:42');
+  assert.equal(lib.formatRecorded('not a time'), 'not a time');
+});
+
 test('the threads of a file are those on its lines, the file itself, or listed with it', () => {
   const placements = {
     a: line('f', 1, 1),

@@ -157,6 +157,9 @@ pub enum BaseData {
 #[derive(Serialize)]
 pub struct RevisionData {
     pub label: String,
+    /// When the revision was recorded (RFC 3339, UTC). The page writes the
+    /// time itself, in the time of whoever is reading it.
+    pub at: String,
     /// In the order to show them: the diff's files, then those that only
     /// threads bring in.
     pub files: Vec<FileData>,
@@ -320,7 +323,7 @@ pub fn view_model_with(
         .iter()
         .zip(&shown)
         .rev()
-        .map(|(view, s)| revision_data(&threads, view, &s.label, &blobs, &mut budget))
+        .map(|(view, s)| revision_data(&threads, view, &s.label, &s.at, &blobs, &mut budget))
         .collect();
     revisions.reverse();
     Ok(ViewModel {
@@ -483,7 +486,7 @@ fn thread_data(
     }
 }
 
-fn rfc3339(at: time::OffsetDateTime) -> String {
+pub(super) fn rfc3339(at: time::OffsetDateTime) -> String {
     use time::format_description::well_known::Rfc3339;
     at.to_offset(time::UtcOffset::UTC)
         .format(&Rfc3339)
@@ -494,6 +497,7 @@ fn revision_data(
     threads: &[Thread],
     view: &RevisionView,
     label: &str,
+    at: &str,
     blobs: &crate::digest::Blobs,
     budget: &mut usize,
 ) -> RevisionData {
@@ -550,6 +554,7 @@ fn revision_data(
         .collect();
     RevisionData {
         label: label.to_string(),
+        at: at.to_string(),
         files,
         placements,
         order,
@@ -721,7 +726,14 @@ pub fn compare_data(
     };
     let threads = build_threads(&loaded.events);
     let mut budget = 0;
-    Ok(revision_data(&threads, &view, &label, &blobs, &mut budget))
+    Ok(revision_data(
+        &threads,
+        &view,
+        &label,
+        &after.at,
+        &blobs,
+        &mut budget,
+    ))
 }
 
 /// What a change to a file did to it, whatever it is that is in it.

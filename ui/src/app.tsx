@@ -220,7 +220,7 @@ function App(props: { model: ViewModel }) {
           ? <select class="diffnote-base__select" data-diffnote-base-select aria-label={lib.m('ui.base.select_label')} value={against == null ? '' : String(against)}
               onChange={function (e) { compareWith(e.currentTarget.value === '' ? null : +e.currentTarget.value); }}>
               <option value="">{model.base.kind === 'git' ? model.base.id : lib.formatTime(model.base.at)}</option>
-              {model.revisions.slice(0, current).map(function (r, i) { return <option key={i} value={String(i)}>{r.label}</option>; })}
+              {model.revisions.slice(0, current).map(function (r, i) { return <option key={i} value={String(i)}>{r.label} ({lib.formatRecorded(r.at)})</option>; })}
             </select>
           : model.base.kind === 'git' ? <code>{model.base.id}</code> : lib.formatTime(model.base.at)}</p>}
       </header>
@@ -230,7 +230,7 @@ function App(props: { model: ViewModel }) {
       }}><ul>
         {model.revisions.map(function (r, i) {
           return <li key={i}><a href={'#rev-' + i} data-diffnote-revision-link={i} class={i === current ? 'is-current' : ''}
-            onClick={function (e) { e.preventDefault(); openRevision(i); }}>{r.label}</a></li>;
+            onClick={function (e) { e.preventDefault(); openRevision(i); }}>{r.label} <span class="diffnote-revisions__at">({lib.formatRecorded(r.at)})</span></a></li>;
         })}
       </ul></nav>}
       <div class="diffnote-topbar__actions">
@@ -251,7 +251,7 @@ function App(props: { model: ViewModel }) {
         <OpenedContext.Provider value={openedFiles}>
           <Revision key={current} model={model} index={current} hideResolved={hide} layout={layout} ignoreSpace={ignoreSpace} compose={compose} override={override}
             overrideNote={override ? {
-              short: model.revisions[against!].label.replace(/ \(.*$/, '') + ' .. ' + model.revisions[current].label.replace(/ \(.*$/, ''),
+              short: model.revisions[against!].label + ' .. ' + model.revisions[current].label,
               tip: lib.m('ui.base.select_tip'),
             } : null}
             author={review.actions ? model.author : null} userSettingsOpen={screen === 'user'}

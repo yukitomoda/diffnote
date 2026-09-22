@@ -65,6 +65,9 @@ struct Marks {
 /// tree (a fresh `init` snapshot has no diff, so is left out).
 struct Shown<'a> {
     label: String,
+    /// When it was recorded (RFC 3339, UTC): the page says it in the reader's
+    /// own time, so the text of it is not made here.
+    at: String,
     diff: UnifiedDiff,
     revision: &'a crate::model::Revision,
     tree: Vec<crate::model::TreeFile>,
@@ -86,13 +89,10 @@ fn shown_revisions(loaded: &crate::bundle::Loaded) -> anyhow::Result<Vec<Shown<'
             crate::model::Source::Git(g) => g.head.chars().take(7).collect(),
             crate::model::Source::Files { .. } => m("html.dir_label").to_string(),
         };
-        let label = format!(
-            "#{} {source} ({})",
-            shown.len() + 1,
-            revision.created_at.date()
-        );
+        let label = format!("#{} {source}", shown.len() + 1);
         shown.push(Shown {
             label,
+            at: viewmodel::rfc3339(revision.created_at),
             diff,
             revision,
             tree: loaded.manifest(revision),

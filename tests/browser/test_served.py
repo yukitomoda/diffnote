@@ -2006,7 +2006,7 @@ class ServeAddsTheLatestDiff(ServedCase):
         self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-revision-link]').length === 2"))
         self.assertIn("差分を記録しました", b.js("document.querySelector('[data-diffnote-pull-note]').textContent"))
         labels = b.js("[...document.querySelectorAll('[data-diffnote-revision-link]')].map(a => a.textContent).join('|')")
-        self.assertRegex(labels, r"^#1 [0-9a-f]{7} \(.*\)\|#2 [0-9a-f]{7} \(.*\)$",
+        self.assertRegex(labels, r"^#1 [0-9a-f]{7} \(\d+/\d\d \d\d:\d\d\)\|#2 [0-9a-f]{7} \(\d+/\d\d \d\d:\d\d\)$",
                          "the revisions are named by their commits, not the base")
         # (With a revision before it, the base is a menu whose first choice is the base;
         # this is part of the topbar, so it is visible with the settings screen open too.)

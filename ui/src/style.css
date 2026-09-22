@@ -40,6 +40,8 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-revisions a { display: block; white-space: nowrap; color: var(--diffnote-color-fg); text-decoration: none; border: 1px solid transparent; border-radius: 6px; padding: 3px 10px; font-size: 13px; }
 .diffnote-revisions a:hover { background: var(--diffnote-color-border); }
 .diffnote-revisions a.is-current { background: var(--diffnote-color-bg); border-color: var(--diffnote-color-border); font-weight: 600; }
+/* When it was recorded: beside which revision it is, and quieter than it. */
+.diffnote-revisions__at { font-weight: 400; color: var(--diffnote-color-muted); }
 
 /* A revision: file list on the left, the changes on the right. */
 .diffnote-revision { display: grid; grid-template-columns: 280px minmax(0, 1fr); column-gap: 16px; align-items: start; padding: 0 16px 48px; }

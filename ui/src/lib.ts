@@ -161,6 +161,7 @@ interface Lib {
   plainText(nodes: DocNode[] | null | undefined): string;
   preview(nodes: DocNode[] | null | undefined): string;
   formatTime(iso: string): string;
+  formatRecorded(iso: string): string;
   formatSize(bytes: number): string;
   bytesToMB(bytes: number): number;
   mbToBytes(text: string): number | null;
@@ -425,6 +426,16 @@ lib.preview = function (nodes) {
 };
 
 // A time as `YYYY-MM-DD HH:MM` in the viewer's time zone.
+// When a revision was recorded, as a tab says it: the month and day, and
+// the time of day. The year is left out -- a review is read over days, not
+// years, and the tabs are narrow.
+lib.formatRecorded = function (iso) {
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  var two = function (n: number) { return (n < 10 ? '0' : '') + n; };
+  return (d.getMonth() + 1) + '/' + two(d.getDate()) + ' ' + two(d.getHours()) + ':' + two(d.getMinutes());
+};
+
 lib.formatTime = function (iso) {
   var d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
