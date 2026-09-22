@@ -39,14 +39,24 @@ export type ChangeAnswer = Answer<{
   added?: number;
 }>;
 
-/** A new thread, as the page asks for it. */
+/** The lines a new thread is about, on one side. */
+export interface LineSpan {
+  start: number;
+  len: number;
+}
+
+/**
+ * A new thread, as the page asks for it (see `create_thread` in
+ * `src/serve.rs`): what it is about, in which revision, and the text. Lines are
+ * said as the new side has them; where they are on the old side is worked out
+ * from the revision's own diff unless `base` says.
+ */
 export interface NewThread {
-  kind: 'line' | 'file' | 'global';
-  rev: number;
-  path?: string;
-  side?: Side;
-  start?: number;
-  end?: number;
+  scope: 'lines' | 'file' | 'global';
+  revision: number;
+  file?: string;
+  head?: LineSpan;
+  base?: LineSpan;
   body?: string;
 }
 
@@ -145,6 +155,16 @@ export interface View {
 }
 
 /**
+ * A file as the page shows it: one of the revision's, or one opened to look at
+ * (which carries how many lines it has and where the next ones start).
+ */
+export type ShownFile = FileData & {
+  opened?: boolean;
+  total?: number;
+  next?: number | null;
+};
+
+/**
  * What every part of one revision is drawn from: the revision itself, where its
  * threads are, and how it is being shown. Made by `Revision` and handed down as
  * `ctx`.
@@ -155,7 +175,7 @@ export interface RevisionCtx {
   model: ViewModel;
   revision: RevisionData;
   /** The files of the diff, without the ones only opened to look at. */
-  diffFiles: FileData[];
+  diffFiles: ShownFile[];
   /** The thread ids in the order of the list, where each is, and each thread. */
   order: string[];
   placements: Record<string, Placement>;

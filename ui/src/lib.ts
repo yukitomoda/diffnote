@@ -105,6 +105,9 @@ export interface AttachmentUse {
   name: string;
 }
 
+/** What is read of a row to say which threads and cards are on it. */
+export type LineNumbers = Pick<Row, 'o' | 'n'>;
+
 /** A piece of a line, and whether it is one of the words that changed. */
 export type MarkedPiece = [kind: string | null, text: string, changed: boolean];
 
@@ -124,13 +127,13 @@ interface Lib {
 
   shownIds(ids: string[], byId: Record<string, ThreadData>, hideResolved: boolean): string[];
   coverage(threadIds: string[], placements: Record<string, Placement>, file: string): Coverage;
-  covering(cover: Coverage, row: Row): string[];
+  covering(cover: Coverage, row: LineNumbers): string[];
   cardsAfter(
     threadIds: string[],
     placements: Record<string, Placement>,
     file: string,
   ): Record<string, string[]>;
-  cardsOfRow(after: Record<string, string[]>, row: Row): string[];
+  cardsOfRow(after: Record<string, string[]>, row: LineNumbers): string[];
   threadsOfFile(threadIds: string[], placements: Record<string, Placement>, file: string): string[];
   counts(threads: ThreadData[]): { all: number; resolved: number };
 

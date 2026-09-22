@@ -3,7 +3,7 @@ import { useContext, useEffect, useMemo } from 'preact/hooks';
 import { lib } from './lib.ts';
 import { UserChip } from './UserChip.tsx';
 import { ViewMenu } from './ViewMenu.tsx';
-import { File } from './diff/File.jsx';
+import { File } from './diff/File.tsx';
 import { Tree } from './nav/Tree.tsx';
 import { FileList, ThreadList } from './nav/lists.tsx';
 import { OpenedContext, ViewedContext } from './state/contexts.ts';

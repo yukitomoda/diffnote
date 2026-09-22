@@ -1,16 +1,24 @@
 // One file of the diff, open or folded away.
 import { useContext, useMemo, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
-import { transport } from '../transport.ts';
+import { server } from '../transport.ts';
 import { DiffTable, SplitTable } from './tables.jsx';
 import { htmlId } from '../dom.ts';
 import { ComposeContext, OpenedContext, ViewedContext } from '../state/contexts.ts';
 import { Card } from '../thread/Card.tsx';
 import { Composer } from '../thread/Composer.tsx';
+import type { Token } from '../model.ts';
+import type { RevisionCtx, ShownFile } from '../state/contexts.ts';
+import type { Expand } from './tables.tsx';
 
 // A file: its own threads, its diff (drawn when it is first opened), and
 // the threads that could not be placed in it.
-export function File(props) {
+interface FileProps {
+  file: ShownFile;
+  ctx: RevisionCtx;
+}
+
+export function File(props: FileProps) {
   var file = props.file;
   var ctx = props.ctx;
   var mine = lib.threadsOfFile(ctx.order, ctx.placements, file.path);
@@ -23,7 +31,7 @@ export function File(props) {
   var setOpened = _[1];
   var missing = file.status === 'context' && file.hunks.length === 0;
   var compose = useContext(ComposeContext);
-  var details = useRef(null);
+  var details = useRef<HTMLDetailsElement | null>(null);
   // The lines of the diff's left-out places that have been shown (their pieces,
   // by new line number): kept by number, so they stay when the places change.
   var _g = useState({});
@@ -34,17 +42,18 @@ export function File(props) {
   // What the diff of the file adds and removes, as it is shown (so, with white
   // space ignored if it is).
   var stat = lib.diffStat(ctx.ignoreSpace ? lib.withoutSpaceChanges(file) : file);
-  var expand = function (gap, where) {
-    var g = file.gaps[gap];
-    var req = lib.expandRequest(g, shown[gap] || { top: [], bottom: [] }, where);
-    if (!req) return Promise.resolve();
+  var expand: Expand = function (gap, where) {
+    const g = (file.gaps || [])[gap];
+    const req = g && lib.expandRequest(g, shown[gap] || { top: [], bottom: [] }, where);
+    if (!g || !req) return Promise.resolve();
     // Rows of the file are counted by position: what was chosen is let go.
-    if (compose && compose.sel && compose.sel.path === file.path) compose.close();
-    var get = function (offset, count) {
-      if (g.t) return Promise.resolve(g.t.slice(offset, offset + count));
-      var part = function (from, left, acc) {
+    if (compose && compose!.sel && compose!.sel.path === file.path) compose!.close();
+    var get = function (offset: number, count: number): Promise<Token[][]> {
+      var held = g.t;
+      if (held) return Promise.resolve(held.slice(offset, offset + count));
+      var part = function (from: number, left: number, acc: Token[][]): Promise<Token[][]> {
         var take = Math.min(left, 1000);
-        return transport.get('/api/files/' + ctx.rev + '/lines?path=' + encodeURIComponent(file.path) + '&from=' + (g.w + from) + '&count=' + take).then(function (res) {
+        return server().get<{ lines: Token[][] }>('/api/files/' + ctx.rev + '/lines?path=' + encodeURIComponent(file.path) + '&from=' + (g.w + from) + '&count=' + take).then(function (res) {
           if (!res.ok || res.lines.length === 0) return acc;
           acc = acc.concat(res.lines);
           return left > take ? part(from + take, left - take, acc) : acc;
@@ -54,13 +63,13 @@ export function File(props) {
     };
     return get(req.offset, req.count).then(function (lines) {
       setRevealed(function (cur) {
-        var all = Object.assign({}, cur);
+        var all: Record<number, Token[]> = Object.assign({}, cur);
         lines.forEach(function (pieces, i) { all[g.w + req.offset + i] = pieces; });
         return all;
       });
     });
   };
-  var composing = compose && compose.scope && compose.scope.kind === 'file' && compose.scope.rev === ctx.rev && compose.scope.path === file.path;
+  var composing = compose && compose!.scope && compose!.scope.kind === 'file' && compose!.scope.rev === ctx.rev && compose!.scope.path === file.path;
   // A file that was added or deleted as a whole (a binary one too) is tinted.
   var kind = file.status === 'binary' ? file.change : file.status;
   var viewed = useContext(ViewedContext);
@@ -68,7 +77,7 @@ export function File(props) {
   // list at the side says so, and takes it back.
   if (viewed && viewed.is(file)) return null;
   return <section class={'diffnote-file' + (kind === 'added' || kind === 'deleted' ? ' diffnote-file--' + kind : '')} id={'r' + ctx.rev + '-file-' + htmlId(file.path)} data-diffnote-file={file.path}>
-    <details ref={details} open={startsOpen} onToggle={function (e) { if (e.target.open && !opened) setOpened(true); }}>
+    <details ref={details} open={startsOpen} onToggle={function (e) { if (e.currentTarget.open && !opened) setOpened(true); }}>
       <summary>
         {viewed && <button type="button" class="diffnote-mini diffnote-mini--check" data-diffnote-viewed={file.path} title={lib.m('ui.file.viewed_title')}
           onClick={function (e) { e.preventDefault(); e.stopPropagation(); viewed.toggle(file); }}>{lib.m('ui.file.viewed_button')}</button>}
@@ -85,17 +94,17 @@ export function File(props) {
           onClick={function (e) {
             e.preventDefault();
             e.stopPropagation();
-            if (compose && compose.scope && compose.scope.path === file.path) compose.close();
-            if (compose && compose.sel && compose.sel.path === file.path) compose.close();
-            files.close(ctx.rev, file.path);
+            if (compose && compose!.scope && compose!.scope.path === file.path) compose!.close();
+            if (compose && compose!.sel && compose!.sel.path === file.path) compose!.close();
+            files!.close(ctx.rev, file.path);
           }}>{lib.m('ui.file.close_button')}</button>}
         {compose && (file.opened || file.status !== 'context' || mine.length > 0) && <button type="button" class="diffnote-mini" data-diffnote-add="file" title={lib.m('ui.file.add_comment_title')}
           onClick={function (e) {
             e.preventDefault();
             e.stopPropagation();
-            details.current.open = true;
+            details.current!.open = true;
             setOpened(true);
-            compose.openScope('file', ctx.rev, file.path);
+            compose!.openScope('file', ctx.rev, file.path);
           }}>{lib.m('ui.file.add_comment_button')}</button>}
       </summary>
       {composing && <div class="diffnote-compose-wrap"><Composer scope="file" where={lib.mf('ui.compose.file_where', { path: file.path })} request={{ scope: 'file', revision: ctx.rev, file: file.path }} /></div>}
@@ -104,13 +113,13 @@ export function File(props) {
       {file.status === 'binary' && <p class="diffnote-file__binary" data-diffnote-binary>{lib.m('ui.file.binary_note')}</p>}
       {opened && file.hunks.length > 0 && (ctx.layout === 'split' ? <SplitTable file={view} ctx={ctx} expand={expand} /> : <DiffTable file={view} ctx={ctx} expand={expand} />)}
       {opened && file.opened && file.next && <div class="diffnote-more-row"><button type="button" class="diffnote-button" data-diffnote-more
-        onClick={function (e) { e.target.disabled = true; files.more(ctx.rev, file.path).then(function () { e.target.disabled = false; }); }}>{lib.mf('ui.file.more_button', { from: String(file.next), total: String(file.total) })}</button></div>}
+        onClick={function (e) { var button = e.currentTarget; button.disabled = true; files!.more(ctx.rev, file.path).then(function () { button.disabled = false; }); }}>{lib.mf('ui.file.more_button', { from: String(file.next), total: String(file.total) })}</button></div>}
       {unplaced.length > 0 && <section class="diffnote-outdated">
         <h3>{lib.m('ui.thread.unplaced_heading')}</h3>
         {unplaced.map(function (id) {
           var p = ctx.placements[id];
           return <div class="diffnote-outdated__entry" key={id}>
-            {p.was.length > 0 && <pre class="diffnote-outdated__snippet">{p.was.join('\n') + '\n'}</pre>}
+            {p.kind === 'unplaced' && p.was.length > 0 && <pre class="diffnote-outdated__snippet">{p.was.join('\n') + '\n'}</pre>}
             <Card rev={ctx.rev} thread={ctx.byId[id]} placement={p} />
           </div>;
         })}
