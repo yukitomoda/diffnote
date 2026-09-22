@@ -181,9 +181,28 @@ class Browser:
         self.cdp.call("Page.enable")
 
     def close(self):
-        self.cdp.sock.close()
-        self.proc.terminate()
-        self.proc.wait(timeout=10)
+        """Stop it, and be sure it is stopped.
+
+        A Chrome that doesn't go on being asked (it does happen) used to be
+        waited on until the wait gave up, which left the whole of it running --
+        and its profile on disk -- for the rest of the suite. A test class each
+        starts one, so they pile up, and every page after them has less machine
+        to draw on: the waits that were failing about one full run in four were
+        this.
+        """
+        try:
+            self.cdp.sock.close()
+        except OSError:
+            pass
+        try:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait(timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
         shutil.rmtree(self.profile, ignore_errors=True)
 
     # -- page --
