@@ -1,6 +1,8 @@
 // The screen behind the title: one of the panes below, with the list of them.
 import { useEffect } from 'preact/hooks';
 import { lib } from '../lib.ts';
+import { SECTIONS } from '../state/route.ts';
+import type { Section } from '../state/route.ts';
 import { AttachmentsPane } from './Attachments.jsx';
 import { SettingsFormPane } from './Form.jsx';
 import { GeneralPane } from './General.jsx';
@@ -12,9 +14,7 @@ import type { AttachmentsProps } from './Attachments.tsx';
 import type { UserProps } from './User.tsx';
 
 // The left-hand nav of the settings screen: which of its sections is shown.
-export type Section = 'general' | 'settings' | 'attachments' | 'user';
-
-var SETTINGS_SECTIONS: Section[] = ['general', 'settings', 'attachments', 'user'];
+var SETTINGS_SECTIONS: Section[] = SECTIONS.slice();
 
 function sectionLabel(key: Section) {
   return lib.m('ui.settings.' + key + '_tab');

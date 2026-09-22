@@ -16,6 +16,20 @@ import { useCompose } from './state/compose.ts';
 import { ActionsContext, ComposeContext, LinksContext, OpenedContext } from './state/contexts.ts';
 import { useOpened } from './state/opened.ts';
 import { useReview } from './state/review.ts';
+import {
+  against as shownAgainst,
+  at as jumpedAt,
+  compareWith,
+  current as shownRevision,
+  jumpedTo,
+  routeOfHash,
+  screen as shownScreen,
+  showRevision,
+  showRoute,
+  showScreen,
+  startRoute,
+  writeAddress,
+} from './state/route.ts';
 import { isViewed, seen, toggleViewed } from './state/viewed.ts';
 import {
   hideResolved,
@@ -28,37 +42,26 @@ import type { At } from './lib.ts';
 import type { RevisionData, ViewModel } from './model.ts';
 import type { Links } from './state/contexts.ts';
 import type { PullNote } from './settings/General.tsx';
-import type { Section } from './settings/Screen.tsx';
 
 function App(props: { model: ViewModel }) {
   var review = useReview(props.model);
   var openedFiles = useOpened(props.model.interactive);
   var model = review.model;
-  // Where the page starts, from the address (see the effects near the bottom
-  // of this function): the revision (1-based there, as the tabs are), the
-  // settings screen, what it is compared against, and the last place jumped
-  // to. `null` if there was nothing to go on.
-  var initialHash = lib.parseHash(location.hash);
-  var initialRev = initialHash && initialHash.rev >= 1 && initialHash.rev <= model.revisions.length
-    ? initialHash.rev - 1
-    : model.revisions.length - 1;
-  var _c = useState(initialRev);
-  var current = _c[0];
-  var setCurrent = _c[1];
+  // Where the page is: the revision shown, the settings screen, what it is
+  // compared against and the last place jumped to, all of which are in the
+  // address (see `state/route.ts`).
+  var current = useStore(shownRevision);
+  var screen = useStore(shownScreen);
+  var against = useStore(shownAgainst);
+  var at = useStore(jumpedAt);
   // Set just before a change is made because the browser's back/forward moved
   // the address (so the effect that writes it back doesn't write it again).
   var navigating = useRef(false);
-  // Resolved threads are hidden unless that was turned off before.
-  // The revision is looked at against an earlier one (chosen at the base) instead
-  // of against the base: the number of that one, or `null`. Only for looking.
-  var _a = useState(initialHash ? initialHash.against : null);
-  var against = _a[0];
-  var setAgainst = _a[1];
   var _k = useState<{ rev: number; from: number; data: RevisionData } | null>(null);
   var cmp = _k[0];
   var setCmp = _k[1];
   useEffect(function () {
-    if (against != null && against >= current) setAgainst(null);
+    if (against != null && against >= current) compareWith(null);
   }, [current, against]);
   useEffect(function () {
     if (!review.actions || against == null || against >= current) { setCmp(null); return undefined; }
@@ -66,7 +69,7 @@ function App(props: { model: ViewModel }) {
     server().get<{ revision: RevisionData }>('/api/compare?rev=' + current + '&from=' + against).then(function (res) {
       if (stale) return;
       if (res.ok) setCmp({ rev: current, from: against!, data: res.revision });
-      else { setCmp(null); setAgainst(null); }
+      else { setCmp(null); compareWith(null); }
     });
     return function () { stale = true; };
   }, [against, current, model.stamp]);
@@ -82,23 +85,12 @@ function App(props: { model: ViewModel }) {
       }),
     });
   }, [cmp, current, against, model]);
-  // The settings screen shown instead of the review, if any: the review's
-  // own (`'bundle'`), or this machine's user settings (`'user'`).
-  var _st = useState<Section | null>((initialHash ? initialHash.screen : null) as Section | null);
-  var screen = _st[0];
-  var setScreen = _st[1];
   // 添付 lists what the bundle holds, and an upload's answer says only how
   // big the bundle now is (not a whole model): ask for one when that screen
   // opens, so what was just attached is in the list.
   useEffect(function () {
     if (screen === 'attachments' && review.reload) review.reload();
   }, [screen === 'attachments']);
-  // The place last jumped to (a file, some lines, or a thread): kept only so
-  // it is part of the address; nothing else reads it back except the effects
-  // that write and retrace it.
-  var _at = useState(initialHash ? initialHash.at : null);
-  var at = _at[0];
-  var setAt = _at[1];
   // The tab that is shown is kept in view when there are more than fit.
   var tabs = useRef<HTMLElement | null>(null);
   useLayoutEffect(function () {
@@ -152,31 +144,28 @@ function App(props: { model: ViewModel }) {
         var place: At = 'kind' in ref
           ? ref
           : { kind: 'lines', path: ref.path, side: ref.side, start: ref.start, end: ref.end };
-        if (index !== current) setCurrent(index);
-        setAt(place);
+        if (index !== current) showRevision(index);
+        jumpedTo(place);
         jump(index, place);
       },
       jump: jump,
     };
   }, [model, current]);
-  // The initial address may already point at a specific place (from a copied
-  // link, or typed in): jump there once the page has drawn.
+  // The address may already point at a specific place (from a copied link, or
+  // typed in): jump there once the page has drawn.
   useEffect(function () {
-    if (initialHash && initialHash.at) links.jump(initialRev, initialHash.at);
+    var start = startRoute(location.hash, model.revisions.length);
+    if (start && start.at) links.jump(start.rev - 1, start.at);
   }, []);
   // The browser's back/forward buttons: retrace the revision, settings screen,
   // compare target and last jump, exactly as the address says.
   useEffect(function () {
     var onPop = function () {
-      var parsed = lib.parseHash(location.hash);
-      if (!parsed || parsed.rev < 1 || parsed.rev > model.revisions.length) return;
+      var route = routeOfHash(location.hash, model.revisions.length);
+      if (!route) return;
       navigating.current = true;
-      var index = parsed.rev - 1;
-      setCurrent(index);
-      setScreen(parsed.screen as Section | null);
-      setAgainst(parsed.against);
-      setAt(parsed.at);
-      if (parsed.at) links.jump(index, parsed.at);
+      showRoute(route);
+      if (route.at) links.jump(route.rev - 1, route.at);
     };
     window.addEventListener('popstate', onPop);
     return function () { window.removeEventListener('popstate', onPop); };
@@ -185,15 +174,9 @@ function App(props: { model: ViewModel }) {
   // the buttons above have something to retrace), unless it came from there
   // just now. The very first time, the address is only filled in, not added
   // to (nothing was navigated to yet -- it is where the page already was).
-  var everWritten = useRef(false);
   useEffect(function () {
-    if (navigating.current) { navigating.current = false; everWritten.current = true; return; }
-    var hash = '#' + lib.formatHash({ rev: current + 1, screen: screen, against: against, at: at });
-    if (hash !== location.hash) {
-      if (everWritten.current) history.pushState(null, '', hash);
-      else history.replaceState(null, '', hash);
-    }
-    everWritten.current = true;
+    writeAddress(navigating.current);
+    navigating.current = false;
   }, [current, screen, against, at]);
   // Differences that are only in white space ignored: the review says how the page
   // starts (a default kept in it), and changing it here is for this page only.
@@ -206,7 +189,7 @@ function App(props: { model: ViewModel }) {
     review.actions!.refresh().then(function (res) {
       setNote({ text: (res.ok ? res.message : res.error) || lib.m('ui.topbar.pull_failed'), failed: !res.ok });
       // What was taken in is what to look at now.
-      if (res.ok && res.added && res.model) setCurrent(res.model.revisions.length - 1);
+      if (res.ok && res.added && res.model) showRevision(res.model.revisions.length - 1);
     });
   };
   // Short messages at the top of the page (see TopbarNotices): today, only
@@ -217,7 +200,7 @@ function App(props: { model: ViewModel }) {
     notices.push({
       id: 'pending',
       text: lib.m('ui.topbar.new_commits_notice'),
-      onClick: function () { setScreen('general'); },
+      onClick: function () { showScreen('general'); },
     });
   }
   var hide = useStore(hideResolved);
@@ -239,11 +222,11 @@ function App(props: { model: ViewModel }) {
       <header class="diffnote-summary">
         <h1>{review.actions
           ? <button type="button" class="diffnote-title" data-diffnote-settings title={lib.m('ui.settings.title_button')} aria-haspopup="dialog"
-              aria-pressed={screen === 'general' || screen === 'settings'} onClick={function () { setScreen(screen === 'general' ? null : 'general'); }}>{model.title || lib.m('html.default_title')}<span class="diffnote-title__icon" aria-hidden="true">⚙</span></button>
+              aria-pressed={screen === 'general' || screen === 'settings'} onClick={function () { showScreen(screen === 'general' ? null : 'general'); }}>{model.title || lib.m('html.default_title')}<span class="diffnote-title__icon" aria-hidden="true">⚙</span></button>
           : model.title || lib.m('html.default_title')}</h1>
         {model.base && <p data-diffnote-base class={against != null ? 'is-changed' : ''} title={against != null ? lib.m('ui.base.changed_title') : lib.m('ui.base.default_title')}>{lib.m('ui.base.label')}: {review.actions && current > 0
           ? <select class="diffnote-base__select" data-diffnote-base-select aria-label={lib.m('ui.base.select_label')} value={against == null ? '' : String(against)}
-              onChange={function (e) { setAgainst(e.currentTarget.value === '' ? null : +e.currentTarget.value); }}>
+              onChange={function (e) { compareWith(e.currentTarget.value === '' ? null : +e.currentTarget.value); }}>
               <option value="">{model.base.kind === 'git' ? model.base.id : lib.formatTime(model.base.at)}</option>
               {model.revisions.slice(0, current).map(function (r, i) { return <option key={i} value={String(i)}>{r.label}</option>; })}
             </select>
@@ -255,7 +238,7 @@ function App(props: { model: ViewModel }) {
       }}><ul>
         {model.revisions.map(function (r, i) {
           return <li key={i}><a href={'#rev-' + i} data-diffnote-revision-link={i} class={i === current ? 'is-current' : ''}
-            onClick={function (e) { e.preventDefault(); setScreen(null); setAt(null); setCurrent(i); }}>{r.label}</a></li>;
+            onClick={function (e) { e.preventDefault(); showScreen(null); jumpedTo(null); showRevision(i); }}>{r.label}</a></li>;
         })}
       </ul></nav>}
       <div class="diffnote-topbar__actions">
@@ -266,9 +249,9 @@ function App(props: { model: ViewModel }) {
     {screen != null && review.actions && <SettingsScreen section={screen} model={model} pending={review.pending} note={note} onPull={pull}
       saveSettings={review.actions.saveSettings} saveUserSettings={review.actions.saveUserSettings}
       removeAttached={review.actions.removeAttached}
-      onShowThread={function (id) { setScreen(null); links.go({ kind: 'thread', id: id }); }}
+      onShowThread={function (id) { showScreen(null); links.go({ kind: 'thread', id: id }); }}
       placementOf={function (id) { return ((model.revisions[current] || {}).placements || {})[id]; }}
-      onSelect={setScreen} onClose={function () { setScreen(null); }} />}
+      onSelect={showScreen} onClose={function () { showScreen(null); }} />}
     <div class="diffnote-review-body" hidden={screen != null && !!review.actions}>
     <LinksContext.Provider value={links}>
     <ActionsContext.Provider value={review.actions}>
@@ -280,7 +263,7 @@ function App(props: { model: ViewModel }) {
               tip: lib.m('ui.base.select_tip'),
             } : null}
             author={review.actions ? model.author : null} userSettingsOpen={screen === 'user'}
-            onToggleUserSettings={review.actions && function () { setScreen(screen === 'user' ? null : 'user'); }} />
+            onToggleUserSettings={review.actions && function () { showScreen(screen === 'user' ? null : 'user'); }} />
         </OpenedContext.Provider>
       </ComposeContext.Provider>
     </ActionsContext.Provider>
