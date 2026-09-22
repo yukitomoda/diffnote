@@ -1067,7 +1067,11 @@ class Images(ServedCase):
         self.assertTrue(b.wait("document.querySelector('[data-diffnote-attach-status]').textContent.includes('画像を追加しました')"))
         b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
         img = f"#{card} .diffnote-comment__body img.diffnote-image"
-        self.assertTrue(b.wait(f"!!document.querySelector({json.dumps(img)}) && document.querySelector({json.dumps(img)}).naturalWidth === 8"))
+        # Asked in two parts, so that a failure says which: the comment showing
+        # the picture at all, or the picture itself arriving.
+        self.assertTrue(b.wait_exists(img), "the comment shows the picture")
+        self.assertTrue(b.wait(f"document.querySelector({json.dumps(img)}).naturalWidth === 8"),
+                        "the picture is the one that was sent")
 
     def test_a_link_to_an_image_elsewhere_is_only_its_text(self):
         self.serve()
