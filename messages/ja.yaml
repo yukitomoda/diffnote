@@ -381,6 +381,8 @@ serve:
       タイトル変更
     settings_label: |-
       設定変更
+    removed_label: |-
+      添付の削除
     count: |-
       {what} {n} 件
     none: |-

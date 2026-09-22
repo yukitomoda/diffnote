@@ -338,6 +338,22 @@ impl Loaded {
             .collect()
     }
 
+    /// Every image the bundle holds, with its bytes.
+    pub fn images(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.stored("images/")
+    }
+
+    /// The same for the other files attached to comments.
+    pub fn attachments(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.stored("attachments/")
+    }
+
+    fn stored(&self, prefix: &'static str) -> impl Iterator<Item = (&str, &[u8])> {
+        self.carried_entries
+            .iter()
+            .filter_map(move |(name, bytes)| Some((name.strip_prefix(prefix)?, bytes.as_slice())))
+    }
+
     /// How many images the bundle holds, and how many bytes they are.
     pub fn image_stats(&self) -> (usize, u64) {
         Self::stats(&self.carried_entries, "images/")

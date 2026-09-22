@@ -208,6 +208,9 @@ pub struct Server {
     session: std::sync::Mutex<std::collections::HashSet<Ulid>>,
     /// The comments this session added or edited (the page tints them).
     changed: std::sync::Mutex<std::collections::HashSet<Ulid>>,
+    /// What this session attached, as `image:<id>`/`file:<id>`: deleting one
+    /// of these again is not worth telling anyone about at the end.
+    attached: std::sync::Mutex<std::collections::HashSet<String>>,
     /// What was done since the server started, to say so when it stops.
     stats: std::sync::Mutex<Stats>,
 }
@@ -226,6 +229,9 @@ struct Stats {
     reactions: u32,
     images: u32,
     files: u32,
+    /// Attachments taken out that were not added in this session (the ones
+    /// that were cancel out against `images`/`files` instead).
+    removed: u32,
 }
 
 impl Stats {
@@ -262,6 +268,7 @@ impl Stats {
             (self.deleted, m("serve.stats.deleted_label")),
             (self.titled, m("serve.stats.titled_label")),
             (self.settings, m("serve.stats.settings_label")),
+            (self.removed, m("serve.stats.removed_label")),
         ] {
             if n > 0 {
                 parts.push(mf(
@@ -333,6 +340,7 @@ impl Server {
             },
             session: Default::default(),
             changed: Default::default(),
+            attached: Default::default(),
             stats: Default::default(),
         }
     }
@@ -769,6 +777,7 @@ impl Server {
             };
             bundle::save_with(&self.review, &loaded, &loaded.events, &none, &images)
                 .map_err(internal)?;
+            self.remember_attached("image", &id);
             self.count(|s| s.images += 1);
         }
         let bundle_size = std::fs::metadata(&self.review)
@@ -823,6 +832,7 @@ impl Server {
             };
             bundle::save_with(&self.review, &loaded, &loaded.events, &none, &files)
                 .map_err(internal)?;
+            self.remember_attached("file", &id);
             self.count(|s| s.files += 1);
         }
         let name = crate::image::file_name(
@@ -841,6 +851,69 @@ impl Server {
                 "bundle_size": bundle_size,
             }),
         ))
+    }
+
+    fn remember_attached(&self, kind: &str, id: &str) {
+        self.attached
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(format!("{kind}:{id}"));
+    }
+
+    /// Takes an image or another attached file out of the review, whether or
+    /// not a comment still refers to it (the page asks first, and says which
+    /// comments do). The text of those comments is left as it was, so the
+    /// image or link in them is simply not there any more.
+    fn delete_attached(&self, kind: &str, id: &str) -> Result<Reply, Failure> {
+        let image = kind == "image";
+        if !crate::image::is_id(id) {
+            return Err(Failure(404, m("serve.not_found").into()));
+        }
+        let loaded = bundle::load(&self.review).map_err(internal)?;
+        let held = if image {
+            loaded.image(id).is_some()
+        } else {
+            loaded.attachment(id).is_some()
+        };
+        if !held {
+            return Err(Failure(404, m("serve.attachment_missing").into()));
+        }
+        let before = html::stamp(&loaded);
+        let keep: std::collections::HashSet<String> = if image {
+            loaded.image_ids()
+        } else {
+            loaded.attachment_ids()
+        }
+        .into_iter()
+        .filter(|held| held != id)
+        .collect();
+        let none = bundle::Additions::default();
+        let images = if image {
+            bundle::Images {
+                keep: Some(&keep),
+                ..Default::default()
+            }
+        } else {
+            bundle::Images {
+                keep_files: Some(&keep),
+                ..Default::default()
+            }
+        };
+        bundle::save_with(&self.review, &loaded, &loaded.events, &none, &images)
+            .map_err(internal)?;
+        // One this session attached is simply undone; anything older is a
+        // change of its own, worth saying at the end.
+        let ours = self
+            .attached
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&format!("{kind}:{id}"));
+        self.count(|s| match (ours, image) {
+            (true, true) => s.images = s.images.saturating_sub(1),
+            (true, false) => s.files = s.files.saturating_sub(1),
+            (false, _) => s.removed += 1,
+        });
+        self.model_answer(&before, serde_json::json!({}))
     }
 
     /// A file attached to a comment, to be saved: never shown by itself.
@@ -1185,6 +1258,8 @@ impl Server {
             ["api", "user-settings"] => self.set_user_settings(request.body),
             ["api", "images"] => self.add_image(request.body),
             ["api", "attachments"] => self.add_attachment(request.target, request.body),
+            ["api", "images", id, "delete"] => self.delete_attached("image", id),
+            ["api", "attachments", id, "delete"] => self.delete_attached("file", id),
             ["api", "refresh"] => self.refresh(),
             ["api", "comments", id, "edit"] => self.edit_comment(id, request.body),
             ["api", "comments", id, "delete"] => self.delete_comment(id),
@@ -2719,6 +2794,110 @@ mod tests {
             .to_string();
         assert!(told.contains("画像 2 件"), "{told}");
         assert_eq!(bundle::load(&f.path).unwrap().image_ids(), vec![id]);
+    }
+
+    #[test]
+    fn the_model_lists_what_is_attached_biggest_first_with_an_images_type() {
+        let f = fixture();
+        let big = [PNG, &[7; 40]].concat();
+        f.send_bytes("/api/images", PNG);
+        f.send_bytes("/api/images", &big);
+        f.send_bytes("/api/attachments?name=log.zip", b"PK\x03\x04 log");
+        let listed =
+            json(&f.request("GET", "/api/model", &[], ""))["model"]["bundle"]["attachments"]
+                .clone();
+        let of = |i: usize| listed[i].clone();
+        assert_eq!(listed.as_array().unwrap().len(), 3);
+        assert_eq!(of(0)["kind"], "image");
+        assert_eq!(of(0)["size"], big.len());
+        assert_eq!(of(0)["media_type"], "image/png");
+        assert_eq!(of(1)["kind"], "image");
+        assert_eq!(of(1)["size"], PNG.len());
+        // The other files' type is never read, so none is said.
+        assert_eq!(of(2)["kind"], "file");
+        assert_eq!(of(2)["media_type"], serde_json::Value::Null);
+        assert!(crate::image::is_id(of(2)["id"].as_str().unwrap()));
+    }
+
+    #[test]
+    fn an_attachment_can_be_deleted_whether_or_not_a_comment_still_refers_to_it() {
+        let f = fixture();
+        let image = json(&f.send_bytes("/api/images", PNG))["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let file = json(&f.send_bytes("/api/attachments?name=log.zip", b"PK\x03\x04 log"))["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        // A comment shows the image: it still goes, and the text stays as it was.
+        let body = format!(r#"{{"body":"see ![shot](diffnote-image:{image})"}}"#);
+        f.post(&format!("/api/threads/{}/replies", f.thread), &body);
+        let gone = json(&f.post(&format!("/api/images/{image}/delete"), "{}"));
+        assert_eq!(gone["ok"], true);
+        assert!(bundle::load(&f.path).unwrap().image_ids().is_empty());
+        assert!(
+            f.comments()
+                .iter()
+                .any(|c| c.2.contains(&format!("diffnote-image:{image}"))),
+            "the comment is left as it was written"
+        );
+        assert_eq!(
+            gone["model"]["bundle"]["attachments"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1,
+            "the list in the answer is already without it"
+        );
+        // Unknown ids are refused, and the other store is untouched by the first.
+        assert_eq!(
+            f.post(&format!("/api/images/{image}/delete"), "{}").status,
+            404
+        );
+        assert_eq!(f.post("/api/attachments/nope/delete", "{}").status, 404);
+        assert_eq!(
+            f.post(&format!("/api/attachments/{file}/delete"), "{}")
+                .status,
+            200
+        );
+        assert!(bundle::load(&f.path).unwrap().attachment_ids().is_empty());
+        // Both were attached in this session, so nothing is said to have been added.
+        let told = json(&f.post("/api/shutdown", "{}"))["farewell"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(!told.contains("画像"), "{told}");
+        assert!(!told.contains("添付の削除"), "{told}");
+    }
+
+    #[test]
+    fn deleting_an_attachment_from_an_earlier_session_is_told_at_the_end() {
+        let f = fixture();
+        // Put in behind the server's back: as if an earlier session attached it.
+        let loaded = bundle::load(&f.path).unwrap();
+        let events = loaded.events.clone();
+        bundle::save_with(
+            &f.path,
+            &loaded,
+            &events,
+            &bundle::Additions::default(),
+            &bundle::Images {
+                add: &[PNG.to_vec()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let id = crate::image::id_of(PNG);
+        assert_eq!(
+            f.post(&format!("/api/images/{id}/delete"), "{}").status,
+            200
+        );
+        let told = json(&f.post("/api/shutdown", "{}"))["farewell"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(told.contains("添付の削除 1 件"), "{told}");
     }
 
     /// Says in the review how big an attached file may be.

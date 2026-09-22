@@ -115,6 +115,23 @@ pub struct BundleInfo {
     pub revisions: usize,
     pub images: Count,
     pub files: Count,
+    /// Every image and other attached file it holds, biggest first. Which
+    /// comments use one is worked out by the page, from their text.
+    pub attachments: Vec<AttachedData>,
+}
+
+/// One image or other file attached to a comment, as the page lists it.
+#[derive(Serialize)]
+pub struct AttachedData {
+    /// The digest it is stored and referred to by.
+    pub id: String,
+    /// `image` (shown in the comment) or `file` (offered to be saved).
+    pub kind: &'static str,
+    /// An image's media type (`image/png`); absent for other files, whose
+    /// type is never read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<&'static str>,
+    pub size: u64,
 }
 
 /// A number of things, and how many bytes they are.
@@ -592,6 +609,26 @@ fn file_sig(files: &[crate::model::FileDigest], path: &str) -> Option<String> {
 pub fn bundle_info(loaded: &crate::bundle::Loaded, size: u64, revisions: usize) -> BundleInfo {
     let (images, image_bytes) = loaded.image_stats();
     let (files, file_bytes) = loaded.attachment_stats();
+    let listed = |kind: &'static str, id: &str, bytes: &[u8]| AttachedData {
+        id: id.to_string(),
+        kind,
+        media_type: (kind == "image")
+            .then(|| crate::image::kind(bytes).ok())
+            .flatten(),
+        size: bytes.len() as u64,
+    };
+    let mut attachments: Vec<AttachedData> = loaded
+        .images()
+        .map(|(id, bytes)| listed("image", id, bytes))
+        .chain(
+            loaded
+                .attachments()
+                .map(|(id, bytes)| listed("file", id, bytes)),
+        )
+        .collect();
+    // Biggest first: the page lists them this way (with the unused ones it
+    // works out first), so the ones worth clearing out are at the top.
+    attachments.sort_by(|a, b| b.size.cmp(&a.size).then_with(|| a.id.cmp(&b.id)));
     BundleInfo {
         size,
         revisions,
@@ -603,6 +640,7 @@ pub fn bundle_info(loaded: &crate::bundle::Loaded, size: u64, revisions: usize) 
             count: files,
             bytes: file_bytes,
         },
+        attachments,
     }
 }
 
