@@ -12,6 +12,7 @@ pub mod git;
 pub mod html;
 pub mod image;
 pub mod linediff;
+pub mod messages;
 pub mod model;
 pub mod record;
 pub mod review;

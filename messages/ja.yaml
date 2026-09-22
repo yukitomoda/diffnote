@@ -1,0 +1,342 @@
+# diffnote の画面・CLI に出てくる文言(日本語)。
+#
+# ネストしたマッピングで、葉(文字列)がそのままメッセージです。Rust/JS
+# からは `.` で連結したパス(例: `cli.init.about`)で引きます。`{name}` は
+# 実行時に値へ置き換わるプレースホルダです(YAML 自体の構文ではありませ
+# ん)。将来、他言語を足すときはこのファイルをコピーして訳すだけで足りる
+# ように、キーの構成は言語に依存しない形にしています。
+#
+# 読み込み側: Rust は src/messages.rs、WebUI は ui/client/lib.js の `m`/`mf`。
+
+# --- CLI (`diffnote --help` などに出る文言) ---------------------------------
+cli:
+  about: |-
+    diffnote: git の差分やディレクトリにローカルでコメントし、レビューをファイルで共有する。
+  help_flag: |-
+    ヘルプを表示する
+  version_flag: |-
+    バージョンを表示する
+  heading_args: |-
+    引数
+  heading_options: |-
+    オプション
+  heading_commands: |-
+    コマンド
+  help_template: |-
+    {about}
+
+    使い方: {usage}
+
+    {all-args}
+
+  init:
+    about: |-
+      最初のレビューバンドルを作る。git のリポジトリの中(`.git` がある)なら、指定したコミット(既定は HEAD)を基準として記録し、そうでなければ、ディレクトリの今の状態を基準として保存する。以降の `edit`(引数なし)で、その基準からの変更をレビューできる。
+    review: |-
+      作成するレビューバンドル(.diffnote、zip 形式)のパス。省略時は ./.diffnote。
+    target: |-
+      git のリポジトリの中では、基準にするコミット(HEAD、ブランチ名、タグ、コミット ID など。省略時は HEAD)。それ以外では、スナップショットを取るディレクトリ(省略時は `.`。`.diffnoteignore`(なければ`.gitignore`)に一致するファイルは含めない)。
+    files: |-
+      git のリポジトリの中でも、ファイルのスナップショット(ディレクトリのレビュー)を作る。
+    repo: |-
+      基準のコミットを探すリポジトリ。省略時は、実行したディレクトリのリポジトリ。
+    title: |-
+      レビューのタイトル。エクスポートの見出しに使われる(省略できる)。
+
+  edit:
+    about: |-
+      レビュー対象を $EDITOR で開いてコメントを書き、レビューバンドルに追記する(git のレビューでは、バンドルがなければ作成する)。
+    review: |-
+      レビューバンドル(.diffnote、zip 形式)のパス。省略時は ./.diffnote。
+    target: |-
+      比較対象。git のレビュー: ベース(`init` で決めたコミット)と比べるコミット(HEAD、ブランチ名、タグ、コミット ID など。省略時は HEAD)。範囲(`A..B`)は指定できません。バンドルがなく `--base` もないときは、そのコミットの第一親をベースにします(そのコミット自身の変更のレビュー)。ディレクトリのレビュー(`init` で作ったバンドル): ベースのスナップショットと比べるディレクトリ(省略時はカレント)。
+    base: |-
+      ベース(比較の起点): git のレビューではコミット、ディレクトリのレビューではディレクトリ。まだバンドルがないときに指定でき、`init BASE` してから `edit` するのと同じ意味になります。バンドルがあるときは、そのベースと同じものしか指定できません。
+    files: |-
+      git のリポジトリの中でも、ディレクトリのレビューにする(まだバンドルがないときだけ意味があります)。
+    repo: |-
+      git のレビューの対象のリポジトリ。コミットの解決と、ファイルの読み出しに使う。省略時は、実行したディレクトリのリポジトリ。
+    snapshot: |-
+      新しい差分を初めて見て、かつこの回で何かを追加したときに、バンドルへ保存する内容。`changed`(差分が触れた全ファイルの両側と、コメントが参照する全ファイル)か、`full`(それに加えて head 全体のツリー)。省略時は、バンドルにすでに決まっているモード、なければ git のレビューでは `changed`(残りは git が持っている)。ディレクトリのレビューは常に全体を保存するので、そこで `--snapshot changed` を指定するとエラーになる。
+    show: |-
+      ファイル(`PATH`)またはその一部の行(`PATH:START-END`、`PATH:LINE`)をバッファに入れる。差分が触れていない箇所にもコメントを書ける。レビューの head 側の内容が対象。繰り返し指定できる。差分がすでに表示している箇所の前後 3 行は、重ねて追加されない。
+    title: |-
+      レビューのタイトルを設定する。エクスポートの見出しに使われる。すでにあるタイトルを変えるときにも使い、空文字列(`--title ""`)で取り消す。
+    reopen: |-
+      新しく差分を計算せず、保存済みの最後のリビジョンを開き直す(コメントを足すためのもの)。比較対象(REV|DIR)や `--base`、`--files`、`--snapshot`、`--show` とは一緒に指定できない。
+
+  serve:
+    about: |-
+      レビューをブラウザで開き、返信や解決をその画面で行う(自分のパソコンからだけ接続できる)。
+    review: |-
+      レビューバンドル(.diffnote)のパス。省略時は ./.diffnote。
+    port: |-
+      待ち受けるポート。省略時は空いているものを自動で選ぶ。
+    no_open: |-
+      ブラウザを自動で開かない(URL だけを表示する)。
+    title: |-
+      レビューのタイトルを設定する(`edit --title` と同じ)。画面でも変えられます。
+    repo: |-
+      git のレビューを作ったリポジトリ。バンドルに保存されていないファイルを、コミットから開くために使う。省略時は、起動したディレクトリ。
+    target: |-
+      レビューに加える比較対象。`edit` と同じ指定です。git のレビュー: ベースと比べるコミット(省略時は HEAD)。ディレクトリのレビュー: ベースのスナップショットと比べるディレクトリ(省略時は何も加えません)。すでに記録された差分や、空の差分は加えません。
+    base: |-
+      ベース(比較の起点)。まだバンドルがないときに指定できます(`edit --base` と同じ)。
+    files: |-
+      git のリポジトリの中でも、ディレクトリのレビューにする(まだバンドルがないときだけ意味があります)。
+    reopen: |-
+      新しく差分を計算せず、保存済みの最後のリビジョンだけを開く(コメントを足すためのもの)。起動時に差分を追加せず、「新しいコミットがあります」の通知も「最新を取り込む」ボタンも出さない。比較対象(REV|DIR)や `--base`、`--files` とは一緒に指定できない。
+
+  show:
+    about: |-
+      レビューバンドルに保存されたスレッドと返信を表示する。
+    review: |-
+      レビューバンドル(.diffnote)のパス。省略時は ./.diffnote。
+
+  export:
+    about: |-
+      レビューバンドルを、単体で開ける HTML ファイルに書き出す。
+    review: |-
+      レビューバンドル(.diffnote)のパス。省略時は ./.diffnote。
+    output: |-
+      出力する HTML のパス。例: `-o out.html`。
+    output_pos: |-
+      -o/--output の代わりに位置引数で渡す出力パス。例: `diffnote export out.html`。
+    expand_limit: |-
+      差分が省略している行を、HTML に埋め込む行数の上限(全ファイル・全リビジョンの合計)。
+      埋め込んだ分は、HTML を開いたあとで展開できます。`0` で埋め込まず、`all` で全部埋め込みます。
+
+  config:
+    about: |-
+      このマシンの、このユーザーの設定を操作する(バンドルごとの設定とは別で、すべての diffnote バンドルに効く)。OS のユーザー設定ディレクトリの `diffnote/config.json` に保存される(`DIFFNOTE_CONFIG_DIR` で置き場所を変えられる)。
+    get:
+      about: |-
+        設定を表示する。KEY を省略すると、全部を表示する。
+      key: |-
+        表示する項目(`author` など)。省略時は全部。
+    set:
+      about: |-
+        設定する。
+      key: |-
+        設定する項目(`author` など)。
+      value: |-
+        設定する値。
+    unset:
+      about: |-
+        設定を取り消す(以降は、そのぶんの既定の決めかたに戻る)。
+      key: |-
+        取り消す項目(`author` など)。
+
+# --- 実行時のメッセージ(main.rs) -------------------------------------------
+main:
+  macro:
+    stdout_write_failed: |-
+      標準出力に書き込めませんでした: {error}
+  output_path_conflict: |-
+    出力パスは位置引数か -o/--output のどちらか一方で指定してください
+  output_path_missing: |-
+    出力パスがありません(位置引数か -o/--output で指定してください)
+  needs_a_base: |-
+    ディレクトリのレビューを始めるには、`diffnote init` でベースを決めるか、`--base DIR` でベースのディレクトリを指定してください
+  title_set: |-
+    タイトルを設定しました
+  warning_prefix: |-
+    警告: {warning}
+  notice_prefix: |-
+    注意: {notice}
+
+  config:
+    not_set: |-
+      {key} は設定されていません
+    none_set: |-
+      何も設定されていません
+    file_path: |-
+      設定ファイル: {path}
+    entry: |-
+      {key} = {value}
+    empty_value_refused: |-
+      空の値は設定できません。取り消すときは `diffnote config unset {key}` を使ってください
+    set_ok: |-
+      {key} を設定しました: {value}
+    unset_ok: |-
+      {key} の設定を取り消しました
+
+  repo_of:
+    not_a_repo: |-
+      {dir} は git リポジトリではありません
+
+  add_revision:
+    no_bundle: |-
+      {path} がありません。先に `diffnote init` でレビューを作るか、レビューするコミットを指定してください(例: `diffnote serve HEAD`)
+    recorded_git: |-
+      差分を記録しました: {from}..{to}
+    recorded_files: |-
+      ディレクトリの変更を記録しました
+
+  reopen:
+    conflicting_flags: |-
+      --reopen は、比較対象(REV|DIR)や --base、--files とは一緒に指定できません(何の差分も計算しないためです)
+    edit_conflicts_snapshot: |-
+      --reopen は --snapshot とは一緒に指定できません(新しく保存するものがないためです)
+    edit_conflicts_show: |-
+      --reopen は --show とは一緒に指定できません(まだ記録されていないファイルは読み出せません)
+    input_no_revision: |-
+      まだ保存されたリビジョンがありません。先に `diffnote init` か `diffnote edit` でレビューを作ってください
+
+  serve:
+    reopen_no_bundle: |-
+      {path} がありません。--reopen は、すでにあるレビューの、保存済みの最後のリビジョンを開くためのものです
+    no_bundle: |-
+      {path} がありません。先に `diffnote init` か `diffnote edit` でレビューを作るか、レビューするコミットを指定してください(例: `diffnote serve HEAD`)
+    no_revision: |-
+      {path} に、まだ保存されたリビジョンがありません
+    refresh_failed: |-
+      注意: 最新の差分を記録できませんでした: {error}
+    no_diff_at_all: |-
+      レビューする差分がありません(バンドルは作りませんでした)
+    no_diff_yet: |-
+      注意: レビューする差分がまだありません。基準のあとにコミットを重ねてから、もう一度 `diffnote serve` を起動してください(比較対象は `diffnote serve <コミット>` でも指定できます)
+    opening_browser: |-
+      ブラウザで開きます: {url}
+    quit_hint: |-
+      終了するには、この画面で Ctrl+C を押すか、ブラウザの「終了」ボタンを押してください
+    open_failed: |-
+      ブラウザを自動で開けませんでした。上の URL を、ブラウザに貼り付けてください
+
+  export:
+    expand_limit_invalid: |-
+      行数(0 以上の整数)か `all` を指定してください
+    no_diff: |-
+      {path} にはまだ記録された差分がありません。先に `diffnote edit` を実行してください
+    write_failed: |-
+      {path} を書き込めませんでした
+    wrote: |-
+      {path} を書き出しました
+
+  git_range:
+    no_ranges: |-
+      範囲(`A..B`、`A B`)は指定できません。比較の起点(ベース)は、`diffnote init` か `--base` で決め、比較対象は 1 つだけ指定してください
+    base_locked: |-
+      このバンドルのベースは {base} です。ベースは変えられません(別のベースでレビューするときは、新しいバンドルを作ってください)
+    dir_bundle: |-
+      このバンドルはディレクトリのレビューです(git のコミットは指定できません)
+    no_target: |-
+      レビューするコミットを指定してください(例: `diffnote edit HEAD`)。基準になる状態を先に決めるには、`diffnote init` を実行してください
+
+  files_input:
+    no_snapshot: |-
+      バンドルに、比べる対象のスナップショットがありません
+
+  check_files_base:
+    mismatch: |-
+      {dir} の内容は、このバンドルのベースと違います。ベースは変えられません(別のベースでレビューするときは、新しいバンドルを作ってください)
+
+  init:
+    already_exists: |-
+      {path} はすでに存在します
+    git_done: |-
+      {rev}({commit}) を基準として {path} を作成しました。`diffnote edit` で、ここから今の HEAD までの変更をレビューできます
+    files_done: |-
+      {count} 個のファイルを {path} に保存しました
+
+  edit:
+    show_parse_failed: |-
+      --show {spec}: {error}
+    dir_snapshot_changed_refused: |-
+      ディレクトリのレビューでは `--snapshot changed` は指定できません。git のように残りを読み出す手段がなく、次の edit で比べるためにツリー全体が必要なので、常に全体を保存します。レビューに不要なものは `.diffnoteignore` で除外してください。
+    resuming_draft: |-
+      前回の編集がうまく保存できなかったときの下書きから再開します: {path}
+    temp_dir_failed: |-
+      一時ディレクトリを作れませんでした
+    temp_write_failed: |-
+      一時ファイルにコメント用のバッファを書き込めませんでした
+    editor_empty: |-
+      $EDITOR が空です。エディタのコマンドを設定してください
+    editor_launch_failed: |-
+      エディタ '{editor}' を起動できませんでした($EDITOR を設定してください)
+    read_back_failed: |-
+      編集したファイルを読み戻せませんでした
+    editor_failed: |-
+      エディタ '{editor}' が異常終了しました。編集内容は {path} に保存しました。直してから `diffnote edit` を再実行すると続きから再開できます
+    parse_failed: |-
+      編集内容を解釈できませんでした: {error}
+
+      編集内容は {path} に保存しました。誤りを直して `diffnote edit` を再実行すると、続きから再開できます。
+    no_diff: |-
+      レビューする変更がありません(差分が空です)
+    no_comments: |-
+      コメントは追加されませんでした
+    reanchor_conflict: |-
+      '>!reanchor' は、同じブロックの中でコメント本文や他のディレクティブと併用できません
+    reanchor_bad_id: |-
+      '>!reanchor {id}': スレッド ID として正しくありません
+    internal_unknown_thread_ref: |-
+      内部エラー: 不明なスレッド参照です
+    no_changes: |-
+      変更はありません
+    saved: |-
+      コメント {comments} 件({events} 件のイベント)を {path} に書き込みました
+
+  show:
+    empty: |-
+      {path} は空です
+    setting_title: |-
+      [設定] タイトル={title}
+    setting_ignore_whitespace: |-
+      [設定] 空白の違いを無視(初期表示)
+    setting_attachment_limit: |-
+      [設定] 添付ファイルの上限={bytes} バイト
+    meta: |-
+      [メタ] context_lines={context_lines}
+    revision: |-
+      [リビジョン] {id} digest={digest} 対象={target} スナップショット={mode}
+    dir_marker: |-
+      (ディレクトリ)
+    title: |-
+      [タイトル] {title} -- {author}
+    ignore_whitespace_on: |-
+      無視する
+    ignore_whitespace_off: |-
+      無視しない
+    ignore_whitespace_change: |-
+      [設定] 空白の違いを{state} -- {author}
+    pin: |-
+      [固定] リビジョン {revision}: {count} 個のファイル
+    new_comment: |-
+      [{id}] 新規  {where} -- {author}
+    reply: |-
+      [{id}] 返信 -> {parent} -- {author}
+    resolve: "      解決 {parent} -- {author}"
+    reopen: "      再オープン {parent} -- {author}"
+    reanchor: "      再アンカー {parent} -> {where} -- {author}"
+
+  anchor:
+    insert_position: |-
+      {file}:{line} (挿入位置)
+    single_line: |-
+      {file}:{line}
+    range: |-
+      {file}:{start}-{end}
+    unknown: |-
+      ?
+    global: |-
+      差分全体
+    whole_file: |-
+      ファイル全体: {file}
+    moved: |-
+      {head} <- {base}
+    deleted: |-
+      {span} (削除)
+
+  push_directive:
+    internal_error: |-
+      内部エラー: {directive} は呼び出し側で処理されるはずです
+
+  save_draft:
+    failed: |-
+      下書きを {path} に保存できませんでした
+
+  snapshot:
+    ignore_hint: |-
+      レビューに不要なものは `.diffnoteignore` で除外してください。
+    confirm_prompt: "代わりに `changed`(この差分が触れるファイルだけ)にしますか? [y/N] "
