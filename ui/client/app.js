@@ -783,7 +783,7 @@
       return function () { document.removeEventListener('keydown', key); };
     }, []);
     return html`<main class="diffnote-settings" data-diffnote-settings-page data-diffnote-settings-section=${props.section}>
-      <p><button type="button" class="diffnote-button" data-diffnote-settings-back onClick=${props.onClose}>← レビューに戻る</button></p>
+      <p class="diffnote-settings__top"><button type="button" class="diffnote-button" data-diffnote-settings-back onClick=${props.onClose}>← レビューに戻る</button></p>
       <div class="diffnote-settings__layout">
         <${SettingsNav} current=${props.section} onSelect=${props.onSelect} />
         <div class="diffnote-settings__pane">

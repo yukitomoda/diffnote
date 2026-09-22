@@ -360,6 +360,7 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
 .diffnote-review-body[hidden] { display: none; }
 .diffnote-title[aria-pressed="true"] { background: var(--diffnote-color-bg); border-color: var(--diffnote-color-accent); }
 .diffnote-settings { padding: 24px 16px 48px; }
+.diffnote-settings__top { max-width: 64em; margin: 0 auto 12px; }
 .diffnote-settings__layout { display: flex; align-items: flex-start; gap: 32px; max-width: 64em; margin: 0 auto; }
 .diffnote-settings-nav { flex: none; width: 12em; }
 .diffnote-settings-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
