@@ -132,8 +132,8 @@ enum Cmd {
         review: PathBuf,
         #[arg(long, value_name = "PORT", default_value_t = 0, help = m("cli.serve.port"))]
         port: u16,
-        #[arg(long, help = m("cli.serve.no_open"))]
-        no_open: bool,
+        #[arg(long, help = m("cli.serve.open"))]
+        open: bool,
         #[arg(long, value_name = "DIR", help = m("cli.serve.repo"))]
         repo: Option<PathBuf>,
         #[arg(value_name = "REV|DIR", help = m("cli.serve.target"))]
@@ -247,7 +247,7 @@ fn main() -> Result<()> {
         Cmd::Serve {
             review,
             port,
-            no_open,
+            open,
             repo,
             target,
             base,
@@ -256,7 +256,7 @@ fn main() -> Result<()> {
         } => cmd_serve(
             review,
             port,
-            no_open,
+            open,
             repo,
             Compare {
                 target,
@@ -545,7 +545,7 @@ struct Compare {
 fn cmd_serve(
     review: PathBuf,
     port: u16,
-    no_open: bool,
+    open: bool,
     repo: Option<PathBuf>,
     compare: Compare,
 ) -> Result<()> {
@@ -638,9 +638,13 @@ fn cmd_serve(
         for notice in notices {
             println!("{}", mf("main.notice_prefix", &[("notice", notice)]));
         }
-        println!("{}", mf("main.serve.opening_browser", &[("url", url)]));
+        if open {
+            println!("{}", mf("main.serve.opening_browser", &[("url", url)]));
+        } else {
+            println!("{}", mf("main.serve.at", &[("url", url)]));
+        }
         println!("{}", m("main.serve.quit_hint"));
-        if !no_open && !open_in_browser(url) {
+        if open && !open_in_browser(url) {
             println!("{}", m("main.serve.open_failed"));
         }
     })

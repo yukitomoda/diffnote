@@ -354,7 +354,7 @@ class Served:
             set_user_author(author)
         env = dict(os.environ)
         env["DIFFNOTE_CONFIG_DIR"] = USER_CONFIG_DIR
-        self.proc = subprocess.Popen([BIN, "serve", "-f", review, "--no-open", *extra],
+        self.proc = subprocess.Popen([BIN, "serve", "-f", review, *extra],
                                      cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8")
         self.notices = []
         self.said = []

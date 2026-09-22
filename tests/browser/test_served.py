@@ -1946,7 +1946,7 @@ class ServeAddsTheLatestDiff(ServedCase):
     def test_a_different_base_or_a_range_stops_serve_before_it_starts(self):
         review = os.path.join(self.fresh("review"), "bad.diffnote")
         assert harness.diffnote("init", "-f", review, "c1", cwd=self.repo).returncode == 0
-        run = lambda *args: subprocess.run([harness.BIN, "serve", "-f", review, "--no-open", *args],
+        run = lambda *args: subprocess.run([harness.BIN, "serve", "-f", review, *args],
                                            cwd=self.repo, capture_output=True, text=True, encoding="utf-8", timeout=20)
         other = run("--base", "c2", "HEAD")
         self.assertNotEqual(other.returncode, 0)
@@ -1992,7 +1992,7 @@ class ServeAddsTheLatestDiff(ServedCase):
         with open(os.path.join(same, "a.txt"), "w") as f:
             f.write("one\ntwo\nthree\n")
         lone = os.path.join(self.fresh("review"), "none.diffnote")
-        out = subprocess.run([harness.BIN, "serve", "-f", lone, "--no-open", "--files", "--base", old, "."],
+        out = subprocess.run([harness.BIN, "serve", "-f", lone, "--files", "--base", old, "."],
                              cwd=same, capture_output=True, text=True, encoding="utf-8", timeout=20)
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("差分がありません", out.stderr)
@@ -2075,7 +2075,7 @@ class Reopen(ServedCase):
 
     def test_reopen_with_a_comparison_target_is_refused_before_the_server_starts(self):
         review = os.path.join(self.fresh("review"), "refused.diffnote")
-        out = subprocess.run([harness.BIN, "serve", "-f", review, "--no-open", "--reopen", "c2"],
+        out = subprocess.run([harness.BIN, "serve", "-f", review, "--reopen", "c2"],
                              cwd=self.repo, capture_output=True, text=True, encoding="utf-8", timeout=20)
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("--reopen", out.stderr)

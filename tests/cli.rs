@@ -1640,11 +1640,7 @@ fn reopen_refuses_a_comparison_target_and_a_bundle_with_no_revision_yet() {
         String::from_utf8_lossy(&out.stderr).contains("--reopen"),
         "{out:?}"
     );
-    let out = env.run(
-        &repo,
-        &[],
-        &["serve", "-f", review_arg, "--reopen", "--no-open", "c3"],
-    );
+    let out = env.run(&repo, &[], &["serve", "-f", review_arg, "--reopen", "c3"]);
     assert!(!out.status.success());
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("--reopen"),
