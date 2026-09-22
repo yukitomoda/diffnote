@@ -174,6 +174,24 @@ class Replies(ServedCase):
         self.assertIn('filename="r.html"', b.js("window.__export.disposition"))
         self.assertTrue(b.js("window.__export.text.includes('mul の型') && !window.__export.text.includes('D.api = ')"))
 
+    def test_the_download_button_gives_the_bundle_exactly_as_it_is(self):
+        self.serve()
+        b = self.b
+        self.assertEqual(b.js("document.querySelector('[data-diffnote-download]').getAttribute('href')"), "/download")
+        self.assertFalse(b.js("document.querySelector('[data-diffnote-download]').hasAttribute('download')"))
+        b.js("fetch('/download',{credentials:'same-origin'}).then(function(r){return r.arrayBuffer().then(function(buf){"
+             "window.__download={disposition:r.headers.get('content-disposition'), type:r.headers.get('content-type'), size:buf.byteLength}})})")
+        self.assertTrue(b.wait("!!window.__download"))
+        self.assertIn('filename="r.diffnote"', b.js("window.__download.disposition"))
+        self.assertEqual(b.js("window.__download.type"), "application/zip")
+        self.assertEqual(b.js("window.__download.size"), os.path.getsize(self.review))
+        # A reply made through the session is in it (the file on disk, byte for byte).
+        card = self.card("mul の型")
+        self.reply_to(card, "ダウンロードの確認")
+        b.js("fetch('/download',{credentials:'same-origin'}).then(function(r){return r.arrayBuffer().then(function(buf){window.__size2=buf.byteLength})})")
+        self.assertTrue(b.wait("window.__size2 !== undefined && window.__size2 !== window.__download.size"))
+        self.assertEqual(b.js("window.__size2"), os.path.getsize(self.review))
+
     def test_what_a_comment_says_is_text_and_markdown_never_html_or_script(self):
         self.serve()
         b = self.b
@@ -565,7 +583,7 @@ class Replies(ServedCase):
         nav = b.js("(() => { const n = document.querySelector('.diffnote-revisions'); return {over: n.scrollWidth > n.clientWidth, bar: n.offsetHeight - n.clientHeight}; })()")
         self.assertTrue(nav["over"], "the tabs scroll sideways")
         self.assertEqual(nav["bar"], 0, "with no scroll bar taking height")
-        for sel in ("[data-diffnote-pull]", "[data-diffnote-export]", "[data-diffnote-shutdown]"):
+        for sel in ("[data-diffnote-pull]", "[data-diffnote-download]", "[data-diffnote-export]", "[data-diffnote-shutdown]"):
             h = b.js(f"document.querySelector({json.dumps(sel)}).getBoundingClientRect().height")
             self.assertLess(h, 32, f"{sel} stays on one line")
         right = b.js("document.querySelector('[data-diffnote-quit-more]').getBoundingClientRect().right")

@@ -547,6 +547,7 @@ impl Server {
         match (request.method, path) {
             ("GET", "/") => self.page(),
             ("GET", "/export") => self.export(),
+            ("GET", "/download") => self.download(),
             ("GET", "/api/model") => self.model(),
             ("GET", "/api/version") => self.version(),
             ("GET", "/api/compare") => self.compare(query),
@@ -640,6 +641,37 @@ impl Server {
             "Content-Disposition".into(),
             format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{encoded}"),
         ));
+        reply
+    }
+
+    /// The bundle exactly as it is on disk right now, to be saved by the
+    /// browser under the name it already has (e.g. `review.diffnote`).
+    fn download(&self) -> Reply {
+        let bytes = match std::fs::read(&self.review) {
+            Ok(bytes) => bytes,
+            Err(e) => return Reply::error(500, &format!("読み込めませんでした: {e}")),
+        };
+        let name = self
+            .review
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "review.diffnote".into());
+        let ascii: String = name
+            .chars()
+            .map(|c| if c.is_ascii() { c } else { '_' })
+            .collect();
+        let mut reply = Reply::new(200, "application/zip", bytes);
+        reply.headers.push((
+            "Content-Disposition".into(),
+            format!(
+                "attachment; filename=\"{ascii}\"; filename*=UTF-8''{}",
+                percent_encode(&name)
+            ),
+        ));
+        reply
+            .headers
+            .push(("X-Content-Type-Options".into(), "nosniff".into()));
         reply
     }
 
@@ -1987,6 +2019,47 @@ mod tests {
         let bare = f.server.handle(&Request {
             method: "GET",
             target: "/export",
+            headers: vec![("host".into(), "127.0.0.1:4242".into())],
+            body: b"",
+        });
+        assert_eq!(bare.status, 403);
+    }
+
+    #[test]
+    fn the_bundle_can_be_downloaded_exactly_as_it_is_on_disk() {
+        let f = fixture();
+        let on_disk = std::fs::read(&f.path).unwrap();
+        let reply = f.request("GET", "/download", &[], "");
+        assert_eq!(reply.status, 200);
+        assert_eq!(reply.content_type, "application/zip");
+        assert_eq!(reply.body, on_disk);
+        let disposition = reply
+            .headers
+            .iter()
+            .find(|(n, _)| n == "Content-Disposition")
+            .map(|(_, v)| v.clone())
+            .unwrap();
+        assert!(
+            disposition.starts_with("attachment; filename=\"r.diffnote\""),
+            "{disposition}"
+        );
+        // A change made through the session is in the download too.
+        f.post(
+            &format!("/api/threads/{}/replies", f.thread),
+            r#"{"body":"かきくけこ"}"#,
+        );
+        let reply = f.request("GET", "/download", &[], "");
+        assert_ne!(reply.body, on_disk, "reflects what changed since");
+        assert_eq!(reply.body, std::fs::read(&f.path).unwrap());
+        assert!(
+            f.events()
+                .iter()
+                .any(|e| matches!(e, Event::Comment { body, .. } if body == "かきくけこ"))
+        );
+        // Not without the token, like the rest.
+        let bare = f.server.handle(&Request {
+            method: "GET",
+            target: "/download",
             headers: vec![("host".into(), "127.0.0.1:4242".into())],
             body: b"",
         });

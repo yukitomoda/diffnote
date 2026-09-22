@@ -2013,6 +2013,7 @@
             title="起動したあとに増えたコミットなど、対象の新しい変更を、新しいリビジョンとして取り込み、それを表示します">最新を取り込む</button>
           ${note && html`<span class=${'diffnote-pull__note' + (note.failed ? ' is-failed' : '')} data-diffnote-pull-note role="status">${note.text}</span>`}
         </span>`}
+        ${model.interactive && html`<a class="diffnote-button" data-diffnote-download href="/download" title="今のバンドル(.diffnote)を、そのままファイルとして保存します">ダウンロード</a>`}
         ${model.interactive && html`<a class="diffnote-button" data-diffnote-export href="/export" title="今の内容を、誰でも開ける HTML として保存します">エクスポート</a>`}
         ${model.interactive && html`<${QuitButton} />`}
         </div>
