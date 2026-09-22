@@ -6,35 +6,34 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { lib } from '../lib.ts';
 import {
-  against,
-  at,
   compareWith,
-  current,
+  goTo,
   hashOfRoute,
   isSection,
-  jumpedTo,
+  openRevision,
+  route,
   routeOfHash,
-  screen,
   showRevision,
   showRoute,
   showScreen,
-  startRoute,
 } from '../state/route.ts';
 
 lib.setMessages({});
 
 function fresh() {
-  current.set(0);
-  screen.set(null);
-  against.set(null);
-  at.set(null);
+  route.set({ rev: 0, screen: null, against: null, at: null });
+}
+
+/** A jump that stays in the revision being shown. */
+function jumpTo(place) {
+  goTo(route.get().rev, place);
 }
 
 test('an address says which revision, and the page counts from zero', () => {
   fresh();
   assert.deepEqual(routeOfHash('#rev=2', 3), { rev: 2, screen: null, against: null, at: null });
   showRoute(routeOfHash('#rev=2', 3));
-  assert.equal(current.get(), 1, 'the second revision');
+  assert.equal(route.get().rev, 1, 'the second revision');
   assert.equal(hashOfRoute(), '#rev=2');
 });
 
@@ -52,33 +51,36 @@ test('a screen is one of the ones there are', () => {
   assert.equal(routeOfHash('#rev=1&screen=nowhere', 1).screen, null, 'and is dropped if not');
 });
 
-test('the page starts where the address says, or at the last revision', () => {
+test('a move is one move: a tab leaves no screen or jump behind it', () => {
   fresh();
-  assert.equal(startRoute('#rev=1&screen=settings', 3).rev, 1);
-  assert.equal(current.get(), 0);
-  assert.equal(screen.get(), 'settings');
+  showScreen('settings');
+  jumpTo({ kind: 'file', path: 'a.rs' });
+  openRevision(1);
+  assert.deepEqual(route.get(), { rev: 1, screen: null, against: null, at: null });
+});
 
+test('a jump shows the review, at the place, in the revision it names', () => {
   fresh();
-  assert.equal(startRoute('', 3), null, 'nothing in the address');
-  assert.equal(current.get(), 2, 'the last revision is what a review opens at');
-  assert.equal(screen.get(), null);
+  showScreen('attachments');
+  goTo(2, { kind: 'thread', id: '01ABC' });
+  assert.deepEqual(route.get(), { rev: 2, screen: null, against: null, at: { kind: 'thread', id: '01ABC' } });
 });
 
 test('everything the page is shown with is in the address, and comes back', () => {
   fresh();
   showRevision(2);
-  showScreen('attachments');
   compareWith(1);
-  jumpedTo({ kind: 'lines', path: 'src/a.ts', side: 'new', start: 10, end: 13 });
+  jumpTo({ kind: 'lines', path: 'src/a.ts', side: 'new', start: 10, end: 13 });
+  showScreen('attachments');
   const hash = hashOfRoute();
   assert.equal(hash, '#rev=3&screen=attachments&against=1&at=lines%3Asrc%2Fa.ts%3AR10-13');
 
   fresh();
   showRoute(routeOfHash(hash, 3));
-  assert.equal(current.get(), 2);
-  assert.equal(screen.get(), 'attachments');
-  assert.equal(against.get(), 1);
-  assert.deepEqual(at.get(), { kind: 'lines', path: 'src/a.ts', side: 'new', start: 10, end: 13 });
+  assert.equal(route.get().rev, 2);
+  assert.equal(route.get().screen, 'attachments');
+  assert.equal(route.get().against, 1);
+  assert.deepEqual(route.get().at, { kind: 'lines', path: 'src/a.ts', side: 'new', start: 10, end: 13 });
 });
 
 test('a jump to a file and to a thread survives the same round trip', () => {
@@ -87,8 +89,7 @@ test('a jump to a file and to a thread survives the same round trip', () => {
     { kind: 'thread', id: '01ABCDEF' },
   ]) {
     fresh();
-    showRevision(0);
-    jumpedTo(place);
+    jumpTo(place);
     const route = routeOfHash(hashOfRoute(), 1);
     assert.deepEqual(route.at, place);
   }

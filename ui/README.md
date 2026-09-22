@@ -61,6 +61,13 @@ parts of the page hand each other.
   its lines), not through components.
 - `src/app.tsx` — the page itself, with a file per part of it beside it:
   `thread/`, `diff/`, `nav/`, `settings/`, and `state/` for what the page holds.
+- `src/state/` — what the page holds. Three of them are stores (nanostores),
+  because they are written from all over the page and read all over it:
+  `route.ts` (which revision, which screen, what it is compared against, the
+  last place jumped to -- that is, what is in the address), `view.ts` (how the
+  reader prefers the diff shown) and `viewed.ts` (the files marked as looked
+  at). The review itself and what is being written are hooks (`review.ts`,
+  `compose.ts`, `opened.ts`), since they belong to the page that draws them.
 - `src/model.ts` — the form of the data the page is drawn from, as types.
 - `src/api.ts` — talking to the server; only the served bundle has it.
 - `src/emoji.ts` — the emoji the page offers.

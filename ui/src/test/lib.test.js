@@ -501,8 +501,9 @@ test('a hash with no revision (or none at all) parses to null: nothing to go on'
   assert.equal(lib.parseHash('screen=user'), null);
   assert.equal(lib.parseHash('rev=abc'), null);
   assert.equal(lib.parseHash('#rev-2'), null, 'the old, one-way format is not read back');
-  // An unknown screen or a broken `at` is dropped, not fatal.
-  assert.deepEqual(lib.parseHash('rev=1&screen=nope&at=garbled'), { rev: 1, screen: null, against: null, at: null });
+  // A broken `at` is dropped, not fatal. A screen is read as it is written:
+  // whether there is such a screen is for `state/route.ts` to say.
+  assert.deepEqual(lib.parseHash('rev=1&screen=nope&at=garbled'), { rev: 1, screen: 'nope', against: null, at: null });
 });
 
 test('the hash is built in a fixed, readable order', () => {

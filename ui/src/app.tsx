@@ -17,18 +17,16 @@ import { ActionsContext, ComposeContext, LinksContext, OpenedContext } from './s
 import { useOpened } from './state/opened.ts';
 import { useReview } from './state/review.ts';
 import {
-  against as shownAgainst,
-  at as jumpedAt,
   compareWith,
-  current as shownRevision,
-  jumpedTo,
+  followRoute,
+  goTo,
+  openRevision,
+  route,
   routeOfHash,
-  screen as shownScreen,
   showRevision,
   showRoute,
   showScreen,
   startRoute,
-  writeAddress,
 } from './state/route.ts';
 import { isViewed, seen, toggleViewed } from './state/viewed.ts';
 import {
@@ -50,13 +48,10 @@ function App(props: { model: ViewModel }) {
   // Where the page is: the revision shown, the settings screen, what it is
   // compared against and the last place jumped to, all of which are in the
   // address (see `state/route.ts`).
-  var current = useStore(shownRevision);
-  var screen = useStore(shownScreen);
-  var against = useStore(shownAgainst);
-  var at = useStore(jumpedAt);
-  // Set just before a change is made because the browser's back/forward moved
-  // the address (so the effect that writes it back doesn't write it again).
-  var navigating = useRef(false);
+  var here = useStore(route);
+  var current = here.rev;
+  var screen = here.screen;
+  var against = here.against;
   var _k = useState<{ rev: number; from: number; data: RevisionData } | null>(null);
   var cmp = _k[0];
   var setCmp = _k[1];
@@ -144,8 +139,7 @@ function App(props: { model: ViewModel }) {
         var place: At = 'kind' in ref
           ? ref
           : { kind: 'lines', path: ref.path, side: ref.side, start: ref.start, end: ref.end };
-        if (index !== current) showRevision(index);
-        jumpedTo(place);
+        goTo(index, place);
         jump(index, place);
       },
       jump: jump,
@@ -161,11 +155,10 @@ function App(props: { model: ViewModel }) {
   // compare target and last jump, exactly as the address says.
   useEffect(function () {
     var onPop = function () {
-      var route = routeOfHash(location.hash, model.revisions.length);
-      if (!route) return;
-      navigating.current = true;
-      showRoute(route);
-      if (route.at) links.jump(route.rev - 1, route.at);
+      var there = routeOfHash(location.hash, model.revisions.length);
+      if (!there) return;
+      showRoute(there);
+      if (there.at) links.jump(there.rev - 1, there.at);
     };
     window.addEventListener('popstate', onPop);
     return function () { window.removeEventListener('popstate', onPop); };
@@ -174,10 +167,8 @@ function App(props: { model: ViewModel }) {
   // the buttons above have something to retrace), unless it came from there
   // just now. The very first time, the address is only filled in, not added
   // to (nothing was navigated to yet -- it is where the page already was).
-  useEffect(function () {
-    writeAddress(navigating.current);
-    navigating.current = false;
-  }, [current, screen, against, at]);
+  // The address says where the page is, for as long as it is open.
+  useEffect(followRoute, []);
   // Differences that are only in white space ignored: the review says how the page
   // starts (a default kept in it), and changing it here is for this page only.
   // What pressing 「最新を取り込む」 did, said next to it.
@@ -238,7 +229,7 @@ function App(props: { model: ViewModel }) {
       }}><ul>
         {model.revisions.map(function (r, i) {
           return <li key={i}><a href={'#rev-' + i} data-diffnote-revision-link={i} class={i === current ? 'is-current' : ''}
-            onClick={function (e) { e.preventDefault(); showScreen(null); jumpedTo(null); showRevision(i); }}>{r.label}</a></li>;
+            onClick={function (e) { e.preventDefault(); openRevision(i); }}>{r.label}</a></li>;
         })}
       </ul></nav>}
       <div class="diffnote-topbar__actions">
@@ -249,7 +240,7 @@ function App(props: { model: ViewModel }) {
     {screen != null && review.actions && <SettingsScreen section={screen} model={model} pending={review.pending} note={note} onPull={pull}
       saveSettings={review.actions.saveSettings} saveUserSettings={review.actions.saveUserSettings}
       removeAttached={review.actions.removeAttached}
-      onShowThread={function (id) { showScreen(null); links.go({ kind: 'thread', id: id }); }}
+      onShowThread={function (id) { links.go({ kind: 'thread', id: id }); }}
       placementOf={function (id) { return ((model.revisions[current] || {}).placements || {})[id]; }}
       onSelect={showScreen} onClose={function () { showScreen(null); }} />}
     <div class="diffnote-review-body" hidden={screen != null && !!review.actions}>

@@ -843,7 +843,8 @@ lib.parseHash = function (hash) {
     got[decodeURIComponent(k)] = decodeURIComponent(v);
   });
   if (!/^\d+$/.test(got.rev || '')) return null;
-  var screen = ['general', 'settings', 'attachments', 'user'].indexOf(got.screen) >= 0 ? got.screen : null;
+  // Which screens there are is not the parser's to know (see `state/route.ts`).
+  var screen = got.screen || null;
   var against = /^\d+$/.test(got.against || '') ? +got.against : null;
   return { rev: +got.rev, screen: screen, against: against, at: got.at ? lib.parseAt(got.at) : null };
 };
