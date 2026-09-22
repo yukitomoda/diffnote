@@ -108,6 +108,9 @@ impl Env {
             .env("EDITOR", &self.editor)
             .env("DN_FAKE_EDITOR", "1")
             .env("DN_SCRIPT", &script)
+            // Isolated from whatever `diffnote config` this machine actually
+            // has (an empty directory unless a test's `env.run` set it up).
+            .env("DIFFNOTE_CONFIG_DIR", self.path("user-config"))
             .args(args)
             .output()
             .expect("diffnote runs")
@@ -1323,6 +1326,95 @@ fn a_blank_author_is_ignored() {
         ],
     );
     assert_eq!(authors(&review), ["山田 太郎"]);
+}
+
+#[test]
+fn a_configured_author_is_remembered_across_bundles_and_beats_git() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    git(&repo, &["config", "user.name", "山田 太郎"]);
+    let set = env.ok(&repo, &[], &["config", "set", "author", "鈴木 花子"]);
+    assert!(set.contains("設定しました"), "{set}");
+    let got = env.ok(&repo, &[], &["config", "get", "author"]);
+    assert_eq!(got.trim(), "鈴木 花子");
+    // It wins over git's own user.name, in an edit of any bundle.
+    let review_a = env.path("a.diffnote");
+    env.ok(
+        &repo,
+        &[("+B", "why?")],
+        &[
+            "edit",
+            "-f",
+            review_a.to_str().unwrap(),
+            "--base",
+            "c1",
+            "c2",
+        ],
+    );
+    assert_eq!(authors(&review_a), ["鈴木 花子"]);
+    // A second, unrelated bundle: remembered there too.
+    let review_b = env.path("b.diffnote");
+    env.ok(
+        &repo,
+        &[("+B", "why?")],
+        &[
+            "edit",
+            "-f",
+            review_b.to_str().unwrap(),
+            "--base",
+            "c1",
+            "c2",
+        ],
+    );
+    assert_eq!(authors(&review_b), ["鈴木 花子"]);
+    // `--author` still overrides it for that one run.
+    let review_c = env.path("c.diffnote");
+    env.ok(
+        &repo,
+        &[("+B", "why?")],
+        &[
+            "edit",
+            "-f",
+            review_c.to_str().unwrap(),
+            "--author",
+            "レビュアーA",
+            "--base",
+            "c1",
+            "c2",
+        ],
+    );
+    assert_eq!(authors(&review_c), ["レビュアーA"]);
+    // Unset: git's name takes over again.
+    let unset = env.ok(&repo, &[], &["config", "unset", "author"]);
+    assert!(unset.contains("取り消しました"), "{unset}");
+    let review_d = env.path("d.diffnote");
+    env.ok(
+        &repo,
+        &[("+B", "why?")],
+        &[
+            "edit",
+            "-f",
+            review_d.to_str().unwrap(),
+            "--base",
+            "c1",
+            "c2",
+        ],
+    );
+    assert_eq!(authors(&review_d), ["山田 太郎"]);
+}
+
+#[test]
+fn setting_an_empty_value_is_refused_and_unset_needs_no_value() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let out = env.run(&repo, &[], &["config", "set", "author", ""]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("空の値"));
+    // Never set: unsetting it anyway is not an error, and get says so.
+    let unset = env.ok(&repo, &[], &["config", "unset", "author"]);
+    assert!(unset.contains("取り消しました"), "{unset}");
+    let got = env.ok(&repo, &[], &["config", "get", "author"]);
+    assert!(got.contains("設定されていません"), "{got}");
 }
 
 #[test]

@@ -39,18 +39,24 @@ struct Cli {
 }
 
 /// clap の組み込みの見出し(Usage など)を日本語にしたコマンド定義。
+/// (`config get`/`set`/`unset` のように、何段ネストしていても効くように再帰する。)
 fn command() -> clap::Command {
     use clap::CommandFactory;
-    Cli::command().mut_subcommands(|sub| {
-        sub.help_template(HELP_TEMPLATE).mut_args(|a| {
-            let heading = if a.is_positional() {
-                "引数"
-            } else {
-                "オプション"
-            };
-            a.help_heading(heading)
-        })
-    })
+    fn localize(cmd: clap::Command) -> clap::Command {
+        cmd.help_template(HELP_TEMPLATE)
+            .subcommand_help_heading("コマンド")
+            .subcommand_value_name("コマンド")
+            .mut_args(|a| {
+                let heading = if a.is_positional() {
+                    "引数"
+                } else {
+                    "オプション"
+                };
+                a.help_heading(heading)
+            })
+            .mut_subcommands(localize)
+    }
+    localize(Cli::command())
 }
 
 const HELP_TEMPLATE: &str = "{about}\n\n使い方: {usage}\n\n{all-args}";
@@ -191,6 +197,43 @@ enum Cmd {
         #[arg(long, value_name = "行数|all", default_value = "5000", value_parser = parse_expand_limit)]
         expand_limit: diffnote::html::ExpandLimit,
     },
+    /// このマシンの、このユーザーの設定を操作する(バンドルごとの設定とは別で、すべての diffnote バンドルに効く)。OS のユーザー設定ディレクトリの `diffnote/config.json` に保存される(`DIFFNOTE_CONFIG_DIR` で置き場所を変えられる)。
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+}
+
+/// `diffnote config` の下位コマンド。
+#[derive(Debug, Subcommand)]
+enum ConfigAction {
+    /// 設定を表示する。KEY を省略すると、全部を表示する。
+    Get {
+        /// 表示する項目(`author` など)。省略時は全部。
+        #[arg(value_enum, hide_possible_values = true)]
+        key: Option<ConfigKey>,
+    },
+    /// 設定する。
+    Set {
+        /// 設定する項目(`author` など)。
+        #[arg(value_enum, hide_possible_values = true)]
+        key: ConfigKey,
+        /// 設定する値。
+        value: String,
+    },
+    /// 設定を取り消す(以降は、そのぶんの既定の決めかたに戻る)。
+    Unset {
+        /// 取り消す項目(`author` など)。
+        #[arg(value_enum, hide_possible_values = true)]
+        key: ConfigKey,
+    },
+}
+
+/// `diffnote config` で扱える設定項目(今のところ `author` のみ)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum ConfigKey {
+    /// コメントなどの作者名の既定値。`--author` や git の設定より決めかたは下だが、git より上(すべてのバンドルで一貫させるためのもの)。
+    Author,
 }
 
 fn main() -> Result<()> {
@@ -277,6 +320,77 @@ fn main() -> Result<()> {
             };
             cmd_export(review, output, expand_limit)
         }
+        Cmd::Config { action } => cmd_config(action),
+    }
+}
+
+fn cmd_config(action: ConfigAction) -> Result<()> {
+    match action {
+        ConfigAction::Get { key: Some(key) } => {
+            let config = diffnote::user_config::load();
+            match config_field(&config, key) {
+                Some(value) => println!("{value}"),
+                None => println!("{} は設定されていません", config_key_name(key)),
+            }
+        }
+        ConfigAction::Get { key: None } => {
+            let config = diffnote::user_config::load();
+            let mut any = false;
+            for key in [ConfigKey::Author] {
+                if let Some(value) = config_field(&config, key) {
+                    println!("{} = {value}", config_key_name(key));
+                    any = true;
+                }
+            }
+            if !any {
+                println!("何も設定されていません");
+            }
+            if let Some(path) = diffnote::user_config::path() {
+                println!("設定ファイル: {}", path.display());
+            }
+        }
+        ConfigAction::Set { key, value } => {
+            let value = value.trim();
+            if value.is_empty() {
+                anyhow::bail!(
+                    "空の値は設定できません。取り消すときは `diffnote config unset {}` を使ってください",
+                    config_key_name(key)
+                );
+            }
+            let mut config = diffnote::user_config::load();
+            set_config_field(&mut config, key, Some(value.to_string()));
+            diffnote::user_config::save(&config)?;
+            println!("{} を設定しました: {value}", config_key_name(key));
+        }
+        ConfigAction::Unset { key } => {
+            let mut config = diffnote::user_config::load();
+            set_config_field(&mut config, key, None);
+            diffnote::user_config::save(&config)?;
+            println!("{} の設定を取り消しました", config_key_name(key));
+        }
+    }
+    Ok(())
+}
+
+fn config_key_name(key: ConfigKey) -> &'static str {
+    match key {
+        ConfigKey::Author => "author",
+    }
+}
+
+fn config_field(config: &diffnote::user_config::UserConfig, key: ConfigKey) -> Option<&str> {
+    match key {
+        ConfigKey::Author => config.author.as_deref(),
+    }
+}
+
+fn set_config_field(
+    config: &mut diffnote::user_config::UserConfig,
+    key: ConfigKey,
+    value: Option<String>,
+) {
+    match key {
+        ConfigKey::Author => config.author = value,
     }
 }
 

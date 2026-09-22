@@ -23,6 +23,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 EXE = "diffnote.exe" if os.name == "nt" else "diffnote"
 BIN = os.environ.get("DIFFNOTE_BIN") or os.path.join(ROOT, "target", "debug", EXE)
+# Isolated from whatever `diffnote config` this machine actually has.
+USER_CONFIG_DIR = tempfile.mkdtemp(prefix="dn-user-config-")
 
 
 def find_chrome():
@@ -255,6 +257,7 @@ class Browser:
 def diffnote(*args, cwd=None, env=None, comments=None):
     """Run `diffnote`; `comments` are (after-line, text) pairs for the fake editor."""
     full_env = dict(os.environ)
+    full_env["DIFFNOTE_CONFIG_DIR"] = USER_CONFIG_DIR
     if env:
         full_env.update(env)
     if comments is not None:
@@ -288,8 +291,10 @@ class Served:
 
     def __init__(self, review, cwd=None, extra=(), author="tester"):
         self.review = review
+        env = dict(os.environ)
+        env["DIFFNOTE_CONFIG_DIR"] = USER_CONFIG_DIR
         self.proc = subprocess.Popen([BIN, "serve", "-f", review, "--no-open", "--author", author, *extra],
-                                     cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8")
+                                     cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8")
         self.notices = []
         self.said = []
         self.url = None

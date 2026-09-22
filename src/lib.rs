@@ -17,3 +17,4 @@ pub mod record;
 pub mod review;
 pub mod serve;
 pub mod show;
+pub mod user_config;

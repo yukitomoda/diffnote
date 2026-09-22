@@ -1,16 +1,19 @@
-//! Who a comment is by: `--author`, else git's `user.name`, else its
-//! `user.email`, else the login name from the environment.
+//! Who a comment is by: `--author`, else the user config's `author` (see
+//! [`crate::user_config`], set once for every bundle), else git's
+//! `user.name`, else its `user.email`, else the login name from the
+//! environment.
 
 use std::process::Command;
 
 /// The first of the given values that isn't blank, or `unknown`.
 pub fn pick(
     explicit: Option<&str>,
+    configured: Option<&str>,
     git_name: Option<&str>,
     git_email: Option<&str>,
     login: Option<&str>,
 ) -> String {
-    [explicit, git_name, git_email, login]
+    [explicit, configured, git_name, git_email, login]
         .into_iter()
         .flatten()
         .map(str::trim)
@@ -33,12 +36,14 @@ pub fn resolve(explicit: Option<&str>) -> String {
     let login = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .ok();
-    // `--author` needs no git at all.
+    // `--author` needs no git, and no user config, at all.
     if let Some(explicit) = explicit.filter(|e| !e.trim().is_empty()) {
         return explicit.trim().to_string();
     }
+    let configured = crate::user_config::load().author;
     pick(
         None,
+        configured.as_deref(),
         git_config("user.name").as_deref(),
         git_config("user.email").as_deref(),
         login.as_deref(),
@@ -52,33 +57,53 @@ mod tests {
     #[test]
     fn the_explicit_author_beats_everything() {
         assert_eq!(
-            pick(Some("Me"), Some("Name"), Some("e@x"), Some("login")),
+            pick(
+                Some("Me"),
+                Some("Configured"),
+                Some("Name"),
+                Some("e@x"),
+                Some("login")
+            ),
             "Me"
+        );
+    }
+
+    #[test]
+    fn the_configured_author_comes_before_git_and_the_login() {
+        assert_eq!(
+            pick(
+                None,
+                Some("Configured"),
+                Some("Yuki T"),
+                Some("e@x"),
+                Some("login")
+            ),
+            "Configured"
         );
     }
 
     #[test]
     fn git_name_comes_before_email_and_login() {
         assert_eq!(
-            pick(None, Some("Yuki T"), Some("e@x"), Some("login")),
+            pick(None, None, Some("Yuki T"), Some("e@x"), Some("login")),
             "Yuki T"
         );
-        assert_eq!(pick(None, None, Some("e@x"), Some("login")), "e@x");
-        assert_eq!(pick(None, None, None, Some("login")), "login");
-        assert_eq!(pick(None, None, None, None), "unknown");
+        assert_eq!(pick(None, None, None, Some("e@x"), Some("login")), "e@x");
+        assert_eq!(pick(None, None, None, None, Some("login")), "login");
+        assert_eq!(pick(None, None, None, None, None), "unknown");
     }
 
     #[test]
     fn blank_values_are_skipped_and_the_result_is_trimmed() {
         assert_eq!(
-            pick(Some("  "), Some(""), Some(" e@x "), Some("login")),
+            pick(Some("  "), Some(""), Some(""), Some(" e@x "), Some("login")),
             "e@x"
         );
-        assert_eq!(pick(Some(" Me "), None, None, None), "Me");
+        assert_eq!(pick(Some(" Me "), None, None, None, None), "Me");
     }
 
     #[test]
-    fn an_explicit_author_is_used_without_asking_git() {
+    fn an_explicit_author_is_used_without_asking_git_or_the_configuration() {
         assert_eq!(resolve(Some("  Someone Else ")), "Someone Else");
     }
 }
