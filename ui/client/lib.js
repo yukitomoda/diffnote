@@ -615,7 +615,7 @@
       got[decodeURIComponent(k)] = decodeURIComponent(v);
     });
     if (!/^\d+$/.test(got.rev || '')) return null;
-    var screen = got.screen === 'bundle' || got.screen === 'user' ? got.screen : null;
+    var screen = ['general', 'settings', 'user'].indexOf(got.screen) >= 0 ? got.screen : null;
     var against = /^\d+$/.test(got.against || '') ? +got.against : null;
     return { rev: +got.rev, screen: screen, against: against, at: got.at ? lib.parseAt(got.at) : null };
   };

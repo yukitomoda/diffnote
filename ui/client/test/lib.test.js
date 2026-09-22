@@ -468,7 +468,7 @@ test('a file says how many lines its diff adds and removes, and shows five block
 test('the page state round-trips through a hash: revision, screen, compare target, and a jump', () => {
   const round = (state) => lib.parseHash(lib.formatHash(state));
   assert.deepEqual(round({ rev: 2, screen: null, against: null, at: null }), { rev: 2, screen: null, against: null, at: null });
-  assert.deepEqual(round({ rev: 0, screen: 'bundle', against: null, at: null }), { rev: 0, screen: 'bundle', against: null, at: null });
+  assert.deepEqual(round({ rev: 0, screen: 'general', against: null, at: null }), { rev: 0, screen: 'general', against: null, at: null });
   assert.deepEqual(round({ rev: 3, screen: 'user', against: 1, at: null }), { rev: 3, screen: 'user', against: 1, at: null });
   assert.deepEqual(
     round({ rev: 1, screen: null, against: null, at: { kind: 'file', path: 'src/a b.ts' } }),
@@ -501,7 +501,7 @@ test('a hash with no revision (or none at all) parses to null: nothing to go on'
 test('the hash is built in a fixed, readable order', () => {
   assert.equal(lib.formatHash({ rev: 1, screen: null, against: null, at: null }), 'rev=1');
   assert.equal(
-    lib.formatHash({ rev: 1, screen: 'bundle', against: 0, at: { kind: 'file', path: 'a.rs' } }),
-    'rev=1&screen=bundle&against=0&at=file%3Aa.rs'
+    lib.formatHash({ rev: 1, screen: 'general', against: 0, at: { kind: 'file', path: 'a.rs' } }),
+    'rev=1&screen=general&against=0&at=file%3Aa.rs'
   );
 });

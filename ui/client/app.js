@@ -608,72 +608,57 @@
     </div>`;
   }
 
-  // This machine's user settings (`diffnote config`; today, just the author
-  // name): a screen of its own, like the review's settings -- but this is not
-  // part of the bundle, so it is kept separate (and applies to every review
-  // from now on, not only this one).
-  function UserSettingsPage(props) {
-    var model = props.model;
-    var configured = (model.user_settings && model.user_settings.author) || '';
-    var _a = useState(configured);
-    var author = _a[0];
-    var setAuthor = _a[1];
-    var _b = useState(false);
-    var busy = _b[0];
-    var setBusy = _b[1];
-    var _e = useState('');
-    var error = _e[0];
-    var setError = _e[1];
-    var _s = useState(false);
-    var saved = _s[0];
-    var setSaved = _s[1];
-    var first = useRef(null);
-    useEffect(function () { if (first.current) first.current.focus(); }, []);
-    useEffect(function () {
-      var key = function (e) { if (e.key === 'Escape') props.onClose(); };
-      document.addEventListener('keydown', key);
-      return function () { document.removeEventListener('keydown', key); };
-    }, []);
-    var dirty = author.trim() !== configured.trim();
-    var touched = function (v) { setAuthor(v); setSaved(false); setError(''); };
-    var submit = function (e) {
-      e.preventDefault();
-      if (busy) return;
-      setBusy(true);
-      setError('');
-      props.save(author).then(function (res) {
-        setBusy(false);
-        if (res.ok) setSaved(true);
-        else setError(res.error || '保存できませんでした');
-      });
-    };
-    return html`<main class="diffnote-settings" data-diffnote-user-settings-page>
-      <form class="diffnote-settings__form" noValidate onSubmit=${submit}>
-        <p><button type="button" class="diffnote-button" data-diffnote-user-settings-back onClick=${props.onClose}>← レビューに戻る</button></p>
-        <h2>ユーザー設定</h2>
-        <p class="diffnote-settings__note">ここでの設定は、このマシンの、このユーザーに保存されます。このレビューだけでなく、これから開くすべての diffnote のレビューに使われます。</p>
-        <label class="diffnote-field">
-          <span>作者名</span>
-          <input ref=${first} type="text" maxlength="100" data-diffnote-user-setting-author value=${author} placeholder="空にすると、git の設定などから決まります"
-            onInput=${function (e) { touched(e.target.value); }} />
-        </label>
-        ${error && html`<p class="diffnote-error" role="alert">${error}</p>`}
-        <div class="diffnote-reply__buttons">
-          <button type="submit" class="diffnote-button diffnote-button--primary" data-diffnote-user-settings-save disabled=${busy || !dirty}>保存</button>
-          ${saved && html`<span class="diffnote-settings__saved" data-diffnote-user-settings-saved role="status">保存しました</span>`}
-          ${dirty && !saved && html`<span class="diffnote-settings__dirty" data-diffnote-user-settings-dirty>保存していない変更があります(戻ると、失われます)</span>`}
-        </div>
-      </form>
-    </main>`;
+  // The left-hand nav of the settings screen: which of its sections is shown.
+  var SETTINGS_SECTIONS = [['general', '全般'], ['settings', '設定'], ['user', 'ユーザー設定']];
+  function SettingsNav(props) {
+    return html`<nav class="diffnote-settings-nav" aria-label="設定">
+      <ul>
+        ${SETTINGS_SECTIONS.map(function (s) {
+          return html`<li key=${s[0]}><button type="button" class=${'diffnote-settings-nav__item' + (props.current === s[0] ? ' is-current' : '')}
+            aria-current=${props.current === s[0] ? 'page' : undefined} data-diffnote-settings-nav=${s[0]}
+            onClick=${function () { props.onSelect(s[0]); }}>${s[1]}</button></li>`;
+        })}
+      </ul>
+    </nav>`;
   }
 
-  // The review's settings, as they are kept in the bundle: a screen of its own
-  // (the review is hidden, not taken down, while it is shown). Changed here and
-  // saved together: nothing is kept until 保存.
-  function SettingsPage(props) {
+  // 全般: what pressing 最新を取り込む/ダウンロード/エクスポート did before this
+  // was a screen of its own -- bundle-wide operations, not something kept.
+  function GeneralPane(props) {
+    var model = props.model;
+    var bundle = model.bundle;
+    var row = function (label, value) { return html`<div><dt>${label}</dt><dd>${value}</dd></div>`; };
+    return html`<div data-diffnote-general-pane>
+      <h2>全般</h2>
+      ${model.refreshable && html`<div class="diffnote-settings__action">
+        <button type="button" class=${'diffnote-button' + (props.pending ? ' diffnote-button--primary' : '')} data-diffnote-pull
+          disabled=${!!(props.note && props.note.busy)} onClick=${props.onPull}>最新を取り込む</button>
+        <p class="diffnote-settings__action-note">起動したあとに増えたコミットなど、対象の新しい変更を、新しいリビジョンとして取り込み、それを表示します。</p>
+        ${props.note && html`<p class=${'diffnote-pull__note' + (props.note.failed ? ' is-failed' : '')} data-diffnote-pull-note role="status">${props.note.text}</p>`}
+      </div>`}
+      <div class="diffnote-settings__action">
+        <a class="diffnote-button" data-diffnote-download href="/download">ダウンロード</a>
+        <p class="diffnote-settings__action-note">今のバンドル(.diffnote)を、そのままファイルとして保存します。</p>
+      </div>
+      <div class="diffnote-settings__action">
+        <a class="diffnote-button" data-diffnote-export href="/export">エクスポート</a>
+        <p class="diffnote-settings__action-note">今の内容を、誰でも開ける HTML として保存します。</p>
+      </div>
+      ${bundle && html`<dl class="diffnote-settings__info" data-diffnote-bundle-info>
+        <h3>このバンドルの内容(読み取りのみ)</h3>
+        ${row('大きさ', lib.formatSize(bundle.size))}
+        ${row('リビジョン', bundle.revisions + ' 件')}
+        ${row('画像', bundle.images.count + ' 件(' + lib.formatSize(bundle.images.bytes) + ')')}
+        ${row('ほかの添付', bundle.files.count + ' 件(' + lib.formatSize(bundle.files.bytes) + ')')}
+      </dl>`}
+    </div>`;
+  }
+
+  // 設定: the review's settings, as they are kept in the bundle. Changed here
+  // and saved together: nothing is kept until 保存.
+  function SettingsFormPane(props) {
     var model = props.model;
     var settings = model.settings || {};
-    var bundle = model.bundle;
     var _t = useState(settings.title || '');
     var title = _t[0];
     var setTitle = _t[1];
@@ -694,11 +679,6 @@
     var setSaved = _s[1];
     var first = useRef(null);
     useEffect(function () { if (first.current) first.current.focus(); }, []);
-    useEffect(function () {
-      var key = function (e) { if (e.key === 'Escape') props.onClose(); };
-      document.addEventListener('keydown', key);
-      return function () { document.removeEventListener('keydown', key); };
-    }, []);
     // What is here is not what is kept.
     var dirty = title.trim() !== (settings.title || '').trim() || ignore !== !!settings.ignore_whitespace
       || lib.mbToBytes(limit) !== settings.attachment_limit;
@@ -717,41 +697,114 @@
         else setError(res.error || '保存できませんでした');
       });
     };
-    var row = function (label, value) { return html`<div><dt>${label}</dt><dd>${value}</dd></div>`; };
-    return html`<main class="diffnote-settings" data-diffnote-settings-page>
-      <form class="diffnote-settings__form" noValidate onSubmit=${submit}>
-        <p><button type="button" class="diffnote-button" data-diffnote-settings-back onClick=${props.onClose}>← レビューに戻る</button></p>
-        <h2>レビューの設定</h2>
-        <p class="diffnote-settings__note">ここでの設定は、バンドルに保存され、このレビューを開く人みんなに、同じに働きます(作者の名前は、レビューの画面の左下の「ユーザー設定」で変えられます。このマシンのすべてのレビューに使われます)。</p>
-        <label class="diffnote-field">
-          <span>タイトル</span>
-          <input ref=${first} type="text" maxlength="200" data-diffnote-setting-title value=${title} placeholder="空にすると、既定の見出しに戻ります"
-            onInput=${function (e) { touched(setTitle)(e.target.value); }} />
-        </label>
-        <label class="diffnote-field diffnote-field--check">
-          <input type="checkbox" data-diffnote-setting-ignore checked=${ignore} onChange=${function (e) { touched(setIgnore)(e.target.checked); }} />
-          <span>開いたとき、空白の違いを無視して表示する<small>(初期状態です。画面の「表示」メニューでの切り替えは、保存されません)</small></span>
-        </label>
-        <label class="diffnote-field">
-          <span>添付できるファイルの大きさの上限(1 つあたり)</span>
-          <span class="diffnote-field__unit"><input type="number" step="any" data-diffnote-setting-limit value=${limit}
-            onInput=${function (e) { touched(setLimit)(e.target.value); }} /> MB</span>
-        </label>
-        ${bundle && html`<dl class="diffnote-settings__info" data-diffnote-bundle-info>
-          <h3>このバンドルの内容(読み取りのみ)</h3>
-          ${row('大きさ', lib.formatSize(bundle.size))}
-          ${row('リビジョン', bundle.revisions + ' 件')}
-          ${row('画像', bundle.images.count + ' 件(' + lib.formatSize(bundle.images.bytes) + ')')}
-          ${row('ほかの添付', bundle.files.count + ' 件(' + lib.formatSize(bundle.files.bytes) + ')')}
-        </dl>`}
-        ${error && html`<p class="diffnote-error" role="alert">${error}</p>`}
-        <div class="diffnote-reply__buttons">
-          <button type="submit" class="diffnote-button diffnote-button--primary" data-diffnote-settings-save disabled=${busy || !dirty}>保存</button>
-          ${saved && html`<span class="diffnote-settings__saved" data-diffnote-settings-saved role="status">保存しました</span>`}
-          ${dirty && !saved && html`<span class="diffnote-settings__dirty" data-diffnote-settings-dirty>保存していない変更があります(戻ると、失われます)</span>`}
+    return html`<form class="diffnote-settings__form" data-diffnote-settings-pane noValidate onSubmit=${submit}>
+      <h2>設定</h2>
+      <p class="diffnote-settings__note">ここでの設定は、バンドルに保存され、このレビューを開く人みんなに、同じに働きます(作者の名前は、「ユーザー設定」で変えられます。このマシンのすべてのレビューに使われます)。</p>
+      <label class="diffnote-field">
+        <span>タイトル</span>
+        <input ref=${first} type="text" maxlength="200" data-diffnote-setting-title value=${title} placeholder="空にすると、既定の見出しに戻ります"
+          onInput=${function (e) { touched(setTitle)(e.target.value); }} />
+      </label>
+      <label class="diffnote-field diffnote-field--check">
+        <input type="checkbox" data-diffnote-setting-ignore checked=${ignore} onChange=${function (e) { touched(setIgnore)(e.target.checked); }} />
+        <span>開いたとき、空白の違いを無視して表示する<small>(初期状態です。画面の「表示」メニューでの切り替えは、保存されません)</small></span>
+      </label>
+      <label class="diffnote-field">
+        <span>添付できるファイルの大きさの上限(1 つあたり)</span>
+        <span class="diffnote-field__unit"><input type="number" step="any" data-diffnote-setting-limit value=${limit}
+          onInput=${function (e) { touched(setLimit)(e.target.value); }} /> MB</span>
+      </label>
+      ${error && html`<p class="diffnote-error" role="alert">${error}</p>`}
+      <div class="diffnote-reply__buttons">
+        <button type="submit" class="diffnote-button diffnote-button--primary" data-diffnote-settings-save disabled=${busy || !dirty}>保存</button>
+        ${saved && html`<span class="diffnote-settings__saved" data-diffnote-settings-saved role="status">保存しました</span>`}
+        ${dirty && !saved && html`<span class="diffnote-settings__dirty" data-diffnote-settings-dirty>保存していない変更があります(戻ると、失われます)</span>`}
+      </div>
+    </form>`;
+  }
+
+  // ユーザー設定: this machine's user settings (`diffnote config`; today, just
+  // the author name) -- not part of the bundle (applies to every review from
+  // now on, not only this one).
+  function UserSettingsPane(props) {
+    var model = props.model;
+    var configured = (model.user_settings && model.user_settings.author) || '';
+    var _a = useState(configured);
+    var author = _a[0];
+    var setAuthor = _a[1];
+    var _b = useState(false);
+    var busy = _b[0];
+    var setBusy = _b[1];
+    var _e = useState('');
+    var error = _e[0];
+    var setError = _e[1];
+    var _s = useState(false);
+    var saved = _s[0];
+    var setSaved = _s[1];
+    var first = useRef(null);
+    useEffect(function () { if (first.current) first.current.focus(); }, []);
+    var dirty = author.trim() !== configured.trim();
+    var touched = function (v) { setAuthor(v); setSaved(false); setError(''); };
+    var submit = function (e) {
+      e.preventDefault();
+      if (busy) return;
+      setBusy(true);
+      setError('');
+      props.save(author).then(function (res) {
+        setBusy(false);
+        if (res.ok) setSaved(true);
+        else setError(res.error || '保存できませんでした');
+      });
+    };
+    return html`<form class="diffnote-settings__form" data-diffnote-settings-pane noValidate onSubmit=${submit}>
+      <h2>ユーザー設定</h2>
+      <p class="diffnote-settings__note">ここでの設定は、このマシンの、このユーザーに保存されます。このレビューだけでなく、これから開くすべての diffnote のレビューに使われます。</p>
+      <label class="diffnote-field">
+        <span>作者名</span>
+        <input ref=${first} type="text" maxlength="100" data-diffnote-user-setting-author value=${author} placeholder="空にすると、git の設定などから決まります"
+          onInput=${function (e) { touched(e.target.value); }} />
+      </label>
+      ${error && html`<p class="diffnote-error" role="alert">${error}</p>`}
+      <div class="diffnote-reply__buttons">
+        <button type="submit" class="diffnote-button diffnote-button--primary" data-diffnote-user-settings-save disabled=${busy || !dirty}>保存</button>
+        ${saved && html`<span class="diffnote-settings__saved" data-diffnote-user-settings-saved role="status">保存しました</span>`}
+        ${dirty && !saved && html`<span class="diffnote-settings__dirty" data-diffnote-user-settings-dirty>保存していない変更があります(戻ると、失われます)</span>`}
+      </div>
+    </form>`;
+  }
+
+  // The settings screen, in place of the review (the review is hidden, not
+  // taken down, while it is shown): a left-hand nav picks which of the
+  // sections above is shown on the right, GitHub-repo-settings style.
+  function SettingsScreen(props) {
+    useEffect(function () {
+      var key = function (e) { if (e.key === 'Escape') props.onClose(); };
+      document.addEventListener('keydown', key);
+      return function () { document.removeEventListener('keydown', key); };
+    }, []);
+    return html`<main class="diffnote-settings" data-diffnote-settings-page data-diffnote-settings-section=${props.section}>
+      <p><button type="button" class="diffnote-button" data-diffnote-settings-back onClick=${props.onClose}>← レビューに戻る</button></p>
+      <div class="diffnote-settings__layout">
+        <${SettingsNav} current=${props.section} onSelect=${props.onSelect} />
+        <div class="diffnote-settings__pane">
+          ${props.section === 'general' && html`<${GeneralPane} model=${props.model} pending=${props.pending} note=${props.note} onPull=${props.onPull} />`}
+          ${props.section === 'settings' && html`<${SettingsFormPane} model=${props.model} save=${props.saveSettings} />`}
+          ${props.section === 'user' && html`<${UserSettingsPane} model=${props.model} save=${props.saveUserSettings} />`}
         </div>
-      </form>
+      </div>
     </main>`;
+  }
+
+  // Short, clickable messages at the top (today, only a pending pull makes
+  // one): built generic so another source can add its own later without new
+  // topbar markup, each just {id, text, onClick}.
+  function TopbarNotices(props) {
+    if (!props.items || props.items.length === 0) return null;
+    return html`<div class="diffnote-notices">
+      ${props.items.map(function (n) {
+        return html`<button key=${n.id} type="button" class="diffnote-notice" data-diffnote-notice=${n.id} onClick=${n.onClick}>${n.text}</button>`;
+      })}
+    </div>`;
   }
 
   // 「終了」: the way to finish, big; and, behind the arrow, the way not to
@@ -1955,6 +2008,17 @@
         if (res.ok && res.added) setCurrent(res.model.revisions.length - 1);
       });
     };
+    // Short messages at the top of the page (see TopbarNotices): today, only
+    // a pull waiting to be taken in makes one, and it opens 全般 (where the
+    // button now lives) rather than acting by itself.
+    var notices = [];
+    if (review.actions && model.refreshable && review.pending) {
+      notices.push({
+        id: 'pending',
+        text: '新しいコミットがあります',
+        onClick: function () { setScreen('general'); },
+      });
+    }
     // Side by side, if chosen and there is room for two columns. What was chosen
     // before is kept; without a choice the page starts side by side if the
     // window is wide (only when it opens: resizing the window doesn't change it).
@@ -1986,8 +2050,8 @@
       <div class="diffnote-topbar">
         <header class="diffnote-summary">
           <h1>${review.actions
-            ? html`<button type="button" class="diffnote-title" data-diffnote-settings title="レビューの設定(タイトルなど)" aria-haspopup="dialog"
-                aria-pressed=${screen === 'bundle'} onClick=${function () { setScreen(screen === 'bundle' ? null : 'bundle'); }}>${model.title || DEFAULT_TITLE}<span class="diffnote-title__icon" aria-hidden="true">⚙</span></button>`
+            ? html`<button type="button" class="diffnote-title" data-diffnote-settings title="設定(タイトル、ダウンロードなど)" aria-haspopup="dialog"
+                aria-pressed=${screen === 'general' || screen === 'settings'} onClick=${function () { setScreen(screen === 'general' ? null : 'general'); }}>${model.title || DEFAULT_TITLE}<span class="diffnote-title__icon" aria-hidden="true">⚙</span></button>`
             : model.title || DEFAULT_TITLE}</h1>
           ${model.base && html`<p data-diffnote-base class=${against != null ? 'is-changed' : ''} title=${against != null ? 'ベースの代わりに、このリビジョンと比べて表示しています(記録は変わりません)' : 'すべてのリビジョンは、これと比べた差分です'}>ベース: ${review.actions && current > 0
             ? html`<select class="diffnote-base__select" data-diffnote-base-select aria-label="比べる相手" value=${against == null ? '' : String(against)}
@@ -2007,19 +2071,12 @@
           })}
         </ul></nav>`}
         <div class="diffnote-topbar__actions">
-        ${review.actions && model.refreshable && html`<span class="diffnote-pull">
-          ${review.pending && html`<span class="diffnote-pull__pending" data-diffnote-pending role="status">新しいコミットがあります</span>`}
-          <button type="button" class=${'diffnote-button' + (review.pending ? ' diffnote-button--primary' : '')} data-diffnote-pull disabled=${!!(note && note.busy)} onClick=${pull}
-            title="起動したあとに増えたコミットなど、対象の新しい変更を、新しいリビジョンとして取り込み、それを表示します">最新を取り込む</button>
-          ${note && html`<span class=${'diffnote-pull__note' + (note.failed ? ' is-failed' : '')} data-diffnote-pull-note role="status">${note.text}</span>`}
-        </span>`}
-        ${model.interactive && html`<a class="diffnote-button" data-diffnote-download href="/download" title="今のバンドル(.diffnote)を、そのままファイルとして保存します">ダウンロード</a>`}
-        ${model.interactive && html`<a class="diffnote-button" data-diffnote-export href="/export" title="今の内容を、誰でも開ける HTML として保存します">エクスポート</a>`}
+        <${TopbarNotices} items=${notices} />
         ${model.interactive && html`<${QuitButton} />`}
         </div>
       </div>
-      ${screen === 'bundle' && review.actions && html`<${SettingsPage} model=${model} save=${review.actions.saveSettings} onClose=${function () { setScreen(null); }} />`}
-      ${screen === 'user' && review.actions && html`<${UserSettingsPage} model=${model} save=${review.actions.saveUserSettings} onClose=${function () { setScreen(null); }} />`}
+      ${screen != null && review.actions && html`<${SettingsScreen} section=${screen} model=${model} pending=${review.pending} note=${note} onPull=${pull}
+        saveSettings=${review.actions.saveSettings} saveUserSettings=${review.actions.saveUserSettings} onSelect=${setScreen} onClose=${function () { setScreen(null); }} />`}
       <div class="diffnote-review-body" hidden=${screen != null && !!review.actions}>
       <${ViewContext.Provider} value=${viewOptions}>
       <${ViewedContext.Provider} value=${viewed}>
