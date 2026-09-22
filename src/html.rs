@@ -1,16 +1,20 @@
 //! Self-contained static HTML export, so a review can be viewed without
 //! installing diffnote.
 //!
-//! Everything (CSS, JS, per-line syntax highlighting, comment Markdown) is
-//! rendered to plain HTML at export time in Rust -- the output is a single
-//! file, safe to open via a bare `file://` URL: no fetch/import of sibling
-//! files, no secure-context-only APIs, no `localStorage`. Collapsing is
-//! done with native `<details>`/`<summary>` (works with the inline script
-//! disabled); the one inline `<script>` (see `SCRIPT`) only links hovering
-//! a diff line's color band to its thread card and back, pure local DOM
-//! event handling. Class names are stable and BEM-style, and theme colors
-//! are `:root` CSS custom properties, so a future custom-CSS feature can
-//! mostly work via variable overrides.
+//! The page is a client-side app (see `ui/`), drawn in the browser from the
+//! data this works out (`viewmodel`) and embeds in it as JSON, with the app's
+//! own bundle and the style embedded beside it. So the output is one file,
+//! safe to open by a bare `file://` address: nothing to fetch, no modules, no
+//! secure-context-only APIs. It does need JavaScript.
+//!
+//! What stays here is everything about the review itself: where each thread
+//! sits in each revision, the order of the thread list, each line's pieces
+//! with the colors of their syntax, and a comment's text parsed into elements.
+//! The page lays that out; it works nothing out about the review.
+//!
+//! Class names are stable and BEM-style, and theme colors are `:root` CSS
+//! custom properties, so a future custom-CSS feature can mostly work via
+//! variable overrides.
 //!
 //! Re-anchoring reuses the exact same `anchor::resolve` logic `diffnote
 //! edit` uses, against whatever diff is passed in here -- but read-only:
