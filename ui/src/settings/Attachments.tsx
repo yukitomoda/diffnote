@@ -2,18 +2,28 @@
 import { h } from 'preact';
 import { useMemo, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
+import type { AttachedData, Placement, ViewModel } from '../model.ts';
+import type { ChangeAnswer } from '../state/contexts.ts';
 
 // 添付: what the comments have attached, and what uses it. Unused ones are
 // dropped at 終了 anyway; this is where to see them, save one, or take one
 // out on the spot.
-export function AttachmentsPane(props) {
+export interface AttachmentsProps {
+  model: ViewModel;
+  remove(attached: AttachedData): Promise<ChangeAnswer>;
+  /** Going to the comment that shows one, and where that comment is. */
+  onShow(thread: string): void;
+  placementOf(thread: string): Placement | undefined;
+}
+
+export function AttachmentsPane(props: AttachmentsProps) {
   var model = props.model;
   var listed = (model.bundle && model.bundle.attachments) || [];
   var _e = useState('');
   var error = _e[0];
   var setError = _e[1];
   // The one being asked about before it goes, by id.
-  var _a = useState(null);
+  var _a = useState<string | null>(null);
   var ask = _a[0];
   var setAsk = _a[1];
   var uses = useMemo(function () { return lib.attachmentUses(model.threads); }, [model.threads]);
@@ -21,25 +31,25 @@ export function AttachmentsPane(props) {
   // them: biggest first.
   var order = useMemo(function () {
     return listed.slice().sort(function (a, b) {
-      return ((uses[a.id] || []).length > 0) - ((uses[b.id] || []).length > 0);
+      return Number((uses[a.id] || []).length > 0) - Number((uses[b.id] || []).length > 0);
     });
   }, [listed, uses]);
   var total = listed.reduce(function (n, a) { return n + a.size; }, 0);
-  var remove = function (a) {
+  var remove = function (a: AttachedData) {
     setAsk(null);
     setError('');
     props.remove(a).then(function (res) {
       if (!res.ok) setError(res.error || lib.m('ui.attachments.delete_failed'));
     });
   };
-  var nameOf = function (a) {
+  var nameOf = function (a: AttachedData) {
     var named = (uses[a.id] || []).filter(function (u) { return u.name; })[0];
     return named ? named.name : lib.m('ui.attachments.no_name');
   };
   // What it is saved as. A file is called what the comment's link says (a
   // real file name); an image's text there is a description, not a name, so
   // it is saved by its digest, with the extension its type usually has.
-  var fileName = function (a) {
+  var fileName = function (a: AttachedData) {
     var named = a.kind === 'file' && (uses[a.id] || []).filter(function (u) { return u.name; })[0];
     if (named) return named.name;
     var ext = (a.media_type || '').split('/')[1];

@@ -1,19 +1,26 @@
 // 設定: what is saved in the review itself.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
+import type { Settings, ViewModel } from '../model.ts';
+import type { ChangeAnswer } from '../state/contexts.ts';
 
 // 設定: the review's settings, as they are kept in the bundle. Changed here
 // and saved together: nothing is kept until 保存.
-export function SettingsFormPane(props) {
+export interface FormProps {
+  model: ViewModel;
+  save(settings: Partial<Settings>): Promise<ChangeAnswer>;
+}
+
+export function SettingsFormPane(props: FormProps) {
   var model = props.model;
-  var settings = model.settings || {};
+  var settings: Partial<Settings> = model.settings || {};
   var _t = useState(settings.title || '');
   var title = _t[0];
   var setTitle = _t[1];
   var _w = useState(!!settings.ignore_whitespace);
   var ignore = _w[0];
   var setIgnore = _w[1];
-  var _l = useState(String(lib.bytesToMB(settings.attachment_limit)));
+  var _l = useState(String(lib.bytesToMB(settings.attachment_limit || 0)));
   var limit = _l[0];
   var setLimit = _l[1];
   var _b = useState(false);
@@ -25,13 +32,13 @@ export function SettingsFormPane(props) {
   var _s = useState(false);
   var saved = _s[0];
   var setSaved = _s[1];
-  var first = useRef(null);
+  var first = useRef<HTMLInputElement | null>(null);
   useEffect(function () { if (first.current) first.current.focus(); }, []);
   // What is here is not what is kept.
   var dirty = title.trim() !== (settings.title || '').trim() || ignore !== !!settings.ignore_whitespace
     || lib.mbToBytes(limit) !== settings.attachment_limit;
-  var touched = function (set) { return function (v) { set(v); setSaved(false); setError(''); }; };
-  var submit = function (e) {
+  var touched = function <T>(set: (v: T) => void) { return function (v: T) { set(v); setSaved(false); setError(''); }; };
+  var submit = function (e: Event) {
     e.preventDefault();
     if (busy) return;
     var bytes = lib.mbToBytes(limit);
@@ -50,17 +57,17 @@ export function SettingsFormPane(props) {
     <p class="diffnote-settings__note">{lib.m('ui.settings.form_note')}</p>
     <label class="diffnote-field">
       <span>{lib.m('ui.settings.title_label')}</span>
-      <input ref={first} type="text" maxlength="200" data-diffnote-setting-title value={title} placeholder={lib.m('ui.settings.title_placeholder')}
-        onInput={function (e) { touched(setTitle)(e.target.value); }} />
+      <input ref={first} type="text" maxlength={200} data-diffnote-setting-title value={title} placeholder={lib.m('ui.settings.title_placeholder')}
+        onInput={function (e) { touched(setTitle)(e.currentTarget.value); }} />
     </label>
     <label class="diffnote-field diffnote-field--check">
-      <input type="checkbox" data-diffnote-setting-ignore checked={ignore} onChange={function (e) { touched(setIgnore)(e.target.checked); }} />
+      <input type="checkbox" data-diffnote-setting-ignore checked={ignore} onChange={function (e) { touched(setIgnore)(e.currentTarget.checked); }} />
       <span>{lib.m('ui.settings.ignore_ws_label')}<small>{lib.m('ui.settings.ignore_ws_hint')}</small></span>
     </label>
     <label class="diffnote-field">
       <span>{lib.m('ui.settings.attach_limit_label')}</span>
       <span class="diffnote-field__unit"><input type="number" step="any" data-diffnote-setting-limit value={limit}
-        onInput={function (e) { touched(setLimit)(e.target.value); }} /> MB</span>
+        onInput={function (e) { touched(setLimit)(e.currentTarget.value); }} /> MB</span>
     </label>
     {error && <p class="diffnote-error" role="alert">{error}</p>}
     <div class="diffnote-reply__buttons">

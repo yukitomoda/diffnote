@@ -1,14 +1,23 @@
 // ユーザー設定: what is saved for every review of this user.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
+import type { ViewModel } from '../model.ts';
+import type { ChangeAnswer } from '../state/contexts.ts';
 
 // ユーザー設定: this machine's user settings (`diffnote config`; today, just
 // the author name) -- not part of the bundle (applies to every review from
 // now on, not only this one).
-export function UserSettingsPane(props) {
+export interface UserProps {
+  model: ViewModel;
+  /** The name this machine has saved, if any. */
+  configured?: string;
+  save(author: string): Promise<ChangeAnswer>;
+}
+
+export function UserSettingsPane(props: UserProps) {
   var model = props.model;
   var configured = (model.user_settings && model.user_settings.author) || '';
-  var _a = useState(configured);
+  var _a = useState<string>(configured);
   var author = _a[0];
   var setAuthor = _a[1];
   var _b = useState(false);
@@ -20,11 +29,11 @@ export function UserSettingsPane(props) {
   var _s = useState(false);
   var saved = _s[0];
   var setSaved = _s[1];
-  var first = useRef(null);
+  var first = useRef<HTMLInputElement | null>(null);
   useEffect(function () { if (first.current) first.current.focus(); }, []);
   var dirty = author.trim() !== configured.trim();
-  var touched = function (v) { setAuthor(v); setSaved(false); setError(''); };
-  var submit = function (e) {
+  var touched = function (v: string) { setAuthor(v); setSaved(false); setError(''); };
+  var submit = function (e: Event) {
     e.preventDefault();
     if (busy) return;
     setBusy(true);
@@ -40,8 +49,8 @@ export function UserSettingsPane(props) {
     <p class="diffnote-settings__note">{lib.m('ui.user_settings.note')}</p>
     <label class="diffnote-field">
       <span>{lib.m('ui.user_settings.author_label')}</span>
-      <input ref={first} type="text" maxlength="100" data-diffnote-user-setting-author value={author} placeholder={lib.m('ui.user_settings.author_placeholder')}
-        onInput={function (e) { touched(e.target.value); }} />
+      <input ref={first} type="text" maxlength={100} data-diffnote-user-setting-author value={author} placeholder={lib.m('ui.user_settings.author_placeholder')}
+        onInput={function (e) { touched(e.currentTarget.value); }} />
     </label>
     {error && <p class="diffnote-error" role="alert">{error}</p>}
     <div class="diffnote-reply__buttons">

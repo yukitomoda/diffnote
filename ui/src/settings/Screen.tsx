@@ -5,15 +5,27 @@ import { AttachmentsPane } from './Attachments.jsx';
 import { SettingsFormPane } from './Form.jsx';
 import { GeneralPane } from './General.jsx';
 import { UserSettingsPane } from './User.jsx';
+import type { ViewModel } from '../model.ts';
+import type { GeneralProps } from './General.tsx';
+import type { FormProps } from './Form.tsx';
+import type { AttachmentsProps } from './Attachments.tsx';
+import type { UserProps } from './User.tsx';
 
 // The left-hand nav of the settings screen: which of its sections is shown.
-var SETTINGS_SECTIONS = ['general', 'settings', 'attachments', 'user'];
+export type Section = 'general' | 'settings' | 'attachments' | 'user';
 
-function sectionLabel(key) {
+var SETTINGS_SECTIONS: Section[] = ['general', 'settings', 'attachments', 'user'];
+
+function sectionLabel(key: Section) {
   return lib.m('ui.settings.' + key + '_tab');
 }
 
-function SettingsNav(props) {
+interface NavProps {
+  current: Section;
+  onSelect(section: Section): void;
+}
+
+function SettingsNav(props: NavProps) {
   return <nav class="diffnote-settings-nav" aria-label={lib.m('ui.settings.nav_label')}>
     <ul>
       {SETTINGS_SECTIONS.map(function (key) {
@@ -28,9 +40,21 @@ function SettingsNav(props) {
 // The settings screen, in place of the review (the review is hidden, not
 // taken down, while it is shown): a left-hand nav picks which of the
 // sections above is shown on the right, GitHub-repo-settings style.
-export function SettingsScreen(props) {
+interface ScreenProps extends Omit<GeneralProps, 'model'> {
+  section: Section;
+  model: ViewModel;
+  onSelect(section: Section): void;
+  onClose(): void;
+  saveSettings: FormProps['save'];
+  saveUserSettings: UserProps['save'];
+  removeAttached: AttachmentsProps['remove'];
+  onShowThread: AttachmentsProps['onShow'];
+  placementOf: AttachmentsProps['placementOf'];
+}
+
+export function SettingsScreen(props: ScreenProps) {
   useEffect(function () {
-    var key = function (e) { if (e.key === 'Escape') props.onClose(); };
+    var key = function (e: KeyboardEvent) { if (e.key === 'Escape') props.onClose(); };
     document.addEventListener('keydown', key);
     return function () { document.removeEventListener('keydown', key); };
   }, []);

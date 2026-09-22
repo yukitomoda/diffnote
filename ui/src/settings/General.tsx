@@ -1,12 +1,28 @@
 // 全般: what the review is, and what can be done with the whole of it.
 import { lib } from '../lib.ts';
+import type { ViewModel } from '../model.ts';
 
 // 全般: what pressing 最新を取り込む/ダウンロード/エクスポート did before this
 // was a screen of its own -- bundle-wide operations, not something kept.
-export function GeneralPane(props) {
+/** What a pull is doing, or what came of it. */
+export interface PullNote {
+  text: string;
+  busy?: boolean;
+  failed?: boolean;
+}
+
+export interface GeneralProps {
+  model: ViewModel;
+  /** Whether the target has something new to take in. */
+  pending: boolean;
+  note: PullNote | null;
+  onPull(): void;
+}
+
+export function GeneralPane(props: GeneralProps) {
   var model = props.model;
   var bundle = model.bundle;
-  var row = function (label, value) { return <div><dt>{label}</dt><dd>{value}</dd></div>; };
+  var row = function (label: string, value: preact.ComponentChildren) { return <div><dt>{label}</dt><dd>{value}</dd></div>; };
   return <div data-diffnote-general-pane>
     <h2>{lib.m('ui.settings.general_heading')}</h2>
     {model.refreshable && <div class="diffnote-settings__action">

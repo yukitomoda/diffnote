@@ -2,8 +2,19 @@
 import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
-import { transport } from '../transport.ts';
-import { kept } from '../state/kept.ts';
+import { server } from '../transport.ts';
+
+/** What the server says as it stops. */
+interface Farewell {
+  discarded?: boolean;
+  /** Where the review was saved, and whether it was taken away instead. */
+  path?: string;
+  removed?: boolean;
+  /** What was done to it, said in a line, and the count behind it. */
+  changes?: string;
+  threads?: number;
+  comments?: number;
+}
 
 // 「終了」: the way to finish, big; and, behind the arrow, the way not to
 // keep what was done in this session (asked again before it is done).
@@ -14,14 +25,14 @@ export function QuitButton() {
   var _s = useState(false);
   var sure = _s[0];
   var setSure = _s[1];
-  var _e = useState(null);
+  var _e = useState<string | null>(null);
   var error = _e[0];
   var setError = _e[1];
-  var box = useRef(null);
+  var box = useRef<HTMLElement | null>(null);
   useEffect(function () {
     if (!open) return undefined;
-    var away = function (e) { if (box.current && !box.current.contains(e.target)) { setOpen(false); setSure(false); } };
-    var key = function (e) { if (e.key === 'Escape') { setOpen(false); setSure(false); } };
+    var away = function (e: MouseEvent) { if (box.current && !box.current.contains(e.target as Node)) { setOpen(false); setSure(false); } };
+    var key = function (e: KeyboardEvent) { if (e.key === 'Escape') { setOpen(false); setSure(false); } };
     document.addEventListener('mousedown', away);
     document.addEventListener('keydown', key);
     return function () {
@@ -29,8 +40,8 @@ export function QuitButton() {
       document.removeEventListener('keydown', key);
     };
   }, [open]);
-  var quit = function (discard) {
-    transport.post('/api/shutdown', discard ? { discard: true } : undefined).then(function (res) {
+  var quit = function (discard: boolean) {
+    server().post<{ summary: Farewell }>('/api/shutdown', discard ? { discard: true } : undefined).then(function (res) {
       if (res.ok) stopped(res.summary);
       else setError(res.error || lib.m('ui.quit.shutdown_failed'));
     });
@@ -49,9 +60,9 @@ export function QuitButton() {
 }
 
 // What the tab shows once the server has stopped.
-function stopped(summary) {
-  render(null, document.getElementById('app'));
-  var make = function (tag, cls, text) {
+function stopped(summary: Farewell | undefined) {
+  render(null, document.getElementById('app') as HTMLElement);
+  var make = function (tag: string, cls: string, text?: string) {
     var e = document.createElement(tag);
     e.className = cls;
     if (text != null) e.textContent = text;
@@ -61,16 +72,16 @@ function stopped(summary) {
   var discarded = !!(summary && summary.discarded);
   card.appendChild(make('div', 'diffnote-farewell__mark', discarded ? '↩' : '✓'));
   card.appendChild(make('h1', 'diffnote-farewell__title', discarded ? lib.m('ui.farewell.discarded_title') : lib.m('ui.farewell.done_title')));
-  if (discarded) {
-    var kept = make('dl', 'diffnote-farewell__list');
-    kept.appendChild(make('dt', '', lib.m('ui.farewell.changes_label')));
-    kept.appendChild(make('dd', '', lib.m('ui.farewell.discarded_value')));
-    kept.appendChild(make('dt', '', lib.m('ui.farewell.path_label')));
-    kept.appendChild(make('dd', '', summary.path + (summary.removed ? lib.m('ui.farewell.removed_suffix') : lib.m('ui.farewell.kept_suffix'))));
-    card.appendChild(kept);
+  if (discarded && summary) {
+    var discardedList = make('dl', 'diffnote-farewell__list');
+    discardedList.appendChild(make('dt', '', lib.m('ui.farewell.changes_label')));
+    discardedList.appendChild(make('dd', '', lib.m('ui.farewell.discarded_value')));
+    discardedList.appendChild(make('dt', '', lib.m('ui.farewell.path_label')));
+    discardedList.appendChild(make('dd', '', summary.path + (summary.removed ? lib.m('ui.farewell.removed_suffix') : lib.m('ui.farewell.kept_suffix'))));
+    card.appendChild(discardedList);
   } else if (summary) {
     var list = make('dl', 'diffnote-farewell__list');
-    var row = function (label, value) {
+    var row = function (label: string, value?: string) {
       list.appendChild(make('dt', '', label));
       list.appendChild(make('dd', '', value));
     };
