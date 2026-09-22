@@ -43,8 +43,8 @@ export const api: Transport = {
     return call<T>(path);
   },
 
-  upload(blob: Blob): Promise<UploadAnswer> {
-    return call('/api/images', {
+  upload(blob: Blob, name?: string): Promise<UploadAnswer> {
+    return call((name ? '/api/images?name=' + encodeURIComponent(name) : '/api/images'), {
       method: 'POST',
       headers: { 'Content-Type': blob.type || 'application/octet-stream', ...OURS },
       body: blob,

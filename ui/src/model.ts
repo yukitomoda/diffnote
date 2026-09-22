@@ -181,6 +181,9 @@ export interface AttachedData {
   /** An image's media type; other files' types are never read. */
   media_type?: string;
   size: number;
+  /** What the file was called where it was attached from; absent if it came
+   * without a name, as a pasted screenshot does. */
+  name?: string;
 }
 
 /** What the bundle holds, for the screens that show it. */

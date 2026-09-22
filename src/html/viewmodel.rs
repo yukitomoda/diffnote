@@ -132,6 +132,10 @@ pub struct AttachedData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub media_type: Option<&'static str>,
     pub size: u64,
+    /// What the file was called where it was attached from; absent if it came
+    /// without a name, as a pasted screenshot does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// A number of things, and how many bytes they are.
@@ -616,6 +620,7 @@ pub fn bundle_info(loaded: &crate::bundle::Loaded, size: u64, revisions: usize) 
             .then(|| crate::image::kind(bytes).ok())
             .flatten(),
         size: bytes.len() as u64,
+        name: loaded.attached.get(id).and_then(|about| about.name.clone()),
     };
     let mut attachments: Vec<AttachedData> = loaded
         .images()

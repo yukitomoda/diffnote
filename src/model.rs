@@ -46,6 +46,21 @@ pub struct Reaction {
 /// taken back is gone), kept in the bundle's `reactions.json`.
 pub type Reactions = std::collections::BTreeMap<String, Vec<Reaction>>;
 
+/// What is known about one file attached to a comment beyond its bytes -- the
+/// things the bytes cannot be asked for.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attached {
+    /// What the file was called where it was attached from. `None`: it came
+    /// without one (a screenshot pasted straight out of the clipboard).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// What is known about the attachments, by the digest each is stored under:
+/// state, not history, kept in the bundle's `attachments.json`. An attachment
+/// nothing knows anything about is simply not in here.
+pub type Attachments = std::collections::BTreeMap<String, Attached>;
+
 /// What an attached file may weigh unless the review says otherwise (5 MB).
 pub const DEFAULT_ATTACHMENT_LIMIT: u64 = 5 * 1024 * 1024;
 

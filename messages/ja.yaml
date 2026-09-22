@@ -641,6 +641,8 @@ bundle:
     {path} のリアクションの記録を読めませんでした
   settings_read_failed: |-
     {path} の設定を読めませんでした
+  attachments_read_failed: |-
+    {path} の添付の情報を読めませんでした
   dir_create_failed: |-
     {path} を作れませんでした
   temp_file_failed: |-

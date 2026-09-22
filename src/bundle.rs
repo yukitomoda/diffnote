@@ -12,6 +12,8 @@
 //!                          there are none)
 //! settings.json             the review's settings as they are now (left out if all
 //!                          are their defaults)
+//! attachments.json          what is known about the attachments below beyond
+//!                          their bytes, by digest (left out if nothing is)
 //! diffs/<digest>.diff      one per recorded revision (its unified diff)
 //! blobs/<sha256 hex>       one per distinct file version, however many
 //!                          revisions have it
@@ -31,7 +33,7 @@
 
 use crate::messages::{m, mf};
 pub use crate::model::SnapshotMode;
-use crate::model::{Event, Reactions, Revision, Settings, Source, TreeFile};
+use crate::model::{Attachments, Event, Reactions, Revision, Settings, Source, TreeFile};
 use anyhow::{Context, Result};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -46,6 +48,10 @@ pub struct Loaded {
     /// The reactions to comments (state, see [`Reactions`]); a change is made
     /// here and saved with the bundle.
     pub reactions: Reactions,
+    /// What is known about the attachments (state, see [`Attachments`]); a
+    /// change is made here and saved with the bundle. A save keeps only what
+    /// is about an attachment the bundle still holds.
+    pub attached: Attachments,
     /// Existing `diffs/`/`blobs/` entries, carried through unchanged into
     /// the rewritten archive.
     carried_entries: Vec<(String, Vec<u8>)>,
@@ -174,6 +180,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
             events: Vec::new(),
             settings: Settings::default(),
             reactions: Reactions::new(),
+            attached: Attachments::new(),
             carried_entries: Vec::new(),
         });
     }
@@ -195,6 +202,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
     let mut settings = Settings::default();
     let mut from_file: Option<serde_json::Map<String, serde_json::Value>> = None;
     let mut reactions = Reactions::new();
+    let mut attached = Attachments::new();
     let mut carried_entries = Vec::new();
 
     for i in 0..archive.len() {
@@ -232,6 +240,13 @@ pub fn load(path: &Path) -> Result<Loaded> {
                     &[("path", &path.display().to_string())],
                 )
             })?;
+        } else if name == "attachments.json" {
+            attached = serde_json::from_slice(&bytes).with_context(|| {
+                mf(
+                    "bundle.attachments_read_failed",
+                    &[("path", &path.display().to_string())],
+                )
+            })?;
         } else if name == "settings.json" {
             from_file = Some(serde_json::from_slice(&bytes).with_context(|| {
                 mf(
@@ -249,6 +264,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
         events,
         settings,
         reactions,
+        attached,
         carried_entries,
     })
 }
@@ -503,6 +519,28 @@ pub fn save_with(
                 writer.start_file(name, options)?;
                 writer.write_all(bytes)?;
             }
+        }
+
+        // What is known about the attachments, written last because it is the
+        // entries above that say which are still here: one left out takes
+        // what was known about it with it, and cannot be left behind.
+        let known: Attachments = loaded
+            .attached
+            .iter()
+            .filter(|(id, about)| {
+                **about != crate::model::Attached::default()
+                    && (written.contains(&format!("images/{id}"))
+                        || written.contains(&format!("attachments/{id}")))
+            })
+            .map(|(id, about)| (id.clone(), about.clone()))
+            .collect();
+        if !known.is_empty() {
+            writer.start_file("attachments.json", options)?;
+            writer.write_all(
+                serde_json::to_string_pretty(&known)
+                    .context(m("bundle.encode_failed"))?
+                    .as_bytes(),
+            )?;
         }
 
         writer.finish().context(m("bundle.encode_failed"))?;
@@ -987,5 +1025,72 @@ mod tests {
         crate::review::toggle_reaction(&mut again.reactions, "c1", "👍", "a");
         save(&path, &again, &events, &Additions::default()).unwrap();
         assert!(!names(&path).contains(&"reactions.json".to_string()));
+    }
+
+    #[test]
+    fn what_is_known_about_an_attachment_is_kept_only_while_the_attachment_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.diffnote");
+        let events = vec![sample_event()];
+        let entries = |p: &Path| -> Vec<String> {
+            let mut a = ZipArchive::new(std::fs::File::open(p).unwrap()).unwrap();
+            (0..a.len())
+                .map(|i| a.by_index(i).unwrap().name().to_string())
+                .collect()
+        };
+        let shot = b"a picture, near enough".to_vec();
+        let other = b"PK and some archive".to_vec();
+        let id = |bytes: &[u8]| digest_path_component(&digest(bytes)).to_string();
+
+        let loaded = load(&path).unwrap();
+        let both = Images {
+            add: std::slice::from_ref(&shot),
+            add_files: std::slice::from_ref(&other),
+            ..Default::default()
+        };
+        save_with(&path, &loaded, &events, &Additions::default(), &both).unwrap();
+        let mut loaded = load(&path).unwrap();
+        assert!(loaded.attached.is_empty());
+        assert!(
+            !entries(&path).contains(&"attachments.json".to_string()),
+            "nothing is known about them yet"
+        );
+
+        loaded.attached.entry(id(&shot)).or_default().name = Some("図.png".into());
+        loaded.attached.entry(id(&other)).or_default().name = Some("ログ.zip".into());
+        loaded.attached.entry("0".repeat(64)).or_default().name = Some("never here.txt".into());
+        save(&path, &loaded, &events, &Additions::default()).unwrap();
+
+        let loaded = load(&path).unwrap();
+        assert_eq!(loaded.attached[&id(&shot)].name.as_deref(), Some("図.png"));
+        assert_eq!(
+            loaded.attached[&id(&other)].name.as_deref(),
+            Some("ログ.zip")
+        );
+        assert_eq!(
+            loaded.attached.len(),
+            2,
+            "one about an attachment the bundle doesn't hold is not kept"
+        );
+        assert!(
+            !entry_names(&loaded).contains(&"attachments.json"),
+            "not carried as an entry"
+        );
+
+        // The picture goes: what was known about it goes with it, and what is
+        // known about the other file stays.
+        let keep = std::collections::HashSet::new();
+        let none_left = Images {
+            keep: Some(&keep),
+            ..Default::default()
+        };
+        save_with(&path, &loaded, &events, &Additions::default(), &none_left).unwrap();
+        let loaded = load(&path).unwrap();
+        assert!(loaded.image_ids().is_empty());
+        assert_eq!(loaded.attached.len(), 1);
+        assert_eq!(
+            loaded.attached[&id(&other)].name.as_deref(),
+            Some("ログ.zip")
+        );
     }
 }

@@ -2,6 +2,7 @@
 resolving, the version check, shutting down."""
 import unittest
 
+import base64
 import json
 import time
 
@@ -38,6 +39,15 @@ class ServedCase(BrowserCase):
         """Types into a box the way the page hears it (and lets it settle)."""
         self.b.js("var t=document.querySelector(%r); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,%r); t.dispatchEvent(new Event('input',{bubbles:true}))" % (selector, text))
         time.sleep(0.1)
+
+    def paste(self, selector, name, mime, content, base64=False):
+        """Pastes a file into a box, as a screenshot from the clipboard arrives."""
+        self.b.js("""(function(sel, name, mime, content, base64){
+          var bytes = base64 ? Uint8Array.from(atob(content), function (c) { return c.charCodeAt(0); }) : new TextEncoder().encode(content);
+          var dt = new DataTransfer(); dt.items.add(new File([bytes], name, {type: mime}));
+          var ta = document.querySelector(sel); ta.focus();
+          ta.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}));
+        })(%s, %s, %s, %s, %s)""" % (json.dumps(selector), json.dumps(name), json.dumps(mime), json.dumps(content), "true" if base64 else "false"))
 
     def reply_to(self, card, text, shows=None):
         b = self.b
@@ -934,20 +944,14 @@ class CompareWithAnEarlierRevision(ServedCase):
 
 
 PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+# The same picture with a byte after its end: a second attachment (they are
+# told apart by their bytes), the same to look at.
+PNG_1X1_TOO = base64.b64encode(base64.b64decode(PNG_1X1) + b"\0").decode()
 SVG_OK = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="blue"/></svg>'
 SVG_BAD = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)" width="8" height="8"></svg>'
 
 
 class Images(ServedCase):
-    def paste(self, selector, name, mime, content, base64=False):
-        """Pastes a file into a box, as a screenshot from the clipboard arrives."""
-        self.b.js("""(function(sel, name, mime, content, base64){
-          var bytes = base64 ? Uint8Array.from(atob(content), function (c) { return c.charCodeAt(0); }) : new TextEncoder().encode(content);
-          var dt = new DataTransfer(); dt.items.add(new File([bytes], name, {type: mime}));
-          var ta = document.querySelector(sel); ta.focus();
-          ta.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}));
-        })(%s, %s, %s, %s, %s)""" % (json.dumps(selector), json.dumps(name), json.dumps(mime), json.dumps(content), "true" if base64 else "false"))
-
     def test_a_pasted_picture_is_put_in_the_review_and_shown_in_the_comment(self):
         self.serve()
         b = self.b
@@ -1268,6 +1272,34 @@ class AttachmentsScreen(ServedCase):
         self.assertEqual(
             b.js(f"document.querySelector('[data-diffnote-attached-download=\"{saved}\"]').getAttribute('download')"),
             "ログ.zip", "a file keeps the name the comment gives it")
+
+    def test_an_image_goes_by_the_name_of_the_file_it_was_attached_from(self):
+        self.serve()
+        b = self.b
+        card = self.card("mul の型")
+        box = f"#{card} .diffnote-reply textarea"
+        # One attached from a file, and one out of the clipboard -- which
+        # Chrome calls `image.png` whatever it is a picture of, so the review
+        # is better off knowing nothing about that one.
+        self.paste(box, "図 1.png", "image/png", PNG_1X1, base64=True)
+        self.assertTrue(b.wait("!!document.querySelector('[data-diffnote-attach-status]:not(.is-failed)')"))
+        self.paste(box, "image.png", "image/png", PNG_1X1_TOO, base64=True)
+        self.assertTrue(b.wait(f"(document.querySelector({json.dumps(box)}).value.match(/diffnote-image:/g) || []).length === 2"))
+        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
+        self.assertTrue(b.wait(f"document.getElementById({card!r}).querySelectorAll('img.diffnote-image').length === 2"))
+
+        self.open_attachments(2)
+        by_id = {r["id"]: r for r in self.rows()}
+        named = b.js("""[...document.querySelectorAll('[data-diffnote-attached]')].map(function (li) {
+          return [li.dataset.diffnoteAttached, li.querySelector('[data-diffnote-attached-download]').getAttribute('download')];
+        })""")
+        from_file = [id for id, name in named if name == "図 1.png"]
+        self.assertEqual(len(from_file), 1, f"it is saved under its own name: {named}")
+        self.assertIn("図 1.png", by_id[from_file[0]]["text"], "and listed under it")
+        pasted = [id for id, name in named if id != from_file[0]]
+        self.assertRegex(dict(named)[pasted[0]], r"^diffnote-[0-9a-f]{12}\.png$",
+                         "the pasted one never had a name worth keeping")
+        self.assertIn("画像", by_id[pasted[0]]["text"], "so it goes by what the comment calls it")
 
     def test_an_image_can_be_looked_at_by_itself(self):
         # The thumbnail is 48px: the only way to tell what it is is to open it.

@@ -763,20 +763,28 @@ impl Server {
 
     /// Puts an image (the bytes sent) in the review, and says what it is called
     /// there, how big it is, and how big the bundle now is.
-    fn add_image(&self, bytes: &[u8]) -> Result<Reply, Failure> {
+    fn add_image(&self, target: &str, bytes: &[u8]) -> Result<Reply, Failure> {
         let mime = crate::image::kind(bytes).map_err(|m| Failure(400, m))?;
         self.within_limit(bytes.len())?;
         let id = crate::image::id_of(bytes);
-        let loaded = bundle::load(&self.review).map_err(internal)?;
+        let mut loaded = bundle::load(&self.review).map_err(internal)?;
         let new = loaded.image(&id).is_none();
-        if new {
+        let named = remember_name(&mut loaded, &id, target);
+        if new || named {
             let none = bundle::Additions::default();
+            let added = if new {
+                vec![bytes.to_vec()]
+            } else {
+                Vec::new()
+            };
             let images = bundle::Images {
-                add: &[bytes.to_vec()],
+                add: &added,
                 ..Default::default()
             };
             bundle::save_with(&self.review, &loaded, &loaded.events, &none, &images)
                 .map_err(internal)?;
+        }
+        if new {
             self.remember_attached("image", &id);
             self.count(|s| s.images += 1);
         }
@@ -823,15 +831,24 @@ impl Server {
         }
         self.within_limit(bytes.len())?;
         let id = crate::image::id_of(bytes);
-        let loaded = bundle::load(&self.review).map_err(internal)?;
-        if loaded.attachment(&id).is_none() {
+        let mut loaded = bundle::load(&self.review).map_err(internal)?;
+        let new = loaded.attachment(&id).is_none();
+        let named = remember_name(&mut loaded, &id, target);
+        if new || named {
             let none = bundle::Additions::default();
+            let added = if new {
+                vec![bytes.to_vec()]
+            } else {
+                Vec::new()
+            };
             let files = bundle::Images {
-                add_files: &[bytes.to_vec()],
+                add_files: &added,
                 ..Default::default()
             };
             bundle::save_with(&self.review, &loaded, &loaded.events, &none, &files)
                 .map_err(internal)?;
+        }
+        if new {
             self.remember_attached("file", &id);
             self.count(|s| s.files += 1);
         }
@@ -1256,7 +1273,7 @@ impl Server {
             }
             ["api", "settings"] => self.set_settings(request.body),
             ["api", "user-settings"] => self.set_user_settings(request.body),
-            ["api", "images"] => self.add_image(request.body),
+            ["api", "images"] => self.add_image(request.target, request.body),
             ["api", "attachments"] => self.add_attachment(request.target, request.body),
             ["api", "images", id, "delete"] => self.delete_attached("image", id),
             ["api", "attachments", id, "delete"] => self.delete_attached("file", id),
@@ -1729,6 +1746,35 @@ fn internal(e: anyhow::Error) -> Failure {
 }
 
 /// The value of `key` in a query string, with `%XX` and `+` decoded.
+/// Keeps what the file being attached was called where it came from (the
+/// page sends it as `?name=`), unless the same bytes already arrived under a
+/// name: an attachment is its bytes, so the first name they came with is the
+/// one it goes by. Says whether that changed anything.
+fn remember_name(loaded: &mut bundle::Loaded, id: &str, target: &str) -> bool {
+    if loaded.attached.get(id).is_some_and(|a| a.name.is_some()) {
+        return false;
+    }
+    let Some(name) = attached_name(target) else {
+        return false;
+    };
+    loaded.attached.entry(id.to_string()).or_default().name = Some(name);
+    true
+}
+
+/// The name the page says the file had, as a file name; `None` if it said
+/// none, or said one that stands for nothing. A screenshot pasted out of the
+/// clipboard arrives as `image.png` whatever it is a picture of, which is
+/// worse than saying nothing: the comment's own words are better than that.
+fn attached_name(target: &str) -> Option<String> {
+    let query = target.split_once('?').map_or("", |(_, q)| q);
+    let asked = query_param(query, "name")?;
+    if asked.trim().is_empty() {
+        return None;
+    }
+    let name = crate::image::file_name(&asked);
+    (name != "image.png").then_some(name)
+}
+
 fn query_param(query: &str, key: &str) -> Option<String> {
     let raw = query
         .split('&')
@@ -2818,6 +2864,58 @@ mod tests {
         assert_eq!(of(2)["kind"], "file");
         assert_eq!(of(2)["media_type"], serde_json::Value::Null);
         assert!(crate::image::is_id(of(2)["id"].as_str().unwrap()));
+    }
+
+    #[test]
+    fn an_attachment_keeps_the_name_of_the_file_it_was_attached_from() {
+        let f = fixture();
+        let sent = |target: &str, bytes: &[u8]| {
+            json(&f.send_bytes(target, bytes))["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let names = || {
+            json(&f.request("GET", "/api/model", &[], ""))["model"]["bundle"]["attachments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| {
+                    (
+                        a["id"].as_str().unwrap().to_string(),
+                        a["name"].as_str().map(str::to_string),
+                    )
+                })
+                .collect::<std::collections::HashMap<_, _>>()
+        };
+        let image = sent("/api/images?name=%E5%9B%B3.png", PNG);
+        let file = sent("/api/attachments?name=log.zip", b"PK\x03\x04 log");
+        assert_eq!(names()[&image].as_deref(), Some("図.png"));
+        assert_eq!(names()[&file].as_deref(), Some("log.zip"));
+
+        // A screenshot pasted out of the clipboard comes with no name, or with
+        // one Chrome made up that says nothing: neither is worth keeping.
+        let pasted = sent("/api/images", &[PNG, &[1]].concat());
+        let made_up = sent("/api/images?name=image.png", &[PNG, &[2]].concat());
+        assert_eq!(names()[&pasted], None);
+        assert_eq!(names()[&made_up], None);
+
+        // The bytes are the attachment, so the first name they come with is
+        // the one it goes by -- but one that came without a name takes the
+        // first it is given.
+        f.send_bytes("/api/images?name=other.png", PNG);
+        assert_eq!(names()[&image].as_deref(), Some("図.png"));
+        f.send_bytes("/api/images?name=shot.png", &[PNG, &[1]].concat());
+        assert_eq!(names()[&pasted].as_deref(), Some("shot.png"));
+
+        // Taken out, and the same bytes attached again with no name: what was
+        // known about it went with it.
+        assert_eq!(
+            json(&f.post(&format!("/api/images/{image}/delete"), "{}"))["ok"],
+            true
+        );
+        assert_eq!(sent("/api/images", PNG), image);
+        assert_eq!(names()[&image], None);
     }
 
     #[test]

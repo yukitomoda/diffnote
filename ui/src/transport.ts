@@ -11,8 +11,9 @@ export interface Transport {
   /** A change: JSON in, JSON out. */
   post<T = object>(path: string, data?: unknown): Promise<Answer<T>>;
   get<T = object>(path: string): Promise<Answer<T>>;
-  /** A picture, as its bytes. */
-  upload(blob: Blob): Promise<UploadAnswer>;
+  /** A picture: its bytes, and the name of the file it came from (a picture
+   * pasted out of the clipboard came from none). */
+  upload(blob: Blob, name?: string): Promise<UploadAnswer>;
   /** Any other file: its bytes, and what it is called. */
   uploadFile(blob: Blob, name: string): Promise<UploadAnswer>;
 }

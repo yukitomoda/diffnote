@@ -59,7 +59,10 @@ export function useAttach(text: string, setText: (text: string) => void): Attach
       return p.then(function () {
         var isImage = /^image\//.test(file.type);
         var name = file.name || (isImage ? 'image' : 'file');
-        return (isImage ? server().upload(file) : server().uploadFile(file, name)).then(function (res) {
+        // The picture is sent with the name of the file it came from, where
+        // there is one, so the review can say what it was: `name` above is
+        // only what this page calls it while it is being attached.
+        return (isImage ? server().upload(file, file.name) : server().uploadFile(file, name)).then(function (res) {
           if (!res.ok) throw new Error(res.error || lib.m('ui.attach.failed'));
           if (isImage) images++;
           snippets.push(isImage ? lib.imageMarkdown(res.id) : lib.fileMarkdown(name, res.id));
