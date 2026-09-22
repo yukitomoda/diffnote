@@ -213,3 +213,9 @@ cargo test
 ```
 
 統合テスト(`tests/cli.rs`)は、Linux と Windows のどちらでも動きます。エディタの代わりに、テストの実行ファイル自身を `$EDITOR` として再起動するので、シェルなどは要りません(git は要ります)。別の場所で作った実行ファイルを試すときは、環境変数 `DIFFNOTE_BIN` にそのパスを指定します。GitHub では、`.github/workflows/ci.yml` が、プッシュとプルリクエストごとに、Linux と Windows(最新の Rust)と、最低版の Rust 1.88(Linux)でテストし、最新の Rust では clippy の警告と、rustfmt の書式()もエラーとして扱います。コードを変えたら、 をかけてください。
+
+### 画面・CLI の文言
+
+CLI のヘルプ・エラーメッセージから WebUI のボタンや文まで、ユーザーに見える文言はすべて `messages/ja.yaml` に集めてあります(ソースコードの中に直接は書きません)。キーはネストした YAML パスで、モジュールごとにまとまっています(`cli.init.about`、`serve.not_found` など)。`{name}` はプレースホルダで、実行時に値へ置き換わります。
+
+Rust 側は `src/messages.rs` の `m(key)`/`mf(key, &[(name, value), ...])`、WebUI 側は `ui/client/lib.js` の `lib.m(key)`/`lib.mf(key, params)` で引きます(同じ `messages/ja.yaml` を、サーバがページに JSON として埋め込みます)。文言を直したいときは、ソースを探し回らず、このファイルだけ見れば大体足ります。
