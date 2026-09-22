@@ -1,5 +1,5 @@
 // Who the comments are written by, and the way to change it.
-import { lib } from './lib.js';
+import { lib } from './lib.ts';
 import { html } from './html.ts';
 
 // The name comments are written under, at the foot of the side, like the

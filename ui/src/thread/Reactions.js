@@ -1,7 +1,7 @@
 // The emoji on a comment, and the table to pick one from.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { EMOJI } from '../emoji.ts';
-import { lib } from '../lib.js';
+import { lib } from '../lib.ts';
 import { html } from '../html.ts';
 
 // The reactions to a comment: what people reacted with and how many (the

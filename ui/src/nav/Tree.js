@@ -1,7 +1,7 @@
 // The other files: everything the review holds, as a tree.
 import { Fragment } from 'preact';
 import { useContext, useEffect, useState } from 'preact/hooks';
-import { lib } from '../lib.js';
+import { lib } from '../lib.ts';
 import { transport } from '../transport.ts';
 import { html } from '../html.ts';
 import { OpenedContext } from '../state/contexts.js';

@@ -1,6 +1,6 @@
 // ユーザー設定: what is saved for every review of this user.
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { lib } from '../lib.js';
+import { lib } from '../lib.ts';
 import { html } from '../html.ts';
 
 // ユーザー設定: this machine's user settings (`diffnote config`; today, just

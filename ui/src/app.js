@@ -6,7 +6,7 @@
 import { render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { interact } from './interact.js';
-import { lib } from './lib.js';
+import { lib } from './lib.ts';
 import { transport } from './transport.ts';
 import { Revision } from './Revision.js';
 import { useWide } from './dom.ts';

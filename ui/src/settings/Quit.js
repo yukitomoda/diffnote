@@ -1,7 +1,7 @@
 // Stopping the server, and what is said afterwards.
 import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { lib } from '../lib.js';
+import { lib } from '../lib.ts';
 import { transport } from '../transport.ts';
 import { html } from '../html.ts';
 import { kept } from '../state/kept.ts';

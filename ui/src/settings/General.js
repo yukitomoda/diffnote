@@ -1,5 +1,5 @@
 // 全般: what the review is, and what can be done with the whole of it.
-import { lib } from '../lib.js';
+import { lib } from '../lib.ts';
 import { html } from '../html.ts';
 
 // 全般: what pressing 最新を取り込む/ダウンロード/エクスポート did before this

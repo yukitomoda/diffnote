@@ -3,11 +3,11 @@
 //
 // Every call gives back an answer with `ok`; a failure to reach the server is
 // `{ ok: false, error }`, like the server's own refusals.
-import { lib } from './lib.js';
+import { lib } from './lib.ts';
 import type { Answer, Refusal, UploadAnswer } from './model.ts';
 import type { Transport } from './transport.ts';
 
-// Not constants: the message table (see lib.js) is only loaded once `start()`
+// Not constants: the message table (see lib.ts) is only loaded once `start()`
 // runs, after this file does.
 const unreachable = (): Refusal => ({ ok: false, error: lib.m('ui.api.unreachable') });
 const unreadable = (): Refusal => ({ ok: false, error: lib.m('ui.api.unreadable') });

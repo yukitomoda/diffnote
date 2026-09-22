@@ -1,7 +1,7 @@
 // A comment's text, as the elements it was parsed into by Rust.
 import { h } from 'preact';
 import { EMOJI } from './emoji.ts';
-import { lib } from './lib.js';
+import { lib } from './lib.ts';
 import { html } from './html.ts';
 
 // A comment: the nodes of its Markdown (see `src/html/markdown.rs`) as

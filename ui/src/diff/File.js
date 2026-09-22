@@ -1,6 +1,6 @@
 // One file of the diff, open or folded away.
 import { useContext, useMemo, useRef, useState } from 'preact/hooks';
-import { lib } from '../lib.js';
+import { lib } from '../lib.ts';
 import { transport } from '../transport.ts';
 import { DiffTable, SplitTable } from './tables.js';
 import { htmlId } from '../dom.ts';

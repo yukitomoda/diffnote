@@ -1,6 +1,6 @@
 // A thread's card: its comments, and the box to reply in.
 import { useContext, useEffect, useRef, useState } from 'preact/hooks';
-import { lib } from '../lib.js';
+import { lib } from '../lib.ts';
 import { useAutoGrow } from '../dom.ts';
 import { html } from '../html.ts';
 import { ActionsContext } from '../state/contexts.js';

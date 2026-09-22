@@ -1,6 +1,6 @@
 // The diff itself: one table of lines, or two side by side.
 import { useContext, useMemo, useState } from 'preact/hooks';
-import { lib } from '../lib.js';
+import { lib } from '../lib.ts';
 import { transport } from '../transport.ts';
 import { html } from '../html.ts';
 import { tokens } from '../markdown.js';

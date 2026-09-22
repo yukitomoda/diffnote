@@ -1,7 +1,7 @@
 // 添付: what is attached, what uses it, and taking one out.
 import { h } from 'preact';
 import { useMemo, useState } from 'preact/hooks';
-import { lib } from '../lib.js';
+import { lib } from '../lib.ts';
 import { html } from '../html.ts';
 
 // 添付: what the comments have attached, and what uses it. Unused ones are

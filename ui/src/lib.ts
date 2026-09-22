@@ -1,6 +1,183 @@
 // Pure helpers of the page: nothing here touches the document, so they can be
 // tested with Node (`npm --prefix ui test`).
-export const lib = {};
+import type { EmojiEntry } from './emoji.ts';
+import type {
+  DocNode,
+  FileData,
+  Gap,
+  Hunk,
+  Placement,
+  Row,
+  Side,
+  ThreadData,
+  Token,
+} from './model.ts';
+
+/** Which threads are on which lines of one file, by side and line number. */
+export interface Coverage {
+  new: Record<number, string[]>;
+  old: Record<number, string[]>;
+}
+
+/** What has been shown of one of the places a diff leaves out. */
+export interface GapShown {
+  top: Row[];
+  bottom: Row[];
+}
+
+/** What a press on such a place asks the server for. */
+export interface ExpandRequest {
+  offset: number;
+  count: number;
+  side: 'top' | 'bottom';
+}
+
+/** The marker that stands for the lines of a place still left out. */
+export interface GapMarker {
+  gap: number;
+  left: number;
+  n: number;
+  prev: boolean;
+  next: boolean;
+  x: boolean;
+  embedded: boolean;
+}
+
+/** A hunk as the page lays it out: a marker instead of lines, or a hunk whose
+ * `@@` row is not shown because the lines above it are. */
+export interface PageHunk extends Hunk {
+  quiet?: boolean;
+  marker?: GapMarker;
+}
+
+export type PageFile = Omit<FileData, 'hunks'> & { hunks: PageHunk[] };
+
+/** A row of a file's diff with where it is and the counters before it. */
+export interface FlatRow {
+  hi: number;
+  ri: number;
+  row: Row;
+  oldNext: number;
+  newNext: number;
+}
+
+/** Lines on one side: where they start, and how many. */
+export interface Span {
+  start: number;
+  len: number;
+}
+
+/** The lines a choice covers, on each side. */
+export interface Counters {
+  base: Span;
+  head: Span;
+}
+
+/** A place in a comment's text that names lines of a file of the review. */
+export interface LineRef {
+  text: string;
+  path: string;
+  side: Side;
+  start: number;
+  end: number;
+  /** Which revision it names, or `null` for the one being shown. */
+  rev: number | null;
+}
+
+/** Where a jump landed. */
+export type At =
+  | { kind: 'file'; path: string }
+  | { kind: 'thread'; id: string }
+  | { kind: 'lines'; path: string; side: Side; start: number; end: number };
+
+/** The page's state that belongs in the URL. */
+export interface PageState {
+  rev: number;
+  screen: string | null;
+  against: number | null;
+  at: At | null;
+}
+
+/** Which comment shows an attachment, and what it calls it there. */
+export interface AttachmentUse {
+  thread: string;
+  comment: string;
+  name: string;
+}
+
+/** A piece of a line, and whether it is one of the words that changed. */
+export type MarkedPiece = [kind: string | null, text: string, changed: boolean];
+
+interface Lib {
+  messages: Record<string, string>;
+  setMessages(table: Record<string, string> | null | undefined): void;
+  m(key: string): string;
+  mf(key: string, params: Record<string, string>): string;
+
+  PALETTE: string[];
+  color(n: number): string;
+  bars(colors: number[]): string;
+
+  baseName(path: string): string;
+  location(p: Placement | null | undefined): string | null;
+  shortLocation(p: Placement | null | undefined): string;
+
+  shownIds(ids: string[], byId: Record<string, ThreadData>, hideResolved: boolean): string[];
+  coverage(threadIds: string[], placements: Record<string, Placement>, file: string): Coverage;
+  covering(cover: Coverage, row: Row): string[];
+  cardsAfter(
+    threadIds: string[],
+    placements: Record<string, Placement>,
+    file: string,
+  ): Record<string, string[]>;
+  cardsOfRow(after: Record<string, string[]>, row: Row): string[];
+  threadsOfFile(threadIds: string[], placements: Record<string, Placement>, file: string): string[];
+  counts(threads: ThreadData[]): { all: number; resolved: number };
+
+  attachmentUses(threads: ThreadData[] | null | undefined): Record<string, AttachmentUse[]>;
+  markPieces(pieces: Token[] | null | undefined, ranges: [number, number][] | null | undefined): MarkedPiece[];
+  pairRows(rows: Row[]): { left: Row | null; right: Row | null }[];
+  diffStat(file: FileData): { added: number; removed: number };
+  diffBlocks(added: number, removed: number): string[];
+  withoutSpaceChanges(file: FileData): FileData;
+
+  EXPAND_STEP: number;
+  withGaps(file: FileData, shown: Record<number, GapShown>): PageFile;
+  shownFrom(
+    gaps: (Gap | null)[] | null | undefined,
+    revealed: Record<number, Token[]>,
+  ): Record<number, GapShown>;
+  expandRequest(g: Gap, st: GapShown, where: 'top' | 'bottom' | 'all'): ExpandRequest | null;
+  gapRows(g: Gap, offset: number, lines: Token[][]): Row[];
+
+  flatRows(file: PageFile): FlatRow[];
+  counters(flat: FlatRow[], a: number, b: number, side?: Side | null): Counters;
+  chosenLocation(path: string, counters: Counters): string;
+  lineRefs(text: string, has: (path: string) => boolean, revisions: number): (string | LineRef)[];
+
+  plainText(nodes: DocNode[] | null | undefined): string;
+  preview(nodes: DocNode[] | null | undefined): string;
+  formatTime(iso: string): string;
+  formatSize(bytes: number): string;
+  bytesToMB(bytes: number): number;
+  mbToBytes(text: string): number | null;
+
+  quoteMarkdown(text: string): string;
+  appendQuote(existing: string, text: string): string;
+  findEmoji(list: EmojiEntry[], query: string): EmojiEntry[];
+  withShortcodes(list: EmojiEntry[], text: string): string;
+  imageMarkdown(id: string): string;
+  fileMarkdown(name: string, id: string): string;
+  insertAt(text: string, from: number, to: number, insert: string): { text: string; cursor: number };
+
+  formatAt(at: At): string;
+  parseAt(text: string): At | null;
+  formatHash(state: PageState): string;
+  parseHash(hash: string): PageState | null;
+}
+
+/** Empty until the lines below fill it in: what `Lib` says is what it has. */
+export const lib = {} as Lib;
 
 // The page's text (see messages/ja.yaml, embedded as JSON by the server/
 // exporter into #diffnote-messages; `start()` loads it with setMessages
@@ -70,7 +247,8 @@ lib.shownIds = function (ids, byId, hideResolved) {
 // begin and end (`ranges`: `[start, end)` in UTF-16 units, sorted), as
 // `[kind or null, text, changed]`. What isn't in a range is not changed.
 lib.markPieces = function (pieces, ranges) {
-  var out = [];
+  var out: MarkedPiece[] = [];
+  var list = ranges || [];
   var at = 0;
   var r = 0;
   (pieces || []).forEach(function (p) {
@@ -79,11 +257,11 @@ lib.markPieces = function (pieces, ranges) {
     var start = 0;
     while (start < text.length) {
       var pos = at + start;
-      while (r < (ranges || []).length && ranges[r][1] <= pos) r++;
-      var range = ranges && r < ranges.length ? ranges[r] : null;
+      while (r < list.length && list[r][1] <= pos) r++;
+      var range = r < list.length ? list[r] : null;
       var inside = range !== null && range[0] <= pos;
       // Up to where the state changes: the end of this range or the start of the next.
-      var stop = inside ? range[1] : range ? range[0] : Infinity;
+      var stop = range ? (inside ? range[1] : range[0]) : Infinity;
       var end = Math.min(text.length, stop - at);
       out.push([kind, text.slice(start, end), inside]);
       start = end;
@@ -105,8 +283,8 @@ lib.bars = function (colors) {
 // Which threads are on which lines of one file: `{ new: {line: [ids]}, old: {...} }`,
 // from the placements of a revision. Threads are taken in the order given.
 lib.coverage = function (threadIds, placements, file) {
-  var cover = { new: {}, old: {} };
-  var add = function (side, a, b, id) {
+  var cover: Coverage = { new: {}, old: {} };
+  var add = function (side: Side, a: number, b: number, id: string) {
     for (var n = a; n <= b; n++) {
       (cover[side][n] = cover[side][n] || []).push(id);
     }
@@ -123,7 +301,7 @@ lib.coverage = function (threadIds, placements, file) {
 // The threads that cover a row (a row has its line number on either side or
 // both), each once in a row.
 lib.covering = function (cover, row) {
-  var ids = [];
+  var ids: string[] = [];
   if (row.n != null && cover.new[row.n]) ids = ids.concat(cover.new[row.n]);
   if (row.o != null && cover.old[row.o]) ids = ids.concat(cover.old[row.o]);
   return ids.filter(function (id, i) {
@@ -136,13 +314,13 @@ lib.covering = function (cover, row) {
 // threads. A thread on lines goes after its last line; one whose lines are
 // not here, after the line before the point where they are.
 lib.cardsAfter = function (threadIds, placements, file) {
-  var after = {};
-  var put = function (key, id) {
+  var after: Record<string, string[]> = {};
+  var put = function (key: string, id: string) {
     (after[key] = after[key] || []).push(id);
   };
   threadIds.forEach(function (id) {
     var p = placements[id];
-    if (!p || p.file !== file) return;
+    if (!p || p.kind === 'global' || p.file !== file) return;
     if (p.kind === 'line') put(p.side + ':' + p.end, id);
     else if (p.kind === 'point') put('new:' + Math.max(p.before - 1, 1), id);
   });
@@ -152,7 +330,7 @@ lib.cardsAfter = function (threadIds, placements, file) {
 // A row's cards: those after its new-side line, then those after its
 // old-side line.
 lib.cardsOfRow = function (after, row) {
-  var ids = [];
+  var ids: string[] = [];
   if (row.n != null && after['new:' + row.n]) ids = ids.concat(after['new:' + row.n]);
   if (row.o != null && after['old:' + row.o]) ids = ids.concat(after['old:' + row.o]);
   return ids;
@@ -187,8 +365,8 @@ lib.pairRows = function (rows) {
 // nodes), so the server needs to say nothing about it. A comment that was
 // deleted has no text left, so it refers to nothing.
 lib.attachmentUses = function (threads) {
-  var uses = {};
-  var walk = function (nodes, at) {
+  var uses: Record<string, AttachmentUse[]> = {};
+  var walk = function (nodes: DocNode[] | undefined, at: { thread: string; comment: string }) {
     (nodes || []).forEach(function (n) {
       if (!n || typeof n === 'string') return;
       if ((n.t === 'image' || n.t === 'file') && n.id) {
@@ -247,7 +425,7 @@ lib.preview = function (nodes) {
 lib.formatTime = function (iso) {
   var d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
-  var two = function (n) {
+  var two = function (n: number) {
     return (n < 10 ? '0' : '') + n;
   };
   return d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate()) + ' ' + two(d.getHours()) + ':' + two(d.getMinutes());
@@ -314,7 +492,7 @@ lib.diffBlocks = function (added, removed) {
 };
 
 // The text of a row's pieces.
-var rowText = function (row) {
+var rowText = function (row: Row) {
   return row.t.map(function (p) { return typeof p === 'string' ? p : p[1]; }).join('');
 };
 
@@ -325,7 +503,7 @@ var rowText = function (row) {
 // line numbers. Nothing is renumbered, so what refers to a line (a thread,
 // the left-out places) still does.
 lib.withoutSpaceChanges = function (file) {
-  var bare = function (row) { return rowText(row).replace(/\s+/g, ''); };
+  var bare = function (row: Row) { return rowText(row).replace(/\s+/g, ''); };
   var changed = false;
   var hunks = file.hunks.map(function (hunk) {
     var rows = [];
@@ -336,8 +514,8 @@ lib.withoutSpaceChanges = function (file) {
       var added = [];
       while (i < hunk.rows.length && hunk.rows[i].k === 'd') removed.push(hunk.rows[i++]);
       while (i < hunk.rows.length && hunk.rows[i].k === 'a') added.push(hunk.rows[i++]);
-      var pendingRemoved = [];
-      var pendingAdded = [];
+      var pendingRemoved: Row[] = [];
+      var pendingAdded: Row[] = [];
       var flush = function () {
         pendingRemoved.forEach(function (r) { rows.push(r); });
         pendingAdded.forEach(function (r) { rows.push(r); });
@@ -368,7 +546,7 @@ lib.withGaps = function (file, shown) {
   var gaps = file.gaps;
   if (!gaps || gaps.length === 0) return file;
   var count = file.hunks.length;
-  var block = function (rows) {
+  var block = function (rows: Row[]) {
     var o = rows[0].o;
     var n = rows[0].n;
     return { header: '@@ -' + o + ',' + rows.length + ' +' + n + ',' + rows.length + ' @@', rows: rows, quiet: true };
@@ -399,14 +577,14 @@ lib.withGaps = function (file, shown) {
 // from the start of a place and those up to its end. Kept by line number, so
 // that it holds when the places change (a thread brought in context).
 lib.shownFrom = function (gaps, revealed) {
-  var out = {};
+  var out: Record<number, GapShown> = {};
   (gaps || []).forEach(function (g, i) {
     if (!g) return;
-    var top = [];
+    var top: Row[] = [];
     while (top.length < g.n && revealed[g.w + top.length]) {
       top.push({ k: 'c', o: g.o + top.length, n: g.w + top.length, t: revealed[g.w + top.length] });
     }
-    var bottom = [];
+    var bottom: Row[] = [];
     while (top.length + bottom.length < g.n && revealed[g.w + g.n - 1 - bottom.length]) {
       var at = g.n - 1 - bottom.length;
       bottom.unshift({ k: 'c', o: g.o + at, n: g.w + at, t: revealed[g.w + at] });
@@ -441,7 +619,7 @@ lib.gapRows = function (g, offset, lines) {
 // the line counters on each side as they stand before it: the old and the
 // new line number the next line would have.
 lib.flatRows = function (file) {
-  var out = [];
+  var out: FlatRow[] = [];
   file.hunks.forEach(function (hunk, hi) {
     if (hunk.marker) return;
     var m = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(hunk.header);
@@ -469,7 +647,7 @@ lib.counters = function (flat, a, b, side) {
   var hi = Math.max(a, b);
   var first = flat[lo];
   var last = flat[hi];
-  var span = function (next, has) {
+  var span = function (next: 'oldNext' | 'newNext', has: boolean) {
     var start = first[next];
     return { start: start, len: last[next] + (has ? 1 : 0) - start };
   };
@@ -505,7 +683,7 @@ lib.chosenLocation = function (path, counters) {
 // (a `12:30` or a `http://…:8080` is not a place), `revisions` how many
 // revisions there are.
 lib.lineRefs = function (text, has, revisions) {
-  var pieces = [];
+  var pieces: (string | LineRef)[] = [];
   var from = 0;
   var re = /:([LR])?(\d+)(?:-(\d+))?(?:@(\d+))?/g;
   var m;
@@ -575,8 +753,8 @@ lib.appendQuote = function (existing, text) {
 lib.findEmoji = function (list, query) {
   var q = String(query).trim().toLowerCase().replace(/^:|:$/g, '');
   if (q === '') return list.slice();
-  var starts = [];
-  var rest = [];
+  var starts: EmojiEntry[] = [];
+  var rest: EmojiEntry[] = [];
   list.forEach(function (e) {
     if (e[1].toLowerCase().indexOf(q) === 0 || e[0] === q) starts.push(e);
     else if (e[1].toLowerCase().indexOf(q) >= 0 || e[2].toLowerCase().indexOf(q) >= 0) rest.push(e);
@@ -588,7 +766,7 @@ lib.findEmoji = function (list, query) {
 // (`:+1:` as 👍); what isn't one (`12:30:45`, `:nope:`) is left as it is.
 lib.withShortcodes = function (list, text) {
   if (String(text).indexOf(':') < 0) return text;
-  var by = {};
+  var by: Record<string, string> = {};
   list.forEach(function (e) { by[e[1]] = e[0]; });
   return String(text).replace(/:([a-z0-9_+-]+):/g, function (whole, code) {
     return Object.prototype.hasOwnProperty.call(by, code) ? by[code] : whole;
@@ -642,8 +820,8 @@ lib.parseAt = function (text) {
 // any) -- as a hash string (without the leading `#`), and back. Anything not
 // given a `rev` (the essential part) parses to `null` (nothing to go on).
 lib.formatHash = function (state) {
-  var p = [];
-  var put = function (k, v) { p.push(encodeURIComponent(k) + '=' + encodeURIComponent(v)); };
+  var p: string[] = [];
+  var put = function (k: string, v: string) { p.push(encodeURIComponent(k) + '=' + encodeURIComponent(v)); };
   put('rev', String(state.rev));
   if (state.screen) put('screen', state.screen);
   if (state.against != null) put('against', String(state.against));
@@ -653,7 +831,7 @@ lib.formatHash = function (state) {
 
 lib.parseHash = function (hash) {
   var text = String(hash || '').replace(/^#/, '');
-  var got = {};
+  var got: Record<string, string> = {};
   text.split('&').forEach(function (part) {
     if (!part) return;
     var eq = part.indexOf('=');

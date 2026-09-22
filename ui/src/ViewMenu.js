@@ -1,6 +1,6 @@
 // The ⚙ menu over a diff: how it is shown.
 import { useContext, useEffect, useRef, useState } from 'preact/hooks';
-import { lib } from './lib.js';
+import { lib } from './lib.ts';
 import { html } from './html.ts';
 import { ViewContext } from './state/contexts.js';
 

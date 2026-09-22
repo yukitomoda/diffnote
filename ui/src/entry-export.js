@@ -4,6 +4,6 @@
 // reach a server is in the bundle at all.
 import { start } from './app.js';
 import { interact } from './interact.js';
-import { lib } from './lib.js';
+import { lib } from './lib.ts';
 
 window.Diffnote = { lib, interact, start };

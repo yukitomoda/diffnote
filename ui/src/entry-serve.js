@@ -3,7 +3,7 @@
 import { api } from './api.ts';
 import { start } from './app.js';
 import { interact } from './interact.js';
-import { lib } from './lib.js';
+import { lib } from './lib.ts';
 import { setTransport } from './transport.ts';
 
 setTransport(api);

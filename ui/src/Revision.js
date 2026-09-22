@@ -1,6 +1,6 @@
 // One revision: its diff, and everything beside it.
 import { useContext, useEffect, useMemo } from 'preact/hooks';
-import { lib } from './lib.js';
+import { lib } from './lib.ts';
 import { UserChip } from './UserChip.js';
 import { ViewMenu } from './ViewMenu.js';
 import { File } from './diff/File.js';

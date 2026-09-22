@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lib } from '../lib.js';
+import { lib } from '../lib.ts';
 
 // The handful of messages/ja.yaml keys this test file's assertions rely on
-// (these tests exercise lib.js's own formatting, not the wording itself).
+// (these tests exercise lib.ts's own formatting, not the wording itself).
 lib.setMessages({
   'ui.location.whole_review': '全体',
   'ui.image_alt_fallback': '[画像]',

@@ -5,7 +5,7 @@
 // a hover doesn't make the page draw itself again.) It reads what the
 // components write: `data-diffnote-thread-id` and `data-diffnote-color` on a
 // thread's card, and `data-diffnote-threads` on the lines a thread covers.
-import { lib } from './lib.js';
+import { lib } from './lib.ts';
 
 var slice = Array.prototype.slice;
 var THREAD = '[data-diffnote-thread-id]';

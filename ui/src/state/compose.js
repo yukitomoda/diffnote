@@ -1,7 +1,7 @@
 // Choosing lines, and the box for a new thread.
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { interact } from '../interact.js';
-import { lib } from '../lib.js';
+import { lib } from '../lib.ts';
 
 // Lines being chosen (pressing a line number, dragging, Shift+click), or a
 // box open for a file or the review, and what is written in it. `null` when
