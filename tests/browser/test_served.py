@@ -1829,6 +1829,38 @@ class ExpandLeftOutLines(ServedCase):
         # Looking records nothing.
         self.assertEqual(entries(self.review), 3)
 
+    def test_a_file_that_was_only_moved_is_one_place_the_server_fills_in(self):
+        # Its diff is empty, so the whole file is the place to open, and the
+        # served page has no lines of it until it asks for them.
+        repo = os.path.join(self.fresh("moved"), "repo")
+        os.makedirs(repo)
+        harness.git(repo, "init", "-q", "-b", "main")
+        harness.write(repo, "src/stays.py", "".join("row %d\n" % n for n in range(1, 31)))
+        harness.write(repo, "touched.py", "x = 1\n")
+        harness.git(repo, "add", "-A")
+        harness.git(repo, "commit", "-q", "-m", "c1")
+        harness.git(repo, "tag", "c1")
+        os.makedirs(os.path.join(repo, "src", "deeper"))
+        harness.git(repo, "mv", "src/stays.py", "src/deeper/stays.py")
+        harness.write(repo, "touched.py", "x = 2\n")
+        harness.git(repo, "add", "-A")
+        harness.git(repo, "commit", "-q", "-m", "c2")
+        harness.git(repo, "tag", "c2")
+        review = os.path.join(self.fresh("moved-review"), "moved.diffnote")
+        assert harness.diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo,
+                                comments=[("+x = 2", "ここだけ変更。")]).returncode == 0
+        self.serve(review)
+        b = self.b
+        moved = f"{CUR} section.diffnote-file[data-diffnote-file='src/deeper/stays.py']"
+        b.js("var d = document.querySelector(%s); d.open = true; d.dispatchEvent(new Event('toggle'))"
+             % json.dumps(moved + " details"))
+        self.assertTrue(b.wait_exists(moved + " [data-diffnote-expand='all']"))
+        self.assertEqual(b.count(moved + " tr[data-diffnote-new]"), 0, "nothing of it is in the page yet")
+        b.click(moved + " [data-diffnote-expand='all']")
+        self.assertTrue(b.wait("document.querySelectorAll(%s).length === 30" % json.dumps(moved + " tr[data-diffnote-new]")))
+        self.assertIn("row 30", b.text(moved + " table"))
+        self.assertEqual(entries(self.review), 3, "looking records nothing")
+
     def test_a_comment_can_be_written_on_a_line_that_was_left_out_and_shown(self):
         self.serve(self.gaps)
         b = self.b

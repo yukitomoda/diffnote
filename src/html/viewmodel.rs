@@ -883,9 +883,6 @@ fn first_of(start: u32, len: u32) -> u32 {
 /// The places the hunks leave out: before the first, between, after the last
 /// (which needs the text, to know where the file ends).
 fn gaps_of(hunks: &[Hunk], text: Option<&str>) -> Vec<Option<GapData>> {
-    if hunks.is_empty() {
-        return Vec::new();
-    }
     let total = text.map(|t| t.lines().count() as u32);
     let gap = |old: u32, new: u32, n: u32| {
         (n > 0).then_some(GapData {
@@ -896,6 +893,16 @@ fn gaps_of(hunks: &[Hunk], text: Option<&str>) -> Vec<Option<GapData>> {
             x: text.is_some(),
         })
     };
+    if hunks.is_empty() {
+        // A file in the diff with nothing of it shown: it was renamed, and
+        // that is all. The whole of it is then one place the diff leaves out,
+        // so it opens like any other -- otherwise there is no way to it at
+        // all (the tree of other files lists only what the diff doesn't have).
+        return match total.and_then(|t| gap(1, 1, t)) {
+            Some(whole) => vec![Some(whole)],
+            None => Vec::new(),
+        };
+    }
     let mut out = Vec::with_capacity(hunks.len() + 1);
     let first = &hunks[0];
     out.push(gap(1, 1, first_of(first.new_start, first.new_lines) - 1));
@@ -1218,5 +1225,20 @@ mod tests {
         let mut moved = a.clone();
         moved.lines[0].new_line = Some(7);
         assert_eq!(json(&colored(&moved, "k.rs")), json(&fresh(&moved, "k.rs")));
+    }
+
+    #[test]
+    fn a_file_the_diff_shows_nothing_of_is_one_place_to_open() {
+        let text = "one\ntwo\nthree\n";
+        let whole = gaps_of(&[], Some(text));
+        let g = whole[0].as_ref().unwrap();
+        assert_eq!(whole.len(), 1, "one place: the file itself");
+        assert_eq!((g.n, g.o, g.w), (3, 1, 1), "all of it, from the first line");
+        assert!(g.x, "and it can be opened");
+        // Without the text there is nothing to open, and nothing is offered.
+        assert!(gaps_of(&[], None).is_empty());
+        // A file that is in the diff and has no lines either (an empty one
+        // that was renamed) has no place to open.
+        assert!(gaps_of(&[], Some("")).is_empty());
     }
 }

@@ -570,45 +570,73 @@ class BinaryFiles(BrowserCase):
 
 class RenamedFiles(BrowserCase):
     """A renamed file is listed under the name it has now, so its heading is
-    the one place that says where it was before."""
+    the one place that says where it was before -- and one that moved and was
+    not otherwise touched has nothing in the diff at all."""
 
-    def test_the_title_says_the_path_a_renamed_file_came_from(self):
-        repo = os.path.join(self.root, "moved")
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        repo = os.path.join(cls.root, "moved")
         os.makedirs(repo)
         git(repo, "init", "-q", "-b", "main")
         # Long enough that git still sees the same file after the change
         # (it calls a rename by how alike the two sides are).
-        before = "".join("line %d\n" % n for n in range(1, 13))
-        write(repo, "src/old.py", before)
+        cls.before = "".join("line %d\n" % n for n in range(1, 13))
+        write(repo, "src/old.py", cls.before)
+        write(repo, "src/stays.py", "GREETING = 'hello'\n")
         write(repo, "kept.py", "x = 1\n")
         git(repo, "add", "-A")
         git(repo, "commit", "-q", "-m", "c1")
         git(repo, "tag", "c1")
         os.makedirs(os.path.join(repo, "src", "deeper"))
         git(repo, "mv", "src/old.py", "src/deeper/new.py")
-        write(repo, "src/deeper/new.py", before.replace("line 7\n", "line seven\n"))
+        write(repo, "src/deeper/new.py", cls.before.replace("line 7\n", "line seven\n"))
+        # Moved and nothing else: the diff has the file and none of its lines.
+        git(repo, "mv", "src/stays.py", "src/deeper/stays.py")
         git(repo, "add", "-A")
         git(repo, "commit", "-q", "-m", "c2")
         git(repo, "tag", "c2")
-        review = os.path.join(self.root, "moved.diffnote")
+        review = os.path.join(cls.root, "moved.diffnote")
         assert diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo,
                         comments=[("+line seven", "数字のままでよいのでは。")]).returncode == 0
-        html = os.path.join(self.root, "moved.html")
+        html = os.path.join(cls.root, "moved.html")
         assert diffnote("export", "-f", review, html).returncode == 0
-        b = self.browser
-        b.open(pathlib.Path(html).as_uri(), ready="!!document.querySelector('.diffnote-file')")
+        cls.url = pathlib.Path(html).as_uri()
+
+    def setUp(self):
+        self.b = self.browser
+        self.b.open(self.url, ready="!!document.querySelector('.diffnote-file')")
+
+    def test_the_title_says_the_path_a_renamed_file_came_from(self):
+        b = self.b
         moved = 'section.diffnote-file[data-diffnote-file="src/deeper/new.py"]'
         self.assertEqual(b.text(moved + " h2"), "src/deeper/new.py (src/old.py から名前変更)")
         self.assertEqual(
-            b.js("document.querySelector('[data-diffnote-renamed-from]').getAttribute('data-diffnote-renamed-from')"),
+            b.js("document.querySelector(%s).getAttribute('data-diffnote-renamed-from')" % json.dumps(moved + " [data-diffnote-renamed-from]")),
             "src/old.py", "the path on its own, for whatever wants it")
-        self.assertEqual(b.count("[data-diffnote-renamed-from]"), 1, "only the file that moved says it")
+        self.assertEqual(b.count("[data-diffnote-renamed-from]"), 2, "the two that moved, and nothing else")
         self.assertEqual(
             b.js("document.querySelector(%s).getAttribute('data-diffnote-copy')" % json.dumps(moved + " .diffnote-copy")),
             "src/deeper/new.py", "the copy button is still the path it has now")
         # Folded, it still says it: that is what the heading is for.
         b.js("document.querySelector(%s).open = false" % json.dumps(moved + " details"))
-        self.assertTrue(b.visible("[data-diffnote-renamed-from]"))
+        self.assertTrue(b.visible(moved + " [data-diffnote-renamed-from]"))
+
+    def test_a_file_that_only_moved_can_still_be_read(self):
+        # Its diff is empty, and the tree of other files lists only what the
+        # diff doesn't have -- so without this there is no way to its content.
+        b = self.b
+        moved = 'section.diffnote-file[data-diffnote-file="src/deeper/stays.py"]'
+        self.assertEqual(b.text(moved + " h2"), "src/deeper/stays.py (src/stays.py から名前変更)")
+        self.assertEqual(b.count(moved + " [data-diffnote-stat]"), 0, "no lines changed to count")
+        b.js("var d = document.querySelector(%s); d.open = true; d.dispatchEvent(new Event('toggle'))"
+             % json.dumps(moved + " details"))
+        self.assertTrue(b.wait("!!document.querySelector(%s)" % json.dumps(moved + " [data-diffnote-expand]")),
+                        "the whole file is one place to open")
+        b.click(moved + " [data-diffnote-expand='all']")
+        self.assertTrue(b.wait("document.querySelectorAll(%s).length === 1" % json.dumps(moved + " tbody tr")))
+        self.assertIn("GREETING = 'hello'", b.text(moved + " tbody tr"))
+        self.assertEqual(b.count(moved + " [data-diffnote-expand]"), 0, "nothing left to open")
 
 
 class LineLinks(BrowserCase):
