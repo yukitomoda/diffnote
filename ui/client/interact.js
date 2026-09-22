@@ -136,9 +136,69 @@
   }
 
   var installed = false;
+  // An image of a comment, shown by itself over the page at its own size.
+  // Built here rather than as a component, so it works the same in an exported
+  // page (where the image is a `data:` address) as in a served one.
+  var zoomed = null;
+  function closeZoom() {
+    if (!zoomed) return;
+    var back = zoomed.back;
+    zoomed.box.remove();
+    document.body.style.overflow = zoomed.overflow;
+    zoomed = null;
+    if (back && back.isConnected) back.focus();
+  }
+  function openZoom(image) {
+    closeZoom();
+    var box = document.createElement('div');
+    box.className = 'diffnote-zoom';
+    box.setAttribute('data-diffnote-zoom', '');
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    if (image.alt) box.setAttribute('aria-label', image.alt);
+    var full = document.createElement('img');
+    full.src = image.currentSrc || image.src;
+    full.alt = image.alt || '';
+    full.setAttribute('data-diffnote-zoom-image', '');
+    // Its own size; too big for the window, the box scrolls. Pressing it fits
+    // it to the window instead, and again brings it back (the cursor says so).
+    var fitted = false;
+    var fit = function () {
+      box.classList.toggle('is-fitted', fitted);
+    };
+    full.addEventListener('click', function (e) {
+      e.stopPropagation();
+      // Only worth toggling for an image the window can't hold as it is.
+      if (!fitted && full.naturalWidth <= box.clientWidth && full.naturalHeight <= box.clientHeight) return;
+      fitted = !fitted;
+      fit();
+    });
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'diffnote-zoom__close';
+    close.setAttribute('data-diffnote-zoom-close', '');
+    close.setAttribute('aria-label', D.lib.m('ui.image.close'));
+    close.textContent = '×';
+    close.addEventListener('click', closeZoom);
+    box.addEventListener('click', closeZoom);
+    box.appendChild(full);
+    box.appendChild(close);
+    zoomed = { box: box, back: document.activeElement, overflow: document.body.style.overflow };
+    document.body.style.overflow = 'hidden';
+    document.body.appendChild(box);
+    close.focus();
+  }
+
   function install() {
     if (installed) return;
     installed = true;
+    document.addEventListener('click', function (e) {
+      // Not one that is itself a link: that click belongs to the link.
+      var image = e.target.closest ? e.target.closest('img.diffnote-image') : null;
+      if (!image || image.closest('a')) return;
+      e.preventDefault();
+      openZoom(image);
+    });
     document.addEventListener('mouseover', function (e) {
       // While lines are being chosen, no comment's range is shown.
       if (pinned || document.body.classList.contains('is-selecting')) return;
@@ -240,10 +300,16 @@
       e.preventDefault();
     });
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') {
-        pinned = null;
-        clear();
+      if (e.key !== 'Escape') return;
+      // An image shown by itself takes the key: closing it is what Escape
+      // means while it is up.
+      if (zoomed) {
+        e.stopPropagation();
+        closeZoom();
+        return;
       }
+      pinned = null;
+      clear();
     });
   }
 

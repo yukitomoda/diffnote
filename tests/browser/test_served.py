@@ -1080,6 +1080,97 @@ class Images(ServedCase):
         self.assertEqual(b.count(f"#{card} img"), 0, "nothing is loaded from an address")
 
 
+class ImageZoom(ServedCase):
+    """An image in a comment, shown by itself over the page."""
+
+    def comment_with_a_picture(self, width, height):
+        """Writes a comment showing a picture of that size, and gives back the
+        card it is in."""
+        b = self.b
+        card = self.card("mul の型")
+        ident = b.js("""(async function () {
+          var c = document.createElement('canvas'); c.width = %d; c.height = %d;
+          var g = c.getContext('2d'); g.fillStyle = '#1f77b4'; g.fillRect(0, 0, c.width, c.height);
+          var blob = await new Promise(function (r) { c.toBlob(r, 'image/png'); });
+          return (await Diffnote.api.upload(blob)).id;
+        })()""" % (width, height))
+        box = f"#{card} .diffnote-reply textarea"
+        self.write(box, f"![再現時の画面](diffnote-image:{ident})")
+        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
+        self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('img.diffnote-image')"))
+        return card
+
+    def test_a_picture_opens_by_itself_at_its_own_size_and_escape_closes_it(self):
+        self.serve()
+        b = self.b
+        card = self.comment_with_a_picture(700, 300)
+        thumb = f"#{card} img.diffnote-image"
+        self.assertTrue(b.wait(f"document.querySelector({json.dumps(thumb)}).complete"))
+        b.click(thumb)
+        self.assertTrue(b.wait_exists("[data-diffnote-zoom]"))
+        self.assertEqual(
+            b.js("document.querySelector('[data-diffnote-zoom-image]').src"),
+            b.js(f"document.querySelector({json.dumps(thumb)}).src"),
+            "the same picture")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-zoom-image]').complete"))
+        self.assertEqual(
+            b.js("(function(){var i=document.querySelector('[data-diffnote-zoom-image]'); return [i.clientWidth, i.naturalWidth]})()"),
+            [700, 700], "at its own size, not the comment's width")
+        self.assertEqual(b.js("document.body.style.overflow"), "hidden", "the page behind doesn't scroll")
+        b.escape()
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-zoom]')"))
+        self.assertEqual(b.js("document.body.style.overflow"), "", "and scrolls again after")
+
+    def test_one_too_big_for_the_window_can_be_fitted_to_it_and_back(self):
+        self.serve()
+        b = self.b
+        card = self.comment_with_a_picture(2400, 1800)
+        b.click(f"#{card} img.diffnote-image")
+        self.assertTrue(b.wait_exists("[data-diffnote-zoom-image]"))
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-zoom-image]').complete"))
+        self.assertEqual(b.js("document.querySelector('[data-diffnote-zoom-image]').clientWidth"), 2400)
+        b.click("[data-diffnote-zoom-image]")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-zoom]').classList.contains('is-fitted')"))
+        self.assertLess(b.js("document.querySelector('[data-diffnote-zoom-image]').clientWidth"), 2400)
+        self.assertTrue(b.exists("[data-diffnote-zoom]"), "pressing it fits it, it doesn't close")
+        b.click("[data-diffnote-zoom-image]")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-zoom-image]').clientWidth === 2400"))
+
+    def test_it_works_in_an_exported_page_opened_from_a_file(self):
+        self.serve()
+        b = self.b
+        self.comment_with_a_picture(500, 250)
+        exported = b.js("fetch('/export').then(r => r.text())")
+        path = os.path.join(self.fresh("export"), "with-picture.html")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(exported)
+        b.open(pathlib.Path(path).as_uri(), ready="!!document.querySelector('img.diffnote-image')")
+        self.assertTrue(b.js("document.querySelector('img.diffnote-image').src.startsWith('data:image/png')"),
+                        "the picture is in the page, not at an address")
+        self.assertTrue(b.wait("document.querySelector('img.diffnote-image').complete"))
+        b.click("img.diffnote-image")
+        self.assertTrue(b.wait_exists("[data-diffnote-zoom]"))
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-zoom-image]').complete"))
+        self.assertEqual(
+            b.js("(function(){var i=document.querySelector('[data-diffnote-zoom-image]'); return [i.clientWidth, i.naturalWidth]})()"),
+            [500, 500], "at its own size, with no server to ask")
+        b.escape()
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-zoom]')"))
+
+    def test_the_close_button_and_the_space_around_it_close_it(self):
+        self.serve()
+        b = self.b
+        card = self.comment_with_a_picture(400, 200)
+        b.click(f"#{card} img.diffnote-image")
+        self.assertTrue(b.wait_exists("[data-diffnote-zoom-close]"))
+        b.click("[data-diffnote-zoom-close]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-zoom]')"))
+        b.click(f"#{card} img.diffnote-image")
+        self.assertTrue(b.wait_exists("[data-diffnote-zoom]"))
+        b.click("[data-diffnote-zoom]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-zoom]')"), "the space around it closes it too")
+
+
 class AttachmentsScreen(ServedCase):
     """The 添付 section of the settings screen: what the comments have
     attached, what uses it, and taking one out."""

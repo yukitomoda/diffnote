@@ -719,6 +719,9 @@ ui:
       全体
   image_alt_fallback: |-
     [画像]
+  image:
+    close: |-
+      閉じる
   image_markdown: |-
     ![画像](diffnote-image:{id})
   copied: |-
