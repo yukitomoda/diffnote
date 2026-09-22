@@ -11,6 +11,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
 
 CUR = ".diffnote-revision.is-current"
 
@@ -1070,6 +1071,19 @@ class Images(ServedCase):
         # Asked in two parts, so that a failure says which: the comment showing
         # the picture at all, or the picture itself arriving.
         self.assertTrue(b.wait_exists(img), "the comment shows the picture")
+        if not b.wait(f"document.querySelector({json.dumps(img)}).naturalWidth === 8"):
+            # This one has failed about one full run in four, always stuck
+            # rather than slow, and never on its own. Whatever it is, the next
+            # time it happens it can say so: what the picture's address is, how
+            # far it got, and what the server answers for it now.
+            print("\n-- picture:", b.js(
+                "(function(i){return i ? JSON.stringify({src: i.getAttribute('src'), complete: i.complete,"
+                " width: i.naturalWidth, alt: i.alt}) : 'no img'})(document.querySelector(%s))" % json.dumps(img)),
+                file=sys.stderr)
+            print("-- server says:", b.js(
+                "fetch(document.querySelector(%s).getAttribute('src'), {cache: 'reload'})"
+                ".then(function (r) { return r.status + ' ' + r.headers.get('content-type'); })"
+                ".catch(function (e) { return 'unreachable: ' + e; })" % json.dumps(img)), file=sys.stderr)
         self.assertTrue(b.wait(f"document.querySelector({json.dumps(img)}).naturalWidth === 8"),
                         "the picture is the one that was sent")
 
