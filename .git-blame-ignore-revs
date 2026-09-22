@@ -1,2 +1,5 @@
 # The rustfmt reformatting; GitHub's blame skips it (git: blame.ignoreRevsFile).
 93a0db337cdc94f7743b900811809c665e212a8f
+# Building the page: every line of it lost the two spaces the `(function (D)`
+# wrapper had cost it.
+6043c5caed92c7233fdb879db612f709040d126f
