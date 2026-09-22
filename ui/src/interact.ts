@@ -6,6 +6,7 @@
 // components write: `data-diffnote-thread-id` and `data-diffnote-color` on a
 // thread's card, and `data-diffnote-threads` on the lines a thread covers.
 import { lib } from './lib.ts';
+import { iconNode } from './icon.tsx';
 
 var slice = Array.prototype.slice;
 var THREAD = '[data-diffnote-thread-id]';
@@ -196,7 +197,7 @@ function openZoom(src: string, alt: string) {
   close.className = 'diffnote-zoom__close';
   close.setAttribute('data-diffnote-zoom-close', '');
   close.setAttribute('aria-label', lib.m('ui.image.close'));
-  close.textContent = '×';
+  close.appendChild(iconNode('close'));
   close.addEventListener('click', closeZoom);
   box.addEventListener('click', closeZoom);
   box.appendChild(full);

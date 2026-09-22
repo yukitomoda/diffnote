@@ -5,6 +5,7 @@ import { interact } from '../interact.ts';
 import { lib } from '../lib.ts';
 import type { AttachedData, Placement, ViewModel } from '../model.ts';
 import type { ChangeAnswer } from '../state/contexts.ts';
+import { Icon } from '../icon.tsx';
 
 // 添付: what the comments have attached, and what uses it. Unused ones are
 // dropped at 終了 anyway; this is where to see them, save one, or take one
@@ -80,7 +81,7 @@ export function AttachmentsPane(props: AttachmentsProps) {
                     onClick={function () { interact.zoom('/api/images/' + a.id, nameOf(a)); }}>
                     {h('img', { src: '/api/images/' + a.id, alt: '' })}
                   </button>
-                : <span class="diffnote-attached__clip" aria-hidden="true">📎</span>}</div>
+                : <Icon name="attach" class="diffnote-attached__clip" />}</div>
               <div class="diffnote-attached__what">
                 <p class="diffnote-attached__name">{nameOf(a)}{used.length === 0 && <span class="diffnote-badge" data-diffnote-attached-unused>{lib.m('ui.attachments.unused')}</span>}</p>
                 <p class="diffnote-attached__meta">{image ? lib.m('ui.attachments.image_kind') : lib.m('ui.attachments.file_kind')} ・ {a.media_type || ''}{a.media_type ? ' ・ ' : ''}{lib.formatSize(a.size)}</p>

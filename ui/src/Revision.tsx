@@ -14,6 +14,7 @@ import { Card } from './thread/Card.tsx';
 import { Composer } from './thread/Composer.tsx';
 import type { RevisionData, ThreadData, ViewModel } from './model.ts';
 import type { Compose, ListCtx, RevisionCtx, ShownFile } from './state/contexts.ts';
+import { Icon } from './icon.tsx';
 
 // One revision: the side lists and the files.
 interface RevisionProps {
@@ -115,13 +116,13 @@ export function Revision(props: RevisionProps) {
         <button type="button" class="diffnote-mini diffnote-sidebar__toggle" data-diffnote-sidebar-toggle
           aria-expanded={!hidden} aria-controls={'rev-' + rev + '-lists'}
           title={lib.m(hidden ? 'ui.sidebar.show_title' : 'ui.sidebar.hide_title')}
-          onClick={function () { setSidebarHidden(!hidden); }}>{lib.m(hidden ? 'ui.sidebar.show_button' : 'ui.sidebar.hide_button')}</button>
+          onClick={function () { setSidebarHidden(!hidden); }}><Icon name={hidden ? 'unfold' : 'fold'} /></button>
       </div>
     </aside>
     <div class="diffnote-viewbar">
       {props.compose && <div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global"
         onClick={function () { props.compose!.openScope('global', rev); }}>{lib.m('ui.compose.global_button')}</button></div>}
-      {props.override && <p class="diffnote-compare-note" data-diffnote-compare-note tabindex={0} title={props.overrideNote!.tip} aria-label={props.overrideNote!.short + '。' + props.overrideNote!.tip}>{props.overrideNote!.short}<span class="diffnote-compare-note__icon" aria-hidden="true">⚠</span></p>}
+      {props.override && <p class="diffnote-compare-note" data-diffnote-compare-note tabindex={0} title={props.overrideNote!.tip} aria-label={props.overrideNote!.short + '。' + props.overrideNote!.tip}>{props.overrideNote!.short}<Icon name="warning" class="diffnote-compare-note__icon" /></p>}
       <ViewMenu resolved={lib.counts(model.threads).resolved} interactive={!!model.interactive} />
     </div>
     {(globals.length > 0 || props.compose) && <section class="diffnote-global-comments" data-diffnote-global>

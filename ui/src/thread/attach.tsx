@@ -6,6 +6,7 @@ import { LinksContext } from '../state/contexts.ts';
 import { EmojiButton } from './Reactions.jsx';
 import { server } from '../transport.ts';
 import type { JSX } from 'preact';
+import { Icon } from '../icon.tsx';
 
 // Pictures for a box that a comment is written in: pasted (a screenshot),
 // dropped, or chosen. Each goes to the server, and what stands for it in the
@@ -117,7 +118,7 @@ export function useAttach(text: string, setText: (text: string) => void): Attach
         setText(put.text);
         setTimeout(function () { box!.focus(); box!.setSelectionRange(put.cursor, put.cursor); }, 0);
       };
-      return <><EmojiButton onPick={pick} /><label class="diffnote-attach" title={lib.m('ui.attach.picker_title')}>{lib.m('ui.attach.button_label')}
+      return <><EmojiButton onPick={pick} /><label class="diffnote-attach" title={lib.m('ui.attach.picker_title')}><Icon name="attach" />{' '}{lib.m('ui.attach.button_label')}
         <input type="file" multiple data-diffnote-attach
           onChange={function (e) { var f = field(); if (f) send(e.currentTarget.files, f); e.currentTarget.value = ''; }} /></label></>;
     },

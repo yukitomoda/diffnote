@@ -3,6 +3,7 @@ import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { server } from '../transport.ts';
+import { Icon, iconNode } from '../icon.tsx';
 
 /** What the server says as it stops. */
 interface Farewell {
@@ -49,7 +50,7 @@ export function QuitButton() {
   return <span class="diffnote-quit" ref={box}>
     <button type="button" class="diffnote-quit__main" data-diffnote-shutdown title={lib.m('ui.quit.main_title')}
       onClick={function () { quit(false); }}>{lib.m('ui.quit.main_button')}</button><button type="button" class="diffnote-quit__more" data-diffnote-quit-more aria-label={lib.m('ui.quit.more_label')} aria-expanded={open}
-      onClick={function () { setOpen(!open); setSure(false); }}>▾</button>
+      onClick={function () { setOpen(!open); setSure(false); }}><Icon name="down" /></button>
     {open && <div class="diffnote-quit__menu" data-diffnote-quit-menu>
       {!sure
         ? <button type="button" class="diffnote-quit__item" data-diffnote-discard onClick={function () { setSure(true); }}>{lib.m('ui.quit.discard_button')}</button>
@@ -70,7 +71,9 @@ function stopped(summary: Farewell | undefined) {
   };
   var card = make('div', 'diffnote-farewell__card');
   var discarded = !!(summary && summary.discarded);
-  card.appendChild(make('div', 'diffnote-farewell__mark', discarded ? '↩' : '✓'));
+  var mark = make('div', 'diffnote-farewell__mark');
+  mark.appendChild(iconNode(discarded ? 'undone' : 'done'));
+  card.appendChild(mark);
   card.appendChild(make('h1', 'diffnote-farewell__title', discarded ? lib.m('ui.farewell.discarded_title') : lib.m('ui.farewell.done_title')));
   if (discarded && summary) {
     var discardedList = make('dl', 'diffnote-farewell__list');

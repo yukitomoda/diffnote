@@ -40,6 +40,7 @@ import type { At } from './lib.ts';
 import type { RevisionData, ViewModel } from './model.ts';
 import type { Links } from './state/contexts.ts';
 import type { PullNote } from './settings/General.tsx';
+import { Icon } from './icon.tsx';
 
 function App(props: { model: ViewModel }) {
   var review = useReview(props.model);
@@ -213,7 +214,7 @@ function App(props: { model: ViewModel }) {
       <header class="diffnote-summary">
         <h1>{review.actions
           ? <button type="button" class="diffnote-title" data-diffnote-settings title={lib.m('ui.settings.title_button')} aria-haspopup="dialog"
-              aria-pressed={screen === 'general' || screen === 'settings'} onClick={function () { showScreen(screen === 'general' ? null : 'general'); }}>{model.title || lib.m('html.default_title')}<span class="diffnote-title__icon" aria-hidden="true">⚙</span></button>
+              aria-pressed={screen === 'general' || screen === 'settings'} onClick={function () { showScreen(screen === 'general' ? null : 'general'); }}>{model.title || lib.m('html.default_title')}<Icon name="settings" class="diffnote-title__icon" /></button>
           : model.title || lib.m('html.default_title')}</h1>
         {model.base && <p data-diffnote-base class={against != null ? 'is-changed' : ''} title={against != null ? lib.m('ui.base.changed_title') : lib.m('ui.base.default_title')}>{lib.m('ui.base.label')}: {review.actions && current > 0
           ? <select class="diffnote-base__select" data-diffnote-base-select aria-label={lib.m('ui.base.select_label')} value={against == null ? '' : String(against)}

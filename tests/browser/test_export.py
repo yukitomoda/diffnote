@@ -43,7 +43,8 @@ class StaticExport(BrowserCase):
     def test_a_file_marked_as_looked_at_is_hidden_with_its_threads_and_can_be_brought_back(self):
         b = self.b
         files = b.count(f"{CUR} section.diffnote-file")
-        self.assertEqual(b.js("document.querySelector('[data-diffnote-viewed-count]').textContent.replace(/\\s+/g, ' ').trim()"), f"✓ 0/{files}")
+        self.assertEqual(b.js("document.querySelector('[data-diffnote-viewed-count]').textContent.trim()"), f"0/{files}")
+        self.assertTrue(b.exists("[data-diffnote-viewed-count] svg.diffnote-icon"), "with a check drawn, not a character")
         threads_before = b.count(".diffnote-threadlist li")
         section = f"{CUR} section.diffnote-file[data-diffnote-file='calc.py']"
         self.assertTrue(b.exists(section))
@@ -54,7 +55,7 @@ class StaticExport(BrowserCase):
         self.assertEqual(b.count(f"{CUR} section.diffnote-file"), files - 1)
         self.assertIn(f"1/{files}", b.js("document.querySelector('[data-diffnote-viewed-count]').textContent"))
         item = "[data-diffnote-check='calc.py']"
-        self.assertEqual(b.js(f"document.querySelector({json.dumps(item)}).textContent"), "✓")
+        self.assertTrue(b.exists(item + " svg.diffnote-icon"), "the file is marked with a check")
         self.assertTrue(b.exists("li.is-viewed [data-diffnote-open-count]"), "what is still open is said, small")
         self.assertEqual(b.count(".diffnote-threadlist li"), threads_before, "its threads are still listed")
         b.click(item)
@@ -101,6 +102,25 @@ class StaticExport(BrowserCase):
         time.sleep(0.2)  # (the menu listens for Escape once it has been drawn)
         b.escape()
         self.assertTrue(b.wait(f"document.querySelector({json.dumps(panel)}).hidden"), "Escape shuts it")
+
+    def test_the_icons_are_drawn_in_the_page_and_take_the_colour_of_their_text(self):
+        b = self.b
+        self.assertGreater(b.count("svg.diffnote-icon"), 5, "the page's own marks are shapes")
+        self.assertTrue(b.js("""[...document.querySelectorAll('svg.diffnote-icon')].every(function (s) {
+          return s.children.length === 1 && s.firstElementChild.tagName === 'path' && !s.textContent;
+        })"""), "one shape each, with no text of its own")
+        # Drawn here: an exported page is opened from a file and has no font
+        # or picture to go and get.
+        self.assertEqual(b.count("img, link, iframe, object"), 0)
+        got = b.js("""(() => {
+          const button = document.querySelector('[data-diffnote-view-menu]');
+          const icon = button.querySelector('svg.diffnote-icon');
+          const box = icon.getBoundingClientRect();
+          return [getComputedStyle(icon).fill, getComputedStyle(button).color, box.width, parseFloat(getComputedStyle(button).fontSize)];
+        })()""")
+        self.assertEqual(got[0], got[1], "the icon is the colour of the words beside it")
+        self.assertGreater(got[2], got[3], "and a little bigger than them")
+        self.assertLess(got[2], got[3] * 1.5)
 
     def test_the_lists_beside_the_diff_can_be_put_away_and_brought_back(self):
         b = self.b

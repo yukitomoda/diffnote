@@ -56,6 +56,19 @@ test('an element that loads something is built, not written as markup', () => {
   }
 });
 
+test('an icon of the page is a shape, never a character', () => {
+  // A picture character is whatever the reader's platform draws it as: a
+  // different weight, a different size, often in colour, and never the colour
+  // of the text beside it. The page's own icons are drawn (see `icon.tsx`);
+  // `emoji.ts` is the table of emoji people react with, which is content.
+  const pictures = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{21E4}\u{21E5}\u{21A9}\u{22EE}\u{25B4}-\u{25BE}]/u;
+  for (const [name, body] of sources()) {
+    if (name === 'emoji.ts') continue;
+    const found = body.match(pictures);
+    assert.ok(!found, `${name} draws an icon with the character ${found && found[0]}`);
+  }
+});
+
 test('a script can never end the element it sits in', () => {
   // Every bundle is served inside a `<script>` in the page.
   for (const [name, body] of sources()) {

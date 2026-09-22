@@ -12,6 +12,7 @@ import type { GeneralProps } from './General.tsx';
 import type { FormProps } from './Form.tsx';
 import type { AttachmentsProps } from './Attachments.tsx';
 import type { UserProps } from './User.tsx';
+import { Icon } from '../icon.tsx';
 
 // The left-hand nav of the settings screen: which of its sections is shown.
 var SETTINGS_SECTIONS: Section[] = SECTIONS.slice();
@@ -59,7 +60,7 @@ export function SettingsScreen(props: ScreenProps) {
     return function () { document.removeEventListener('keydown', key); };
   }, []);
   return <main class="diffnote-settings" data-diffnote-settings-page data-diffnote-settings-section={props.section}>
-    <p class="diffnote-settings__top"><button type="button" class="diffnote-button" data-diffnote-settings-back onClick={props.onClose}>{lib.m('ui.settings.back_button')}</button></p>
+    <p class="diffnote-settings__top"><button type="button" class="diffnote-button" data-diffnote-settings-back onClick={props.onClose}><Icon name="back" />{' '}{lib.m('ui.settings.back_button')}</button></p>
     <div class="diffnote-settings__layout">
       <SettingsNav current={props.section} onSelect={props.onSelect} />
       <div class="diffnote-settings__pane">

@@ -35,7 +35,7 @@ await esbuild.build({
   entryPoints: { export: 'src/entry-export.ts', serve: 'src/entry-serve.ts' },
   outdir: 'dist',
   banner: {
-    js: '/*! diffnote: preact (MIT). See ui/THIRD-PARTY.md. */',
+    js: '/*! diffnote: preact and nanostores (MIT), Material Symbols icons (Apache-2.0). See ui/THIRD-PARTY.md. */',
   },
 });
 

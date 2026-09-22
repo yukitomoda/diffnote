@@ -4,6 +4,7 @@ import { EMOJI } from './emoji.ts';
 import { lib } from './lib.ts';
 import type { DocElement, DocNode, Token } from './model.ts';
 import type { Links } from './state/contexts.ts';
+import { Icon } from './icon.tsx';
 
 // A comment: the nodes of its Markdown (see `src/html/markdown.rs`) as
 // elements. Only what is known is drawn, so nothing a comment says can be
@@ -26,7 +27,8 @@ export function markdown(
   return (nodes || []).map(function (node: DocNode, i: number): preact.ComponentChildren {
     if (typeof node === 'string') {
       var text = node;
-      // `:+1:` is 👍 (the text as written is kept; it is only shown so).
+      // `:+1:` is the thumbs-up (the text as written is kept; it is only
+      // shown so).
       text = lib.withShortcodes(EMOJI, text);
       if (!links || inLink) return text;
       // `src/a.ts:10-13` in the text goes to those lines.
@@ -69,7 +71,7 @@ export function markdown(
         // Another file of the review: only ever to be saved.
         var name = lib.plainText(n.c).trim() || 'file';
         var href = links && links.file ? links.file(n.id || '', name) : '';
-        return href ? h('a', { key: i, class: 'diffnote-attachment', href: href, download: name, rel: 'noopener' }, '📎 ', kids) : h('span', { key: i }, kids);
+        return href ? h('a', { key: i, class: 'diffnote-attachment', href: href, download: name, rel: 'noopener' }, h(Icon, { name: 'attach' }), ' ', kids) : h('span', { key: i }, kids);
       }
       case 'code': return h('code', { key: i }, n.s || '');
       case 'br': return h('br', { key: i });

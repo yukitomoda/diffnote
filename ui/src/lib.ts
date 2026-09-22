@@ -766,7 +766,8 @@ lib.findEmoji = function (list, query) {
 };
 
 // A text with each `:code:` that is the code of an emoji written as the emoji
-// (`:+1:` as 👍); what isn't one (`12:30:45`, `:nope:`) is left as it is.
+// (`:+1:` as the thumbs-up); what isn't one (`12:30:45`, `:nope:`) is left
+// as it is.
 lib.withShortcodes = function (list, text) {
   if (String(text).indexOf(':') < 0) return text;
   var by: Record<string, string> = {};

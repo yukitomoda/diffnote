@@ -847,7 +847,8 @@ class CompareWithAnEarlierRevision(ServedCase):
         before = entries(self.review)
         self.choose("0")
         self.assertTrue(b.wait_exists("[data-diffnote-compare-note]"))
-        self.assertRegex(b.text("[data-diffnote-compare-note]"), r"^#1 [0-9a-f]{7} \.\. #2 [0-9a-f]{7}⚠$")
+        self.assertRegex(b.text("[data-diffnote-compare-note]"), r"^#1 [0-9a-f]{7} \.\. #2 [0-9a-f]{7}$")
+        self.assertTrue(b.exists("[data-diffnote-compare-note] svg.diffnote-icon"), "marked as something to notice")
         self.assertIn("表示だけの切り替え", b.js("document.querySelector('[data-diffnote-compare-note]').title"), "the explanation is the tooltip")
         self.assertTrue(b.js("document.querySelector('[data-diffnote-base]').classList.contains('is-changed')"))
         # What changed from c2 to c3: a docstring (two lines) and one line replaced.

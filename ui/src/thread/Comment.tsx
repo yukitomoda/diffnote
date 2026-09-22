@@ -8,6 +8,7 @@ import { Reactions } from './Reactions.jsx';
 import { useAttach } from './attach.jsx';
 import type { CommentData } from '../model.ts';
 import type { Actions } from '../state/contexts.ts';
+import { Icon } from '../icon.tsx';
 
 function Time(props: { at: string }) {
   var t = new Date(props.at);
@@ -173,12 +174,12 @@ export function Comment(props: CommentProps) {
         ? <p class="diffnote-comment__deleted" data-diffnote-deleted>{lib.m('ui.comment.deleted_notice')}</p>
         : <><div class="diffnote-comment__body" ref={body} onMouseUp={function () { setTimeout(look, 0); }} onKeyUp={look}>{markdown(c.doc, links)}</div>{error && <p class="diffnote-error">{error}</p>}<Reactions comment={c} actions={actions} /></>}
     {quote && <button type="button" class="diffnote-quote-button" data-diffnote-quote-selection style={'top:' + quote.top + 'px;left:' + quote.left + 'px'}
-      onMouseDown={function (e) { e.preventDefault(); }} onClick={function () { quoteIt(quote!.text); }}>{lib.m('ui.comment.quote_button')}</button>}
+      onMouseDown={function (e) { e.preventDefault(); }} onClick={function () { quoteIt(quote!.text); }}><Icon name="quote" />{' '}{lib.m('ui.comment.quote_button')}</button>}
   </article>;
 }
 
-// The 「⋮」 of a comment: what can be done to it (in the page while it is shut,
-// only not shown).
+// The menu of a comment: what can be done to it (in the page while it is
+// shut, only not shown).
 interface MenuProps {
   busy?: boolean;
   canChange: boolean;
@@ -205,7 +206,7 @@ function CommentMenu(props: MenuProps) {
   }, [open]);
   return <span class="diffnote-comment__menu" ref={box}>
     <button type="button" class="diffnote-comment__more" data-diffnote-comment-menu aria-label={lib.m('ui.comment.menu_label')} aria-haspopup="true" aria-expanded={open}
-      onClick={function () { setOpen(!open); }}>⋮</button>
+      onClick={function () { setOpen(!open); }}><Icon name="menu" /></button>
     <span class="diffnote-comment__panel" hidden={!open}>
       <button type="button" class="diffnote-comment__item" data-diffnote-quote
         onClick={function () { setOpen(false); props.onQuote(); }}>{lib.m('ui.comment.menu_quote')}</button>

@@ -9,6 +9,7 @@ import { Composer } from '../thread/Composer.tsx';
 import type { GapMarker, PageFile } from '../lib.ts';
 import type { Row, Side } from '../model.ts';
 import type { RevisionCtx } from '../state/contexts.ts';
+import { Icon } from '../icon.tsx';
 
 // What stands for the lines a diff leaves out: buttons to show some of them
 // (next to the hunk above, next to the hunk below) or all.
@@ -37,8 +38,8 @@ function Expander(props: ExpanderProps) {
     return <div class="diffnote-expand"><span class="diffnote-expand__label">{lib.mf('ui.expand.left_label', { n: String(m.left) })}</span>{m.x && !m.embedded && !transport && <span class="diffnote-expand__note">{lib.m('ui.expand.not_embedded_note')}</span>}</div>;
   }
   return <div class="diffnote-expand">
-    {m.left > step && m.prev && <button type="button" class="diffnote-expand__button" data-diffnote-expand="top" disabled={busy} onClick={function () { go('top'); }}>{lib.mf('ui.expand.up_button', { n: String(step) })}</button>}
-    {m.left > step && m.next && <button type="button" class="diffnote-expand__button" data-diffnote-expand="bottom" disabled={busy} onClick={function () { go('bottom'); }}>{lib.mf('ui.expand.down_button', { n: String(step) })}</button>}
+    {m.left > step && m.prev && <button type="button" class="diffnote-expand__button" data-diffnote-expand="top" disabled={busy} onClick={function () { go('top'); }}><Icon name="up" />{' '}{lib.mf('ui.expand.up_button', { n: String(step) })}</button>}
+    {m.left > step && m.next && <button type="button" class="diffnote-expand__button" data-diffnote-expand="bottom" disabled={busy} onClick={function () { go('bottom'); }}><Icon name="down" />{' '}{lib.mf('ui.expand.down_button', { n: String(step) })}</button>}
     <button type="button" class="diffnote-expand__button diffnote-expand__all" data-diffnote-expand="all" disabled={busy} onClick={function () { go('all'); }}>{lib.mf('ui.expand.all_button', { n: String(m.left) })}</button>
   </div>;
 }

@@ -4,6 +4,7 @@ import { EMOJI } from '../emoji.ts';
 import { lib } from '../lib.ts';
 import type { CommentData } from '../model.ts';
 import type { Actions } from '../state/contexts.ts';
+import { Icon } from '../icon.tsx';
 
 // The reactions to a comment: what people reacted with and how many (the
 // ones of the name signed in are marked, and pressing one takes it back or
@@ -71,7 +72,7 @@ export function EmojiButton(props: EmojiButtonProps) {
   var pick = function (ch: string) { setOpen(false); setQuery(''); props.onPick(ch); };
   return <span class={'diffnote-emoji' + (props.side === 'left' ? ' diffnote-emoji--left' : '')} ref={box}>
     <button type="button" class={props.buttonClass || 'diffnote-attach diffnote-emoji__open'} data-diffnote-emoji-button={props.name || ''} aria-haspopup="true" aria-expanded={open}
-      title={props.title || lib.m('ui.emoji.default_title')} onClick={function () { setOpen(!open); }}>{props.label || '😀'}</button>
+      title={props.title || lib.m('ui.emoji.default_title')} onClick={function () { setOpen(!open); }}>{props.label || <Icon name="react" />}</button>
     {open && <div class="diffnote-emoji__panel" data-diffnote-emoji-panel>
       <input ref={input} type="search" class="diffnote-emoji__search" data-diffnote-emoji-search placeholder={lib.m('ui.emoji.search_placeholder')} value={query}
         onInput={function (e) { setQuery(e.currentTarget.value); }}
