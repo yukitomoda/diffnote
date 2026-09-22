@@ -279,8 +279,8 @@ export type TreeAnswer = Answer<{
   /** Said instead of the entries (nothing here), or beside them (a warning). */
   message: string | null;
   note: string | null;
-  /** Whether there are more than are listed. */
-  more: boolean;
+  /** How many more there are than are listed. */
+  more: number;
 }>;
 
 /** What is attached to a comment, after uploading it. */

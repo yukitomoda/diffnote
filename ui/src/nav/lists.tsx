@@ -4,8 +4,13 @@ import { EMOJI } from '../emoji.ts';
 import { lib } from '../lib.ts';
 import { htmlId } from '../dom.ts';
 import { LinksContext, ViewedContext } from '../state/contexts.ts';
+import type { RevisionCtx } from '../state/contexts.ts';
 
-export function FileList(props) {
+interface ListProps {
+  ctx: RevisionCtx;
+}
+
+export function FileList(props: ListProps) {
   var ctx = props.ctx;
   var viewed = useContext(ViewedContext);
   var links = useContext(LinksContext);
@@ -41,7 +46,7 @@ export function FileList(props) {
   </details>;
 }
 
-export function ThreadList(props) {
+export function ThreadList(props: ListProps) {
   var ctx = props.ctx;
   var links = useContext(LinksContext);
   var open = ctx.model.threads.filter(function (t) { return !t.resolved; }).length;

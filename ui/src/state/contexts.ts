@@ -11,6 +11,8 @@ import type {
   FileData,
   Hunk,
   OpenedFile,
+  Placement,
+  RevisionData,
   Settings,
   Side,
   ThreadData,
@@ -142,9 +144,35 @@ export interface View {
   setHide(on: boolean): void;
 }
 
+/**
+ * What every part of one revision is drawn from: the revision itself, where its
+ * threads are, and how it is being shown. Made by `Revision` and handed down as
+ * `ctx`.
+ */
+export interface RevisionCtx {
+  /** Which revision this is (0-based, as the model has them). */
+  rev: number;
+  model: ViewModel;
+  revision: RevisionData;
+  /** The files of the diff, without the ones only opened to look at. */
+  diffFiles: FileData[];
+  /** The thread ids in the order of the list, where each is, and each thread. */
+  order: string[];
+  placements: Record<string, Placement>;
+  byId: Record<string, ThreadData>;
+  hideResolved: boolean;
+  ignoreSpace: boolean;
+  layout: 'unified' | 'split';
+  /** What this revision is being compared against, where that is not the base. */
+  compare?: number | null;
+}
+
 export const ActionsContext = createContext<Actions | null>(null);
 export const ComposeContext = createContext<Compose | null>(null);
 export const OpenedContext = createContext<Opened | null>(null);
-export const ViewedContext = createContext<Viewed | null>(null);
-export const LinksContext = createContext<Links | null>(null);
-export const ViewContext = createContext<View | null>(null);
+// These three are given by the page whatever it is (an exported page marks
+// files as looked at and jumps about like any other); the default stands for
+// nothing and is never the one used.
+export const ViewedContext = createContext<Viewed>(null as unknown as Viewed);
+export const LinksContext = createContext<Links>(null as unknown as Links);
+export const ViewContext = createContext<View>(null as unknown as View);
