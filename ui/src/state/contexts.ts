@@ -13,6 +13,7 @@ import type {
   OpenedFile,
   Settings,
   Side,
+  ThreadData,
   ViewModel,
 } from '../model.ts';
 
@@ -23,6 +24,11 @@ import type {
  */
 export type ChangeAnswer = Answer<{
   model?: ViewModel;
+  /** The stamp the review had before the change, and the thread as it is now. */
+  before?: string;
+  thread_data?: ThreadData;
+  /** Whether the target has something new to take in. */
+  pending?: boolean;
   stamp?: string;
   editable?: string[];
   changed?: string[];

@@ -12,11 +12,11 @@ import { Revision } from './Revision.jsx';
 import { useWide } from './dom.ts';
 import { QuitButton } from './settings/Quit.jsx';
 import { SettingsScreen } from './settings/Screen.jsx';
-import { useCompose } from './state/compose.js';
+import { useCompose } from './state/compose.ts';
 import { ActionsContext, ComposeContext, LinksContext, OpenedContext, ViewContext, ViewedContext } from './state/contexts.ts';
 import { keep, kept } from './state/kept.ts';
-import { useOpened } from './state/opened.js';
-import { useReview } from './state/review.js';
+import { useOpened } from './state/opened.ts';
+import { useReview } from './state/review.ts';
 
 function App(props) {
   var review = useReview(props.model);

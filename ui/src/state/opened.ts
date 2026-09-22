@@ -1,26 +1,28 @@
 // Files opened to look at, which are not in the model.
 import { useMemo, useRef, useState } from 'preact/hooks';
-import { transport } from '../transport.ts';
+import { server } from '../transport.ts';
+import type { Hunk, OpenedFile } from '../model.ts';
+import type { Opened } from './contexts.ts';
 import { htmlId } from '../dom.ts';
 
 // The files opened to look at, per revision, and the lines of each read so
 // far. Kept here, not in the model: nothing is recorded by opening one.
-export function useOpened(interactive) {
-  var _ = useState({});
+export function useOpened(interactive: boolean): Opened | null {
+  var _ = useState<Record<number, OpenedFile[]>>({});
   var byRev = _[0];
   var setByRev = _[1];
   var ref = useRef(byRev);
   ref.current = byRev;
-  return useMemo(function () {
+  return useMemo(function (): Opened | null {
     if (!interactive) return null;
-    var update = function (rev, fn) {
+    var update = function (rev: number, fn: (list: OpenedFile[]) => OpenedFile[]) {
       setByRev(function (cur) {
         var next = Object.assign({}, cur);
         next[rev] = fn(cur[rev] || []);
         return next;
       });
     };
-    var show = function (rev, path) {
+    var show = function (rev: number, path: string) {
       var el = document.getElementById('r' + rev + '-file-' + htmlId(path));
       if (!el) return;
       var d = el.querySelector('details');
@@ -35,7 +37,7 @@ export function useOpened(interactive) {
           show(rev, path);
           return Promise.resolve({ ok: true });
         }
-        return transport.get('/api/files/' + rev + '/open?json=1&path=' + encodeURIComponent(path)).then(function (res) {
+        return server().get<{ file: OpenedFile }>('/api/files/' + rev + '/open?json=1&path=' + encodeURIComponent(path)).then(function (res) {
           if (!res.ok) return res;
           update(rev, function (list) { return list.concat([res.file]); });
           setTimeout(function () { show(rev, path); }, 0);
@@ -48,7 +50,7 @@ export function useOpened(interactive) {
       more: function (rev, path) {
         var file = (ref.current[rev] || []).filter(function (f) { return f.path === path; })[0];
         if (!file || !file.next) return Promise.resolve({ ok: true });
-        return transport.get('/api/files/' + rev + '/more?json=1&path=' + encodeURIComponent(path) + '&from=' + file.next).then(function (res) {
+        return server().get<{ hunk: Hunk; next: number | null }>('/api/files/' + rev + '/more?json=1&path=' + encodeURIComponent(path) + '&from=' + file.next).then(function (res) {
           if (res.ok) {
             update(rev, function (list) {
               return list.map(function (f) {

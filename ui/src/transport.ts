@@ -22,3 +22,12 @@ export let transport: Transport | null = null;
 export function setTransport(api: Transport): void {
   transport = api;
 }
+
+/**
+ * The server, where the page has one. Only asked for down a path that has
+ * already found that the page is the served one (`model.interactive`).
+ */
+export function server(): Transport {
+  if (!transport) throw new Error('diffnote: this page has no server');
+  return transport;
+}

@@ -1,19 +1,20 @@
 // Choosing lines, and the box for a new thread.
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import type { Actions, Compose, Scope, Selection } from './contexts.ts';
 import { interact } from '../interact.js';
 import { lib } from '../lib.ts';
 
 // Lines being chosen (pressing a line number, dragging, Shift+click), or a
 // box open for a file or the review, and what is written in it. `null` when
 // the page can't change the review.
-export function useCompose(actions, current) {
-  var _s = useState(null);
+export function useCompose(actions: Actions | null, current: string): Compose | null {
+  var _s = useState<Selection | null>(null);
   var sel = _s[0];
   var setSel = _s[1];
   var _g = useState(false);
   var selecting = _g[0];
   var setSelecting = _g[1];
-  var _o = useState(null);
+  var _o = useState<Scope | null>(null);
   var scope = _o[0];
   var setScope = _o[1];
   var _d = useState('');
@@ -40,7 +41,7 @@ export function useCompose(actions, current) {
       document.body.classList.remove('is-selecting');
       setSelecting(false);
     };
-    var key = function (e) {
+    var key = function (e: KeyboardEvent) {
       if (e.key === 'Escape') close();
     };
     document.addEventListener('mouseup', up);
@@ -53,7 +54,7 @@ export function useCompose(actions, current) {
   // Another revision: what was open belonged to the one left.
   useEffect(close, [current]);
 
-  return useMemo(function () {
+  return useMemo(function (): Compose | null {
     if (!actions) return null;
     return {
       sel: sel, selecting: selecting, scope: scope, draft: draft, pending: pending, error: error,
