@@ -725,3 +725,47 @@ class IgnoreWhitespace(BrowserCase):
         self.assertTrue(b.wait_exists("table.diffnote-diff--split"))
         b.click("[data-diffnote-ignore-space]")
         self.assertTrue(b.wait("document.querySelectorAll('td.diffnote-cell--removed.diffnote-line__content').length === 1"))
+
+
+class ViewedFilesAndTheList(BrowserCase):
+    """A file marked as looked at is not in the page at all: the list must not
+    go on showing it as one of the files on screen."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        repo = os.path.join(cls.root, "two")
+        os.makedirs(repo)
+        git(repo, "init", "-q", "-b", "main")
+        write(repo, "a.txt", "one\n")
+        write(repo, "b.txt", "one\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "c1")
+        git(repo, "tag", "c1")
+        write(repo, "a.txt", "two\n")
+        write(repo, "b.txt", "two\n")
+        git(repo, "commit", "-q", "-am", "c2")
+        git(repo, "tag", "c2")
+        review = os.path.join(cls.root, "two.diffnote")
+        harness.set_user_author("reviewer")
+        out = diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo, comments=[("+two", "見ました")])
+        assert out.returncode == 0, out.stdout + out.stderr
+        html = os.path.join(cls.root, "two.html")
+        assert diffnote("export", "-f", review, html).returncode == 0
+        cls.url = pathlib.Path(html).as_uri()
+
+    def test_one_that_has_gone_is_not_left_marked_as_on_screen(self):
+        b = self.browser
+        b.open(self.url)
+        link = lambda path: json.dumps(f"{CUR} .diffnote-filelist a[data-diffnote-file-link='{path}']")
+        section = lambda path: json.dumps(f"{CUR} section.diffnote-file[data-diffnote-file='{path}']")
+        b.click(f"{CUR} section.diffnote-file[data-diffnote-file='a.txt'] [data-diffnote-viewed]")
+        self.assertTrue(b.wait(f"!document.querySelector({section('a.txt')})"))
+        # As if the observer that watches the files never got to say that this
+        # one had gone (it is disconnected as the page draws itself again).
+        b.js(f"document.querySelector({link('a.txt')}).classList.add('is-visible')")
+        # Drawing the list again rebuilds the marks from what is in the page.
+        b.click(f"{CUR} section.diffnote-file[data-diffnote-file='b.txt'] [data-diffnote-viewed]")
+        self.assertTrue(b.wait(f"!document.querySelector({section('b.txt')})"))
+        self.assertTrue(b.wait(f"!document.querySelector({link('a.txt')}).classList.contains('is-visible')"),
+                        "a file that is not in the page is not one of the files on screen")

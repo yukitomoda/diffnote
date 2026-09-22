@@ -1568,6 +1568,10 @@
       var links = {};
       document.querySelectorAll('#rev-' + rev + ' .diffnote-filelist a').forEach(function (a) {
         links[(a.getAttribute('href') || '').slice(1)] = a;
+        // Marked from nothing but what is observed below: a file that has
+        // just been marked as looked at is no longer in the page at all, and
+        // would otherwise keep the mark it had when it went.
+        a.classList.remove('is-visible');
       });
       var io = new IntersectionObserver(function (entries) {
         entries.forEach(function (en) {
