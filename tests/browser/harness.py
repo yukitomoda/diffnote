@@ -161,13 +161,39 @@ class Cdp:
         self.call("Input.dispatchKeyEvent", type="keyDown", key=key, code=code, windowsVirtualKeyCode=vk)
 
 
+# How Chrome is started. Beyond the headless basics, these are all about a
+# page that nobody is looking at: Chrome would otherwise treat one as
+# backgrounded and slow its timers down -- or stop them -- which is exactly
+# what a test that waits for something to happen cannot have. (Tests have been
+# seen waiting for something the page was never going to get round to.)
+CHROME_FLAGS = [
+    "--headless=new",
+    "--no-sandbox",
+    "--disable-gpu",
+    # Shared memory is small in some containers; Chrome falls over without it.
+    "--disable-dev-shm-usage",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+    # A page that changes the address often (which these do) can be throttled.
+    "--disable-ipc-flooding-protection",
+    # Nothing to set up: the profile is thrown away anyway.
+    "--no-first-run",
+    "--disable-extensions",
+]
+# (`--no-default-browser-check` is deliberately not here: with it, a drag over
+# the diff stops selecting anything, and the test that copies what was dragged
+# over fails every time. Whatever it does, it is not worth finding out for a
+# profile that lives for one test class.)
+
+
 class Browser:
     """A headless Chrome with one page, and helpers to look at it."""
 
     def __init__(self):
         self.profile = tempfile.mkdtemp(prefix="dn-chrome-")
         self.proc = subprocess.Popen(
-            [find_chrome(), "--headless=new", "--no-sandbox", "--disable-gpu", "--remote-debugging-port=0",
+            [find_chrome(), *CHROME_FLAGS, "--remote-debugging-port=0",
              f"--user-data-dir={self.profile}", "--window-size=1500,900", "about:blank"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         port_file = os.path.join(self.profile, "DevToolsActivePort")
