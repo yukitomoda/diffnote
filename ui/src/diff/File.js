@@ -1,10 +1,10 @@
 // One file of the diff, open or folded away.
 import { useContext, useMemo, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.js';
-import { transport } from '../transport.js';
+import { transport } from '../transport.ts';
 import { DiffTable, SplitTable } from './tables.js';
-import { htmlId } from '../dom.js';
-import { html } from '../html.js';
+import { htmlId } from '../dom.ts';
+import { html } from '../html.ts';
 import { ComposeContext, OpenedContext, ViewedContext } from '../state/contexts.js';
 import { Card } from '../thread/Card.js';
 import { Composer } from '../thread/Composer.js';

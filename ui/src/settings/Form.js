@@ -1,7 +1,7 @@
 // 設定: what is saved in the review itself.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.js';
-import { html } from '../html.js';
+import { html } from '../html.ts';
 
 // 設定: the review's settings, as they are kept in the bundle. Changed here
 // and saved together: nothing is kept until 保存.

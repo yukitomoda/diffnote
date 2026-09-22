@@ -2,7 +2,7 @@
 import { h } from 'preact';
 import { useMemo, useState } from 'preact/hooks';
 import { lib } from '../lib.js';
-import { html } from '../html.js';
+import { html } from '../html.ts';
 
 // 添付: what the comments have attached, and what uses it. Unused ones are
 // dropped at 終了 anyway; this is where to see them, save one, or take one

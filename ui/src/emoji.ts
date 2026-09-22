@@ -2,7 +2,10 @@
 // react with. `[emoji, code, words to find it by]` (the code as in GitHub's
 // `:+1:`; the words are Japanese, and the code is searched too). The first
 // eight are the ones offered at once for a reaction. Add to it here.
-export const EMOJI = [
+/** One emoji: itself, its `:code:`, and the words it is found by. */
+export type EmojiEntry = [emoji: string, code: string, words: string];
+
+export const EMOJI: EmojiEntry[] = [
   ['👍', '+1', 'いいね 賛成 ok 承認'],
   ['👎', '-1', 'だめ 反対 否定'],
   ['😄', 'smile', 'うれしい 笑顔 笑'],

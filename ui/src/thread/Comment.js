@@ -1,8 +1,8 @@
 // One comment: its text, who wrote it, and what can be done to it.
 import { useContext, useEffect, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.js';
-import { useAutoGrow } from '../dom.js';
-import { html } from '../html.js';
+import { useAutoGrow } from '../dom.ts';
+import { html } from '../html.ts';
 import { markdown } from '../markdown.js';
 import { LinksContext } from '../state/contexts.js';
 import { Reactions } from './Reactions.js';

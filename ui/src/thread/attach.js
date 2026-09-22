@@ -1,8 +1,8 @@
 // Putting a picture or a file in a comment: the buttons, and what they upload.
 import { useContext, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.js';
-import { transport } from '../transport.js';
-import { html } from '../html.js';
+import { transport } from '../transport.ts';
+import { html } from '../html.ts';
 import { LinksContext } from '../state/contexts.js';
 import { EmojiButton } from './Reactions.js';
 

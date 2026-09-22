@@ -1,8 +1,8 @@
 // The emoji on a comment, and the table to pick one from.
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { EMOJI } from '../emoji.js';
+import { EMOJI } from '../emoji.ts';
 import { lib } from '../lib.js';
-import { html } from '../html.js';
+import { html } from '../html.ts';
 
 // The reactions to a comment: what people reacted with and how many (the
 // ones of the name signed in are marked, and pressing one takes it back or

@@ -1,6 +1,6 @@
 // 全般: what the review is, and what can be done with the whole of it.
 import { lib } from '../lib.js';
-import { html } from '../html.js';
+import { html } from '../html.ts';
 
 // 全般: what pressing 最新を取り込む/ダウンロード/エクスポート did before this
 // was a screen of its own -- bundle-wide operations, not something kept.

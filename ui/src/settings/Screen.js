@@ -1,7 +1,7 @@
 // The screen behind the title: one of the panes below, with the list of them.
 import { useEffect } from 'preact/hooks';
 import { lib } from '../lib.js';
-import { html } from '../html.js';
+import { html } from '../html.ts';
 import { AttachmentsPane } from './Attachments.js';
 import { SettingsFormPane } from './Form.js';
 import { GeneralPane } from './General.js';

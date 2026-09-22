@@ -1,6 +1,6 @@
 // Who the comments are written by, and the way to change it.
 import { lib } from './lib.js';
-import { html } from './html.js';
+import { html } from './html.ts';
 
 // The name comments are written under, at the foot of the side, like the
 // user who is signed in. Pressing it opens the user settings screen (like

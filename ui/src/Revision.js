@@ -4,7 +4,7 @@ import { lib } from './lib.js';
 import { UserChip } from './UserChip.js';
 import { ViewMenu } from './ViewMenu.js';
 import { File } from './diff/File.js';
-import { html } from './html.js';
+import { html } from './html.ts';
 import { Tree } from './nav/Tree.js';
 import { FileList, ThreadList } from './nav/lists.js';
 import { OpenedContext, ViewedContext } from './state/contexts.js';

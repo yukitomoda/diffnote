@@ -2,8 +2,8 @@
 import { Fragment } from 'preact';
 import { useContext, useEffect, useState } from 'preact/hooks';
 import { lib } from '../lib.js';
-import { transport } from '../transport.js';
-import { html } from '../html.js';
+import { transport } from '../transport.ts';
+import { html } from '../html.ts';
 import { OpenedContext } from '../state/contexts.js';
 
 // The entries of a directory of the files that could be opened (read from

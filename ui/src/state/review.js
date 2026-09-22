@@ -1,6 +1,6 @@
 // The review the page shows, and what can be done to it.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { transport } from '../transport.js';
+import { transport } from '../transport.ts';
 
 // The model, and (on the served page) the changes that can be made to it.
 // A change is shown at once and put right by the server's answer. The answer

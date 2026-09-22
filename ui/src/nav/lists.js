@@ -1,9 +1,9 @@
 // The lists beside the diff: the files, and the threads.
 import { useContext } from 'preact/hooks';
-import { EMOJI } from '../emoji.js';
+import { EMOJI } from '../emoji.ts';
 import { lib } from '../lib.js';
-import { htmlId } from '../dom.js';
-import { html } from '../html.js';
+import { htmlId } from '../dom.ts';
+import { html } from '../html.ts';
 import { LinksContext, ViewedContext } from '../state/contexts.js';
 
 export function FileList(props) {

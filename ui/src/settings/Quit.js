@@ -2,9 +2,9 @@
 import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.js';
-import { transport } from '../transport.js';
-import { html } from '../html.js';
-import { kept } from '../state/kept.js';
+import { transport } from '../transport.ts';
+import { html } from '../html.ts';
+import { kept } from '../state/kept.ts';
 
 // 「終了」: the way to finish, big; and, behind the arrow, the way not to
 // keep what was done in this session (asked again before it is done).

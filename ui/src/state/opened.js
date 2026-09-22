@@ -1,7 +1,7 @@
 // Files opened to look at, which are not in the model.
 import { useMemo, useRef, useState } from 'preact/hooks';
-import { transport } from '../transport.js';
-import { htmlId } from '../dom.js';
+import { transport } from '../transport.ts';
+import { htmlId } from '../dom.ts';
 
 // The files opened to look at, per revision, and the lines of each read so
 // far. Kept here, not in the model: nothing is recorded by opening one.

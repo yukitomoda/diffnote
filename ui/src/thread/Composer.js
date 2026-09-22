@@ -1,8 +1,8 @@
 // The box a new thread is written in.
 import { useContext, useEffect, useRef } from 'preact/hooks';
 import { lib } from '../lib.js';
-import { useAutoGrow } from '../dom.js';
-import { html } from '../html.js';
+import { useAutoGrow } from '../dom.ts';
+import { html } from '../html.ts';
 import { ComposeContext } from '../state/contexts.js';
 import { useAttach } from './attach.js';
 

@@ -34,11 +34,11 @@ test('the page is made of elements, never of HTML text', () => {
   }
 });
 
-test('only api.js talks to the server', () => {
+test('only api.ts talks to the server', () => {
   // So that leaving it out of a bundle (entry-export.js) is all it takes for a
   // page to make no requests at all.
   for (const [name, body] of sources()) {
-    if (name === 'api.js') continue;
+    if (name === 'api.ts') continue;
     for (const banned of ['fetch(', 'XMLHttpRequest', 'new Worker', 'serviceWorker']) {
       assert.ok(!body.includes(banned), `${name} uses ${banned}`);
     }
