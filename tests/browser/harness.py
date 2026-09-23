@@ -295,13 +295,33 @@ class Browser:
         self.cdp.mouse("mouseReleased", x, y, 0, modifiers)
 
     def click_at(self, selector, modifiers=0):
-        self.press(selector, modifiers)
-        self.release(selector, modifiers)
+        """Presses and lets go at one point.
 
-    def drag(self, first, last):
+        Measured once: pressing can move what was pressed (choosing a line
+        opens a box under it, which pushes the rest of the table down), and
+        letting go at a freshly measured point would be letting go somewhere
+        else -- which is a drag, not a click.
+        """
+        x, y = self.center(selector)
+        self.cdp.mouse("mouseMoved", x, y)
+        self.cdp.mouse("mousePressed", x, y, 1, modifiers)
+        self.cdp.mouse("mouseReleased", x, y, 0, modifiers)
+
+    def drag(self, first, last, steps=8):
+        """Presses on `first`, moves to `last` with the button held, and lets
+        go there.
+
+        The move is made in steps, as a hand makes it. One jump from the
+        press to the release leaves some builds of Chrome with no selection
+        at all (the browser tests' drag over a diff has never selected
+        anything on the CI runner, while passing here): what a drag is, to
+        a browser, is a press followed by movement.
+        """
         x, y = self.press(first)
         x2, y2 = self.center(last)
-        self.cdp.mouse("mouseMoved", x2, y2, 1)
+        for i in range(1, steps + 1):
+            self.cdp.mouse("mouseMoved", round(x + (x2 - x) * i / steps),
+                           round(y + (y2 - y) * i / steps), 1)
         self.release(last)
 
     def hover(self, selector):
