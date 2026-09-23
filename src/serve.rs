@@ -2797,6 +2797,29 @@ mod tests {
     ];
 
     #[test]
+    fn a_safe_svg_is_taken_and_sent_as_an_svg_that_can_do_nothing() {
+        let f = fixture();
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>"#;
+        let told = json(&f.send_bytes("/api/images", svg));
+        assert_eq!(told["type"], "image/svg+xml");
+        let got = f.request(
+            "GET",
+            &format!("/api/images/{}", told["id"].as_str().unwrap()),
+            &[],
+            "",
+        );
+        assert_eq!(got.status, 200);
+        assert_eq!(got.content_type, "image/svg+xml");
+        assert_eq!(got.body, svg);
+        assert!(
+            got.headers
+                .iter()
+                .any(|(n, v)| n == "Content-Security-Policy" && v.starts_with("sandbox")),
+            "even a safe one runs nothing if opened by itself"
+        );
+    }
+
+    #[test]
     fn an_image_is_put_in_the_review_shown_to_the_page_and_let_go_of_if_no_comment_has_it() {
         let f = fixture();
         // Refused: not an image, an SVG that runs.

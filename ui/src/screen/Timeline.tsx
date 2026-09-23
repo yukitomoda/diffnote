@@ -9,6 +9,7 @@ import { Icon } from '../icon.tsx';
 import type { IconName } from '../icon.tsx';
 import { lib } from '../lib.ts';
 import { openRevision } from '../state/route.ts';
+import { daysOf } from './days.ts';
 import type { CommentData, Placement, TimelineCommit, TimelineEntry, ViewModel } from '../model.ts';
 
 export interface TimelineProps {
@@ -16,42 +17,6 @@ export interface TimelineProps {
   /** Going to the comment an entry is about, and where that comment is. */
   onShow(thread: string): void;
   placementOf(thread: string): Placement | undefined;
-}
-
-/** A run of entries on one day, with the entries of a run by one author on
- * one kind of thing folded into a single line. */
-interface Day {
-  day: string;
-  runs: TimelineEntry[][];
-}
-
-/**
- * The days, and within each the runs to draw -- newest first, which is not
- * the order the model carries them in (that is the log's own, oldest first).
- * The commits a revision brought stay in the order they were made: the
- * stream is read from the top, a series of commits from its beginning.
- */
-function daysOf(entries: TimelineEntry[]): Day[] {
-  var days: Day[] = [];
-  entries.slice().reverse().forEach(function (entry) {
-    var day = lib.formatDay(entry.at);
-    var last = days[days.length - 1];
-    if (!last || last.day !== day) {
-      last = { day: day, runs: [] };
-      days.push(last);
-    }
-    // Comments by one author, one after another, are one line with a count:
-    // an `edit` session writes several at once, and a day of them would
-    // otherwise be a wall.
-    var run = last.runs[last.runs.length - 1];
-    var joins = run
-      && entry.kind === 'comment'
-      && run[0].kind === 'comment'
-      && run[0].author === entry.author;
-    if (joins) run.push(entry);
-    else last.runs.push([entry]);
-  });
-  return days;
 }
 
 var MARK: Record<TimelineEntry['kind'], IconName> = {

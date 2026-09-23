@@ -73,6 +73,8 @@ struct Served {
     child: std::process::Child,
     port: u16,
     cookie: String,
+    /// What it said before it was ready (what it recorded, notices).
+    said: String,
 }
 
 /// Where a comment goes, as the page says it.
@@ -251,9 +253,25 @@ impl Served {
         );
     }
 
+    /// The page's 「最新を取り込む」: whether something was added.
+    fn refresh(&self) -> bool {
+        self.api("/api/refresh", Some(serde_json::json!({})))["added"]
+            .as_bool()
+            .unwrap()
+    }
+
     /// Ends the server the way the page's button does.
-    fn stop(mut self) {
-        let _ = http(self.port, "POST", "/api/shutdown", &self.cookie, Some("{}"));
+    fn stop(self) {
+        self.shut_down("{}");
+    }
+
+    /// 「保存せずに終了」: everything this server did is taken back.
+    fn discard(self) {
+        self.shut_down(r#"{"discard":true}"#);
+    }
+
+    fn shut_down(mut self, body: &str) {
+        let _ = http(self.port, "POST", "/api/shutdown", &self.cookie, Some(body));
         for _ in 0..50 {
             if matches!(self.child.try_wait(), Ok(Some(_))) {
                 return;
@@ -288,15 +306,17 @@ impl Env {
             .spawn()
             .expect("diffnote serve starts");
         let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+        let mut said = String::new();
         let url = loop {
             match lines.next() {
                 Some(Ok(line)) => {
                     if let Some(at) = line.find("http://127.0.0.1:") {
                         break line[at..].trim().to_string();
                     }
+                    said.push_str(&line);
+                    said.push('\n');
                 }
                 _ => {
-                    let mut said = String::new();
                     if let Some(mut err) = child.stderr.take() {
                         let _ = err.read_to_string(&mut said);
                     }
@@ -316,6 +336,7 @@ impl Env {
             child,
             port,
             cookie: cookie.split(';').next().unwrap().to_string(),
+            said,
         }
     }
 
@@ -1927,4 +1948,123 @@ fn a_comment_on_a_whole_file_is_kept_with_the_file_and_placed_on_it() {
         assert_eq!(placement["kind"], "file", "{placement}");
         assert_eq!(placement["file"], "README.md");
     }
+}
+
+#[test]
+fn serve_takes_in_later_commits_when_asked_but_a_named_commit_does_not_move() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let review_arg = review.to_str().unwrap();
+    env.ok(&repo, &["init", "-f", review_arg, "c2"]);
+    let served = env.serve(&repo, &review, &[]);
+    assert!(
+        served.said.contains("差分を記録しました"),
+        "{}",
+        served.said
+    );
+    assert_eq!(git_sources(&review).len(), 2);
+    // A commit made while it runs: taken in once, when asked.
+    std::fs::write(repo.join("calc.txt"), "a\nB\nc\nd\ne\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c4"]);
+    assert_eq!(git_sources(&review).len(), 2, "not before it is asked for");
+    assert!(served.refresh());
+    let sources = git_sources(&review);
+    assert_eq!(sources.len(), 3);
+    assert_eq!(sources[2].head, commit_id(&repo, "HEAD"));
+    assert!(!served.refresh(), "and only once");
+    served.stop();
+
+    // A commit named on the command line stays what is reviewed.
+    let served = env.serve(&repo, &review, &["c3"]);
+    std::fs::write(repo.join("calc.txt"), "x\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c5"]);
+    assert!(!served.refresh());
+    served.stop();
+    assert_eq!(git_sources(&review).len(), 3);
+}
+
+#[test]
+fn quitting_without_saving_takes_back_what_serve_added_and_a_bundle_it_made() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    env.ok(&repo, &["init", "-f", review.to_str().unwrap(), "c1"]);
+    let before = std::fs::read(&review).unwrap();
+    let served = env.serve(&repo, &review, &[]);
+    served.note(&Note::Global("消える"));
+    assert_ne!(std::fs::read(&review).unwrap(), before);
+    served.discard();
+    assert_eq!(
+        std::fs::read(&review).unwrap(),
+        before,
+        "as if serve had not run"
+    );
+
+    let made = env.path("made.diffnote");
+    let served = env.serve(&repo, &made, &["--base", "c1", "c2"]);
+    assert!(made.exists());
+    served.discard();
+    assert!(!made.exists(), "a bundle serve made goes with it");
+}
+
+#[test]
+fn serve_says_when_there_is_nothing_yet_and_takes_a_directory_only_when_named() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    env.ok(&repo, &["init", "-f", review.to_str().unwrap(), "HEAD"]);
+    let served = env.serve(&repo, &review, &[]);
+    assert!(
+        served.said.contains("差分がまだありません"),
+        "{}",
+        served.said
+    );
+    served.stop();
+    assert_eq!(git_sources(&review).len(), 1, "nothing was added");
+
+    let dir = env.path("project");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    let review = env.path("dir.diffnote");
+    env.ok(&dir, &["init", "-f", review.to_str().unwrap()]);
+    std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+    // `.` may be anywhere: with no directory named, none is taken in.
+    env.serve(&dir, &review, &[]).stop();
+    assert_eq!(bundle::load(&review).unwrap().revisions().count(), 1);
+    let served = env.serve(&dir, &review, &["."]);
+    assert!(
+        served.said.contains("ディレクトリの変更を記録しました"),
+        "{}",
+        served.said
+    );
+    served.stop();
+    assert_eq!(bundle::load(&review).unwrap().revisions().count(), 2);
+}
+
+#[test]
+fn reopen_adds_to_the_last_revision_and_never_looks_at_a_later_commit() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    env.ok(&repo, &["init", "-f", review.to_str().unwrap(), "c2"]);
+    let threads = env.review(&repo, &review, &[], &[Note::Line("calc.txt", "d", "d は?")]);
+    std::fs::write(repo.join("calc.txt"), "x\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c4"]);
+    let served = env.serve(&repo, &review, &["--reopen"]);
+    assert!(
+        !served.said.contains("差分を記録しました"),
+        "{}",
+        served.said
+    );
+    served.reply(&threads[0], "了解です");
+    let model = served.api("/api/model", None);
+    assert!(
+        model["model"].get("refreshable").is_none(),
+        "nothing to take in, so no button for it"
+    );
+    served.stop();
+    let loaded = bundle::load(&review).unwrap();
+    assert_eq!(loaded.revisions().count(), 2);
+    assert_eq!(comment_bodies(&loaded), ["d は?", "了解です"]);
 }

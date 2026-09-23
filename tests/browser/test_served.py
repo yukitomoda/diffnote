@@ -2,7 +2,6 @@
 resolving, the version check, shutting down."""
 import unittest
 
-import base64
 import json
 import time
 
@@ -11,8 +10,6 @@ from harness import BrowserCase, Served, add_settings, entries, make_calc_review
 import os
 import pathlib
 import shutil
-import subprocess
-import sys
 
 CUR = ".diffnote-revision.is-current"
 
@@ -993,9 +990,6 @@ class CompareWithAnEarlierRevision(ServedCase):
 
 
 PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-# The same picture with a byte after its end: a second attachment (they are
-# told apart by their bytes), the same to look at.
-PNG_1X1_TOO = base64.b64encode(base64.b64decode(PNG_1X1) + b"\0").decode()
 SVG_OK = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="blue"/></svg>'
 SVG_BAD = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)" width="8" height="8"></svg>'
 
@@ -1108,7 +1102,10 @@ class Images(ServedCase):
         self.assertIn("超えています", said)
         self.assertEqual([n for n in harness.zip_names(self.review) if n.startswith("attachments/")], [], "nothing was sent")
 
-    def test_an_svg_is_taken_only_if_nothing_in_it_runs(self):
+    def test_an_svg_that_runs_something_is_refused_on_the_page(self):
+        # Which SVGs are taken, and how they are sent, is the server's
+        # (`src/image.rs`, `src/serve.rs`); a picture arriving in a comment
+        # is `test_a_pasted_picture_is_put_in_the_review_and_shown_in_the_comment`.
         self.serve()
         b = self.b
         card = self.card("mul の型")
@@ -1117,28 +1114,6 @@ class Images(ServedCase):
         self.assertTrue(b.wait("!!document.querySelector('.is-failed[data-diffnote-attach-status]')"))
         self.assertIn("SVG", b.text("[data-diffnote-attach-status]"))
         self.assertNotIn("diffnote-image:", b.js(f"document.querySelector({json.dumps(box)}).value"))
-        self.paste(box, "ok.svg", "image/svg+xml", SVG_OK)
-        self.assertTrue(b.wait("document.querySelector('[data-diffnote-attach-status]').textContent.includes('画像を追加しました')"))
-        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
-        img = f"#{card} .diffnote-comment__body img.diffnote-image"
-        # Asked in two parts, so that a failure says which: the comment showing
-        # the picture at all, or the picture itself arriving.
-        self.assertTrue(b.wait_exists(img), "the comment shows the picture")
-        if not b.wait(f"document.querySelector({json.dumps(img)}).naturalWidth === 8"):
-            # This one has failed about one full run in four, always stuck
-            # rather than slow, and never on its own. Whatever it is, the next
-            # time it happens it can say so: what the picture's address is, how
-            # far it got, and what the server answers for it now.
-            print("\n-- picture:", b.js(
-                "(function(i){return i ? JSON.stringify({src: i.getAttribute('src'), complete: i.complete,"
-                " width: i.naturalWidth, alt: i.alt}) : 'no img'})(document.querySelector(%s))" % json.dumps(img)),
-                file=sys.stderr)
-            print("-- server says:", b.js(
-                "fetch(document.querySelector(%s).getAttribute('src'), {cache: 'reload'})"
-                ".then(function (r) { return r.status + ' ' + r.headers.get('content-type'); })"
-                ".catch(function (e) { return 'unreachable: ' + e; })" % json.dumps(img)), file=sys.stderr)
-        self.assertTrue(b.wait(f"document.querySelector({json.dumps(img)}).naturalWidth === 8"),
-                        "the picture is the one that was sent")
 
     def test_a_link_to_an_image_elsewhere_is_only_its_text(self):
         self.serve()
@@ -1285,14 +1260,14 @@ class Timeline(ServedCase):
         b.click("[data-diffnote-screen-nav='timeline']")
         self.assertTrue(b.wait_exists("[data-diffnote-timeline-pane]"))
 
-    def test_what_happened_is_listed_in_order_with_the_commits_each_revision_brought(self):
+    def test_the_entries_are_drawn_with_the_commits_each_revision_brought(self):
+        # What the entries are is the model's (`tests/cli.rs`); their order and
+        # folding into runs, `ui/src/test/days.test.js`. Here: that it is drawn.
         self.serve(self.timeline_review)
         b = self.b
         self.open_timeline()
         kinds = b.js("[...document.querySelectorAll('[data-diffnote-timeline]')].map(e => e.dataset.diffnoteTimeline)")
-        self.assertEqual(kinds[-2:], ["revision", "started"],
-                         "newest first, so the review being made is at the bottom")
-        self.assertEqual(kinds[0], "resolved", "and the last thing that happened is at the top")
+        self.assertEqual((kinds[0], kinds[-1]), ("resolved", "started"))
         self.assertIn("comments", kinds, "a run of comments by one person is one line")
         # The commits of the revision, with what they said folded away.
         self.assertEqual(b.count("[data-diffnote-commit]"), 1, "the one commit c1..c2 brought")
@@ -1374,17 +1349,15 @@ class AttachmentsScreen(ServedCase):
         self.write(box, f"見てください ![再現時の画面](diffnote-image:{shown}) と [ログ.zip](diffnote-file:{saved})")
         b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
         self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('img.diffnote-image')"))
+        # The order and the names are `ui/src/test/attached.test.js`; here,
+        # that the screen is drawn from what the review holds.
         self.open_attachments(3)
-        rows = self.rows()
-        self.assertEqual([r["id"] for r in rows][0], spare, "the one nothing uses comes first")
-        self.assertTrue(rows[0]["unused"])
-        self.assertIn("未使用", rows[0]["text"])
-        self.assertIn("(名前なし)", rows[0]["text"], "no comment names it")
-        self.assertFalse(rows[1]["unused"] or rows[2]["unused"])
-        by_id = {r["id"]: r for r in rows}
-        self.assertIn("再現時の画面", by_id[shown]["text"], "an image is called what the comment calls it")
+        by_id = {r["id"]: r for r in self.rows()}
+        self.assertTrue(by_id[spare]["unused"])
+        self.assertIn("未使用", by_id[spare]["text"])
+        self.assertFalse(by_id[shown]["unused"] or by_id[saved]["unused"])
+        self.assertIn("再現時の画面", by_id[shown]["text"])
         self.assertIn("image/png", by_id[shown]["text"])
-        self.assertIn("ログ.zip", by_id[saved]["text"])
         self.assertEqual(len(by_id[shown]["uses"]), 1)
         self.assertRegex(by_id[shown]["uses"][0], r"^\S+:\d", "a use says where that comment is")
         # An image is shown as itself; a download is offered for each.
@@ -1399,28 +1372,16 @@ class AttachmentsScreen(ServedCase):
         b = self.b
         card = self.card("mul の型")
         box = f"#{card} .diffnote-reply textarea"
-        # One attached from a file, and one out of the clipboard -- which
-        # Chrome calls `image.png` whatever it is a picture of, so the review
-        # is better off knowing nothing about that one.
+        # The page sends the file's name along; which names the review keeps
+        # (not a clipboard's `image.png`) is the server's (`src/serve.rs`).
         self.paste(box, "図 1.png", "image/png", PNG_1X1, base64=True)
-        self.assertTrue(b.wait("!!document.querySelector('[data-diffnote-attach-status]:not(.is-failed)')"))
-        self.paste(box, "image.png", "image/png", PNG_1X1_TOO, base64=True)
-        self.assertTrue(b.wait(f"(document.querySelector({json.dumps(box)}).value.match(/diffnote-image:/g) || []).length === 2"))
+        self.assertTrue(b.wait(f"document.querySelector({json.dumps(box)}).value.includes('diffnote-image:')"))
         b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
-        self.assertTrue(b.wait(f"document.getElementById({card!r}).querySelectorAll('img.diffnote-image').length === 2"))
-
-        self.open_attachments(2)
-        by_id = {r["id"]: r for r in self.rows()}
-        named = b.js("""[...document.querySelectorAll('[data-diffnote-attached]')].map(function (li) {
-          return [li.dataset.diffnoteAttached, li.querySelector('[data-diffnote-attached-download]').getAttribute('download')];
-        })""")
-        from_file = [id for id, name in named if name == "図 1.png"]
-        self.assertEqual(len(from_file), 1, f"it is saved under its own name: {named}")
-        self.assertIn("図 1.png", by_id[from_file[0]]["text"], "and listed under it")
-        pasted = [id for id, name in named if id != from_file[0]]
-        self.assertRegex(dict(named)[pasted[0]], r"^diffnote-[0-9a-f]{12}\.png$",
-                         "the pasted one never had a name worth keeping")
-        self.assertIn("画像", by_id[pasted[0]]["text"], "so it goes by what the comment calls it")
+        self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('img.diffnote-image')"))
+        self.open_attachments(1)
+        self.assertIn("図 1.png", self.rows()[0]["text"])
+        self.assertEqual(b.js("document.querySelector('[data-diffnote-attached-download]').getAttribute('download')"),
+                         "図 1.png")
 
     def test_an_image_can_be_looked_at_by_itself(self):
         # The thumbnail is 48px: the only way to tell what it is is to open it.
@@ -2038,48 +1999,8 @@ def git_short(repo, rev):
 
 
 class ServeAddsTheLatestDiff(ServedCase):
-    """`init` on a commit, more commits, then `serve`: the changes since are there to review."""
-
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        cls.repo = make_gaps_review(cls.root, name="since")[1]
-
-    def start(self):
-        self.review = os.path.join(self.fresh("review"), "since.diffnote")
-        out = harness.diffnote("init", "-f", self.review, "c1", cwd=self.repo)
-        assert out.returncode == 0, out.stdout + out.stderr
-        self.server = Served(self.review, cwd=self.repo, author="検証者")
-        self.addCleanup(self.server.stop)
-        self.b = self.browser
-        ready = "!!document.querySelector('.diffnote-file')"
-        self.b.open(self.server.url, ready=ready)
-        self.b.js("localStorage.setItem('diffnote-layout','unified')")
-        self.b.reload(ready=ready)
-
-    def test_the_commits_since_the_base_are_added_and_can_be_commented_on(self):
-        self.start()
-        b = self.b
-        self.assertTrue(any("差分を記録しました" in l for l in self.server.said), self.server.said)
-        self.assertEqual(entries(self.review), 3, "meta, the base, and the revision since")
-        self.assertTrue(b.wait_exists("section.diffnote-file[data-diffnote-file='long.txt']"))
-        b.js("document.querySelector('section.diffnote-file[data-diffnote-file=\"long.txt\"] details').open = true")
-        b.js("document.querySelector('section.diffnote-file[data-diffnote-file=\"long.txt\"] details').dispatchEvent(new Event('toggle'))")
-        self.assertTrue(b.wait_exists("tr[data-diffnote-new='20']"))
-        b.click_at("tr[data-diffnote-new='20'] .diffnote-line__gutter-new")
-        self.assertTrue(b.wait_exists(".diffnote-composer-row"))
-        self.write(".diffnote-composer-row textarea", "ここを見てください")
-        b.js("document.querySelector('.diffnote-composer-row .diffnote-compose').requestSubmit()")
-        self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row')"))
-        self.assertIn("long.txt:20", recorded(self.review))
-
-    def test_with_no_commit_since_the_base_it_says_there_is_nothing_to_review_yet(self):
-        review = os.path.join(self.fresh("review"), "none.diffnote")
-        assert harness.diffnote("init", "-f", review, "HEAD", cwd=self.repo).returncode == 0
-        server = Served(review, cwd=self.repo)
-        self.addCleanup(server.stop)
-        self.assertTrue(any("差分がまだありません" in n for n in server.notices), server.notices)
-        self.assertEqual(entries(review), 2, "nothing was added")
+    """A commit made while `serve` runs is told on the page and taken in by
+    its button. (What is recorded, and when, is in `tests/cli.rs`.)"""
 
     def open_page(self, server):
         self.server = server
@@ -2126,144 +2047,10 @@ class ServeAddsTheLatestDiff(ServedCase):
         self.assertTrue(b.wait("document.querySelector('[data-diffnote-pull-note]').textContent.includes('新しい変更はありません')"))
         self.assertEqual(b.js("document.querySelectorAll('[data-diffnote-revision-link]').length"), 2)
 
-    def test_a_named_commit_has_nothing_to_pull(self):
-        repo = make_gaps_review(self.root, name="named2")[1]
-        review = os.path.join(self.fresh("review"), "named2.diffnote")
-        assert harness.diffnote("init", "-f", review, "c1", cwd=repo).returncode == 0
-        self.open_page(Served(review, cwd=repo, extra=["c2"]))
-        harness.write(repo, "long.txt", "x\n")
-        harness.git(repo, "commit", "-q", "-am", "c3")
-        self.b.js("window.dispatchEvent(new Event('focus'))")
-        time.sleep(0.5)
-        self.assertFalse(self.b.exists("[data-diffnote-notice='pending']"))
-        self.b.click("[data-diffnote-screen-open]")
-        self.assertTrue(self.b.wait_exists("[data-diffnote-pull]"))
-        self.b.click("[data-diffnote-pull]")
-        self.assertTrue(self.b.wait("document.querySelector('[data-diffnote-pull-note]').textContent.includes('新しい変更はありません')"))
-
-    def discard_all(self):
-        b = self.b
-        b.click("[data-diffnote-quit-more]")
-        self.assertTrue(b.wait_exists("[data-diffnote-discard]"))
-        b.click("[data-diffnote-discard]")
-        self.assertTrue(b.wait_exists("[data-diffnote-discard-confirm]"))
-        b.click("[data-diffnote-discard-confirm]")
-        self.assertTrue(b.wait("!document.getElementById('app')"))
-
-    def test_quitting_without_saving_also_takes_back_the_difference_serve_added(self):
-        review = os.path.join(self.fresh("review"), "back.diffnote")
-        assert harness.diffnote("init", "-f", review, "c1", cwd=self.repo).returncode == 0
-        with open(review, "rb") as f:
-            before = f.read()
-        self.open_page(Served(review, cwd=self.repo))
-        self.assertGreater(entries(review), 2, "the difference was added")
-        self.discard_all()
-        with open(review, "rb") as f:
-            self.assertEqual(f.read(), before, "as if serve had not run")
-
-    def test_quitting_without_saving_removes_a_bundle_that_serve_made(self):
-        review = os.path.join(self.fresh("review"), "made.diffnote")
-        self.open_page(Served(review, cwd=self.repo, extra=["--base", "c1", "c2"]))
-        self.assertTrue(os.path.exists(review))
-        self.discard_all()
-        self.assertIn("削除しました", self.b.js("document.body.textContent"))
-        self.assertFalse(os.path.exists(review))
-
-    def test_a_base_and_a_target_make_the_bundle_if_there_is_none(self):
-        review = os.path.join(self.fresh("review"), "named.diffnote")
-        server = Served(review, cwd=self.repo, extra=["--base", "c1", "c2"])
-        self.open_page(server)
-        self.assertTrue(any("差分を記録しました" in l for l in server.said), server.said)
-        self.assertTrue(os.path.exists(review))
-        self.assertTrue(self.b.wait_exists("section.diffnote-file[data-diffnote-file='long.txt']"))
-        self.assertGreaterEqual(entries(review), 2)
-
-    def test_a_target_is_compared_with_the_base_of_the_bundle_and_not_added_twice(self):
-        review = os.path.join(self.fresh("review"), "based.diffnote")
-        assert harness.diffnote("init", "-f", review, "c1", cwd=self.repo).returncode == 0
-        server = Served(review, cwd=self.repo, extra=["c2"])
-        self.open_page(server)
-        added = entries(review)
-        self.assertEqual(added, 3, "meta, the base, and the target compared with it")
-        server.stop()
-        again = Served(review, cwd=self.repo, extra=["c2"])
-        self.addCleanup(again.stop)
-        self.assertFalse(any("差分を記録しました" in l for l in again.said), again.said)
-        self.assertEqual(entries(review), added)
-
-    def test_a_different_base_or_a_range_stops_serve_before_it_starts(self):
-        review = os.path.join(self.fresh("review"), "bad.diffnote")
-        assert harness.diffnote("init", "-f", review, "c1", cwd=self.repo).returncode == 0
-        run = lambda *args: subprocess.run([harness.BIN, "serve", "-f", review, *args],
-                                           cwd=self.repo, capture_output=True, text=True, encoding="utf-8", timeout=20)
-        other = run("--base", "c2", "HEAD")
-        self.assertNotEqual(other.returncode, 0)
-        self.assertIn("ベース", other.stderr)
-        ranged = run("c1..c2")
-        self.assertNotEqual(ranged.returncode, 0)
-        self.assertIn("範囲", ranged.stderr)
-        self.assertEqual(entries(review), 2, "nothing was added")
-
-    def test_a_directory_bundle_takes_the_directory_named_and_nothing_when_none_is(self):
-        root = self.fresh("plain")
-        with open(os.path.join(root, "a.txt"), "w") as f:
-            f.write("one\ntwo\nthree\n")
-        review = os.path.join(self.fresh("review"), "files.diffnote")
-        assert harness.diffnote("init", "-f", review, cwd=root).returncode == 0
-        with open(os.path.join(root, "a.txt"), "w") as f:
-            f.write("one\nTWO\nthree\n")
-        # No directory named: nothing is added (the directory is not known).
-        quiet = Served(review, cwd=root)
-        self.assertFalse(any("差分を記録しました" in l or "変更を記録しました" in l for l in quiet.said), quiet.said)
-        quiet.stop()
-        self.assertEqual(entries(review), 2)
-        server = Served(review, cwd=root, extra=["."])
-        self.open_page(server)
-        self.assertTrue(any("ディレクトリの変更を記録しました" in l for l in server.said), server.said)
-        self.assertEqual(entries(review), 3)
-        self.assertTrue(self.b.wait_exists("section.diffnote-file[data-diffnote-file='a.txt']"))
-
-    def test_two_directories_can_be_reviewed_in_one_step(self):
-        old, new = self.fresh("old"), self.fresh("new")
-        with open(os.path.join(old, "a.txt"), "w") as f:
-            f.write("one\ntwo\nthree\n")
-        with open(os.path.join(new, "a.txt"), "w") as f:
-            f.write("one\nTWO\nthree\n")
-        review = os.path.join(self.fresh("review"), "dirs.diffnote")
-        server = Served(review, cwd=new, extra=["--files", "--base", old, "."])
-        self.open_page(server)
-        self.assertTrue(any("ディレクトリの変更を記録しました" in l for l in server.said), server.said)
-        self.assertEqual(entries(review), 3, "meta, the base, and the directory compared with it")
-        self.assertTrue(self.b.wait_exists("section.diffnote-file[data-diffnote-file='a.txt']"))
-        # Nothing to compare: no bundle is left behind.
-        same = self.fresh("same")
-        with open(os.path.join(same, "a.txt"), "w") as f:
-            f.write("one\ntwo\nthree\n")
-        lone = os.path.join(self.fresh("review"), "none.diffnote")
-        out = subprocess.run([harness.BIN, "serve", "-f", lone, "--files", "--base", old, "."],
-                             cwd=same, capture_output=True, text=True, encoding="utf-8", timeout=20)
-        self.assertNotEqual(out.returncode, 0)
-        self.assertIn("差分がありません", out.stderr)
-        self.assertFalse(os.path.exists(lone))
-
-    def test_serving_again_with_nothing_new_adds_nothing(self):
-        self.start()
-        self.server.stop()
-        before = entries(self.review)
-        again = Served(self.review, cwd=self.repo, author="検証者")
-        self.addCleanup(again.stop)
-        self.assertFalse(any("差分を記録しました" in l for l in again.said), again.said)
-        self.assertEqual(entries(self.review), before)
-
 
 class Reopen(ServedCase):
     """`serve --reopen`: the last saved revision only, with no pull button and
     a later commit changing nothing it shows."""
-
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        cls.repo = harness.make_gaps_review(cls.root, name="reopen-refuse")[1]
 
     def start_reopened(self, repo, review):
         self.repo = repo
@@ -2297,34 +2084,6 @@ class Reopen(ServedCase):
         b.js("window.dispatchEvent(new Event('focus'))")
         time.sleep(0.3)
         self.assertFalse(b.exists("[data-diffnote-notice='pending']"), "not even told about it")
-
-    def test_a_reply_can_still_be_added_and_no_new_revision_appears(self):
-        repo = harness.make_gaps_review(self.root, name="reopen2")[1]
-        review = os.path.join(self.fresh("review"), "reopen2.diffnote")
-        assert harness.diffnote("init", "-f", review, "c1", cwd=repo).returncode == 0
-        harness.review_of(repo, review, "c2", comments=[
-            {"file": "long.txt", "line": "TWENTY", "body": "20 行目を変えました。"},
-        ])
-        harness.write(repo, "long.txt", "x\n")
-        harness.git(repo, "commit", "-q", "-am", "c3")
-        self.start_reopened(repo, review)
-        b = self.b
-        b.js("localStorage.setItem('diffnote-layout','unified')")
-        b.reload(ready="!!document.querySelector('.diffnote-file')")
-        card = self.card("20 行目を変えました。")
-        self.reply_to(card, "了解です")
-        self.assertIn("了解です", recorded(review))
-        self.assertEqual(b.js("document.querySelectorAll('[data-diffnote-revision-link]').length"), 1,
-                         "the reply didn't add a revision")
-
-    def test_reopen_with_a_comparison_target_is_refused_before_the_server_starts(self):
-        review = os.path.join(self.fresh("review"), "refused.diffnote")
-        out = subprocess.run([harness.BIN, "serve", "-f", review, "--reopen", "c2"],
-                             cwd=self.repo, capture_output=True, text=True, encoding="utf-8", timeout=20)
-        self.assertNotEqual(out.returncode, 0)
-        self.assertIn("--reopen", out.stderr)
-        self.assertFalse(os.path.exists(review))
-
 
 class BrowserHistory(ServedCase):
     """The browser's own back/forward buttons retrace revision switches,

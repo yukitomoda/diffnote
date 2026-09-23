@@ -6,6 +6,7 @@ import { lib } from '../lib.ts';
 import type { AttachedData, Placement, ViewModel } from '../model.ts';
 import type { ChangeAnswer } from '../state/contexts.ts';
 import { Icon } from '../icon.tsx';
+import { fileNameOf, inOrder, nameOf as attachedName } from './attached.ts';
 
 // 添付: what the comments have attached, and what uses it. Unused ones are
 // dropped at 終了 anyway; this is where to see them, save one, or take one
@@ -29,13 +30,7 @@ export function AttachmentsPane(props: AttachmentsProps) {
   var ask = _a[0];
   var setAsk = _a[1];
   var uses = useMemo(function () { return lib.attachmentUses(model.threads); }, [model.threads]);
-  // Unused first (the ones worth clearing out), then as the server sorted
-  // them: biggest first.
-  var order = useMemo(function () {
-    return listed.slice().sort(function (a, b) {
-      return Number((uses[a.id] || []).length > 0) - Number((uses[b.id] || []).length > 0);
-    });
-  }, [listed, uses]);
+  var order = useMemo(function () { return inOrder(listed, uses); }, [listed, uses]);
   var total = listed.reduce(function (n, a) { return n + a.size; }, 0);
   var remove = function (a: AttachedData) {
     setAsk(null);
@@ -44,25 +39,10 @@ export function AttachmentsPane(props: AttachmentsProps) {
       if (!res.ok) setError(res.error || lib.m('ui.attachments.delete_failed'));
     });
   };
-  // What it goes by: the name of the file it was attached from, where the
-  // review kept one, and otherwise what a comment calls it (for an image
-  // that is its description, which is better than nothing).
   var nameOf = function (a: AttachedData) {
-    if (a.name) return a.name;
-    var named = (uses[a.id] || []).filter(function (u) { return u.name; })[0];
-    return named ? named.name : lib.m('ui.attachments.no_name');
+    return attachedName(a, uses) || lib.m('ui.attachments.no_name');
   };
-  // What it is saved as: its own name, then -- for a file -- what the
-  // comment's link calls it. An image's text there is a description, not a
-  // name, so one that came without a name is saved by its digest, with the
-  // extension its type usually has.
-  var fileName = function (a: AttachedData) {
-    if (a.name) return a.name;
-    var named = a.kind === 'file' && (uses[a.id] || []).filter(function (u) { return u.name; })[0];
-    if (named) return named.name;
-    var ext = (a.media_type || '').split('/')[1];
-    return 'diffnote-' + a.id.slice(0, 12) + (ext ? '.' + ext.replace('+xml', '') : '');
-  };
+  var fileName = function (a: AttachedData) { return fileNameOf(a, uses); };
   return <div data-diffnote-attachments-pane>
     <h2>{lib.m('ui.attachments.heading')}</h2>
     <p class="diffnote-screen__note">{lib.m('ui.attachments.note')}</p>
