@@ -319,6 +319,11 @@ class Browser:
         """
         x, y = self.press(first)
         x2, y2 = self.center(last)
+        # A few pixels first: a browser starts selecting once the pointer has
+        # moved past its own threshold, and a first step of an eighth of the
+        # way is a jump, not a movement.
+        for nudge in (2, 5, 9):
+            self.cdp.mouse("mouseMoved", x + nudge, y, 1)
         for i in range(1, steps + 1):
             self.cdp.mouse("mouseMoved", round(x + (x2 - x) * i / steps),
                            round(y + (y2 - y) * i / steps), 1)

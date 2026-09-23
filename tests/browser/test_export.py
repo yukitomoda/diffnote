@@ -4,6 +4,7 @@ import os
 import shutil
 import pathlib
 import time
+import sys
 import unittest
 
 import harness
@@ -386,7 +387,37 @@ class SideBySide(BrowserCase):
         cell = lambda n: "document.querySelector(\"td.diffnote-line__gutter-%s[data-diffnote-%s='%d']\").nextElementSibling" % (side, side, n)
         b.js("%s.setAttribute('data-t','from'); %s.setAttribute('data-t','to')" % (cell(first), cell(last)))
         b.drag("[data-t=from]", "[data-t=to]")
-        return b.js("(function(){var dt=new DataTransfer(); document.dispatchEvent(new ClipboardEvent('copy',{clipboardData:dt,bubbles:true,cancelable:true})); return dt.getData('text/plain')})()")
+        copied = b.js("(function(){var dt=new DataTransfer(); document.dispatchEvent(new ClipboardEvent('copy',{clipboardData:dt,bubbles:true,cancelable:true})); return dt.getData('text/plain')})()")
+        if not copied:
+            # This has never worked on the CI runner and always works here,
+            # so when it fails it must say what the browser thought: whether
+            # anything was selected at all, and whether the two cells were
+            # where the mouse was told to go.
+            print("\n-- nothing copied. selection:", b.js("""(function () {
+              var s = getSelection();
+              return JSON.stringify({ ranges: s.rangeCount, length: s.toString().length,
+                text: s.toString().slice(0, 60) });
+            })()"""), file=sys.stderr)
+            print("-- where the page is:", b.js("""(function () {
+              var box = function (sel) {
+                var e = document.querySelector(sel);
+                if (!e) return null;
+                var r = e.getBoundingClientRect();
+                return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+              };
+              var at = function (sel) {
+                var e = document.querySelector(sel);
+                if (!e) return null;
+                var r = e.getBoundingClientRect();
+                var hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                return hit ? hit.tagName + '.' + (hit.className || '') : 'nothing';
+              };
+              return JSON.stringify({ view: [innerWidth, innerHeight], scroll: Math.round(scrollY),
+                from: box('[data-t=from]'), to: box('[data-t=to]'),
+                atFrom: at('[data-t=from]'), atTo: at('[data-t=to]'),
+                ua: navigator.userAgent.replace(/.*Chrome\\/([0-9.]+).*/, 'Chrome $1') });
+            })()"""), file=sys.stderr)
+        return copied
 
     def test_copying_after_a_drag_takes_only_the_side_it_started_on(self):
         b = self.b
