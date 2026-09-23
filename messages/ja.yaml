@@ -205,8 +205,9 @@ main:
       {dir} は、このバンドルのベースと違います。ベースは変えられません
 
   init:
-    already_exists: |-
-      {path} はすでに存在します
+    confirm_overwrite: "{path} はすでに存在します。上書きして、新しいレビューを作りますか? [y/N] "
+    kept: |-
+      {path} はそのままにしました
     git_done: |-
       {rev}({commit}) を基準に {path} を作成しました。`diffnote review` でレビューを始められます
     files_done: |-

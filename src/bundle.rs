@@ -177,18 +177,23 @@ fn digest_path_component(digest: &str) -> &str {
     digest.strip_prefix("sha256:").unwrap_or(digest)
 }
 
-/// Loads an existing bundle, or (if `path` doesn't exist yet) an empty one
-/// ready to be filled in and saved for the first time.
+/// A bundle with nothing in it, ready to be filled in and saved for the
+/// first time.
+pub fn empty() -> Loaded {
+    Loaded {
+        events: Vec::new(),
+        settings: Settings::default(),
+        reactions: Reactions::new(),
+        attached: Attachments::new(),
+        commits: Commits::new(),
+        carried_entries: Vec::new(),
+    }
+}
+
+/// Loads an existing bundle, or (if `path` doesn't exist yet) an empty one.
 pub fn load(path: &Path) -> Result<Loaded> {
     if !path.exists() {
-        return Ok(Loaded {
-            events: Vec::new(),
-            settings: Settings::default(),
-            reactions: Reactions::new(),
-            attached: Attachments::new(),
-            commits: Commits::new(),
-            carried_entries: Vec::new(),
-        });
+        return Ok(empty());
     }
 
     let file = std::fs::File::open(path).with_context(|| {

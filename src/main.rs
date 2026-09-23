@@ -943,9 +943,12 @@ fn cmd_init(
     title: Option<String>,
     snapshot: Option<bundle::SnapshotMode>,
 ) -> Result<()> {
-    if review_path.exists() {
+    // A review already there is replaced only when the person says so. It
+    // stays as it is until the new one is saved in its place (a mistake in
+    // what was asked for leaves it untouched).
+    if review_path.exists() && !confirm_overwrite(&review_path) {
         anyhow::bail!(mf(
-            "main.init.already_exists",
+            "main.init.kept",
             &[("path", &review_path.display().to_string())]
         ));
     }
@@ -986,13 +989,34 @@ fn first_events() -> Vec<Event> {
     }]
 }
 
-/// A new bundle (not on disk yet) with its title, if one is given.
-fn fresh_bundle(review_path: &Path, title: Option<&str>) -> Result<bundle::Loaded> {
-    let mut loaded = bundle::load(review_path)?;
+/// A new bundle with its title, if one is given. Nothing of what may be at
+/// the path already is kept: `init` has been told it may replace it.
+fn fresh_bundle(title: Option<&str>) -> bundle::Loaded {
+    let mut loaded = bundle::empty();
     if let Some(title) = title {
         review::set_title(&mut loaded.settings, title);
     }
-    Ok(loaded)
+    loaded
+}
+
+/// Asks whether the review at `path` may be replaced by a new one. Anything
+/// but yes (including no one there to answer) is no.
+fn confirm_overwrite(path: &Path) -> bool {
+    eprint!(
+        "{}",
+        mf(
+            "main.init.confirm_overwrite",
+            &[("path", &path.display().to_string())]
+        )
+    );
+    std::io::Write::flush(&mut std::io::stderr()).ok();
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer).ok();
+    // No one answered (nothing to read): end the question's line anyway.
+    if answer.is_empty() {
+        eprintln!();
+    }
+    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
 /// A git review that starts at a commit: the commit is the base, so that the
@@ -1032,7 +1056,7 @@ fn init_git(
     };
     bundle::save(
         review_path,
-        &fresh_bundle(review_path, title.as_deref())?,
+        &fresh_bundle(title.as_deref()),
         &events,
         &additions,
     )?;
@@ -1077,7 +1101,7 @@ fn init_files(review_path: &Path, dir: &Path, title: Option<String>, say: bool) 
     };
     bundle::save(
         review_path,
-        &fresh_bundle(review_path, title.as_deref())?,
+        &fresh_bundle(title.as_deref()),
         &events,
         &additions,
     )?;

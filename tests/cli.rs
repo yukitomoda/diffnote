@@ -45,14 +45,31 @@ impl Env {
 
     /// Runs `diffnote args...` in `cwd`.
     fn run(&self, cwd: &Path, args: &[&str]) -> Output {
-        Command::new(bin())
+        self.answering(cwd, args, "")
+    }
+
+    /// Runs `diffnote args...` in `cwd` with `input` typed in, for a
+    /// question it asks (`run` answers nothing: anything asked is a no).
+    fn answering(&self, cwd: &Path, args: &[&str], input: &str) -> Output {
+        use std::io::Write;
+        let mut child = Command::new(bin())
             .current_dir(cwd)
             // Isolated from whatever `diffnote config` this machine actually
             // has (an empty directory unless a test's `env.run` set it up).
             .env("DIFFNOTE_CONFIG_DIR", self.path("user-config"))
             .args(args)
-            .output()
-            .expect("diffnote runs")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("diffnote runs");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        child.wait_with_output().expect("diffnote runs")
     }
 
     fn ok(&self, cwd: &Path, args: &[&str]) -> String {
@@ -2132,4 +2149,46 @@ fn the_type_is_asked_for_when_a_review_is_made_and_cannot_be_changed() {
     env.ok(&dir, &["init", "-f", review.to_str().unwrap()]);
     let said = env.serve_refused(&dir, &review, &["--type", "git", "."]);
     assert!(said.contains("raw"), "{said}");
+}
+
+#[test]
+fn init_over_a_review_that_is_there_asks_and_replaces_it_only_when_told_yes() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let arg = review.to_str().unwrap();
+    env.ok(&repo, &["init", "-f", arg, "--title", "前のレビュー", "c1"]);
+    env.review(&repo, &review, &["c2"], &[Note::Global("前のコメント")]);
+    let before = std::fs::read(&review).unwrap();
+
+    // Anything but yes, and no answer at all, leave it as it was.
+    for answer in ["", "n\n", "no\n", "はい\n"] {
+        let out = env.answering(&repo, &["init", "-f", arg, "c3"], answer);
+        assert!(!out.status.success(), "{answer:?}");
+        let said = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            said.contains("上書き") && said.contains("そのまま"),
+            "{said}"
+        );
+        assert_eq!(std::fs::read(&review).unwrap(), before, "{answer:?}");
+    }
+    // A mistake in what is asked for leaves it as it was too, even after a yes.
+    let out = env.answering(&repo, &["init", "-f", arg, "no-such-commit"], "y\n");
+    assert!(!out.status.success());
+    assert_eq!(std::fs::read(&review).unwrap(), before);
+
+    // Yes: a new review, with nothing of the old one in it.
+    let out = env.answering(&repo, &["init", "-f", arg, "c3"], "y\n");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let loaded = bundle::load(&review).unwrap();
+    assert_eq!(loaded.revisions().count(), 1);
+    assert!(comment_bodies(&loaded).is_empty());
+    assert_eq!(diffnote::review::title(&loaded.settings), None);
+    assert_eq!(git_sources(&review)[0].base, commit_id(&repo, "c3"));
+    let out = env.answering(&repo, &["init", "-f", arg, "c2"], "YES\n");
+    assert!(out.status.success());
 }
