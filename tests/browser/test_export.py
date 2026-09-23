@@ -103,6 +103,16 @@ class StaticExport(BrowserCase):
         time.sleep(0.2)  # (the menu listens for Escape once it has been drawn)
         b.escape()
         self.assertTrue(b.wait(f"document.querySelector({json.dumps(panel)}).hidden"), "Escape shuts it")
+        # It stays in view under the top bar as the page scrolls, with the
+        # files' own headers stopping below it.
+        b.js("document.querySelector('section.diffnote-file').style.minHeight = '5000px'; window.scrollTo(0, 2000)")
+        self.assertTrue(b.wait("window.scrollY > 0"))
+        at = b.js("""(() => { const bar = document.querySelector('.diffnote-viewbar').getBoundingClientRect();
+          const top = document.querySelector('.diffnote-topbar').getBoundingClientRect();
+          return {gap: bar.top - top.bottom, shown: bar.bottom > bar.top}; })()""")
+        self.assertLessEqual(abs(at["gap"]), 1, at)
+        self.assertTrue(at["shown"])
+        b.js("document.querySelector('section.diffnote-file').style.minHeight = ''; window.scrollTo(0, 0)")
 
     def test_the_icons_are_drawn_in_the_page_and_take_the_colour_of_their_text(self):
         b = self.b

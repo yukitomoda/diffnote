@@ -18,6 +18,9 @@
   --diffnote-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", sans-serif;
   --diffnote-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono CJK JP", monospace;
   --diffnote-topbar-h: 44px;
+  /* The bar over the diff (レビュー全体にコメント, 表示), kept in view under
+     the top bar. */
+  --diffnote-viewbar-h: 48px;
 }
 * { box-sizing: border-box; }
 body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); margin: 0; }
@@ -166,8 +169,8 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 .diffnote-global-comments { margin-top: 12px; }
 
 /* Files: a sticky header bar per file, like a code review page. */
-.diffnote-file { border: 1px solid var(--diffnote-color-border); border-radius: 6px; margin-top: 12px; scroll-margin-top: calc(var(--diffnote-topbar-h) + 8px); }
-.diffnote-file > details > summary { position: sticky; top: var(--diffnote-topbar-h); z-index: 5; padding: 6px 12px; cursor: pointer; background: var(--diffnote-color-gutter); border-bottom: 1px solid var(--diffnote-color-border); border-radius: 6px 6px 0 0; }
+.diffnote-file { border: 1px solid var(--diffnote-color-border); border-radius: 6px; margin-top: 12px; scroll-margin-top: calc(var(--diffnote-topbar-h) + var(--diffnote-viewbar-h) + 8px); }
+.diffnote-file > details > summary { position: sticky; top: calc(var(--diffnote-topbar-h) + var(--diffnote-viewbar-h)); z-index: 5; padding: 6px 12px; cursor: pointer; background: var(--diffnote-color-gutter); border-bottom: 1px solid var(--diffnote-color-border); border-radius: 6px 6px 0 0; }
 .diffnote-file--added > details > summary { background: var(--diffnote-color-added-bg); }
 .diffnote-file--deleted > details > summary { background: var(--diffnote-color-removed-bg); }
 .diffnote-file h2 { display: inline; font-size: 13px; font-weight: 600; font-family: var(--diffnote-font-mono); }
@@ -239,6 +242,7 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
   .diffnote-revision { display: block; padding: 0 8px 32px; }
   .diffnote-sidebar { position: static; height: auto; max-height: 60vh; margin: 8px 0; border-right: 0; }
   .diffnote-file > details > summary { top: 0; position: static; }
+  .diffnote-viewbar { position: static; height: auto; padding: 8px 0 0; }
   .diffnote-thread-row > td { padding-left: 12px !important; }
 }
 
@@ -340,7 +344,7 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 .diffnote-farewell__note { margin: 0; color: var(--diffnote-color-muted); font-size: 13px; }
 
 /* The view menu, at the top right of the diff. */
-.diffnote-viewbar { grid-column: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; }
+.diffnote-viewbar { grid-column: 2; display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; position: sticky; top: var(--diffnote-topbar-h); z-index: 8; height: var(--diffnote-viewbar-h); padding-bottom: 6px; background: var(--diffnote-color-bg); }
 .diffnote-viewbar .diffnote-add { padding: 0; }
 /* The lists put away for a moment: the column is then no wider than the
    button that brings them back, and the diff has the rest. */
