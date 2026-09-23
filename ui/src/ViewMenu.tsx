@@ -10,7 +10,9 @@ import {
   setHideResolved,
   setIgnoreWhitespace,
   setLayout,
+  setWrapLines,
   wide as haveRoom,
+  wrapLines,
 } from './state/view.ts';
 
 interface ViewMenuProps {
@@ -25,6 +27,7 @@ export function ViewMenu(props: ViewMenuProps) {
   var layout = useStore(shownLayout);
   var hide = useStore(hideResolved);
   var ignoreSpace = useStore(ignoreWhitespace);
+  var wrap = useStore(wrapLines);
   var _o = useState(false);
   var open = _o[0];
   var setOpen = _o[1];
@@ -54,6 +57,9 @@ export function ViewMenu(props: ViewMenuProps) {
         })}
         <hr />
       </div>}
+      <label class={'diffnote-viewmenu__item' + (wrap ? ' is-current' : '')}>
+        <input type="checkbox" data-diffnote-wrap checked={wrap} onChange={function (e) { setWrapLines(e.currentTarget.checked); }} /><span class="diffnote-viewmenu__mark">{wrap && <Icon name="check" />}</span>{lib.m('ui.viewmenu.wrap_label')}
+      </label>
       <label class={'diffnote-viewmenu__item' + (ignoreSpace ? ' is-current' : '')} title={lib.m('ui.viewmenu.ignore_space_title')}>
         <input type="checkbox" data-diffnote-ignore-space checked={ignoreSpace} onChange={function (e) { setIgnoreWhitespace(e.currentTarget.checked); }} /><span class="diffnote-viewmenu__mark">{ignoreSpace && <Icon name="check" />}</span>{lib.m('ui.viewmenu.ignore_space_label')}
       </label>

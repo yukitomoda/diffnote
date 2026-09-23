@@ -232,7 +232,13 @@ export function SplitTable(props: TableProps) {
       });
     });
   });
-  return <div class="diffnote-diff-scroll"><table class="diffnote-diff diffnote-diff--split" data-diffnote-file={file.path}>
+  // Without wrapping, both halves are as wide as the longest line of either,
+  // and the table scrolls as one.
+  var longest = 0;
+  file.hunks.forEach(function (hunk) {
+    (hunk.rows || []).forEach(function (row) { longest = Math.max(longest, lib.columns(row.t)); });
+  });
+  return <div class="diffnote-diff-scroll"><table class="diffnote-diff diffnote-diff--split" data-diffnote-file={file.path} style={'--dn-cols: ' + longest}>
     <colgroup><col class="diffnote-col-gutter" /><col /><col class="diffnote-col-gutter" /><col /></colgroup>
     <tbody>{out}</tbody>
   </table></div>;

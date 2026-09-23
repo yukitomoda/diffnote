@@ -472,18 +472,36 @@ class SideBySide(BrowserCase):
         b.reload()
         self.assertEqual(b.count("table.diffnote-diff--split"), 0, "unified is kept too")
 
-    def test_a_long_line_wraps_instead_of_making_the_page_scroll_sideways(self):
+    def test_a_long_line_wraps_unless_asked_not_to_and_then_the_diff_scrolls_sideways(self):
         b = self.b
-        b.open(self.long_url)
+        overflow = "(function(){var s=document.querySelector('.diffnote-diff-scroll'); return s.scrollWidth - s.clientWidth})()"
+        tall = "document.querySelector('%s').getBoundingClientRect().height"
+        for layout, table, cell in (
+                ("split", "table.diffnote-diff--split", "table.diffnote-diff--split .diffnote-cell--removed.diffnote-line__content"),
+                ("unified", "table.diffnote-diff:not(.diffnote-diff--split)", "table.diffnote-diff .diffnote-line--removed .diffnote-line__content")):
+            b.open(self.long_url)
+            b.js("localStorage.setItem('diffnote-layout',%r); localStorage.removeItem('diffnote-wrap')" % layout)
+            b.reload()
+            self.assertTrue(b.wait_exists(table))
+            # Wrapped (the default): the page never scrolls sideways.
+            self.assertLessEqual(b.js(overflow), 1, layout)
+            self.assertGreater(b.js(tall % cell), 40, f"{layout}: the long line takes more than one row")
+            # Not wrapped: one row a line, and the diff scrolls instead.
+            b.click("[data-diffnote-view-menu]")
+            b.click("[data-diffnote-wrap]")
+            self.assertTrue(b.wait("document.body.classList.contains('diffnote-nowrap')"))
+            self.assertLessEqual(b.js(tall % cell), 21, layout)
+            self.assertGreater(b.js(overflow), 100, layout)
+            b.reload()
+            self.assertTrue(b.wait_exists(table))
+            self.assertTrue(b.js("document.body.classList.contains('diffnote-nowrap')"), "the choice is kept")
+        # Side by side, the two halves stay as wide as each other.
         b.js("localStorage.setItem('diffnote-layout','split')")
         b.reload()
         self.assertTrue(b.wait_exists("table.diffnote-diff--split"))
-        self.assertLessEqual(b.js("(function(){var s=document.querySelector('.diffnote-diff-scroll'); return s.scrollWidth - s.clientWidth})()"), 1)
-        # The changed line is a removed one and an added one on one row, wrapped.
-        self.assertGreater(b.js("document.querySelector('table.diffnote-diff--split .diffnote-cell--removed.diffnote-line__content').getBoundingClientRect().height"), 40)
-        b.js("localStorage.setItem('diffnote-layout','unified')")
-        b.reload()
-        self.assertGreater(b.js("(function(){var s=document.querySelector('.diffnote-diff-scroll'); return s.scrollWidth - s.clientWidth})()"), 100, "unified scrolls sideways, as before")
+        widths = b.js("""(function(){var r=document.querySelector('table.diffnote-diff--split .diffnote-split-row');
+          return [r.children[1].getBoundingClientRect().width, r.children[3].getBoundingClientRect().width]})()""")
+        self.assertAlmostEqual(widths[0], widths[1], delta=1)
 
 
 if __name__ == "__main__":

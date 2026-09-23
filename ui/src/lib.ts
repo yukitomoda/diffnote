@@ -141,6 +141,7 @@ interface Lib {
   markPieces(pieces: Token[] | null | undefined, ranges: [number, number][] | null | undefined): MarkedPiece[];
   pairRows(rows: Row[]): { left: Row | null; right: Row | null }[];
   diffStat(file: FileData): { added: number; removed: number };
+  columns(pieces: Token[] | null | undefined): number;
   diffBlocks(added: number, removed: number): string[];
   withoutSpaceChanges(file: FileData): FileData;
 
@@ -511,6 +512,21 @@ lib.EXPAND_STEP = 20;
 // with no rows) between them; a hunk whose place is shown whole, or shown up to it,
 // gives up its `@@` row (`quiet`). The added blocks have headers, so the rows can be told
 // their line numbers as those of a hunk.
+// How wide a line is, in the columns of a fixed-width font: a tab takes a
+// tab stop (8) and a wide character (CJK, full-width forms) two. For a table
+// that doesn't wrap its lines to make room for the longest one.
+lib.columns = function (pieces) {
+  var n = 0;
+  (pieces || []).forEach(function (p) {
+    var text = typeof p === 'string' ? p : p[1];
+    for (var ch of text) {
+      if (ch === '\t') n += 8 - (n % 8);
+      else n += /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]|[\u{20000}-\u{3fffd}]/u.test(ch) ? 2 : 1;
+    }
+  });
+  return n;
+};
+
 // How many lines a file's diff adds and removes (as the page shows it).
 lib.diffStat = function (file) {
   var added = 0;

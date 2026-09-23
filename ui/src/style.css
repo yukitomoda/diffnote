@@ -180,6 +180,9 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 .diffnote-diff td { padding: 0; white-space: pre; vertical-align: top; --dn-l: 0 0 0 0 transparent; --dn-r: 0 0 0 0 transparent; --dn-t: 0 0 0 0 transparent; --dn-b: 0 0 0 0 transparent; box-shadow: var(--dn-l), var(--dn-r), var(--dn-t), var(--dn-b); }
 .diffnote-line__gutter-old, .diffnote-line__gutter-new { width: 1%; min-width: 3.4em; padding: 0 8px !important; text-align: right; color: var(--diffnote-color-muted); background: var(--diffnote-color-gutter); user-select: none; }
 .diffnote-line__content { width: 100%; padding: 0 12px 0 22px !important; position: relative; }
+.diffnote-diff .diffnote-line__content { white-space: pre-wrap; word-break: break-all; overflow-wrap: anywhere; }
+/* 「長い行を折り返す」 off: a line stays one row, and the diff scrolls sideways. */
+.diffnote-nowrap .diffnote-diff .diffnote-line__content { white-space: pre; word-break: normal; overflow-wrap: normal; }
 .diffnote-line__content::before { position: absolute; left: 8px; color: var(--diffnote-color-muted); }
 .diffnote-line--added { background: var(--diffnote-color-added-bg); }
 .diffnote-line--added .diffnote-line__gutter-old, .diffnote-line--added .diffnote-line__gutter-new { background: var(--diffnote-color-added-gutter); }
@@ -239,11 +242,13 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
   .diffnote-thread-row > td { padding-left: 12px !important; }
 }
 
-/* Side by side: the old file on the left, the new on the right; long lines
-   wrap, since the two columns share the width. */
+/* Side by side: the old file on the left, the new on the right, sharing the
+   width. Unwrapped, each half is as wide as the longest line of the file
+   (`--dn-cols`, in columns), and the table scrolls sideways as one. */
 .diffnote-diff--split { table-layout: fixed; }
+.diffnote-nowrap .diffnote-diff--split { min-width: calc(2 * (3.6em + 34px + var(--dn-cols, 0) * 1ch)); }
 .diffnote-diff--split .diffnote-col-gutter { width: 3.6em; }
-.diffnote-diff--split .diffnote-line__content { width: auto; white-space: pre-wrap; word-break: break-all; overflow-wrap: anywhere; }
+.diffnote-diff--split .diffnote-line__content { width: auto; }
 .diffnote-diff--split .diffnote-line__gutter-new { border-left: 1px solid var(--diffnote-color-border); }
 .diffnote-diff--split td.diffnote-line__gutter-old, .diffnote-diff--split td.diffnote-line__gutter-new { width: auto; min-width: 0; }
 .diffnote-diff--split .diffnote-cell--removed { background: var(--diffnote-color-removed-bg); }

@@ -31,6 +31,7 @@ import {
 import { isViewed, seen, toggleViewed } from './state/viewed.ts';
 import {
   hideResolved,
+  wrapLines,
   ignoreWhitespace,
   layout as shownLayout,
   startView,
@@ -196,6 +197,7 @@ function App(props: { model: ViewModel }) {
     });
   }
   var hide = useStore(hideResolved);
+  var wrap = useStore(wrapLines);
   var ignoreSpace = useStore(ignoreWhitespace);
   var layout = useStore(shownLayout);
   // Two columns need the room, for as long as the page is open.
@@ -206,8 +208,9 @@ function App(props: { model: ViewModel }) {
   // At once (not after the next paint): the style that hides cards hangs on it.
   useLayoutEffect(function () {
     document.body.classList.toggle('diffnote-hide-resolved', hide);
+    document.body.classList.toggle('diffnote-nowrap', !wrap);
     interact.reset();
-  }, [hide, current, layout]);
+  }, [hide, wrap, current, layout]);
 
   return <article class="diffnote-review">
     <div class="diffnote-topbar">

@@ -24,6 +24,8 @@ export const layout = computed([chosenLayout, wide], (chosen, room): Layout =>
 );
 
 export const hideResolved = atom(true);
+/** Whether a line too long for its column goes on to the next row. */
+export const wrapLines = atom(true);
 export const ignoreWhitespace = atom(false);
 
 /**
@@ -40,6 +42,11 @@ export function setLayout(next: Layout): void {
 export function setHideResolved(on: boolean): void {
   keep('diffnote-hide-resolved', on ? '1' : '0');
   hideResolved.set(on);
+}
+
+export function setWrapLines(on: boolean): void {
+  keep('diffnote-wrap', on ? '1' : '0');
+  wrapLines.set(on);
 }
 
 export function setIgnoreWhitespace(on: boolean): void {
@@ -68,6 +75,7 @@ export function startView(reviewIgnoresWhitespace: boolean): void {
         : 'unified',
   );
   hideResolved.set(kept('diffnote-hide-resolved', '1') !== '0');
+  wrapLines.set(kept('diffnote-wrap', '1') !== '0');
   ignoreWhitespace.set(reviewIgnoresWhitespace);
 }
 

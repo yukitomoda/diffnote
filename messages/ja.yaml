@@ -754,6 +754,8 @@ ui:
       空白の違いを無視
     hide_resolved_label: |-
       解決済みを隠す
+    wrap_label: |-
+      長い行を折り返す
 
   user:
     settings_title: |-

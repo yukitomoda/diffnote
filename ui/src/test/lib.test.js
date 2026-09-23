@@ -541,3 +541,12 @@ test('the hash is built in a fixed, readable order', () => {
     'rev=1&screen=general&against=0&at=file%3Aa.rs'
   );
 });
+
+test('a line is as wide as its columns: a tab to the next stop, a wide character two', () => {
+  assert.equal(lib.columns(['abc', ['k', 'de']]), 5);
+  assert.equal(lib.columns(['a\tb']), 9);
+  assert.equal(lib.columns(['\t\t']), 16);
+  assert.equal(lib.columns(['漢字', 'ｱ', 'Ａ']), 7, 'a half-width kana is one column, a full-width letter two');
+  assert.equal(lib.columns([]), 0);
+  assert.equal(lib.columns(undefined), 0);
+});
