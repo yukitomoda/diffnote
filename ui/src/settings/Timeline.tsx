@@ -1,4 +1,4 @@
-// タイムライン: what happened to the review, oldest first.
+// タイムライン: what happened to the review, newest first.
 //
 // Everything here is the review's own log, read in order (`src/html/viewmodel.rs`
 // puts it together): nothing is recorded for the timeline's sake. Because a
@@ -25,10 +25,15 @@ interface Day {
   runs: TimelineEntry[][];
 }
 
-/** The days, and within each the runs to draw. */
+/**
+ * The days, and within each the runs to draw -- newest first, which is not
+ * the order the model carries them in (that is the log's own, oldest first).
+ * The commits a revision brought stay in the order they were made: the
+ * stream is read from the top, a series of commits from its beginning.
+ */
 function daysOf(entries: TimelineEntry[]): Day[] {
   var days: Day[] = [];
-  entries.forEach(function (entry) {
+  entries.slice().reverse().forEach(function (entry) {
     var day = lib.formatDay(entry.at);
     var last = days[days.length - 1];
     if (!last || last.day !== day) {
@@ -145,7 +150,8 @@ export function TimelinePane(props: TimelineProps) {
             <ol class="diffnote-timeline">
               {day.runs.map(function (run, i) {
                 if (run.length === 1) return one(run[0], i);
-                // A run of comments: one line, opening onto them.
+                // A run of comments: one line, opening onto them. The
+                // line is timed by the newest of them, which is the first.
                 var first = run[0];
                 return <li key={i} class="diffnote-timeline__entry" data-diffnote-timeline="comments">
                   <Icon name="comment" class="diffnote-timeline__mark" />

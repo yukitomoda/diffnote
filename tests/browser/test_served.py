@@ -1285,9 +1285,10 @@ class Timeline(ServedCase):
         b = self.b
         self.open_timeline()
         kinds = b.js("[...document.querySelectorAll('[data-diffnote-timeline]')].map(e => e.dataset.diffnoteTimeline)")
-        self.assertEqual(kinds[:2], ["started", "revision"], "oldest first: the review, then what it was made of")
+        self.assertEqual(kinds[-2:], ["revision", "started"],
+                         "newest first, so the review being made is at the bottom")
+        self.assertEqual(kinds[0], "resolved", "and the last thing that happened is at the top")
         self.assertIn("comments", kinds, "a run of comments by one person is one line")
-        self.assertIn("resolved", kinds)
         # The commits of the revision, with what they said folded away.
         self.assertEqual(b.count("[data-diffnote-commit]"), 1, "the one commit c1..c2 brought")
         row = "[data-diffnote-commit]"
