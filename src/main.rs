@@ -354,7 +354,7 @@ fn set_config_field(
 ///
 /// - A git bundle: the target is a commit (`HEAD` if none is named).
 /// - A directory bundle: the target is the directory to compare with the base
-///   snapshot. With none, nothing is added (`.` may be anywhere).
+///   snapshot (`.` if none is named, as git's is `HEAD`).
 /// - No bundle yet: `base` (or the target's parent) starts it.
 ///
 /// Nothing is written if the diff is empty or is already recorded (or if
@@ -399,12 +399,9 @@ fn add_revision(
         } else if let Some(base_dir) = base {
             check_files_base(&loaded, Path::new(base_dir), &exclude)?;
         }
-        // The directory is only taken when it is named: `.` may be anywhere.
-        let dir = match target {
-            Some(dir) => dir,
-            None if fresh.0.is_some() => ".",
-            None => return Ok(None),
-        };
+        // As a git review follows `HEAD`, a directory review follows where
+        // it is run.
+        let dir = target.unwrap_or(".");
         // Reading the directory is too much to do each time it is only looked at.
         if !apply {
             return Ok(None);

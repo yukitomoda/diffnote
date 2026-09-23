@@ -2060,7 +2060,7 @@ fn quitting_without_saving_takes_back_what_serve_added_and_a_bundle_it_made() {
 }
 
 #[test]
-fn serve_says_when_there_is_nothing_yet_and_takes_a_directory_only_when_named() {
+fn serve_says_when_there_is_nothing_yet_and_a_directory_review_follows_where_it_is_run() {
     let env = Env::new();
     let repo = git_repo(&env);
     let review = env.path("review.diffnote");
@@ -2080,17 +2080,31 @@ fn serve_says_when_there_is_nothing_yet_and_takes_a_directory_only_when_named() 
     let review = env.path("dir.diffnote");
     env.ok(&dir, &["init", "-f", review.to_str().unwrap()]);
     std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
-    // `.` may be anywhere: with no directory named, none is taken in.
-    env.serve(&dir, &review, &[]).stop();
-    assert_eq!(bundle::load(&review).unwrap().revisions().count(), 1);
-    let served = env.serve(&dir, &review, &["."]);
+    // With no directory named, the one it is run in is taken in, as git's
+    // `HEAD` would be.
+    let served = env.serve(&dir, &review, &[]);
     assert!(
         served.said.contains("ディレクトリの変更を記録しました"),
         "{}",
         served.said
     );
     served.stop();
+    let loaded = bundle::load(&review).unwrap();
+    assert_eq!(loaded.revisions().count(), 2);
+    let text = loaded
+        .revision_diff(loaded.revisions().last().unwrap())
+        .unwrap();
+    assert!(text.contains("+two"), "{text}");
+    // Again with nothing changed: nothing new.
+    env.serve(&dir, &review, &[]).stop();
     assert_eq!(bundle::load(&review).unwrap().revisions().count(), 2);
+    // A change made while it runs is taken in by the page's button, from
+    // the same place.
+    let served = env.serve(&dir, &review, &[]);
+    std::fs::write(dir.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    assert!(served.refresh());
+    served.stop();
+    assert_eq!(bundle::load(&review).unwrap().revisions().count(), 3);
 }
 
 #[test]
