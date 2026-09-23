@@ -581,9 +581,12 @@ fn cmd_serve(
         anyhow::bail!(m("main.reopen.conflicting_flags"));
     }
     // The range a review keeps is decided when it is made, and never again:
-    // asking for one over an existing review is refused rather than ignored.
+    // asking an existing review for another one is refused rather than
+    // ignored. (Saying again what it already is, as with `--base`, is fine.)
     if let Some(asked) = snapshot {
-        if let Some(mode) = bundle::load(&review).ok().and_then(|l| l.snapshot_mode()) {
+        if let Some(mode) = bundle::load(&review).ok().and_then(|l| l.snapshot_mode())
+            && mode != asked
+        {
             anyhow::bail!(mf("main.snapshot.locked", &[("mode", mode_name(mode))]));
         }
         if files && asked == bundle::SnapshotMode::Changed {
