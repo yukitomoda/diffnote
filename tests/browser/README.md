@@ -6,8 +6,9 @@ for the purpose (`harness.py`, standard library only). They use real mouse
 and keyboard events, so what a person does (pressing a line number, dragging,
 Shift+click, Escape) is what is tested.
 
-The reviews they open are made by the real `diffnote` (its `edit`, run with a
-fake editor: `fake_editor.py`); nothing is checked in as a fixture.
+The reviews they open are made by the real `diffnote`: `serve` records the
+revisions and its own API writes the comments, the way a person makes one.
+Nothing is checked in as a fixture.
 
     mise run build
     python3 -m unittest discover -s tests/browser -v

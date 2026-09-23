@@ -9,7 +9,7 @@ import unittest
 
 import harness
 import harness
-from harness import BrowserCase, add_settings, diffnote, git, make_calc_review, make_indent_review, make_gaps_review, make_login_review, write
+from harness import BrowserCase, add_settings, diffnote, git, make_calc_review, review_of, make_indent_review, make_gaps_review, make_login_review, write
 
 CUR = ".diffnote-revision.is-current"
 
@@ -297,8 +297,9 @@ class SideBySide(BrowserCase):
         git(repo, "commit", "-q", "-am", "c2")
         git(repo, "tag", "c2")
         long_review = os.path.join(cls.root, "long.diffnote")
-        assert diffnote("edit", "-f", long_review, "--base", "c1", "c2", cwd=repo,
-                        comments=[("+" + "word " * 100 + "two", "wide")]).returncode == 0
+        review_of(repo, long_review, "c2", base="c1", comments=[
+            {"file": "wide.txt", "line": "word " * 100 + "two", "body": "wide"},
+        ])
         long_html = os.path.join(cls.root, "long.html")
         assert diffnote("export", "-f", long_review, long_html).returncode == 0
         cls.long_url = pathlib.Path(long_html).as_uri()
@@ -613,8 +614,7 @@ class BinaryFiles(BrowserCase):
         git(repo, "commit", "-q", "-m", "c2")
         git(repo, "tag", "c2")
         review = os.path.join(self.root, "bins.diffnote")
-        assert diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo,
-                        comments=[("GLOBAL", "binary")]).returncode == 0
+        review_of(repo, review, "c2", base="c1", comments=[{"global": True, "body": "binary"}])
         html = os.path.join(self.root, "bins.html")
         assert diffnote("export", "-f", review, html).returncode == 0
         b = self.browser
@@ -662,8 +662,9 @@ class RenamedFiles(BrowserCase):
         git(repo, "commit", "-q", "-m", "c2")
         git(repo, "tag", "c2")
         review = os.path.join(cls.root, "moved.diffnote")
-        assert diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo,
-                        comments=[("+line seven", "数字のままでよいのでは。")]).returncode == 0
+        review_of(repo, review, "c2", base="c1", comments=[
+            {"file": "src/deeper/new.py", "line": "line seven", "body": "数字のままでよいのでは。"},
+        ])
         html = os.path.join(cls.root, "moved.html")
         assert diffnote("export", "-f", review, html).returncode == 0
         cls.url = pathlib.Path(html).as_uri()
@@ -724,14 +725,14 @@ class LineLinks(BrowserCase):
         git(repo, "commit", "-q", "-am", "c2")
         git(repo, "tag", "c2")
         review = os.path.join(cls.root, "links.diffnote")
-        assert diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo, comments=[
-            ("+FIVE", "ここは long.txt:40-41 と other.txt:1 と対で、time 12:30 や none.txt:4 は対象外です。削除は long.txt:L5@1 です。"),
-        ]).returncode == 0
+        review_of(repo, review, "c2", base="c1", comments=[
+            {"file": "long.txt", "line": "FIVE",
+             "body": "ここは long.txt:40-41 と other.txt:1 と対で、time 12:30 や none.txt:4 は対象外です。削除は long.txt:L5@1 です。"},
+        ])
         write(repo, "other.txt", "z\n")
         git(repo, "commit", "-q", "-am", "c3")
         git(repo, "tag", "c3")
-        out = diffnote("edit", "-f", review, "--base", "c1", "c3", cwd=repo, comments=[("GLOBAL", "二つ目")])
-        assert out.returncode == 0, out.stdout + out.stderr
+        review_of(repo, review, "c3", comments=[{"global": True, "body": "二つ目"}])
         html = os.path.join(cls.root, "links.html")
         assert diffnote("export", "-f", review, html).returncode == 0
         cls.url = pathlib.Path(html).as_uri()
@@ -904,9 +905,9 @@ class ViewedFilesAndTheList(BrowserCase):
         git(repo, "commit", "-q", "-am", "c2")
         git(repo, "tag", "c2")
         review = os.path.join(cls.root, "two.diffnote")
-        harness.set_user_author("reviewer")
-        out = diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo, comments=[("+two", "見ました")])
-        assert out.returncode == 0, out.stdout + out.stderr
+        review_of(repo, review, "c2", base="c1", comments=[
+            {"file": "a.txt", "line": "two", "body": "見ました"},
+        ])
         html = os.path.join(cls.root, "two.html")
         assert diffnote("export", "-f", review, html).returncode == 0
         cls.url = pathlib.Path(html).as_uri()

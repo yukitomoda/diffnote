@@ -946,12 +946,13 @@ class CompareWithAnEarlierRevision(ServedCase):
         harness.git(repo, "commit", "-q", "-am", "c2")
         harness.git(repo, "tag", "c2")
         master = os.path.join(self.root, "onlythread.diffnote")
-        assert harness.diffnote("edit", "-f", master, "--base", "c1", "c2", cwd=repo, comments=[("+a2", "a への指摘")]).returncode == 0
+        harness.review_of(repo, master, "c2", base="c1", comments=[
+            {"file": "a.txt", "line": "a2", "body": "a への指摘"},
+        ])
         harness.write(repo, "b.txt", "b2\n")
         harness.git(repo, "commit", "-q", "-am", "c3")
         harness.git(repo, "tag", "c3")
-        out = harness.diffnote("edit", "-f", master, "--base", "c1", "c3", cwd=repo, comments=[("GLOBAL", "二つ目")])
-        assert out.returncode == 0, out.stdout + out.stderr
+        harness.review_of(repo, master, "c3", comments=[{"global": True, "body": "二つ目"}])
         self.serve(master)
         b = self.b
         self.choose("0")
@@ -1271,12 +1272,11 @@ class Timeline(ServedCase):
                     "7 行目を書き直した\n\n数字のままだと読みづらかったため。\n\nCo-Authored-By: 誰か <x@example.com>")
         harness.git(repo, "tag", "c2")
         cls.timeline_review = os.path.join(cls.root, "tl.diffnote")
-        harness.set_user_author("共田")
-        assert harness.diffnote("edit", "-f", cls.timeline_review, "--base", "c1", "c2", cwd=repo, comments=[
-            ("GLOBAL", "全体としてよさそうです"),
-            ("+line seven", "ここは数字のままでもよいのでは。"),
-            ("@raw:+line seven", ">!resolve"),
-        ]).returncode == 0
+        harness.review_of(repo, cls.timeline_review, "c2", base="c1", author="共田", comments=[
+            {"global": True, "body": "全体としてよさそうです"},
+            {"file": "calc.py", "line": "line seven", "resolve": True,
+             "body": "ここは数字のままでもよいのでは。"},
+        ])
 
     def open_timeline(self):
         b = self.b
@@ -1829,7 +1829,9 @@ class ThreadsOnFilesAndTheReview(ServedCase):
         harness.git(repo, "commit", "-q", "-m", "c2")
         harness.git(repo, "tag", "c2")
         master = os.path.join(self.root, "newfile.diffnote")
-        assert harness.diffnote("edit", "-f", master, "--base", "c1", "c2", cwd=repo, comments=[("+line 1", "x")]).returncode == 0
+        harness.review_of(repo, master, "c2", base="c1", comments=[
+            {"file": "new.txt", "line": "line 1", "body": "x"},
+        ])
         self.serve(master)
         b = self.b
         row = lambda n: f"{CUR} table[data-diffnote-file='new.txt'] tr[data-diffnote-new='{n}'] .diffnote-line__gutter-new"
@@ -1998,8 +2000,9 @@ class ExpandLeftOutLines(ServedCase):
         harness.git(repo, "commit", "-q", "-m", "c2")
         harness.git(repo, "tag", "c2")
         review = os.path.join(self.fresh("moved-review"), "moved.diffnote")
-        assert harness.diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo,
-                                comments=[("+x = 2", "ここだけ変更。")]).returncode == 0
+        harness.review_of(repo, review, "c2", base="c1", comments=[
+            {"file": "touched.py", "line": "x = 2", "body": "ここだけ変更。"},
+        ])
         self.serve(review)
         b = self.b
         moved = f"{CUR} section.diffnote-file[data-diffnote-file='src/deeper/stays.py']"
@@ -2275,11 +2278,9 @@ class Reopen(ServedCase):
         repo = harness.make_gaps_review(self.root, name="reopen1")[1]
         review = os.path.join(self.fresh("review"), "reopen1.diffnote")
         assert harness.diffnote("init", "-f", review, "c1", cwd=repo).returncode == 0
-        harness.set_user_author("reviewer")
-        out = harness.diffnote("edit", "-f", review, "c2", cwd=repo, comments=[
-            ("+TWENTY", "20 行目を変えました。"),
+        harness.review_of(repo, review, "c2", comments=[
+            {"file": "long.txt", "line": "TWENTY", "body": "20 行目を変えました。"},
         ])
-        assert out.returncode == 0, out.stdout + out.stderr
         before = entries(review)
         # A further commit, made after the review: --reopen never looks at it.
         harness.write(repo, "long.txt", "x\n")
@@ -2301,11 +2302,9 @@ class Reopen(ServedCase):
         repo = harness.make_gaps_review(self.root, name="reopen2")[1]
         review = os.path.join(self.fresh("review"), "reopen2.diffnote")
         assert harness.diffnote("init", "-f", review, "c1", cwd=repo).returncode == 0
-        harness.set_user_author("reviewer")
-        out = harness.diffnote("edit", "-f", review, "c2", cwd=repo, comments=[
-            ("+TWENTY", "20 行目を変えました。"),
+        harness.review_of(repo, review, "c2", comments=[
+            {"file": "long.txt", "line": "TWENTY", "body": "20 行目を変えました。"},
         ])
-        assert out.returncode == 0, out.stdout + out.stderr
         harness.write(repo, "long.txt", "x\n")
         harness.git(repo, "commit", "-q", "-am", "c3")
         self.start_reopened(repo, review)

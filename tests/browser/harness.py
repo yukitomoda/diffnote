@@ -1,9 +1,10 @@
 """Helpers for the browser tests: a small Chrome DevTools client (standard
 library only), a headless Chrome, `diffnote serve`, and reviews to open.
 
-The reviews are made with the real `diffnote` (its `edit` run with a fake
-editor, see `fake_editor.py`), so the tests need only Python, Chrome and a
-built `diffnote` (set DIFFNOTE_BIN, or `cargo build` for target/debug).
+The reviews are made by the real `diffnote`: `serve` records the revisions
+and its own API writes the comments, the way a person makes one. So the
+tests need only Python, Chrome and a built `diffnote` (set DIFFNOTE_BIN,
+or `cargo build` for target/debug).
 """
 import base64
 import http.client
@@ -376,22 +377,15 @@ def set_user_author(name):
     assert out.returncode == 0, out.stdout + out.stderr
 
 
-def diffnote(*args, cwd=None, env=None, comments=None):
-    """Run `diffnote`; `comments` are (after-line, text) pairs for the fake editor."""
+def diffnote(*args, cwd=None, env=None):
+    """Runs `diffnote` and gives back what it did. Comments are not written
+    this way any more: a review is made through the page's own API, which is
+    how a person makes one (see `review_of`)."""
     full_env = dict(os.environ)
     full_env["DIFFNOTE_CONFIG_DIR"] = USER_CONFIG_DIR
     if env:
         full_env.update(env)
-    if comments is not None:
-        script = tempfile.NamedTemporaryFile("w", suffix=".tsv", delete=False, encoding="utf-8")
-        script.write("".join(f"{a}\t{t}\n" for a, t in comments))
-        script.close()
-        full_env["DN_SCRIPT"] = script.name
-        full_env["EDITOR"] = f'"{sys.executable}" "{os.path.join(HERE, "fake_editor.py")}"'
-    out = subprocess.run([BIN, *args], cwd=cwd, env=full_env, capture_output=True, text=True, encoding="utf-8")
-    if comments is not None:
-        os.unlink(script.name)
-    return out
+    return subprocess.run([BIN, *args], cwd=cwd, env=full_env, capture_output=True, text=True, encoding="utf-8")
 
 
 def member(review, name):
