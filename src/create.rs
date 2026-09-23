@@ -1,13 +1,38 @@
-//! Turns the position a comment was written at in the editor (an
-//! [`AnchorScope`], derived from the diff's line counters) into the
-//! [`Anchor`] that is persisted: for each side, the file version (its
-//! digest) and the line range in it. No text is kept -- the versions
-//! themselves are in the bundle.
+//! Turns the position a comment was placed at (an [`AnchorScope`]: the
+//! lines it covers on each side of the diff) into the [`Anchor`] that is
+//! persisted: for each side, the file version (its digest) and the line
+//! range in it. No text is kept -- the versions themselves are in the
+//! bundle.
 
-use crate::annotation::{AnchorScope, LineSpan};
 use crate::diff::UnifiedDiff;
 use crate::messages::mf;
 use crate::model::{Anchor, FileDigest, FileRef, LineRange, Side};
+
+/// A run of lines in one version of a file. `len == 0` is an insertion
+/// point: `start` is the line the (absent) text would sit *before*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineSpan {
+    pub start: u32,
+    pub len: u32,
+}
+
+/// Where a new comment is placed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnchorScope {
+    Global,
+    File {
+        file: String,
+    },
+    /// What the comment covers on each side. A context line is a one-line
+    /// span on both; an added line an empty `base` and a one-line `head`; a
+    /// removed line the reverse; a run of lines the whole run on both
+    /// sides. Never empty on both.
+    Span {
+        file: String,
+        base: LineSpan,
+        head: LineSpan,
+    },
+}
 
 /// `revisions` are the (base, head) ids of the reviewed change; `files` the
 /// digests of the files the diff touches.
@@ -74,17 +99,15 @@ pub fn build_anchor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::annotation::{self, Item};
+    use crate::diff;
     use crate::digest::digest;
     use crate::files::{Tree, diff_trees};
 
     /// A one-file change: the unified diff between `old` and `new` (as the
     /// directory provider makes it) and the digests of both versions.
     struct Change {
-        diff: String,
+        diff: UnifiedDiff,
         files: Vec<FileDigest>,
-        old: Option<String>,
-        new: Option<String>,
     }
 
     fn change(old: Option<&str>, new: Option<&str>) -> Change {
@@ -93,65 +116,32 @@ mod tests {
                 .into_iter()
                 .collect()
         };
-        let (diff, files) = diff_trees(&tree(old), &tree(new));
+        let (text, files) = diff_trees(&tree(old), &tree(new));
         Change {
-            diff,
+            diff: diff::parse(&text).unwrap(),
             files,
-            old: old.map(str::to_string),
-            new: new.map(str::to_string),
         }
-    }
-
-    fn numbered(n: u32) -> String {
-        (1..=n).map(|i| format!("l{i}\n")).collect()
-    }
-
-    /// `text` with the given 1-based lines replaced (`None` = removed).
-    fn edited(text: &str, edits: &[(u32, Option<&str>)]) -> String {
-        let mut out = String::new();
-        for (i, line) in text.lines().enumerate() {
-            match edits.iter().find(|(n, _)| *n == i as u32 + 1) {
-                Some((_, Some(new))) => out.push_str(&format!("{new}\n")),
-                Some((_, None)) => {}
-                None => out.push_str(&format!("{line}\n")),
-            }
-        }
-        out
     }
 
     fn revisions() -> (Option<String>, Option<String>) {
         (Some("base-rev".into()), Some("head-rev".into()))
     }
 
-    fn parse_with_comment(
-        c: &Change,
-        lines: Vec<String>,
-    ) -> (crate::diff::UnifiedDiff, AnchorScope) {
-        let text = lines.join("\n") + "\n";
-        let parsed = annotation::parse(&text).unwrap();
-        let Item::NewThread { scope, .. } = &parsed.items[0] else {
-            panic!("expected a thread in:\n{text}\n({})", c.diff)
+    /// The anchor of a comment on `f.txt` covering `base` and `head`
+    /// (`(start, len)` each).
+    fn span(c: &Change, base: (u32, u32), head: (u32, u32)) -> Anchor {
+        let scope = AnchorScope::Span {
+            file: "f.txt".into(),
+            base: LineSpan {
+                start: base.0,
+                len: base.1,
+            },
+            head: LineSpan {
+                start: head.0,
+                len: head.1,
+            },
         };
-        (parsed.diff.clone(), scope.clone())
-    }
-
-    /// The anchor of a comment written right after the diff line `index`
-    /// (0-based, counting every line of `diff`).
-    fn anchor_after_line(c: &Change, index: usize) -> Anchor {
-        let mut lines: Vec<String> = c.diff.lines().map(str::to_string).collect();
-        lines.insert(index + 1, "> comment".to_string());
-        let (diff, scope) = parse_with_comment(c, lines);
-        build_anchor(&scope, &diff, &c.files, &revisions()).unwrap()
-    }
-
-    /// The anchor for a comment after the first diff line equal to `line`.
-    fn anchor_after(c: &Change, line: &str) -> Anchor {
-        let index = c
-            .diff
-            .lines()
-            .position(|l| l == line)
-            .unwrap_or_else(|| panic!("no diff line {line:?} in:\n{}", c.diff));
-        anchor_after_line(c, index)
+        build_anchor(&scope, &c.diff, &c.files, &revisions()).unwrap()
     }
 
     fn ranges(a: &Anchor) -> (Option<&LineRange>, Option<&LineRange>) {
@@ -166,121 +156,38 @@ mod tests {
         (r.start, r.len)
     }
 
-    /// Two hunks with a gap between them: lines 2 and 19 of 20 changed.
-    fn two_hunks() -> Change {
-        let old = numbered(20);
-        change(
-            Some(&old),
-            Some(&edited(&old, &[(2, Some("L2")), (19, Some("L19"))])),
-        )
-    }
-
     #[test]
-    fn a_context_line_is_a_one_line_range_on_both_sides() {
-        let a = anchor_after(&two_hunks(), " l5");
+    fn each_side_keeps_its_lines_and_the_digest_of_its_own_version() {
+        let c = change(Some("a\nb\nc\n"), Some("a\nB\nc\nd\n"));
+        let a = span(&c, (2, 1), (2, 2));
         let (base, head) = ranges(&a);
-        assert_eq!(at(base), (5, 1));
-        assert_eq!(at(head), (5, 1));
+        assert_eq!((at(base), at(head)), ((2, 1), (2, 2)));
         assert_eq!(base.unwrap().file, "f.txt");
-        assert_eq!(base.unwrap().digest, digest(numbered(20)));
-        assert_eq!(
-            head.unwrap().digest,
-            digest(edited(&numbered(20), &[(2, Some("L2")), (19, Some("L19"))]))
-        );
+        assert_eq!(base.unwrap().digest, digest("a\nb\nc\n"));
+        assert_eq!(head.unwrap().digest, digest("a\nB\nc\nd\n"));
     }
 
     #[test]
-    fn numbering_in_a_later_hunk_follows_the_diff_not_the_hunk() {
-        let a = anchor_after(&two_hunks(), " l16");
+    fn an_insertion_point_is_kept_as_an_empty_range() {
+        let c = change(Some("a\nb\n"), Some("a\nX\nb\n"));
+        let a = span(&c, (2, 0), (2, 1));
         let (base, head) = ranges(&a);
-        assert_eq!((at(base), at(head)), ((16, 1), (16, 1)));
-    }
-
-    #[test]
-    fn an_added_line_is_an_insertion_point_on_the_base_side() {
-        let c = change(
-            Some("a\nb\nc\nd\ne\nf\ng\n"),
-            Some("a\nb\nc\nX\nd\ne\nf\ng\n"),
-        );
-        let a = anchor_after(&c, "+X");
-        let (base, head) = ranges(&a);
-        assert_eq!(at(head), (4, 1));
-        // Between base lines 3 and 4: it sits before line 4 (`d`).
-        assert_eq!(at(base), (4, 0));
-        assert!(base.unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_removed_line_is_an_insertion_point_on_the_head_side() {
-        let c = change(Some("a\nb\nc\nd\ne\nf\ng\n"), Some("a\nb\nc\ne\nf\ng\n"));
-        let a = anchor_after(&c, "-d");
-        let (base, head) = ranges(&a);
-        assert_eq!(at(base), (4, 1));
-        assert_eq!(at(head), (4, 0));
-    }
-
-    #[test]
-    fn a_range_covers_its_lines_on_each_side() {
-        let c = change(
-            Some("a\nb\nc\nd\ne\nf\ng\nh\n"),
-            Some("a\nb\nC\nD\nE\nf\ng\nh\n"),
-        );
-        let mut lines: Vec<String> = c.diff.lines().map(str::to_string).collect();
-        let open = lines.iter().position(|l| l == "-c").unwrap();
-        lines.insert(open, ">[r".to_string());
-        let close = lines.iter().position(|l| l == "+E").unwrap();
-        lines.insert(close + 1, ">]r".to_string());
-        lines.insert(close + 2, "> range".to_string());
-        let (diff, scope) = parse_with_comment(&c, lines);
-        let a = build_anchor(&scope, &diff, &c.files, &revisions()).unwrap();
-        let (base, head) = ranges(&a);
-        assert_eq!(at(base), (3, 3));
-        assert_eq!(at(head), (3, 3));
-    }
-
-    #[test]
-    fn a_range_of_only_added_lines_is_empty_on_the_base_side() {
-        let c = change(Some("a\nb\n"), Some("a\nX\nY\nb\n"));
-        let mut lines: Vec<String> = c.diff.lines().map(str::to_string).collect();
-        let open = lines.iter().position(|l| l == "+X").unwrap();
-        lines.insert(open, ">[r".to_string());
-        let close = lines.iter().position(|l| l == "+Y").unwrap();
-        lines.insert(close + 1, ">]r".to_string());
-        lines.insert(close + 2, "> two new lines".to_string());
-        let (diff, scope) = parse_with_comment(&c, lines);
-        let a = build_anchor(&scope, &diff, &c.files, &revisions()).unwrap();
-        let (base, head) = ranges(&a);
-        assert_eq!(at(head), (2, 2));
         assert_eq!(at(base), (2, 0));
-    }
-
-    #[test]
-    fn a_whole_hunk_is_a_span_over_both_of_its_ranges() {
-        let old = numbered(12);
-        let c = change(
-            Some(&old),
-            Some(&edited(&old, &[(6, Some("L6")), (7, None)])),
-        );
-        // A comment straight after the hunk header.
-        let index = c.diff.lines().position(|l| l.starts_with("@@")).unwrap();
-        let a = anchor_after_line(&c, index);
-        let (base, head) = ranges(&a);
-        // Old lines 3..=10, new lines 3..=9.
-        assert_eq!(at(base), (3, 8));
-        assert_eq!(at(head), (3, 7));
+        assert!(base.unwrap().is_empty());
+        assert_eq!(at(head), (2, 1));
     }
 
     #[test]
     fn added_and_deleted_files_have_only_one_side() {
         let added = change(None, Some("a\nb\nc\n"));
-        let a = anchor_after(&added, "+b");
+        let a = span(&added, (1, 0), (2, 1));
         let (base, head) = ranges(&a);
         assert!(base.is_none());
         assert_eq!(at(head), (2, 1));
         assert_eq!(head.unwrap().digest, digest("a\nb\nc\n"));
 
         let deleted = change(Some("a\nb\nc\n"), None);
-        let a = anchor_after(&deleted, "-b");
+        let a = span(&deleted, (2, 1), (1, 0));
         let (base, head) = ranges(&a);
         assert!(head.is_none());
         assert_eq!(at(base), (2, 1));
@@ -288,17 +195,8 @@ mod tests {
     }
 
     #[test]
-    fn each_side_records_the_digest_of_its_own_version() {
-        let c = change(Some("a\nb\nc\n"), Some("a\nB\nc\n"));
-        let a = anchor_after(&c, " a");
-        let (base, head) = ranges(&a);
-        assert_eq!(base.unwrap().digest, digest("a\nb\nc\n"));
-        assert_eq!(head.unwrap().digest, digest("a\nB\nc\n"));
-    }
-
-    #[test]
     fn a_renamed_file_has_each_side_under_its_own_path_and_digest() {
-        let diff = "\
+        let text = "\
 diff --git a/old.txt b/new.txt
 similarity index 90%
 rename from old.txt
@@ -310,19 +208,20 @@ rename to new.txt
 -b
 +B
  c
-> comment
 ";
-        let parsed = annotation::parse(diff).unwrap();
-        let Item::NewThread { scope, .. } = &parsed.items[0] else {
-            panic!()
-        };
+        let parsed = diff::parse(text).unwrap();
         let files = vec![FileDigest {
             old_path: Some("old.txt".into()),
             new_path: Some("new.txt".into()),
             old: Some(digest("a\nb\nc\n")),
             new: Some(digest("a\nB\nc\n")),
         }];
-        let a = build_anchor(scope, &parsed.diff, &files, &revisions()).unwrap();
+        let scope = AnchorScope::Span {
+            file: "new.txt".into(),
+            base: LineSpan { start: 3, len: 1 },
+            head: LineSpan { start: 3, len: 1 },
+        };
+        let a = build_anchor(&scope, &parsed, &files, &revisions()).unwrap();
         let (base, head) = ranges(&a);
         let (base, head) = (base.unwrap(), head.unwrap());
         assert_eq!(
@@ -331,24 +230,12 @@ rename to new.txt
         );
         assert_eq!(base.digest, digest("a\nb\nc\n"));
         assert_eq!(head.digest, digest("a\nB\nc\n"));
-        // The comment is after the trailing context line ` c`.
-        assert_eq!((at(Some(base)), at(Some(head))), ((3, 1), (3, 1)));
     }
 
     #[test]
     fn global_and_file_anchors_record_the_revisions_and_both_file_versions() {
         let c = change(Some("a\nb\n"), Some("a\nB\n"));
-        let header: String = c.diff.lines().take(3).map(|l| format!("{l}\n")).collect();
-        let parsed = annotation::parse(&format!("> global\n\n{header}> file\n")).unwrap();
-        let scopes: Vec<_> = parsed
-            .items
-            .iter()
-            .map(|i| match i {
-                Item::NewThread { scope, .. } => scope.clone(),
-                _ => panic!(),
-            })
-            .collect();
-        let g = build_anchor(&scopes[0], &parsed.diff, &c.files, &revisions()).unwrap();
+        let g = build_anchor(&AnchorScope::Global, &c.diff, &c.files, &revisions()).unwrap();
         assert_eq!(
             g,
             Anchor::Global {
@@ -356,77 +243,26 @@ rename to new.txt
                 head: Some("head-rev".into())
             }
         );
-        let f = build_anchor(&scopes[1], &parsed.diff, &c.files, &revisions()).unwrap();
-        let Anchor::File { base, head } = f else {
+        let file = AnchorScope::File {
+            file: "f.txt".into(),
+        };
+        let Anchor::File { base, head } =
+            build_anchor(&file, &c.diff, &c.files, &revisions()).unwrap()
+        else {
             panic!()
         };
         assert_eq!(base.unwrap().digest, digest("a\nb\n"));
         assert_eq!(head.unwrap().digest, digest("a\nB\n"));
     }
 
-    /// For a comment after *every* line of a diff: each side's range is where
-    /// the diff's line really is in that version of the file (and a side with
-    /// no line there is an empty range).
-    fn check_every_position(c: &Change) {
-        let old_lines: Vec<&str> = c.old.as_deref().unwrap_or("").lines().collect();
-        let new_lines: Vec<&str> = c.new.as_deref().unwrap_or("").lines().collect();
-        let first_hunk = c.diff.lines().position(|l| l.starts_with("@@")).unwrap();
-        for (i, line) in c.diff.lines().enumerate().skip(first_hunk + 1) {
-            let (marker, content) = match line.chars().next() {
-                Some(m @ (' ' | '+' | '-')) => (m, &line[1..]),
-                _ => continue, // the next file's header etc.
-            };
-            let a = anchor_after_line(c, i);
-            let (base, head) = ranges(&a);
-            let (has_base, has_head) = (marker != '+', marker != '-');
-            for (r, has, lines) in [(base, has_base, &old_lines), (head, has_head, &new_lines)] {
-                let Some(r) = r else {
-                    assert!(
-                        lines.is_empty(),
-                        "{line:?}: side missing but the file has lines"
-                    );
-                    continue;
-                };
-                if has {
-                    assert_eq!(r.len, 1, "{line:?}");
-                    assert_eq!(
-                        lines[r.start as usize - 1],
-                        content,
-                        "{line:?} is not at line {} of its version",
-                        r.start
-                    );
-                } else {
-                    // A point: it sits between the line before and the one after.
-                    assert_eq!(r.len, 0, "{line:?}");
-                    assert!(
-                        r.start >= 1 && r.start as usize <= lines.len() + 1,
-                        "{line:?}"
-                    );
-                }
-            }
-        }
-    }
-
     #[test]
-    fn every_comment_position_anchors_to_where_its_line_really_is() {
-        let old = numbered(30);
-        let new = edited(
-            &old,
-            &[
-                (2, Some("L2")),
-                (3, None),
-                (4, Some("L4a\nL4b")),
-                (15, Some("L15")),
-                (16, Some("L16")),
-                (17, None),
-                (28, Some("L28")),
-            ],
-        );
-        check_every_position(&change(Some(&old), Some(&new)));
-        check_every_position(&two_hunks());
-        check_every_position(&change(Some("a\nb\nc\n"), Some("a\nb\nc\nd\n")));
-        check_every_position(&change(Some("a\nb\nc\nd\n"), Some("d\n")));
-        check_every_position(&change(None, Some("only\nnew\n")));
-        check_every_position(&change(Some("only\nold\n"), None));
+    fn a_span_in_a_file_the_diff_does_not_have_is_refused() {
+        let c = change(Some("a\n"), Some("b\n"));
+        let scope = AnchorScope::Span {
+            file: "other.txt".into(),
+            base: LineSpan { start: 1, len: 1 },
+            head: LineSpan { start: 1, len: 1 },
+        };
+        assert!(build_anchor(&scope, &c.diff, &c.files, &revisions()).is_err());
     }
 }

@@ -1,4 +1,4 @@
-//! What an `edit` session adds to a bundle besides its events: the new
+//! What recording a change adds to a bundle besides its events: the new
 //! revision (if the diff is one the bundle hasn't recorded), and the file
 //! versions that everything the review refers to needs to be placeable from
 //! the bundle alone.

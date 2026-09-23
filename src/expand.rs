@@ -2,14 +2,12 @@
 //!
 //! A thread is placed by where its lines are in the file (see `anchor`), not
 //! by whether the diff happens to show them. So a view (the HTML export, the
-//! `edit` buffer) draws its diff *plus* a few lines of context around every
+//! page) draws its diff *plus* a few lines of context around every
 //! placed thread that the diff doesn't show, taken from the full text of the
 //! version being viewed -- and, for a file the diff doesn't touch at all, a
 //! file that is nothing but that context.
 //!
-//! [`expand`] does that to a parsed diff; [`to_text`] writes the result back
-//! out as unified diff text (for the `edit` buffer, which the annotation
-//! parser reads again).
+//! [`expand`] does that to a parsed diff.
 
 use crate::anchor::{Placement, ViewVersions};
 use crate::diff::{DiffLine, FileDiff, Hunk, LineKind, UnifiedDiff};
@@ -311,86 +309,6 @@ pub fn has_row(diff: &UnifiedDiff, want: &Want) -> bool {
         })
 }
 
-fn hunk_text(h: &Hunk) -> String {
-    let mut out = format!(
-        "@@ -{},{} +{},{} @@",
-        h.old_start, h.old_lines, h.new_start, h.new_lines
-    );
-    if let Some(heading) = &h.section_heading {
-        out.push(' ');
-        out.push_str(heading);
-    }
-    out.push('\n');
-    for l in &h.lines {
-        out.push(match l.kind {
-            LineKind::Context => ' ',
-            LineKind::Added => '+',
-            LineKind::Removed => '-',
-        });
-        out.push_str(&l.content);
-        out.push('\n');
-        if l.no_newline_at_eof {
-            out.push_str("\\ No newline at end of file\n");
-        }
-    }
-    out
-}
-
-/// `expanded` written as unified diff text, keeping `original_text` (which
-/// `original` was parsed from) verbatim wherever the diff wasn't changed and
-/// each changed file's own header lines. `None` if the text doesn't split
-/// into the files `original` has.
-pub fn to_text(
-    original_text: &str,
-    original: &UnifiedDiff,
-    expanded: &UnifiedDiff,
-) -> Option<String> {
-    if expanded == original {
-        return Some(original_text.to_string());
-    }
-    let mut sections: Vec<Vec<&str>> = Vec::new();
-    for line in original_text.lines() {
-        if line.starts_with("diff --git ") {
-            sections.push(Vec::new());
-        }
-        sections.last_mut()?.push(line);
-    }
-    if sections.len() != original.files.len() {
-        return None;
-    }
-    let mut out = String::new();
-    for (i, section) in sections.iter().enumerate() {
-        let (was, now) = (&original.files[i], &expanded.files[i]);
-        let header_end = if was.hunks == now.hunks {
-            section.len()
-        } else {
-            section
-                .iter()
-                .position(|l| l.starts_with("@@ ") || *l == "@@")
-                .unwrap_or(section.len())
-        };
-        for l in &section[..header_end] {
-            out.push_str(l);
-            out.push('\n');
-        }
-        if was.hunks != now.hunks {
-            for h in &now.hunks {
-                out.push_str(&hunk_text(h));
-            }
-        }
-    }
-    for f in &expanded.files[original.files.len()..] {
-        let path = f.new_path.as_deref().or(f.old_path.as_deref())?;
-        out.push_str(&format!(
-            "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
-        ));
-        for h in &f.hunks {
-            out.push_str(&hunk_text(h));
-        }
-    }
-    Some(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,10 +329,9 @@ mod tests {
             .collect()
     }
 
-    /// A view between two trees: the diff text, its parse, the per-file
-    /// digests, and every text held.
+    /// A view between two trees: the diff, the per-file digests, and every
+    /// text held.
     struct Scene {
-        text: String,
         diff: UnifiedDiff,
         files: Vec<FileDigest>,
         held: Vec<String>,
@@ -437,7 +354,6 @@ mod tests {
             .collect();
         Scene {
             diff: diff::parse(&text).unwrap(),
-            text,
             files,
             held,
             tree,
@@ -830,36 +746,6 @@ mod tests {
         assert!(!has_row(&sc.diff, &want("f.txt", Side::Old, 2, 2)));
     }
 
-    // ---- writing the diff back out ----------------------------------------------
-
-    #[test]
-    fn unchanged_diff_is_written_back_verbatim() {
-        let sc = two_hunks();
-        assert_eq!(to_text(&sc.text, &sc.diff, &sc.diff).unwrap(), sc.text);
-    }
-
-    #[test]
-    fn expanded_text_reparses_to_the_expanded_diff() {
-        let sc = two_hunks();
-        for wants in [
-            vec![want("f.txt", Side::New, 12, 12)],
-            vec![want("f.txt", Side::New, 9, 9)],
-            vec![
-                want("f.txt", Side::New, 10, 10),
-                want("f.txt", Side::New, 14, 14),
-                want("f.txt", Side::New, 18, 18),
-            ],
-            vec![
-                want("f.txt", Side::New, 30, 30),
-                want("f.txt", Side::New, 1, 1),
-            ],
-        ] {
-            let (d, _) = run(&sc, &wants);
-            let text = to_text(&sc.text, &sc.diff, &d).unwrap();
-            assert_eq!(diff::parse(&text).unwrap(), d, "{text}");
-        }
-    }
-
     #[test]
     fn a_file_added_for_context_is_written_with_its_own_header() {
         let readme = numbered(9);
@@ -869,66 +755,18 @@ mod tests {
         );
         let (d, synthetic) = run(&sc, &[want("README.md", Side::New, 5, 5)]);
         assert_eq!(synthetic, ["README.md"]);
-        let text = to_text(&sc.text, &sc.diff, &d).unwrap();
-        assert!(
-            text.starts_with(&sc.text),
-            "the real diff comes first, verbatim"
+        assert_eq!(
+            d.files[0], sc.diff.files[0],
+            "the real diff comes first, as it was"
         );
-        assert!(text.contains("diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -2,7 +2,7 @@\n"), "{text}");
-        assert_eq!(diff::parse(&text).unwrap(), d);
-    }
-
-    #[test]
-    fn a_changed_files_own_header_lines_survive_and_others_stay_verbatim() {
-        // A rename with an edit, an untouched-hunk file, and a mode line.
-        let text = "\
-diff --git a/old.txt b/new.txt
-similarity index 80%
-rename from old.txt
-rename to new.txt
-index 111..222 100644
---- a/old.txt
-+++ b/new.txt
-@@ -1,3 +1,3 @@ fn heading
- a
--b
-+B
- c
-diff --git a/other.txt b/other.txt
-index 333..444 100644
---- a/other.txt
-+++ b/other.txt
-@@ -1 +1 @@
--x
-+y
-";
-        let original = diff::parse(text).unwrap();
-        let big: String = (1..=12).map(|n| format!("n{n}\n")).collect();
-        let head = format!("a\nB\nc\n{big}");
-        let view_files = vec![FileDigest {
-            old_path: Some("old.txt".into()),
-            new_path: Some("new.txt".into()),
-            old: Some(digest("a\nb\nc\n")),
-            new: Some(digest(&head)),
-        }];
-        let mut blobs = Blobs::default();
-        blobs.add(head.as_bytes());
-        let (d, _) = expand(
-            &original,
-            &[want("new.txt", Side::New, 10, 10)],
-            &ViewVersions {
-                files: &view_files,
-                tree: &[],
-            },
-            &blobs,
-        );
-        assert_ne!(d, original);
-        let out = to_text(text, &original, &d).unwrap();
-        // Header lines of the changed file are kept; the other file is verbatim.
-        assert!(out.starts_with("diff --git a/old.txt b/new.txt\nsimilarity index 80%\nrename from old.txt\nrename to new.txt\nindex 111..222 100644\n--- a/old.txt\n+++ b/new.txt\n@@ "), "{out}");
-        assert!(out.ends_with("diff --git a/other.txt b/other.txt\nindex 333..444 100644\n--- a/other.txt\n+++ b/other.txt\n@@ -1 +1 @@\n-x\n+y\n"), "{out}");
-        assert!(out.contains("fn heading"), "the section heading is kept");
-        assert_eq!(diff::parse(&out).unwrap(), d);
+        let added = &d.files[1];
+        assert_eq!(added.new_path.as_deref(), Some("README.md"));
+        let hunks: Vec<_> = added
+            .hunks
+            .iter()
+            .map(|h| (h.old_start, h.old_lines, h.new_start, h.new_lines))
+            .collect();
+        assert_eq!(hunks, [(2, 7, 2, 7)]);
     }
 
     #[test]
@@ -972,12 +810,9 @@ diff --git a/f.txt b/f.txt
         // Lines 2..=8 were added in a hunk of their own (the diff's hunk
         // starts at 10, so 9 stays out).
         assert_eq!(d.files[0].hunks.len(), 2);
-        let out = to_text(text, &original, &d).unwrap();
-        assert!(
-            out.contains("+L12\n\\ No newline at end of file\n"),
-            "{out}"
-        );
-        assert_eq!(diff::parse(&out).unwrap(), d);
+        let last = d.files[0].hunks[1].lines.last().unwrap();
+        assert_eq!(last.content, "L12");
+        assert!(last.no_newline_at_eof);
     }
 
     #[test]
@@ -998,16 +833,6 @@ diff --git a/f.txt b/f.txt
             all.windows(2).all(|w| w[0] < w[1]),
             "in order, no repeats: {all:?}"
         );
-    }
-
-    #[test]
-    fn text_that_does_not_split_into_the_diffs_files_is_refused() {
-        let sc = two_hunks();
-        let (d, _) = run(&sc, &[want("f.txt", Side::New, 12, 12)]);
-        // Same diff, but text with a different number of files.
-        assert!(to_text("not a diff at all\n", &sc.diff, &d).is_none());
-        let twice = format!("{}{}", sc.text, sc.text);
-        assert!(to_text(&twice, &sc.diff, &d).is_none());
     }
 
     // ---- randomized: invariants of the result -----------------------------------
@@ -1102,9 +927,6 @@ diff --git a/f.txt b/f.txt
                     "{l:?} lost: {ctx}"
                 );
             }
-            // And it can be written out and read back.
-            let text = to_text(&sc.text, &sc.diff, &d).unwrap();
-            assert_eq!(diff::parse(&text).unwrap(), d, "{ctx}");
         }
     }
 }

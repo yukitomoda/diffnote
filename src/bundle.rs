@@ -156,10 +156,9 @@ impl Loaded {
         })
     }
 
-    /// The mode this bundle's first revision was captured with. `edit`
-    /// defaults new captures to this rather than the CLI's own default, so
-    /// an existing bundle's snapshot behavior never silently changes out
-    /// from under it.
+    /// The mode this bundle's first revision was captured with: the one
+    /// every later revision is captured with too (it is chosen when the
+    /// review is made, and never changes).
     pub fn snapshot_mode(&self) -> Option<SnapshotMode> {
         self.revisions().next().map(|r| r.snapshot_mode)
     }

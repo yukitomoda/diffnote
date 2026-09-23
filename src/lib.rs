@@ -1,11 +1,9 @@
 pub mod anchor;
-pub mod annotation;
 pub mod author;
 pub mod bundle;
 pub mod create;
 pub mod diff;
 pub mod digest;
-pub mod editor;
 pub mod expand;
 pub mod files;
 pub mod git;
@@ -17,5 +15,4 @@ pub mod model;
 pub mod record;
 pub mod review;
 pub mod serve;
-pub mod show;
 pub mod user_config;

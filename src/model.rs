@@ -20,9 +20,8 @@ pub enum Side {
 
 /// What to snapshot into a `.diffnote` bundle the first time a new diff
 /// digest is captured (see `bundle`). Persisted on `Meta` as the mode the
-/// bundle was first created with, so later `edit` sessions default to the
-/// same mode instead of silently switching when the CLI's own default
-/// changes.
+/// bundle was first created with, so later revisions are captured the same
+/// way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum SnapshotMode {
@@ -33,7 +32,7 @@ pub enum SnapshotMode {
 }
 
 /// The commits a git-backed review was made against, resolved to full ids
-/// at edit time (so a moving ref such as `HEAD~4` is pinned).
+/// when recorded (so a moving ref such as `HEAD~4` is pinned).
 /// One emoji that people reacted to a comment with, and who (in the order the
 /// emoji was first used, and each person's reaction).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -323,9 +322,8 @@ pub enum Event {
         #[serde(with = "time::serde::rfc3339")]
         created_at: OffsetDateTime,
     },
-    /// A version of the reviewed content that some edit session was made
-    /// against. Appended the first time a session that adds anything sees a
-    /// diff (by `digest`) the bundle hasn't recorded yet.
+    /// A version of the reviewed content that the review was made against.
+    /// Appended the first time a diff (by `digest`) is recorded.
     Revision(Revision),
     /// Adds files to the head tree a recorded revision knows about, when a
     /// later session refers to files the revision hadn't recorded.
@@ -359,9 +357,9 @@ pub enum Event {
         #[serde(with = "time::serde::rfc3339")]
         created_at: OffsetDateTime,
     },
-    /// Promotes `anchor` to the new authoritative anchor/search-key for
-    /// `parent`'s thread, whether from an explicit `>!reanchor` directive or
-    /// a silently-accepted automatic relocation.
+    /// Promotes `anchor` to the new authoritative anchor for `parent`'s
+    /// thread. Nothing writes one today (the editor that did is gone), but
+    /// bundles that have them are still read, and they still move threads.
     Reanchor {
         parent: Ulid,
         author: String,

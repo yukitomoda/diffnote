@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-/// `println!` that stops quietly when the reader has gone (`diffnote show |
-/// head`), as other commands do, instead of panicking on the broken pipe.
+/// `println!` that stops quietly when the reader has gone (`diffnote config
+/// get | head`), as other commands do, instead of panicking on the broken
+/// pipe.
 macro_rules! println {
     ($($arg:tt)*) => {{
         use std::io::Write;
@@ -18,8 +19,8 @@ macro_rules! println {
 
 use diffnote::digest::digest;
 use diffnote::messages::{m, mf};
-use diffnote::model::{Anchor, Event};
-use diffnote::{annotation, bundle, review};
+use diffnote::model::Event;
+use diffnote::{bundle, review};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use time::OffsetDateTime;
@@ -95,33 +96,6 @@ enum Cmd {
         #[arg(long, value_enum, hide_possible_values = true, help = m("cli.init.snapshot"))]
         snapshot: Option<diffnote::bundle::SnapshotMode>,
     },
-    #[command(about = m("cli.edit.about"))]
-    Edit {
-        #[arg(
-            short = 'f',
-            long = "file",
-            default_value = ".diffnote",
-            hide_default_value = true,
-            help = m("cli.edit.review")
-        )]
-        review: PathBuf,
-        #[arg(value_name = "REV|DIR", help = m("cli.edit.target"))]
-        target: Option<String>,
-        #[arg(long, value_name = "REV|DIR", help = m("cli.edit.base"))]
-        base: Option<String>,
-        #[arg(long, help = m("cli.edit.files"))]
-        files: bool,
-        #[arg(long, value_name = "DIR", help = m("cli.edit.repo"))]
-        repo: Option<PathBuf>,
-        #[arg(long, value_enum, hide_possible_values = true, help = m("cli.edit.snapshot"))]
-        snapshot: Option<diffnote::bundle::SnapshotMode>,
-        #[arg(long = "show", value_name = "PATH[:START[-END]]", help = m("cli.edit.show"))]
-        show: Vec<String>,
-        #[arg(long, value_name = "TITLE", help = m("cli.edit.title"))]
-        title: Option<String>,
-        #[arg(long, help = m("cli.edit.reopen"))]
-        reopen: bool,
-    },
     #[command(about = m("cli.serve.about"))]
     Serve {
         #[arg(
@@ -148,17 +122,6 @@ enum Cmd {
         reopen: bool,
         #[arg(long, value_enum, hide_possible_values = true, help = m("cli.serve.snapshot"))]
         snapshot: Option<diffnote::bundle::SnapshotMode>,
-    },
-    #[command(about = m("cli.show.about"))]
-    Show {
-        #[arg(
-            short = 'f',
-            long = "file",
-            default_value = ".diffnote",
-            hide_default_value = true,
-            help = m("cli.show.review")
-        )]
-        review: PathBuf,
     },
     #[command(about = m("cli.export.about"))]
     Export {
@@ -225,31 +188,6 @@ fn main() -> Result<()> {
             title,
             snapshot,
         } => cmd_init(review, target, files, repo, title, snapshot),
-        Cmd::Edit {
-            review,
-            target,
-            base,
-            files,
-            repo,
-            snapshot,
-            show,
-            title,
-            reopen,
-        } => cmd_edit(
-            review,
-            Compare {
-                target,
-                base,
-                files,
-                reopen,
-                snapshot: None,
-            },
-            repo,
-            snapshot,
-            show,
-            title,
-        ),
-        Cmd::Show { review } => cmd_show(review),
         Cmd::Serve {
             review,
             port,
@@ -388,7 +326,7 @@ fn set_config_field(
     }
 }
 
-/// For `serve`, the counterpart of what `edit` does with what it is given: the
+/// For `serve`, what it is given to compare: the
 /// changes from the base to the target are recorded as a revision of the
 /// bundle (made if there is none yet, for git), so that they can be reviewed in
 /// the browser.
@@ -396,7 +334,7 @@ fn set_config_field(
 /// - A git bundle: the target is a commit (`HEAD` if none is named).
 /// - A directory bundle: the target is the directory to compare with the base
 ///   snapshot. With none, nothing is added (`.` may be anywhere).
-/// - No bundle yet: as for `edit`, `base` (or the target's parent) starts it.
+/// - No bundle yet: `base` (or the target's parent) starts it.
 ///
 /// Nothing is written if the diff is empty or is already recorded (or if
 /// `apply` is off: then it only says whether there is something to add).
@@ -414,7 +352,7 @@ fn add_revision(
     let mut loaded = bundle::load(review_path)?;
     let explicit = base.is_some() || target.is_some();
     let mut fresh = FreshBundle(None);
-    let exclude = [review_path.to_path_buf(), draft_path_for(review_path)];
+    let exclude = [review_path.to_path_buf()];
     let directory_review = match loaded.source() {
         Some(diffnote::model::Source::Files { .. }) => true,
         Some(diffnote::model::Source::Git(_)) => false,
@@ -549,7 +487,7 @@ fn repo_of(dir: Option<PathBuf>) -> Result<diffnote::git::Repo> {
     }
 }
 
-/// What `edit` and `serve` are told to compare: the target, and (if there is no
+/// What `serve` is told to compare: the target, and (if there is no
 /// bundle yet) the base to start from; `files` makes it a directory review.
 struct Compare {
     target: Option<String>,
@@ -747,8 +685,8 @@ type HeadSome = Box<dyn Fn(&[String]) -> Result<Vec<(String, Vec<u8>)>>>;
 /// Reads the whole head tree.
 type HeadAll = Box<dyn FnOnce() -> Result<Vec<(String, Vec<u8>)>>>;
 
-/// What one edit session reviews: the diff, plus everything needed to
-/// record it as a `Revision` if the session ends up adding anything.
+/// What a round of review compares: the diff, plus everything needed to
+/// record it as a `Revision`.
 struct Input {
     diff_text: String,
     /// Per-file digests of the files the diff touches.
@@ -773,7 +711,7 @@ struct Input {
 ///
 /// - With a bundle, the base is the one its first revision has; `base`, if
 ///   given, must be that same commit. The target is `HEAD` if none is named.
-/// - With none, `base` starts it (`edit --base main feature`); without `base`,
+/// - With none, `base` starts it (`serve --base main feature`); without `base`,
 ///   the target alone is a commit's own changes (from its first parent).
 fn git_range(
     repo: &diffnote::git::Repo,
@@ -920,37 +858,6 @@ fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Resu
     })
 }
 
-/// `--reopen`: the last recorded revision, exactly as stored, with nothing
-/// diffed and nothing read from git or the filesystem. Its digest already
-/// matches that revision, so `record_session` adds no new one -- only, if
-/// this session's comments reach a file that revision didn't need, a `Pin`
-/// for it (read from what the bundle already has).
-fn reopen_input(loaded: &bundle::Loaded) -> Result<Input> {
-    let rev = loaded
-        .revisions()
-        .last()
-        .context(m("main.reopen.input_no_revision"))?;
-    let diff_text = loaded.revision_diff(rev).unwrap_or_default();
-    let tree = loaded.tree_of(rev);
-    let all_tree = tree.clone();
-    Ok(Input {
-        digest: rev.digest.clone(),
-        tree_size: 0,
-        source: rev.source.clone(),
-        files: rev.files.clone(),
-        new_files: Default::default(),
-        base_files: Default::default(),
-        head_some: Box::new(move |paths| {
-            Ok(paths
-                .iter()
-                .filter_map(|p| Some((p.clone(), tree.get(p)?.clone())))
-                .collect())
-        }),
-        head_all: Box::new(move || Ok(all_tree.clone().into_iter().collect())),
-        diff_text,
-    })
-}
-
 /// `--base DIR` for a bundle that has a base already: it is fine if it is the
 /// same content (the bundle's base can't change), an error if not.
 fn check_files_base(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Result<()> {
@@ -1052,7 +959,7 @@ fn fresh_bundle(review_path: &Path, title: Option<&str>) -> Result<bundle::Loade
 }
 
 /// A git review that starts at a commit: the commit is the base, so that the
-/// next `edit` reviews what has changed since. Nothing is stored beyond the
+/// next `serve` reviews what has changed since. Nothing is stored beyond the
 /// commit's id (git has the rest).
 fn init_git(
     review_path: &Path,
@@ -1152,675 +1059,6 @@ fn init_files(review_path: &Path, dir: &Path, title: Option<String>, say: bool) 
     Ok(())
 }
 
-fn cmd_edit(
-    review_path: PathBuf,
-    compare: Compare,
-    repo: Option<PathBuf>,
-    snapshot_override: Option<bundle::SnapshotMode>,
-    show_specs: Vec<String>,
-    title: Option<String>,
-) -> Result<()> {
-    let Compare {
-        target,
-        base,
-        files,
-        reopen,
-        snapshot: _,
-    } = compare;
-    if reopen && (target.is_some() || base.is_some() || files) {
-        anyhow::bail!(m("main.reopen.conflicting_flags"));
-    }
-    if reopen && snapshot_override.is_some() {
-        anyhow::bail!(m("main.reopen.edit_conflicts_snapshot"));
-    }
-    if reopen && !show_specs.is_empty() {
-        anyhow::bail!(m("main.reopen.edit_conflicts_show"));
-    }
-    let shows: Vec<diffnote::show::Show> = show_specs
-        .iter()
-        .map(|spec| {
-            diffnote::show::parse(spec).map_err(|e| {
-                anyhow::anyhow!(mf(
-                    "main.edit.show_parse_failed",
-                    &[("spec", spec), ("error", &e.to_string())]
-                ))
-            })
-        })
-        .collect::<Result<_>>()?;
-    let mut loaded = bundle::load(&review_path)?;
-    let repo = repo_of(repo)?;
-    let mut fresh = FreshBundle(None);
-    let mut commits: Vec<(String, diffnote::model::CommitInfo)> = Vec::new();
-    // A directory review: the bundle says so, or (with no bundle) --files or
-    // the lack of a repository does.
-    let directory_review = match loaded.source() {
-        Some(diffnote::model::Source::Files { .. }) => true,
-        Some(diffnote::model::Source::Git(_)) => false,
-        None => files_mode(&repo, files),
-    };
-    let input = if reopen {
-        reopen_input(&loaded)?
-    } else if directory_review {
-        if snapshot_override == Some(bundle::SnapshotMode::Changed) {
-            anyhow::bail!(m("main.edit.dir_snapshot_changed_refused"));
-        }
-        let exclude = [review_path.clone(), draft_path_for(&review_path)];
-        if loaded.source().is_none() {
-            // No bundle: the base directory starts it, as `init` would.
-            let Some(base_dir) = base.as_deref() else {
-                anyhow::bail!(m("main.needs_a_base"));
-            };
-            init_files(&review_path, Path::new(base_dir), None, false)?;
-            fresh = FreshBundle(Some(review_path.clone()));
-            loaded = bundle::load(&review_path)?;
-        } else if let Some(base_dir) = base.as_deref() {
-            check_files_base(&loaded, Path::new(base_dir), &exclude)?;
-        }
-        let dir = PathBuf::from(target.as_deref().unwrap_or("."));
-        files_input(&loaded, &dir, &exclude)?
-    } else {
-        let range = git_range(&repo, &loaded, base.as_deref(), target.as_deref())?;
-        // The trail this head was reached by, read while the repository is at
-        // hand: the review keeps it, since an exported page has nothing to ask.
-        commits = repo.log(&range.base, &range.head).unwrap_or_default();
-        git_input(repo, range)?
-    };
-    let Input {
-        diff_text,
-        files,
-        new_files,
-        base_files,
-        source,
-        digest: diff_digest,
-        tree_size,
-        head_some,
-        head_all,
-    } = input;
-    let author = diffnote::author::resolve(None);
-    let title_set = title
-        .as_deref()
-        .is_some_and(|t| review::set_title(&mut loaded.settings, t));
-    if diff_text.trim().is_empty() {
-        // Nothing to review, but a title can still be given to a review that exists.
-        if title_set && !loaded.events.is_empty() {
-            let events = loaded.events.clone();
-            let none = bundle::Additions::default();
-            bundle::save(&review_path, &loaded, &events, &none)?;
-            fresh.keep();
-            println!("{}", m("main.title_set"));
-            return Ok(());
-        }
-        println!("{}", m("main.edit.no_diff"));
-        return Ok(());
-    }
-    let parsed_diff = diffnote::diff::parse(&diff_text).map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    let revisions = source.revisions(&diff_digest);
-    let existing_events = &loaded.events;
-    let existing_threads = review::build_threads(existing_events);
-
-    // Fresh review: write the diff verbatim, exactly as `git diff` produced
-    // it. annotation::render_for_edit reconstructs it line-by-line instead,
-    // which is fine for round-trip but an unnecessary risk (e.g. a possible
-    // trailing-newline mismatch) when there's nothing to interleave anyway.
-    // The files existing threads refer to that this diff doesn't touch: read
-    // at the head, so those threads can be placed too.
-    let touched_now: std::collections::HashSet<&str> = files
-        .iter()
-        .flat_map(|f| [f.old_path.as_deref(), f.new_path.as_deref()])
-        .flatten()
-        .collect();
-    let untouched_existing: Vec<String> =
-        diffnote::record::referenced_files(existing_events.iter())
-            .into_iter()
-            .chain(shows.iter().map(|s| s.path.clone()))
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .filter(|p| !touched_now.contains(p.as_str()))
-            .collect();
-    let head_of_untouched = if untouched_existing.is_empty() {
-        Vec::new()
-    } else {
-        (head_some)(&untouched_existing)?
-    };
-    let tree_now: Vec<diffnote::model::TreeFile> = head_of_untouched
-        .iter()
-        .map(|(p, b)| diffnote::record::tree_file(p, b))
-        .collect();
-    let mut blobs = loaded.blobs();
-    for bytes in new_files
-        .values()
-        .chain(base_files.values())
-        .chain(head_of_untouched.iter().map(|(_, b)| b))
-    {
-        blobs.add(bytes);
-    }
-    bundle::link_revision_files(&mut blobs, &files);
-    let versions = diffnote::anchor::ViewVersions {
-        files: &files,
-        tree: &tree_now,
-    };
-    let show_wants = diffnote::show::wants(&shows, &versions, &blobs)
-        .map_err(|e| anyhow::anyhow!("--show {e}"))?;
-    let (temp_text, synthetic_files) = if existing_threads.is_empty() && show_wants.is_empty() {
-        (diff_text.clone(), Vec::new())
-    } else {
-        annotation::render_for_edit(
-            &diff_text,
-            &parsed_diff,
-            &versions,
-            &blobs,
-            &existing_threads,
-            &show_wants,
-        )
-    };
-
-    // Comments written in a file the diff doesn't touch (shown for the
-    // threads on it) are anchored to that file's version at the head.
-    let anchor_files: Vec<diffnote::model::FileDigest> =
-        files.iter().cloned().chain(synthetic_files).collect();
-
-    let temp_dir = tempfile::tempdir().context(m("main.edit.temp_dir_failed"))?;
-    let temp_path = temp_dir.path().join("review.diff");
-
-    // If a previous session's edits failed to parse (or the editor itself
-    // exited non-zero), they were saved here instead of being lost -- reopen
-    // that instead of a fresh render so the user can just fix the mistake.
-    let draft_path = draft_path_for(&review_path);
-    let initial_text = match std::fs::read_to_string(&draft_path) {
-        Ok(draft) => {
-            println!(
-                "{}",
-                mf(
-                    "main.edit.resuming_draft",
-                    &[("path", &draft_path.display().to_string())]
-                )
-            );
-            draft
-        }
-        Err(_) => temp_text.clone(),
-    };
-    std::fs::write(&temp_path, &initial_text).context(m("main.edit.temp_write_failed"))?;
-
-    let editor = default_editor();
-    let words = diffnote::editor::command_words(&editor);
-    let (program, args) = words.split_first().context(m("main.edit.editor_empty"))?;
-    let status = Command::new(program)
-        .args(args)
-        .arg(&temp_path)
-        .status()
-        .with_context(|| mf("main.edit.editor_launch_failed", &[("editor", &editor)]))?;
-
-    let annotated = std::fs::read_to_string(&temp_path).context(m("main.edit.read_back_failed"))?;
-
-    if !status.success() {
-        save_draft(&draft_path, &annotated)?;
-        anyhow::bail!(mf(
-            "main.edit.editor_failed",
-            &[
-                ("editor", &editor),
-                ("path", &draft_path.display().to_string()),
-            ]
-        ));
-    }
-
-    let parsed = match annotation::parse(&annotated) {
-        Ok(parsed) => parsed,
-        Err(e) => {
-            save_draft(&draft_path, &annotated)?;
-            anyhow::bail!(mf(
-                "main.edit.parse_failed",
-                &[
-                    ("error", &e.to_string()),
-                    ("path", &draft_path.display().to_string()),
-                ]
-            ));
-        }
-    };
-
-    for warning in &parsed.warnings {
-        eprintln!(
-            "{}",
-            mf("main.warning_prefix", &[("warning", &warning.to_string())])
-        );
-    }
-
-    // Parsing succeeded, so nothing here is at risk of being lost anymore --
-    // any draft from an earlier failed attempt is now stale.
-    let _ = std::fs::remove_file(&draft_path);
-
-    if existing_events.is_empty() && parsed.items.is_empty() && !title_set {
-        println!("{}", m("main.edit.no_comments"));
-        return Ok(());
-    }
-
-    let mut new_events = Vec::new();
-    if existing_events.is_empty() {
-        new_events.push(Event::Meta {
-            version: 1,
-            created_at: OffsetDateTime::now_utc(),
-            description: None,
-            context_lines: 3,
-        });
-    }
-
-    let mut thread_ids: Vec<Ulid> = Vec::new();
-    for item in &parsed.items {
-        match item {
-            annotation::Item::NewThread {
-                scope,
-                body,
-                directives,
-                ..
-            } => {
-                if let Some(pos) = directives
-                    .iter()
-                    .position(|d| matches!(d, annotation::Directive::Reanchor(_)))
-                {
-                    if directives.len() != 1 || body.is_some() {
-                        anyhow::bail!(m("main.edit.reanchor_conflict"));
-                    }
-                    let annotation::Directive::Reanchor(id_str) = &directives[pos] else {
-                        unreachable!()
-                    };
-                    let target_id = Ulid::from_string(id_str).map_err(|_| {
-                        anyhow::anyhow!(mf("main.edit.reanchor_bad_id", &[("id", id_str)]))
-                    })?;
-                    let new_anchor = diffnote::create::build_anchor(
-                        scope,
-                        &parsed.diff,
-                        &anchor_files,
-                        &revisions,
-                    )?;
-                    new_events.push(Event::Reanchor {
-                        parent: target_id,
-                        author: author.clone(),
-                        created_at: OffsetDateTime::now_utc(),
-                        anchor: new_anchor,
-                    });
-                    continue;
-                }
-
-                let id = Ulid::new();
-                thread_ids.push(id);
-                let comment_anchor =
-                    diffnote::create::build_anchor(scope, &parsed.diff, &anchor_files, &revisions)?;
-                new_events.push(Event::Comment {
-                    id,
-                    parent: None,
-                    author: author.clone(),
-                    created_at: OffsetDateTime::now_utc(),
-                    anchor: Some(comment_anchor),
-                    body: body.clone().unwrap_or_default(),
-                });
-                for directive in directives {
-                    push_simple_directive(&mut new_events, directive, id, &author)?;
-                }
-            }
-            annotation::Item::Reply {
-                target,
-                body,
-                directives,
-            } => {
-                let target_id = match target {
-                    annotation::ThreadRef::New(tid) => *thread_ids.get(tid.0).ok_or_else(|| {
-                        anyhow::anyhow!(m("main.edit.internal_unknown_thread_ref"))
-                    })?,
-                    annotation::ThreadRef::Existing(ulid) => *ulid,
-                };
-                if let Some(body) = body {
-                    let id = Ulid::new();
-                    new_events.push(Event::Comment {
-                        id,
-                        parent: Some(target_id),
-                        author: author.clone(),
-                        created_at: OffsetDateTime::now_utc(),
-                        anchor: None,
-                        body: body.clone(),
-                    });
-                }
-                for directive in directives {
-                    push_simple_directive(&mut new_events, directive, target_id, &author)?;
-                }
-            }
-        }
-    }
-
-    // (A title given is something, as a comment is.)
-    if new_events.is_empty() && !title_set {
-        println!("{}", m("main.edit.no_changes"));
-        return Ok(());
-    }
-
-    // Only record a not-yet-seen diff when this session actually produced
-    // something -- an idle "opened it, looked, closed it" pass shouldn't
-    // grow the bundle.
-    // Only asked about (if big) when a new revision is actually recorded.
-    let picked_mode =
-        diffnote::record::pick_snapshot_mode(snapshot_override, loaded.snapshot_mode(), &source);
-    let is_git = matches!(source, diffnote::model::Source::Git(_));
-    let additions = diffnote::record::record_session(
-        &loaded,
-        &mut new_events,
-        diffnote::record::Capture {
-            diff_text: &diff_text,
-            diff_digest: &diff_digest,
-            source,
-            files: &files,
-            new_files: &new_files,
-            base_files: &base_files,
-            commits: &commits,
-        },
-        &|| confirm_snapshot_size(picked_mode, is_git, tree_size),
-        &*head_some,
-        head_all,
-    )?;
-
-    let comment_count = new_events
-        .iter()
-        .filter(|e| matches!(e, Event::Comment { .. }))
-        .count();
-    let mut all_events = loaded.events.clone();
-    all_events.extend(new_events.iter().cloned());
-    bundle::save(&review_path, &loaded, &all_events, &additions)?;
-    fresh.keep();
-    if title_set {
-        println!("{}", m("main.title_set"));
-    }
-    println!(
-        "{}",
-        mf(
-            "main.edit.saved",
-            &[
-                ("comments", &comment_count.to_string()),
-                ("path", &review_path.display().to_string()),
-            ]
-        )
-    );
-    Ok(())
-}
-
-fn cmd_show(review_path: PathBuf) -> Result<()> {
-    let loaded = bundle::load(&review_path)?;
-    let settings = loaded.settings;
-    let events = loaded.events;
-    if events.is_empty() {
-        println!(
-            "{}",
-            mf(
-                "main.show.empty",
-                &[("path", &review_path.display().to_string())]
-            )
-        );
-        return Ok(());
-    }
-    // The settings that are not what they would be anyway.
-    let default = diffnote::model::Settings::default();
-    if let Some(title) = review::title(&settings) {
-        println!("{}", mf("main.show.setting_title", &[("title", title)]));
-    }
-    if settings.ignore_whitespace {
-        println!("{}", m("main.show.setting_ignore_whitespace"));
-    }
-    if settings.attachment_limit != default.attachment_limit {
-        println!(
-            "{}",
-            mf(
-                "main.show.setting_attachment_limit",
-                &[("bytes", &settings.attachment_limit.to_string())]
-            )
-        );
-    }
-    for event in &events {
-        match event {
-            Event::Meta { context_lines, .. } => {
-                println!(
-                    "{}",
-                    mf(
-                        "main.show.meta",
-                        &[("context_lines", &context_lines.to_string())]
-                    )
-                );
-            }
-            Event::Revision(r) => {
-                println!(
-                    "{}",
-                    mf(
-                        "main.show.revision",
-                        &[
-                            ("id", &r.id.to_string()),
-                            ("digest", &r.digest),
-                            (
-                                "target",
-                                match &r.source {
-                                    diffnote::model::Source::Git(g) => g.spec.as_str(),
-                                    diffnote::model::Source::Files { .. } =>
-                                        m("main.show.dir_marker"),
-                                }
-                            ),
-                            ("mode", &format!("{:?}", r.snapshot_mode)),
-                        ]
-                    )
-                );
-            }
-            Event::Title { title, author, .. } => {
-                println!(
-                    "{}",
-                    mf("main.show.title", &[("title", title), ("author", author)])
-                );
-            }
-            Event::IgnoreWhitespace { value, author, .. } => {
-                let state = if *value {
-                    m("main.show.ignore_whitespace_on")
-                } else {
-                    m("main.show.ignore_whitespace_off")
-                };
-                println!(
-                    "{}",
-                    mf(
-                        "main.show.ignore_whitespace_change",
-                        &[("state", state), ("author", author)]
-                    )
-                );
-            }
-            Event::Pin { revision, files } => {
-                println!(
-                    "{}",
-                    mf(
-                        "main.show.pin",
-                        &[
-                            ("revision", &revision.to_string()),
-                            ("count", &files.len().to_string()),
-                        ]
-                    )
-                );
-            }
-            Event::Comment {
-                id,
-                parent: None,
-                author,
-                body,
-                anchor,
-                ..
-            } => {
-                println!(
-                    "{}",
-                    mf(
-                        "main.show.new_comment",
-                        &[
-                            ("id", &id.to_string()),
-                            ("where", &describe_anchor(anchor.as_ref())),
-                            ("author", author),
-                        ]
-                    )
-                );
-                print_body(body);
-            }
-            Event::Comment {
-                id,
-                parent: Some(parent),
-                author,
-                body,
-                ..
-            } => {
-                println!(
-                    "{}",
-                    mf(
-                        "main.show.reply",
-                        &[
-                            ("id", &id.to_string()),
-                            ("parent", &parent.to_string()),
-                            ("author", author),
-                        ]
-                    )
-                );
-                print_body(body);
-            }
-            Event::Resolve { parent, author, .. } => {
-                println!(
-                    "{}",
-                    mf(
-                        "main.show.resolve",
-                        &[("parent", &parent.to_string()), ("author", author)]
-                    )
-                );
-            }
-            Event::Reopen { parent, author, .. } => {
-                println!(
-                    "{}",
-                    mf(
-                        "main.show.reopen",
-                        &[("parent", &parent.to_string()), ("author", author)]
-                    )
-                );
-            }
-            Event::Reanchor {
-                parent,
-                author,
-                anchor,
-                ..
-            } => {
-                println!(
-                    "{}",
-                    mf(
-                        "main.show.reanchor",
-                        &[
-                            ("parent", &parent.to_string()),
-                            ("where", &describe_anchor(Some(anchor))),
-                            ("author", author),
-                        ]
-                    )
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-fn print_body(body: &str) {
-    for line in body.lines() {
-        println!("        | {line}");
-    }
-}
-
-fn describe_anchor(anchor: Option<&Anchor>) -> String {
-    let span = |s: &diffnote::model::LineRange| {
-        let (a, b) = (s.start, s.end());
-        if s.is_empty() {
-            mf(
-                "main.anchor.insert_position",
-                &[("file", &s.file), ("line", &a.to_string())],
-            )
-        } else if a == b {
-            mf(
-                "main.anchor.single_line",
-                &[("file", &s.file), ("line", &a.to_string())],
-            )
-        } else {
-            mf(
-                "main.anchor.range",
-                &[
-                    ("file", &s.file),
-                    ("start", &a.to_string()),
-                    ("end", &b.to_string()),
-                ],
-            )
-        }
-    };
-    match anchor {
-        None => m("main.anchor.unknown").to_string(),
-        Some(Anchor::Global { .. }) => m("main.anchor.global").to_string(),
-        Some(Anchor::File { base, head }) => mf(
-            "main.anchor.whole_file",
-            &[(
-                "file",
-                head.as_ref()
-                    .or(base.as_ref())
-                    .map_or(m("main.anchor.unknown"), |f| f.file.as_str()),
-            )],
-        ),
-        Some(Anchor::Span { base, head }) => match (base, head) {
-            (Some(b), Some(h)) if !b.is_empty() && !h.is_empty() => mf(
-                "main.anchor.moved",
-                &[("head", &span(h)), ("base", &span(b))],
-            ),
-            (_, Some(h)) if !h.is_empty() => span(h),
-            (Some(b), _) => mf("main.anchor.deleted", &[("span", &span(b))]),
-            _ => m("main.anchor.unknown").to_string(),
-        },
-    }
-}
-
-/// Handles `resolve`/`reopen` only -- `reanchor` needs extra
-/// context (the position/target-thread bookkeeping) that only the caller
-/// has, so `cmd_edit` special-cases those before ever reaching here.
-fn push_simple_directive(
-    events: &mut Vec<Event>,
-    directive: &annotation::Directive,
-    thread_id: Ulid,
-    author: &str,
-) -> Result<()> {
-    use annotation::Directive;
-    match directive {
-        Directive::Resolve => events.push(Event::Resolve {
-            parent: thread_id,
-            author: author.to_string(),
-            created_at: OffsetDateTime::now_utc(),
-        }),
-        Directive::Reopen => events.push(Event::Reopen {
-            parent: thread_id,
-            author: author.to_string(),
-            created_at: OffsetDateTime::now_utc(),
-        }),
-        Directive::Reanchor(_) => {
-            anyhow::bail!(mf(
-                "main.push_directive.internal_error",
-                &[("directive", &format!("{directive:?}"))]
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Where an edit session's unsaved buffer is parked if it can't be
-/// committed to the bundle (parse failure, or the editor itself exiting
-/// non-zero) -- a sibling of the review bundle, not inside the temp dir
-/// that gets deleted when `cmd_edit` returns.
-fn draft_path_for(review_path: &Path) -> PathBuf {
-    let mut name = review_path.file_name().unwrap_or_default().to_os_string();
-    name.push(".draft");
-    review_path.with_file_name(name)
-}
-
-fn save_draft(draft_path: &Path, content: &str) -> Result<()> {
-    std::fs::write(draft_path, content).with_context(|| {
-        mf(
-            "main.save_draft.failed",
-            &[("path", &draft_path.display().to_string())],
-        )
-    })
-}
-
 /// The per-file digests of every file `diff` touches: old side read from
 /// the base tree, new side from the head tree (each `None` when that side
 /// doesn't exist, e.g. an added or deleted file).
@@ -1864,7 +1102,7 @@ fn file_digests(
 
 /// Asks about the size of a `full` snapshot, if it is big. A git review
 /// can switch to `changed` (git has the rest); a directory review needs its
-/// full tree to compare the next edit against, so it is only told.
+/// full tree to compare the next round against, so it is only told.
 fn confirm_snapshot_size(
     mode: bundle::SnapshotMode,
     is_git: bool,
@@ -1890,18 +1128,4 @@ fn confirm_snapshot_size(
     } else {
         mode
     }
-}
-
-fn default_editor() -> String {
-    // An empty $EDITOR is as good as none.
-    std::env::var("EDITOR")
-        .ok()
-        .filter(|e| !e.trim().is_empty())
-        .unwrap_or_else(|| {
-            if cfg!(windows) {
-                "notepad".to_string()
-            } else {
-                "vi".to_string()
-            }
-        })
 }

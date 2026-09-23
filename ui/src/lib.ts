@@ -222,8 +222,7 @@ lib.baseName = function (path) {
   return i < 0 ? path : path.slice(i + 1);
 };
 
-// Where a thread is, as `path`, `path:LINE` or `path:FIRST-LAST` (the form
-// `diffnote edit --show` reads); null for a thread about the whole review.
+// Where a thread is, as `path`, `path:LINE` or `path:FIRST-LAST`; null for a thread about the whole review.
 lib.location = function (p) {
   if (!p || p.kind === 'global') return null;
   if (p.kind === 'line') {

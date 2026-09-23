@@ -16,10 +16,9 @@
 //! custom properties, so a future custom-CSS feature can mostly work via
 //! variable overrides.
 //!
-//! Re-anchoring reuses the exact same `anchor::resolve` logic `diffnote
-//! edit` uses, against whatever diff is passed in here -- but read-only:
-//! nothing is ever written back, a `Relocated` result just changes where a
-//! thread is drawn for this one export.
+//! Placing threads is read-only: nothing is ever written back, a
+//! `Relocated` result just changes where a thread is drawn for this one
+//! page.
 
 use crate::anchor::{self, Placement};
 use crate::diff::{FileDiff, Hunk, LineKind, UnifiedDiff};

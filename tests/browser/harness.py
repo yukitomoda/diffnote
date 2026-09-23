@@ -741,7 +741,7 @@ LOGIN_V2 = ("import { Router } from 'express'\nimport { compare } from './crypto
 def make_login_review(root, snapshot=None, name="login"):
     """A git review with a diff of one file that has removed and added lines
     together, and untouched files (docs, a long file, a binary, a huge one)
-    in the repository. `snapshot` is passed to `edit --snapshot`."""
+    in the repository. `snapshot` is what the review keeps (`--snapshot`)."""
     repo = os.path.join(root, name)
     os.makedirs(repo)
     git(repo, "init", "-q", "-b", "main")

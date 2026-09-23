@@ -7,7 +7,7 @@
 //! the thread list), which the page swaps in place. Nothing is reloaded.
 //!
 //! The server keeps no state: every request loads the bundle, and a change
-//! saves it, so a `diffnote edit` at the same time is not overwritten
+//! saves it, so another `diffnote serve` at the same time is not overwritten
 //! unseen (each request starts from what is on disk).
 //!
 //! Who may talk to it: it listens on `127.0.0.1` only; the address the
@@ -15,7 +15,7 @@
 //! its name, is refused); and every request needs the token printed at start,
 //! which the first visit turns into a cookie.
 
-use crate::annotation::{AnchorScope, LineSpan};
+use crate::create::{AnchorScope, LineSpan};
 use crate::git::Repo;
 use crate::messages::{m, mf};
 use crate::model::Event;
@@ -1322,7 +1322,7 @@ impl Server {
 
     /// Changes this machine's user settings (today, just `author`; see
     /// `diffnote config`): saved to the OS config file, so every bundle's
-    /// `edit`/`init`/`serve` uses it from now on, not only this one. Also
+    /// `init`/`serve` uses it from now on, not only this one. Also
     /// updates the name comments are written under for the rest of this
     /// session (an empty name clears the configured one: the session's name
     /// falls back through `--author`, git, and the login name, as it would

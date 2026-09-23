@@ -44,28 +44,6 @@ cli:
     snapshot: |-
       レビューに保存する範囲。`changed`(差分が触れたファイルだけ)か `full`(ツリー全体)。あとから変えられない。
 
-  edit:
-    about: |-
-      $EDITOR でコメントを書き、レビューに追記する。
-    review: |-
-      レビューのパス(省略時は ./.diffnote)。
-    target: |-
-      レビューするコミット、またはディレクトリ(省略時は HEAD、ディレクトリのレビューでは `.`)。
-    base: |-
-      比較の起点。まだレビューがないときだけ指定できる。
-    files: |-
-      git の中でも、ディレクトリのレビューにする。
-    repo: |-
-      対象の git リポジトリ(省略時はカレント)。
-    snapshot: |-
-      レビューに保存する範囲。`changed`(差分が触れたファイルだけ)か `full`(ツリー全体)。
-    show: |-
-      差分に出ていない箇所もコメントできるようにする(`PATH`、`PATH:LINE`、`PATH:START-END`)。繰り返し指定できる。
-    title: |-
-      レビューのタイトルを設定する(`--title ""` で取り消す)。
-    reopen: |-
-      差分を計算せず、最後のリビジョンを開き直す(コメントの追加用)。
-
   serve:
     about: |-
       レビューをブラウザで見る(自分のパソコンからだけ接続できる)。
@@ -87,12 +65,6 @@ cli:
       差分を計算せず、最後のリビジョンだけを開く(コメントの追加用)。
     snapshot: |-
       レビューに保存する範囲。まだレビューがないときだけ指定できる。`changed` か `full`。
-
-  show:
-    about: |-
-      レビューのコメントを一覧する。
-    review: |-
-      レビューのパス(省略時は ./.diffnote)。
 
   export:
     about: |-
@@ -142,8 +114,6 @@ main:
     {path} がありません。レビューするコミットを指定するか、先に `diffnote init` を実行してください
   needs_a_base: |-
     比較の起点を `--base DIR` で指定するか、先に `diffnote init` を実行してください
-  title_set: |-
-    タイトルを設定しました
   warning_prefix: |-
     警告: {warning}
   notice_prefix: |-
@@ -178,13 +148,6 @@ main:
   reopen:
     conflicting_flags: |-
       --reopen は、比較対象や --base、--files とは一緒に指定できません
-    edit_conflicts_snapshot: |-
-      --reopen は --snapshot とは一緒に指定できません
-    edit_conflicts_show: |-
-      --reopen は --show とは一緒に指定できません
-    input_no_revision: |-
-      保存されたリビジョンがありません。先に `diffnote edit` でレビューを作ってください
-
   serve:
     reopen_no_bundle: |-
       {path} がありません。--reopen には、すでにあるレビューが必要です
@@ -209,7 +172,7 @@ main:
     expand_limit_invalid: |-
       行数(0 以上の整数)か `all` を指定してください
     no_diff: |-
-      {path} に記録された差分がありません。先に `diffnote edit` を実行してください
+      {path} に記録された差分がありません。先に `diffnote serve` で差分を記録してください
     write_failed: |-
       {path} を書き込めませんでした
     wrote: |-
@@ -237,106 +200,9 @@ main:
     already_exists: |-
       {path} はすでに存在します
     git_done: |-
-      {rev}({commit}) を基準に {path} を作成しました。`diffnote edit` でレビューを始められます
+      {rev}({commit}) を基準に {path} を作成しました。`diffnote serve` でレビューを始められます
     files_done: |-
       {count} 個のファイルを {path} に保存しました
-
-  edit:
-    show_parse_failed: |-
-      --show {spec}: {error}
-    dir_snapshot_changed_refused: |-
-      ディレクトリのレビューでは `--snapshot changed` は指定できません。不要なものは `.diffnoteignore` で除外してください
-    resuming_draft: |-
-      前回の下書きから再開します: {path}
-    temp_dir_failed: |-
-      一時ディレクトリを作れませんでした
-    temp_write_failed: |-
-      一時ファイルに書き込めませんでした
-    editor_empty: |-
-      $EDITOR が空です。エディタのコマンドを設定してください
-    editor_launch_failed: |-
-      エディタ '{editor}' を起動できませんでした($EDITOR を確認してください)
-    read_back_failed: |-
-      編集したファイルを読み戻せませんでした
-    editor_failed: |-
-      エディタ '{editor}' が異常終了しました。編集内容は {path} に残しました
-    parse_failed: |-
-      編集内容を解釈できませんでした: {error}
-
-      編集内容は {path} に残しました。直して `diffnote edit` を再実行すると、続きから再開できます
-    no_diff: |-
-      レビューする変更がありません
-    no_comments: |-
-      コメントは追加されませんでした
-    reanchor_conflict: |-
-      '>!reanchor' は、コメント本文や他のディレクティブと同じブロックには書けません
-    reanchor_bad_id: |-
-      '>!reanchor {id}': スレッド ID として正しくありません
-    internal_unknown_thread_ref: |-
-      内部エラー: 不明なスレッド参照です
-    no_changes: |-
-      変更はありません
-    saved: |-
-      コメント {comments} 件を {path} に書き込みました
-
-  show:
-    empty: |-
-      {path} は空です
-    setting_title: |-
-      [設定] タイトル={title}
-    setting_ignore_whitespace: |-
-      [設定] 空白の違いを無視(初期表示)
-    setting_attachment_limit: |-
-      [設定] 添付ファイルの上限={bytes} バイト
-    meta: |-
-      [メタ] context_lines={context_lines}
-    revision: |-
-      [リビジョン] {id} digest={digest} 対象={target} スナップショット={mode}
-    dir_marker: |-
-      (ディレクトリ)
-    title: |-
-      [タイトル] {title} -- {author}
-    ignore_whitespace_on: |-
-      無視する
-    ignore_whitespace_off: |-
-      無視しない
-    ignore_whitespace_change: |-
-      [設定] 空白の違いを{state} -- {author}
-    pin: |-
-      [固定] リビジョン {revision}: {count} 個のファイル
-    new_comment: |-
-      [{id}] 新規  {where} -- {author}
-    reply: |-
-      [{id}] 返信 -> {parent} -- {author}
-    resolve: "      解決 {parent} -- {author}"
-    reopen: "      再オープン {parent} -- {author}"
-    reanchor: "      再アンカー {parent} -> {where} -- {author}"
-
-  anchor:
-    insert_position: |-
-      {file}:{line} (挿入位置)
-    single_line: |-
-      {file}:{line}
-    range: |-
-      {file}:{start}-{end}
-    unknown: |-
-      ?
-    global: |-
-      差分全体
-    whole_file: |-
-      ファイル全体: {file}
-    moved: |-
-      {head} <- {base}
-    deleted: |-
-      {span} (削除)
-
-  push_directive:
-    internal_error: |-
-      内部エラー: {directive} を処理できません
-
-  save_draft:
-    failed: |-
-      下書きを {path} に保存できませんでした
 
   snapshot:
     dir_changed_refused: |-
@@ -564,52 +430,6 @@ diff:
   bad_hunk_range_length: |-
     ハンクの範囲の長さが不正です: {value}
 
-annotation:
-  bad_range_id: |-
-    範囲の ID が不正です: {id}
-  reanchor_needs_id: |-
-    'reanchor' にはスレッド ID の引数が必要です
-  reanchor_wrong_syntax: |-
-    'reanchor' は '>!reanchor <id>' と書いてください
-  bad_directive: |-
-    ディレクティブが未知か、書式が不正です: {value}
-  reply_no_target: |-
-    '>>' の返信先になるスレッドが直前にありません
-  range_already_open: |-
-    範囲 '{id}' はすでに開いています
-  range_marker_outside_file: |-
-    ファイルの外に範囲マーカーがあります
-  range_not_open: |-
-    範囲 '{id}' は開かれていません
-  range_empty: |-
-    範囲 '{id}' が空です
-  header_no_id_warning: |-
-    {line} 行目: ID のない '>#@' ヘッダの位置が不正です。直前のスレッドのものとして扱います
-  header_no_target: |-
-    ID のない '>#@' ヘッダの前に、対象のスレッドがありません('>#]<id>' の行を消していませんか?)
-  header_bad_id: |-
-    '>#@' ヘッダのスレッド ID が不正です: {id}
-  close_without_open_warning: |-
-    {line} 行目: '>#]{ulid}' に対応する '>#[{ulid}' がありません
-  content_outside_file: |-
-    ファイルの外に差分の内容があります
-  open_without_close_warning: |-
-    {line} 行目: '>#[{ulid}' に対応する '>#]{ulid}' がありません。返信先が別のスレッドになるおそれがあります
-  range_unclosed: |-
-    範囲 '{id}' が閉じられていません
-  range_label_generic: |-
-    範囲
-  range_label_named: |-
-    範囲 '{id}'
-  range_unused_warning: |-
-    {line} 行目: {name} にコメントがないため、記録されません
-  reanchor_header: |
-    >#--- 差分に置けなかったコメントです。>!reanchor <id> で位置を指定できます ---
-  resolved_tag: " [解決済み]"
-  absence_deleted_tag: " [削除済み]"
-  absence_not_yet_tag: " [まだない]"
-  absence_unknown_tag: " [不在]"
-
 git:
   exec_failed: |-
     git を実行できませんでした(インストールされていて PATH に通っていますか)
@@ -661,28 +481,6 @@ bundle:
     レビューの内容を書き出せませんでした
   save_failed: |-
     {path} を保存できませんでした
-
-show:
-  no_filename: |-
-    ファイル名がありません
-  outside_tree: |-
-    {path} はツリー内のパスではありません(絶対パスや `..` は使えません)
-  bad_range: |-
-    {value} は行番号でも行の範囲でもありません
-  line_starts_at_1: |-
-    行番号は 1 から始まります
-  range_end_before_start: |-
-    {value} は終わりが始まりより前です
-  deleted_in_diff: |-
-    {path}: この差分で削除されているため、表示できません
-  not_in_head: |-
-    {path}: そのファイルはありません
-  not_text: |-
-    {path}: テキストファイルではありません
-  file_empty: |-
-    {path}: 中身が空です
-  past_end: |-
-    {path}: {start} 行目は末尾を過ぎています(全 {total} 行)
 
 user_config:
   save_dir_failed: |-
