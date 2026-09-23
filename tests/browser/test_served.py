@@ -414,7 +414,7 @@ class Replies(ServedCase):
         self.assertGreater(got["width"], 500, "and room to put a list in")
         self.assertEqual(got["sticky"], "sticky", "the nav stays while a long pane scrolls")
         self.assertEqual(got["groups"], 2, "what the review holds, then what is set")
-        self.assertEqual(got["order"], ["attachments", "general", "settings", "user"])
+        self.assertEqual(got["order"], ["timeline", "attachments", "general", "settings", "user"])
 
     def open_settings(self):
         """Opens the settings screen and switches to its 設定 section (the
@@ -1245,6 +1245,78 @@ class ImageZoom(ServedCase):
         self.assertTrue(b.wait_exists("[data-diffnote-zoom]"))
         b.click("[data-diffnote-zoom]")
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-zoom]')"), "the space around it closes it too")
+
+
+class Timeline(ServedCase):
+    """タイムライン: the review's own log, read in order."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        repo = os.path.join(cls.root, "tl-repo")
+        os.makedirs(repo)
+        harness.git(repo, "init", "-q", "-b", "main")
+        body = "".join("line %d\n" % n for n in range(1, 13))
+        harness.write(repo, "calc.py", body)
+        harness.git(repo, "add", "-A")
+        harness.git(repo, "commit", "-q", "-m", "はじめのコミット")
+        harness.git(repo, "tag", "c1")
+        harness.write(repo, "calc.py", body.replace("line 7\n", "line seven\n"))
+        harness.git(repo, "commit", "-q", "-am",
+                    "7 行目を書き直した\n\n数字のままだと読みづらかったため。\n\nCo-Authored-By: 誰か <x@example.com>")
+        harness.git(repo, "tag", "c2")
+        cls.timeline_review = os.path.join(cls.root, "tl.diffnote")
+        harness.set_user_author("共田")
+        assert harness.diffnote("edit", "-f", cls.timeline_review, "--base", "c1", "c2", cwd=repo, comments=[
+            ("GLOBAL", "全体としてよさそうです"),
+            ("+line seven", "ここは数字のままでもよいのでは。"),
+            ("@raw:+line seven", ">!resolve"),
+        ]).returncode == 0
+
+    def open_timeline(self):
+        b = self.b
+        b.click("[data-diffnote-settings]")
+        self.assertTrue(b.wait_exists("[data-diffnote-settings-page]"))
+        b.click("[data-diffnote-settings-nav='timeline']")
+        self.assertTrue(b.wait_exists("[data-diffnote-timeline-pane]"))
+
+    def test_what_happened_is_listed_in_order_with_the_commits_each_revision_brought(self):
+        self.serve(self.timeline_review)
+        b = self.b
+        self.open_timeline()
+        kinds = b.js("[...document.querySelectorAll('[data-diffnote-timeline]')].map(e => e.dataset.diffnoteTimeline)")
+        self.assertEqual(kinds[:2], ["started", "revision"], "oldest first: the review, then what it was made of")
+        self.assertIn("comments", kinds, "a run of comments by one person is one line")
+        self.assertIn("resolved", kinds)
+        # The commits of the revision, with what they said folded away.
+        self.assertEqual(b.count("[data-diffnote-commit]"), 1, "the one commit c1..c2 brought")
+        row = "[data-diffnote-commit]"
+        self.assertIn("7 行目を書き直した", b.text(row))
+        self.assertFalse(b.js("document.querySelector(%s).open" % json.dumps(row + " details")),
+                         "the message is folded until it is asked for")
+        b.js("document.querySelector(%s).open = true" % json.dumps(row + " details"))
+        self.assertTrue(b.wait("!!document.querySelector('%s .diffnote-timeline__body')" % row))
+        self.assertIn("数字のままだと", b.text(row + " .diffnote-timeline__body"))
+        self.assertNotIn("Co-Authored-By", b.text(row + " .diffnote-timeline__body"),
+                         "the trailers are apart from what was written")
+        self.assertIn("Co-Authored-By", b.text(row + " .diffnote-timeline__trailers"))
+        self.assertIn("calc.py", b.text(row + " [data-diffnote-commit-files]"))
+
+    def test_an_entry_leads_to_what_it_is_about(self):
+        self.serve(self.timeline_review)
+        b = self.b
+        self.open_timeline()
+        # A run of comments opens onto the comments in it.
+        b.js("document.querySelector('[data-diffnote-timeline-run]').open = true")
+        self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-timeline-thread]').length > 1"))
+        b.click("[data-diffnote-timeline-thread]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"), "the screen closes")
+        self.assertTrue(b.wait("location.hash.includes('thread')"), "and the address says where it went")
+        # And a revision entry goes to that revision's tab.
+        self.open_timeline()
+        b.click("[data-diffnote-timeline-revision]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"))
+        self.assertTrue(b.wait("!!document.querySelector('%s')" % CUR))
 
 
 class AttachmentsScreen(ServedCase):

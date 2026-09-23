@@ -491,3 +491,48 @@ button.diffnote-reaction:hover { border-color: var(--diffnote-color-muted); }
 .diffnote-stat__blocks i { display: block; width: 9px; height: 9px; border-radius: 2px; background: #d0d7de; }
 .diffnote-stat__blocks i.is-a { background: #2da44e; }
 .diffnote-stat__blocks i.is-d { background: #cf222e; }
+
+/* タイムライン: what happened to the review, a day at a time. Each entry is
+   a mark, what it says, and when -- the mark's column lines the entries up
+   whatever is in them. */
+.diffnote-timeline__day + .diffnote-timeline__day { margin-top: 20px; }
+.diffnote-timeline__day > h3 { margin: 0 0 6px; font-size: 12.5px; font-weight: 600; color: var(--diffnote-color-muted); }
+.diffnote-timeline { list-style: none; margin: 0; padding: 0; border-left: 2px solid var(--diffnote-color-border); }
+.diffnote-timeline__entry { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 8px; align-items: baseline; padding: 5px 0 5px 12px; }
+.diffnote-timeline__mark { width: 16px; height: 16px; color: var(--diffnote-color-muted); justify-self: center; }
+.diffnote-timeline__what { min-width: 0; }
+.diffnote-timeline__at { flex: none; font-size: 12px; color: var(--diffnote-color-muted); font-variant-numeric: tabular-nums; }
+/* What an entry leads to: the revision's tab, or the comment's thread. */
+.diffnote-timeline__go { padding: 0; font: inherit; color: var(--diffnote-color-accent); background: none; border: 0; cursor: pointer; }
+.diffnote-timeline__go:hover { text-decoration: underline; }
+.diffnote-timeline__said { display: block; color: var(--diffnote-color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A run of comments by one person, folded into a line. */
+.diffnote-timeline__what > summary { cursor: pointer; }
+/* The same mark on everything that opens, turned when it is open (a summary
+   that is not a list item has no marker of its own). */
+summary:has(> .diffnote-timeline__chevron), .diffnote-timeline__commit > details > summary { list-style: none; }
+summary:has(> .diffnote-timeline__chevron)::-webkit-details-marker, .diffnote-timeline__commit > details > summary::-webkit-details-marker { display: none; }
+.diffnote-timeline__chevron { color: var(--diffnote-color-muted); transition: transform .12s; }
+details[open] > summary > .diffnote-timeline__chevron { transform: rotate(180deg); }
+.diffnote-timeline__what > summary + .diffnote-timeline { margin-top: 4px; }
+.diffnote-timeline__what .diffnote-timeline { border-left: 0; }
+.diffnote-timeline__what .diffnote-timeline .diffnote-timeline__entry { padding-left: 0; }
+
+/* The commits a revision brought. */
+.diffnote-timeline__commits { list-style: none; margin: 6px 0 2px; padding: 0; border: 1px solid var(--diffnote-color-border); border-radius: 8px; overflow: hidden; }
+.diffnote-timeline__commit + .diffnote-timeline__commit { border-top: 1px solid var(--diffnote-color-border); }
+.diffnote-timeline__commit > details > summary { display: grid; grid-template-columns: 6.5em minmax(0, 1fr) auto auto 1.2em; gap: 10px; align-items: baseline; padding: 6px 10px; cursor: pointer; }
+.diffnote-timeline__commit > details > summary:hover { background: var(--diffnote-color-gutter); }
+.diffnote-timeline__id { font-family: var(--diffnote-font-mono); font-size: 12px; color: var(--diffnote-color-muted); }
+.diffnote-timeline__subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.diffnote-timeline__who { font-size: 12.5px; color: var(--diffnote-color-muted); white-space: nowrap; }
+.diffnote-timeline__message { padding: 0 10px 10px 10px; background: var(--diffnote-color-gutter); }
+.diffnote-timeline__body { margin: 8px 0; white-space: pre-wrap; font-size: 12.5px; }
+.diffnote-timeline__files { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; }
+.diffnote-timeline__files code { font-family: var(--diffnote-font-mono); word-break: break-all; }
+.diffnote-timeline__status { display: inline-block; min-width: 4.5em; color: var(--diffnote-color-muted); }
+.diffnote-timeline__status.is-added { color: #1a7f37; }
+.diffnote-timeline__status.is-deleted { color: #b35900; }
+.diffnote-timeline__trailers { margin-top: 8px; font-size: 12px; color: var(--diffnote-color-muted); }
+.diffnote-timeline__trailers summary { cursor: pointer; }
+.diffnote-timeline__trailers p { margin: 4px 0 0; white-space: pre-wrap; }

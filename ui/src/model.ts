@@ -198,6 +198,30 @@ export interface BundleInfo {
   attachments: AttachedData[];
 }
 
+/** One commit of a revision's trail, as the timeline lists it. */
+export interface TimelineCommit {
+  id: string;
+  short: string;
+  author: string;
+  /** RFC 3339, in the offset it was written in. */
+  at: string;
+  subject: string;
+  body?: string;
+  files?: { path: string; old_path?: string; status: string }[];
+}
+
+/**
+ * What happened to the review, oldest first: the event log as a reader reads
+ * it. A comment says which one it is, not what it says -- its text is in
+ * `threads`, where the rest of the page reads it from.
+ */
+export type TimelineEntry =
+  | { kind: 'started'; at: string }
+  | { kind: 'revision'; at: string; rev: number; label: string; commits?: TimelineCommit[] }
+  | { kind: 'comment'; at: string; author: string; thread: string; reply?: boolean; comment: string }
+  | { kind: 'resolved'; at: string; author: string; thread: string }
+  | { kind: 'reopened'; at: string; author: string; thread: string };
+
 /** What every revision is compared with. */
 export type BaseData = { kind: 'git'; id: string } | { kind: 'files'; at: string };
 
@@ -215,6 +239,8 @@ export interface ViewModel {
   threads: ThreadData[];
   /** Oldest first; the last is shown first. */
   revisions: RevisionData[];
+  /** What happened to the review, oldest first. */
+  timeline?: TimelineEntry[];
   /** The most an attached file may weigh, in bytes. */
   attachment_limit: number;
   /** Whether lines that differ only in white space start out as unchanged. */

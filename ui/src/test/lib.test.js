@@ -150,6 +150,26 @@ test('a revision is stamped with the day and the time, in the local zone', () =>
   assert.equal(lib.formatRecorded('not a time'), 'not a time');
 });
 
+test('a day and a clock time are read in the local zone', () => {
+  const d = new Date(2026, 8, 3, 7, 5);
+  assert.equal(lib.formatDay(d.toISOString()), '2026-09-03');
+  assert.equal(lib.formatClock(d.toISOString()), '07:05');
+  assert.equal(lib.formatDay('not a time'), 'not a time');
+});
+
+test('a commit message is its words, with the block of Key: value lines apart', () => {
+  const said = lib.splitTrailers('件名を直した\n\nなぜかというと。\n\nCo-Authored-By: t <t@example.com>\nSigned-off-by: u <u@example.com>');
+  assert.equal(said.body, '件名を直した\n\nなぜかというと。');
+  assert.deepEqual(said.trailers, ['Co-Authored-By: t <t@example.com>', 'Signed-off-by: u <u@example.com>']);
+  // Only a block at the very end, after a blank line: a line in the middle
+  // that happens to look like one is part of what was written.
+  const inside = lib.splitTrailers('直した\n\nNote: これは本文です\n\nそのあとの段落');
+  assert.deepEqual(inside.trailers, []);
+  assert.equal(inside.body, '直した\n\nNote: これは本文です\n\nそのあとの段落');
+  assert.deepEqual(lib.splitTrailers(''), { body: '', trailers: [] });
+  assert.deepEqual(lib.splitTrailers(undefined), { body: '', trailers: [] });
+});
+
 test('the threads of a file are those on its lines, the file itself, or listed with it', () => {
   const placements = {
     a: line('f', 1, 1),

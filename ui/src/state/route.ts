@@ -12,7 +12,7 @@ import { lib } from '../lib.ts';
 import type { At, PageState } from '../lib.ts';
 
 /** The settings screens, in the order the nav lists them. */
-export const SECTIONS = ['general', 'settings', 'attachments', 'user'] as const;
+export const SECTIONS = ['timeline', 'general', 'settings', 'attachments', 'user'] as const;
 export type Section = (typeof SECTIONS)[number];
 
 /**
@@ -22,7 +22,7 @@ export type Section = (typeof SECTIONS)[number];
  * can reach cannot drift apart (`ui/src/test/route.test.js` checks it).
  */
 export const SECTION_GROUPS: Section[][] = [
-  ['attachments', 'general'],
+  ['timeline', 'attachments', 'general'],
   ['settings', 'user'],
 ];
 

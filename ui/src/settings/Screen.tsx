@@ -4,6 +4,7 @@ import { lib } from '../lib.ts';
 import { SECTION_GROUPS } from '../state/route.ts';
 import type { Section } from '../state/route.ts';
 import { AttachmentsPane } from './Attachments.jsx';
+import { TimelinePane } from './Timeline.jsx';
 import { SettingsFormPane } from './Form.jsx';
 import { GeneralPane } from './General.jsx';
 import { UserSettingsPane } from './User.jsx';
@@ -15,7 +16,7 @@ import type { UserProps } from './User.tsx';
 import { Icon } from '../icon.tsx';
 
 // Panes that are a list rather than a column of text.
-const WIDE: Section[] = ['attachments'];
+const WIDE: Section[] = ['timeline', 'attachments'];
 
 function sectionLabel(key: Section) {
   return lib.m('ui.settings.' + key + '_tab');
@@ -66,6 +67,8 @@ export function SettingsScreen(props: ScreenProps) {
     <div class="diffnote-settings__layout">
       <SettingsNav current={props.section} onSelect={props.onSelect} />
       <div class={'diffnote-settings__pane' + (WIDE.indexOf(props.section) >= 0 ? ' diffnote-settings__pane--wide' : '')}>
+        {props.section === 'timeline' && <TimelinePane model={props.model}
+          onShow={props.onShowThread} placementOf={props.placementOf} />}
         {props.section === 'general' && <GeneralPane model={props.model} pending={props.pending} note={props.note} onPull={props.onPull} />}
         {props.section === 'settings' && <SettingsFormPane model={props.model} save={props.saveSettings} />}
         {props.section === 'attachments' && <AttachmentsPane model={props.model} remove={props.removeAttached}

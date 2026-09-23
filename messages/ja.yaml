@@ -886,6 +886,44 @@ ui:
     show_title: |-
       左の一覧を表示します
 
+  timeline:
+    heading: |-
+      タイムライン
+    note: |-
+      このレビューに起きたことを、古い順に並べています。コメントの編集や削除は記録そのものを書き換えるため、ここに出るのは「いま記録にあること」です
+    empty: |-
+      まだ何もありません
+    started: |-
+      レビューを作成しました
+    revision: |-
+      {label} を記録しました
+    comment: |-
+      {author} がコメントしました
+    reply: |-
+      {author} が返信しました
+    comments: |-
+      {author} がコメントを {n} 件書きました
+    resolved: |-
+      {author} が解決にしました
+    reopened: |-
+      {author} が再開しました
+    somewhere: |-
+      (場所は不明)
+    trailers: |-
+      付記 {n} 行
+    status_added: |-
+      追加
+    status_modified: |-
+      変更
+    status_deleted: |-
+      削除
+    status_renamed: |-
+      名前変更
+    status_copied: |-
+      複製
+    status_changed: |-
+      変更
+
   viewmenu:
     button: |-
       表示
@@ -909,6 +947,8 @@ ui:
   settings:
     nav_label: |-
       レビューの情報と設定
+    timeline_tab: |-
+      タイムライン
     general_tab: |-
       全般
     settings_tab: |-

@@ -162,6 +162,9 @@ interface Lib {
   preview(nodes: DocNode[] | null | undefined): string;
   formatTime(iso: string): string;
   formatRecorded(iso: string): string;
+  formatDay(iso: string): string;
+  formatClock(iso: string): string;
+  splitTrailers(body: string | null | undefined): { body: string; trailers: string[] };
   formatSize(bytes: number): string;
   bytesToMB(bytes: number): number;
   mbToBytes(text: string): number | null;
@@ -426,6 +429,39 @@ lib.preview = function (nodes) {
 };
 
 // A time as `YYYY-MM-DD HH:MM` in the viewer's time zone.
+// The day a time falls on in the reader's zone, as a heading says it, and
+// the clock time within that day.
+lib.formatDay = function (iso) {
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  var two = function (n: number) { return (n < 10 ? '0' : '') + n; };
+  return d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate());
+};
+
+lib.formatClock = function (iso) {
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  var two = function (n: number) { return (n < 10 ? '0' : '') + n; };
+  return two(d.getHours()) + ':' + two(d.getMinutes());
+};
+
+// A commit message without the block of `Key: value` lines at its end, and
+// those lines: they are bookkeeping (`Co-Authored-By`, `Signed-off-by`), kept
+// by the review and folded away by the page.
+lib.splitTrailers = function (body) {
+  var lines = String(body || '').split('\n');
+  var at = lines.length;
+  while (at > 0 && /^[A-Za-z][A-Za-z-]*:\s/.test(lines[at - 1].trim())) at--;
+  // Only a block at the very end, and only after a blank line or the start.
+  if (at === lines.length || (at > 0 && lines[at - 1].trim() !== '')) {
+    return { body: String(body || '').replace(/\s+$/, ''), trailers: [] };
+  }
+  return {
+    body: lines.slice(0, at).join('\n').replace(/\s+$/, ''),
+    trailers: lines.slice(at).filter(function (l) { return l.trim() !== ''; }),
+  };
+};
+
 // When a revision was recorded, as a tab says it: the month and day, and
 // the time of day. The year is left out -- a review is read over days, not
 // years, and the tabs are narrow.

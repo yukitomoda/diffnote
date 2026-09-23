@@ -54,11 +54,22 @@ fn fake_editor_entry() {
         let Some((after, text)) = entry.split_once('\t') else {
             continue;
         };
-        let comment = format!("> {text}");
+        // `@raw:` puts the text in as it is, for a directive (`>!resolve`);
+        // anything else is a comment body.
+        let (after, written) = match after.strip_prefix("@raw:") {
+            Some(after) => (after, text.to_string()),
+            None => (after, format!("> {text}")),
+        };
         if after == "GLOBAL" {
-            lines.splice(0..0, [comment, String::new()]);
+            lines.splice(0..0, [written, String::new()]);
         } else if let Some(at) = lines.iter().position(|l| l == after) {
-            lines.insert(at + 1, comment);
+            // After the last thing already put under that line, so that a
+            // directive follows the comment it is about.
+            let mut to = at + 1;
+            while lines.get(to).is_some_and(|l| l.starts_with('>')) {
+                to += 1;
+            }
+            lines.insert(to, written);
         }
     }
     let mut out = lines.join("\n");
@@ -2083,4 +2094,91 @@ fn a_review_of_a_directory_records_no_commits() {
     assert!(loaded.revisions().all(|r| r.commits.is_empty()));
     assert!(loaded.commits.is_empty());
     assert!(!bundle_names(&review).contains(&"commits.json".to_string()));
+}
+
+#[test]
+fn the_exported_model_says_what_happened_to_the_review_in_order() {
+    let env = Env::new();
+    let repo = repo_with_docs(&env);
+    let review = env.path("r.diffnote");
+    let arg = review.to_str().unwrap();
+    std::fs::write(repo.join("docs.md"), "changed\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c3"]);
+    env.ok(
+        &repo,
+        &[
+            ("GLOBAL", "全体として"),
+            ("+changed", "ここは？"),
+            ("@raw:+changed", ">!resolve"),
+        ],
+        &["edit", "-f", arg, "--base", "c1", "HEAD"],
+    );
+    let html = env.path("out.html");
+    env.ok(
+        &repo,
+        &[],
+        &["export", "-f", arg, "-o", html.to_str().unwrap()],
+    );
+    let model = model_of(&std::fs::read_to_string(&html).unwrap());
+    let timeline = model["timeline"].as_array().unwrap();
+    let kinds: Vec<&str> = timeline
+        .iter()
+        .map(|e| e["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        kinds,
+        ["started", "revision", "comment", "comment", "resolved"]
+    );
+
+    // The revision brought the commits of its trail, with what they said.
+    let revision = &timeline[1];
+    assert_eq!(revision["rev"], 0);
+    let commits = revision["commits"].as_array().unwrap();
+    assert_eq!(commits.len(), 2, "c2 and c3, not the base itself");
+    assert_eq!(commits[1]["subject"], "c3");
+    assert_eq!(
+        commits[1]["author"], "T",
+        "the name git recorded, not the reviewer's"
+    );
+    assert_eq!(commits[1]["short"].as_str().unwrap().len(), 7);
+    assert_eq!(commits[1]["files"][0]["path"], "docs.md");
+    // A comment says which one it is, not what it says: the text is in the
+    // threads, where the rest of the page reads it from.
+    assert!(timeline[2]["comment"].is_string());
+    assert!(timeline[2]["text"].is_null());
+    assert!(
+        !timeline[2]["author"].as_str().unwrap().is_empty(),
+        "who wrote it"
+    );
+    assert_eq!(timeline[4]["thread"], timeline[3]["thread"]);
+    // Every time is there for the page to put in the reader's own zone.
+    for entry in timeline {
+        assert!(entry["at"].as_str().unwrap().contains('T'), "{entry}");
+    }
+}
+
+#[test]
+fn a_review_of_a_directory_has_a_timeline_with_no_commits_in_it() {
+    let env = Env::new();
+    let dir = env.path("work");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    let review = env.path("r.diffnote");
+    let arg = review.to_str().unwrap();
+    env.ok(&dir, &[], &["init", "-f", arg, "--files", "."]);
+    std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+    env.ok(&dir, &[("+two", "変えました")], &["edit", "-f", arg, "."]);
+    let html = env.path("out.html");
+    env.ok(
+        &dir,
+        &[],
+        &["export", "-f", arg, "-o", html.to_str().unwrap()],
+    );
+    let model = model_of(&std::fs::read_to_string(&html).unwrap());
+    let timeline = model["timeline"].as_array().unwrap();
+    assert!(timeline.iter().any(|e| e["kind"] == "revision"));
+    assert!(
+        timeline.iter().all(|e| e["commits"].is_null()),
+        "nothing to say about commits there are none of"
+    );
 }

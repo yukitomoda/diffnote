@@ -14,6 +14,7 @@
 
 use super::tokens::{Token, Tokenizer};
 use super::*;
+use crate::model::Event;
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -77,6 +78,9 @@ pub struct ViewModel {
     pub threads: Vec<ThreadData>,
     /// Oldest first; the last is the one shown first.
     pub revisions: Vec<RevisionData>,
+    /// What happened to the review, oldest first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub timeline: Vec<TimelineEntry>,
 }
 
 #[derive(Serialize)]
@@ -143,6 +147,66 @@ pub struct AttachedData {
 pub struct Count {
     pub count: usize,
     pub bytes: u64,
+}
+
+/// What happened to the review, in the order it happened: the event log as a
+/// reader reads it. Nothing here is new data -- it is `review.jsonl` and the
+/// commit store, put in one order. (Editing and deleting a comment rewrite
+/// the log, so this is what the log says now, not an account of every change
+/// ever made: see the README.)
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum TimelineEntry {
+    /// The review was made.
+    Started { at: String },
+    /// A revision was recorded, and the commits it brought with it (those
+    /// its trail has and the revision before it had not).
+    Revision {
+        at: String,
+        /// Which tab it is, counting from zero.
+        rev: usize,
+        label: String,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        commits: Vec<TimelineCommit>,
+    },
+    /// A comment was written: a thread of its own, or a reply to one.
+    Comment {
+        at: String,
+        author: String,
+        /// The thread it belongs to, for going to it.
+        thread: String,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        reply: bool,
+        /// Which comment it is: the page reads its text from the thread,
+        /// so the model carries it once.
+        comment: String,
+    },
+    /// A thread was resolved, or opened again.
+    Resolved {
+        at: String,
+        author: String,
+        thread: String,
+    },
+    Reopened {
+        at: String,
+        author: String,
+        thread: String,
+    },
+}
+
+/// One commit of a revision's trail, as the timeline lists it.
+#[derive(Serialize)]
+pub struct TimelineCommit {
+    /// The full id (what `git show` wants) and the short one (what is read).
+    pub id: String,
+    pub short: String,
+    pub author: String,
+    pub at: String,
+    pub subject: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub body: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<crate::model::CommitFile>,
 }
 
 /// The base of a review: a commit (its short id), or, for a directory, when
@@ -326,6 +390,7 @@ pub fn view_model_with(
         .map(|(view, s)| revision_data(&threads, view, &s.label, &s.at, &blobs, &mut budget))
         .collect();
     revisions.reverse();
+    let what_happened = timeline(loaded, &shown);
     Ok(ViewModel {
         version: VERSION,
         stamp: stamp(loaded),
@@ -358,6 +423,7 @@ pub fn view_model_with(
         attachment_limit: loaded.settings.attachment_limit,
         interactive,
         title: crate::review::title(&loaded.settings).map(str::to_string),
+        timeline: what_happened,
         threads: {
             let ids = comment_ids(&loaded.events);
             threads
@@ -484,6 +550,94 @@ fn thread_data(
         resolved: thread.resolved,
         comments,
     }
+}
+
+/// What happened to the review, oldest first, from the event log and the
+/// commit store. `shown` is the revisions that have a diff, in the order the
+/// tabs put them: a revision the page never shows is left out.
+pub(super) fn timeline(loaded: &crate::bundle::Loaded, shown: &[Shown]) -> Vec<TimelineEntry> {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut out = Vec::new();
+    for event in &loaded.events {
+        match event {
+            Event::Meta { created_at, .. } => out.push(TimelineEntry::Started {
+                at: rfc3339(*created_at),
+            }),
+            Event::Revision(r) => {
+                let Some(rev) = shown.iter().position(|s| s.revision.id == r.id) else {
+                    continue;
+                };
+                // What this revision brought: its trail, less everything a
+                // revision before it already had.
+                let brought: Vec<TimelineCommit> = r
+                    .commits
+                    .iter()
+                    .filter(|id| !seen.contains(&id.as_str()))
+                    .filter_map(|id| {
+                        let about = loaded.commits.get(id)?;
+                        Some(TimelineCommit {
+                            id: id.clone(),
+                            short: id.chars().take(7).collect(),
+                            author: about.author.clone(),
+                            at: rfc3339_local(about.at),
+                            subject: about.subject.clone(),
+                            body: about.body.clone(),
+                            files: about.files.clone(),
+                        })
+                    })
+                    .collect();
+                seen.extend(r.commits.iter().map(String::as_str));
+                out.push(TimelineEntry::Revision {
+                    at: rfc3339(r.created_at),
+                    rev,
+                    label: shown[rev].label.clone(),
+                    commits: brought,
+                });
+            }
+            Event::Comment {
+                id,
+                parent,
+                author,
+                created_at,
+                ..
+            } => out.push(TimelineEntry::Comment {
+                at: rfc3339(*created_at),
+                author: author.clone(),
+                // Threading is flat: a reply names its thread's first
+                // comment, and a first comment is its own thread.
+                thread: parent.unwrap_or(*id).to_string(),
+                reply: parent.is_some(),
+                comment: id.to_string(),
+            }),
+            Event::Resolve {
+                parent,
+                author,
+                created_at,
+            } => out.push(TimelineEntry::Resolved {
+                at: rfc3339(*created_at),
+                author: author.clone(),
+                thread: parent.to_string(),
+            }),
+            Event::Reopen {
+                parent,
+                author,
+                created_at,
+            } => out.push(TimelineEntry::Reopened {
+                at: rfc3339(*created_at),
+                author: author.clone(),
+                thread: parent.to_string(),
+            }),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// A commit's time as it was written, keeping the offset of whoever wrote it
+/// (the page shows it in the reader's own time either way).
+fn rfc3339_local(at: time::OffsetDateTime) -> String {
+    use time::format_description::well_known::Rfc3339;
+    at.format(&Rfc3339).unwrap_or_default()
 }
 
 pub(super) fn rfc3339(at: time::OffsetDateTime) -> String {
