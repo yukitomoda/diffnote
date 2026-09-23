@@ -17,12 +17,13 @@ export type Section = (typeof SECTIONS)[number];
 
 /**
  * The same screens in the order and the grouping a reader is given them in:
- * what the review holds, then what is set. Here rather than with the screen
+ * the review itself and what it holds -- 全般 first, being where the screen
+ * opens -- then what is set. Here rather than with the screen
  * that draws them, so that a screen an address can carry and a screen anyone
  * can reach cannot drift apart (`ui/src/test/route.test.js` checks it).
  */
 export const SECTION_GROUPS: Section[][] = [
-  ['timeline', 'attachments', 'general'],
+  ['general', 'timeline', 'attachments'],
   ['settings', 'user'],
 ];
 

@@ -414,7 +414,8 @@ class Replies(ServedCase):
         self.assertGreater(got["width"], 500, "and room to put a list in")
         self.assertEqual(got["sticky"], "sticky", "the nav stays while a long pane scrolls")
         self.assertEqual(got["groups"], 2, "what the review holds, then what is set")
-        self.assertEqual(got["order"], ["timeline", "attachments", "general", "settings", "user"])
+        self.assertEqual(got["order"], ["general", "timeline", "attachments", "settings", "user"],
+                         "the pane it opens on first, then the rest of the review, then what is set")
 
     def open_settings(self):
         """Opens the settings screen and switches to its 設定 section (the
