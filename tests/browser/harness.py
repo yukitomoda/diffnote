@@ -6,6 +6,7 @@ editor, see `fake_editor.py`), so the tests need only Python, Chrome and a
 built `diffnote` (set DIFFNOTE_BIN, or `cargo build` for target/debug).
 """
 import base64
+import http.client
 import json
 import os
 import re
@@ -13,6 +14,7 @@ import shutil
 import socket
 import struct
 import subprocess
+import urllib.parse
 import sys
 import tempfile
 import time
@@ -498,6 +500,7 @@ class Served:
         self.notices = []
         self.said = []
         self.url = None
+        self._token_cookie = None
         for line in self.proc.stdout:
             self.said.append(line.strip())
             if "注意" in line:
@@ -509,6 +512,40 @@ class Served:
         assert self.url, "diffnote serve did not start"
         if author is not None and os.path.exists(config_file):
             os.remove(config_file)
+
+    def _connect(self):
+        parts = urllib.parse.urlsplit(self.url)
+        return http.client.HTTPConnection(parts.hostname, parts.port, timeout=15)
+
+    def _cookie(self):
+        """The token, kept the way the page keeps it: the first visit carries
+        it in the address and is answered with a cookie."""
+        if self._token_cookie is None:
+            parts = urllib.parse.urlsplit(self.url)
+            c = self._connect()
+            c.request("GET", parts.path + "?" + parts.query)
+            answer = c.getresponse()
+            answer.read()
+            got = answer.getheader("Set-Cookie")
+            assert got, "the server gave no cookie for %s" % self.url
+            self._token_cookie = got.split(";")[0]
+            c.close()
+        return self._token_cookie
+
+    def api(self, path, data=None):
+        """A request to the review, as the page makes them: JSON in, JSON
+        out, with the token and the header the server insists on."""
+        c = self._connect()
+        body = None if data is None else json.dumps(data).encode("utf-8")
+        headers = {"X-Diffnote": "1", "Cookie": self._cookie()}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        c.request("GET" if body is None else "POST", path, body, headers)
+        answer = c.getresponse()
+        text = answer.read().decode("utf-8")
+        c.close()
+        assert answer.status == 200, "%s: %d %s" % (path, answer.status, text[:300])
+        return json.loads(text) if text.strip() else {}
 
     def said_more(self):
         """What the server has said since it started: waits for it to stop, then reads the rest."""
@@ -533,6 +570,68 @@ class Served:
 
 
 # ---- reviews to open ------------------------------------------------------------
+
+def line_of(repo, rev, path, text):
+    """Which line of `path` at `rev` reads exactly `text`.
+
+    Fixtures name a line by what it says, not by counting: a line that moves
+    when the file above it changes should not move a test with it.
+    """
+    out = subprocess.run(["git", "-C", repo, "show", "%s:%s" % (rev, path)],
+                         capture_output=True, text=True, encoding="utf-8")
+    assert out.returncode == 0, "git show %s:%s: %s" % (rev, path, out.stderr)
+    for n, line in enumerate(out.stdout.split("\n"), 1):
+        if line == text:
+            return n
+    raise AssertionError("%s:%s has no line %r" % (rev, path, text))
+
+
+def write_comments(server, repo, rev, revision, comments):
+    """Writes `comments` into a served review through its own API -- the way
+    a person writes them, without an editor in the middle.
+
+    Each is a dict with a `body` and where it goes: `global`, `file` for a
+    whole file, `file` with `line` (or `lines`, a first and last) for lines,
+    or `reply` (the index of an earlier one in this list). `resolve` marks
+    the thread resolved once it is written. Gives back the thread ids, in
+    order, so a later comment can name one.
+    """
+    ids = []
+    for c in comments:
+        if "reply" in c:
+            thread = ids[c["reply"]]
+            server.api("/api/threads/%s/replies" % thread, {"body": c["body"]})
+            ids.append(thread)
+        else:
+            ask = {"body": c["body"], "revision": revision}
+            if c.get("global"):
+                ask["scope"] = "global"
+            elif "line" in c or "lines" in c:
+                first, last = c["lines"] if "lines" in c else (c["line"], c["line"])
+                start = line_of(repo, rev, c["file"], first)
+                end = line_of(repo, rev, c["file"], last)
+                ask.update(scope="lines", file=c["file"],
+                           head={"start": start, "len": end - start + 1})
+            else:
+                ask.update(scope="file", file=c["file"])
+            ids.append(server.api("/api/threads", ask)["thread"])
+        if c.get("resolve"):
+            server.api("/api/threads/%s/resolve" % ids[-1], {})
+    return ids
+
+
+def review_of(repo, review, target, comments=(), base=None, author="reviewer", extra=()):
+    """Adds `target` to `review` (making it, with `base`, if it is not there
+    yet) and writes `comments` into it, through `serve`."""
+    args = (["--base", base] if base else []) + [target, *extra]
+    server = Served(review, cwd=repo, author=author, extra=args)
+    try:
+        revision = len(server.api("/api/model")["model"]["revisions"]) - 1
+        write_comments(server, repo, target, revision, comments)
+    finally:
+        server.stop()
+
+
 
 def git(repo, *args):
     out = subprocess.run(["git", "-C", repo, "-c", "user.email=t@example.com", "-c", "user.name=T", *args],
@@ -563,11 +662,9 @@ def make_gaps_review(root, name="gaps"):
     git(repo, "commit", "-q", "-am", "c2")
     git(repo, "tag", "c2")
     review = os.path.join(root, name + ".diffnote")
-    set_user_author("reviewer")
-    out = diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo, comments=[
-        ("+TWENTY", "20 行目を変えました。"),
+    review_of(repo, review, "c2", base="c1", comments=[
+        {"file": "long.txt", "line": "TWENTY", "body": "20 行目を変えました。"},
     ])
-    assert out.returncode == 0, out.stdout + out.stderr
     return review, repo
 
 
@@ -591,11 +688,9 @@ def make_indent_review(root):
     git(repo, "commit", "-q", "-am", "c2")
     git(repo, "tag", "c2")
     review = os.path.join(root, "indent.diffnote")
-    set_user_author("reviewer")
-    out = diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo, comments=[
-        ("+    c = 4", "c を変えました。"),
+    review_of(repo, review, "c2", base="c1", comments=[
+        {"file": "x.py", "line": "    c = 4", "body": "c を変えました。"},
     ])
-    assert out.returncode == 0, out.stdout + out.stderr
     return review, repo
 
 
@@ -619,18 +714,15 @@ def make_calc_review(root):
     git(repo, "commit", "-q", "-am", "c3")
     git(repo, "tag", "c3")
     review = os.path.join(root, "calc.diffnote")
-    set_user_author("reviewer")
-    out = diffnote("edit", "-f", review, "--base", "c1", "c2", cwd=repo, comments=[
-        ("GLOBAL", "全体として、テストが追加されていないのが気になります。"),
-        ("+        return None", "None を返すと呼び出し側が気づけません。"),
-        ("@raw:+        return None", ">!resolve"),
-        ("+    return a * b", "mul の型を確認してください。"),
+    review_of(repo, review, "c2", base="c1", comments=[
+        {"global": True, "body": "全体として、テストが追加されていないのが気になります。"},
+        {"file": "calc.py", "line": "        return None", "resolve": True,
+         "body": "None を返すと呼び出し側が気づけません。"},
+        {"file": "calc.py", "line": "    return a * b", "body": "mul の型を確認してください。"},
     ])
-    assert out.returncode == 0, out.stdout + out.stderr
-    out = diffnote("edit", "-f", review, "--base", "c1", "c3", cwd=repo, comments=[
-        ("+\"\"\"calc\"\"\"", "docstring は 1 行でよいです。"),
+    review_of(repo, review, "c3", comments=[
+        {"file": "calc.py", "line": '"""calc"""', "body": "docstring は 1 行でよいです。"},
     ])
-    assert out.returncode == 0, out.stdout + out.stderr
     return review, repo
 
 
@@ -675,11 +767,10 @@ def make_login_review(root, snapshot=None, name="login"):
     git(repo, "tag", "c2")
     review = os.path.join(root, name + ".diffnote")
     extra = ["--snapshot", snapshot] if snapshot else []
-    set_user_author("reviewer")
-    out = diffnote("edit", "-f", review, *extra, "--base", "c1", "c2", cwd=repo, comments=[
-        ("+import { compare } from './crypto'", "`hash` は使っていません。"),
+    review_of(repo, review, "c2", base="c1", extra=extra, comments=[
+        {"file": "src/auth/login.ts", "line": "import { compare } from './crypto'",
+         "body": "`hash` は使っていません。"},
     ])
-    assert out.returncode == 0, out.stdout + out.stderr
     return review, repo
 
 
