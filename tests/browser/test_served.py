@@ -392,6 +392,30 @@ class Replies(ServedCase):
         self.reply_to(card, "二つのサーバーの間で")
         self.assertIn("二つのサーバーの間で", show(self.review))
 
+    def test_the_screen_is_a_page_of_the_review_laid_out_as_the_review_is(self):
+        self.serve()
+        b = self.b
+        # Where the diff's own column starts, before leaving the review.
+        diff_left = b.js("document.querySelector('%s section.diffnote-file').getBoundingClientRect().left" % CUR)
+        b.click("[data-diffnote-settings]")
+        self.assertTrue(b.wait_exists("[data-diffnote-settings-page]"))
+        got = b.js("""(() => {
+          const nav = document.querySelector('.diffnote-settings-nav');
+          const pane = document.querySelector('.diffnote-settings__pane');
+          return { pane: pane.getBoundingClientRect().left,
+                   width: pane.getBoundingClientRect().width,
+                   sticky: getComputedStyle(nav).position,
+                   groups: nav.querySelectorAll('ul').length,
+                   order: [...nav.querySelectorAll('[data-diffnote-settings-nav]')]
+                     .map(b => b.dataset.diffnoteSettingsNav) };
+        })()""")
+        self.assertAlmostEqual(got["pane"], diff_left, delta=1,
+                               msg="the same column as the review, so nothing moves")
+        self.assertGreater(got["width"], 500, "and room to put a list in")
+        self.assertEqual(got["sticky"], "sticky", "the nav stays while a long pane scrolls")
+        self.assertEqual(got["groups"], 2, "what the review holds, then what is set")
+        self.assertEqual(got["order"], ["attachments", "general", "settings", "user"])
+
     def open_settings(self):
         """Opens the settings screen and switches to its 設定 section (the
         screen itself starts on 全般; see test_the_title_is_the_way_into..."""

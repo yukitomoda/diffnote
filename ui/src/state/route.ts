@@ -15,6 +15,17 @@ import type { At, PageState } from '../lib.ts';
 export const SECTIONS = ['general', 'settings', 'attachments', 'user'] as const;
 export type Section = (typeof SECTIONS)[number];
 
+/**
+ * The same screens in the order and the grouping a reader is given them in:
+ * what the review holds, then what is set. Here rather than with the screen
+ * that draws them, so that a screen an address can carry and a screen anyone
+ * can reach cannot drift apart (`ui/src/test/route.test.js` checks it).
+ */
+export const SECTION_GROUPS: Section[][] = [
+  ['attachments', 'general'],
+  ['settings', 'user'],
+];
+
 /** Where the page is. One value, not four, so that a move is one change: the
  * address is written from it, and writing it twice for one move would leave
  * the back button with somewhere to go that the reader was never at. */

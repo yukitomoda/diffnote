@@ -908,7 +908,7 @@ ui:
 
   settings:
     nav_label: |-
-      設定
+      レビューの情報と設定
     general_tab: |-
       全般
     settings_tab: |-
@@ -970,7 +970,7 @@ ui:
     back_button: |-
       レビューに戻る
     title_button: |-
-      設定を開く
+      レビューの情報と設定を開く
 
   attachments:
     heading: |-

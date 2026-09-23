@@ -6,6 +6,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { lib } from '../lib.ts';
 import {
+  SECTIONS,
+  SECTION_GROUPS,
   compareWith,
   goTo,
   hashOfRoute,
@@ -42,6 +44,15 @@ test('an address the review cannot use is no address at all', () => {
   assert.equal(routeOfHash('#rev=0', 3), null, 'the tabs start at one');
   assert.equal(routeOfHash('#rev=4', 3), null, 'there is no fourth revision');
   assert.equal(routeOfHash('#screen=user', 3), null, 'a screen without a revision');
+});
+
+test('every screen there is has a place in the nav that leads to it', () => {
+  // `SECTIONS` says which names an address may carry; `SECTION_GROUPS` says
+  // how they are put in front of a reader. A screen in one and not the other
+  // is either unreachable or a dead link.
+  const listed = SECTION_GROUPS.flat();
+  assert.deepEqual([...listed].sort(), [...SECTIONS].sort());
+  assert.equal(listed.length, new Set(listed).size, 'and in one place only');
 });
 
 test('a screen is one of the ones there are', () => {
