@@ -618,6 +618,9 @@ class Replies(ServedCase):
         self.assertTrue(b.wait_exists("[data-diffnote-discard]"))
         b.click("[data-diffnote-discard]")
         self.assertTrue(b.wait_exists("[data-diffnote-discard-confirm]"), "asked again")
+        self.assertTrue(b.js("""(function (m) { var r = m.getBoundingClientRect();
+          return r.right <= innerWidth && [...m.children].every(function (c) { return c.scrollWidth <= m.clientWidth; }); })(
+          document.querySelector('.diffnote-quit__menu'))"""), "what it says fits in the menu, and the menu in the window")
         self.assertIn("捨てる返信", recorded(self.review), "nothing is thrown away before it is confirmed")
         b.click("[data-diffnote-discard-confirm]")
         self.assertTrue(b.wait("!document.getElementById('app')"))
