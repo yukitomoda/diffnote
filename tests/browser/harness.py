@@ -284,6 +284,17 @@ class Browser:
     def center(self, selector):
         return self.js("(function(){var e=document.querySelector(%s); e.scrollIntoView({block:'center'}); var r=e.getBoundingClientRect(); return [r.x+r.width/2, r.y+r.height/2]})()" % json.dumps(selector))
 
+    def start_of(self, selector):
+        """Just inside the left edge of an element, level with its middle.
+
+        Where a press falls inside a line of text decides where a selection
+        starts, and the middle of a cell is a different place in a different
+        column width or font. This is the beginning of the line wherever it
+        is drawn.
+        """
+        return self.js("(function(){var e=document.querySelector(%s); e.scrollIntoView({block:'center'});"
+                       " var r=e.getBoundingClientRect(); return [r.x+2, r.y+r.height/2]})()" % json.dumps(selector))
+
     def press(self, selector, modifiers=0):
         x, y = self.center(selector)
         self.cdp.mouse("mouseMoved", x, y)
@@ -307,7 +318,7 @@ class Browser:
         self.cdp.mouse("mousePressed", x, y, 1, modifiers)
         self.cdp.mouse("mouseReleased", x, y, 0, modifiers)
 
-    def drag(self, first, last, steps=8):
+    def drag(self, first, last, steps=8, from_start=False):
         """Presses on `first`, moves to `last` with the button held, and lets
         go there.
 
@@ -316,8 +327,16 @@ class Browser:
         at all (the browser tests' drag over a diff has never selected
         anything on the CI runner, while passing here): what a drag is, to
         a browser, is a press followed by movement.
+
+        `from_start` presses at the beginning of `first` rather than in the
+        middle of it, for a drag that is meant to take whole lines.
         """
-        x, y = self.press(first)
+        if from_start:
+            x, y = self.start_of(first)
+            self.cdp.mouse("mouseMoved", x, y)
+            self.cdp.mouse("mousePressed", x, y, 1)
+        else:
+            x, y = self.press(first)
         x2, y2 = self.center(last)
         # A few pixels first: a browser starts selecting once the pointer has
         # moved past its own threshold, and a first step of an eighth of the

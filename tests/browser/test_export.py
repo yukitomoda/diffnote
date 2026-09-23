@@ -386,7 +386,9 @@ class SideBySide(BrowserCase):
         b = self.b
         cell = lambda n: "document.querySelector(\"td.diffnote-line__gutter-%s[data-diffnote-%s='%d']\").nextElementSibling" % (side, side, n)
         b.js("%s.setAttribute('data-t','from'); %s.setAttribute('data-t','to')" % (cell(first), cell(last)))
-        b.drag("[data-t=from]", "[data-t=to]")
+        # From the beginning of the first line: how far into a line the
+        # press falls would otherwise depend on the column width and the font.
+        b.drag("[data-t=from]", "[data-t=to]", from_start=True)
         copied = b.js("(function(){var dt=new DataTransfer(); document.dispatchEvent(new ClipboardEvent('copy',{clipboardData:dt,bubbles:true,cancelable:true})); return dt.getData('text/plain')})()")
         if not copied:
             # This has never worked on the CI runner and always works here,
