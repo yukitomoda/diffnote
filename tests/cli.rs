@@ -2003,3 +2003,84 @@ fn init_and_edit_work_on_the_repository_named_from_anywhere() {
     assert!(!bad.status.success());
     assert!(String::from_utf8_lossy(&bad.stderr).contains("git リポジトリではありません"));
 }
+
+#[test]
+fn a_revision_records_the_commits_it_was_reached_by_and_keeps_each_one_once() {
+    let env = Env::new();
+    let repo = repo_with_docs(&env);
+    let review = env.path("r.diffnote");
+    let arg = review.to_str().unwrap();
+    // Two more commits on top of c2, the second with a body.
+    std::fs::write(repo.join("docs.md"), "changed\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c3"]);
+    git(&repo, &["tag", "c3"]);
+    std::fs::write(repo.join("docs.md"), "changed again\n").unwrap();
+    git(
+        &repo,
+        &[
+            "commit",
+            "-q",
+            "-am",
+            "直した\n\nこうしたほうが読みやすいため。",
+        ],
+    );
+    git(&repo, &["tag", "c4"]);
+
+    // #1 is c1..c3, #2 is c1..c4: the trails overlap.
+    env.ok(
+        &repo,
+        &[("+C30", "ひとつめ")],
+        &["edit", "-f", arg, "--base", "c1", "c3"],
+    );
+    env.ok(
+        &repo,
+        &[("+changed again", "ふたつめ")],
+        &["edit", "-f", arg, "HEAD"],
+    );
+
+    let loaded = bundle::load(&review).unwrap();
+    let trails: Vec<Vec<String>> = loaded.revisions().map(|r| r.commits.clone()).collect();
+    assert_eq!(trails.len(), 2);
+    assert_eq!(trails[0].len(), 2, "c2 and c3");
+    assert_eq!(trails[1].len(), 3, "and c4 after them");
+    assert_eq!(
+        trails[1][..2],
+        trails[0][..],
+        "a trail starts at the review's base, so the second contains the first"
+    );
+    assert_eq!(
+        loaded.commits.len(),
+        3,
+        "each commit is kept once, not once per trail that names it"
+    );
+    assert!(bundle_names(&review).contains(&"commits.json".to_string()));
+
+    let last = &loaded.commits[trails[1].last().unwrap()];
+    assert_eq!(last.subject, "直した");
+    assert_eq!(last.body, "こうしたほうが読みやすいため。");
+    assert_eq!(last.author, "T", "the name git records");
+    assert_eq!(
+        last.files
+            .iter()
+            .map(|f| (f.path.as_str(), f.status.as_str()))
+            .collect::<Vec<_>>(),
+        [("docs.md", "modified")]
+    );
+}
+
+#[test]
+fn a_review_of_a_directory_records_no_commits() {
+    let env = Env::new();
+    let dir = env.path("work");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    let review = env.path("r.diffnote");
+    let arg = review.to_str().unwrap();
+    env.ok(&dir, &[], &["init", "-f", arg, "--files", "."]);
+    std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+    env.ok(&dir, &[("+two", "変えました")], &["edit", "-f", arg, "."]);
+    let loaded = bundle::load(&review).unwrap();
+    assert!(loaded.revisions().all(|r| r.commits.is_empty()));
+    assert!(loaded.commits.is_empty());
+    assert!(!bundle_names(&review).contains(&"commits.json".to_string()));
+}

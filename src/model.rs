@@ -46,6 +46,44 @@ pub struct Reaction {
 /// taken back is gone), kept in the bundle's `reactions.json`.
 pub type Reactions = std::collections::BTreeMap<String, Vec<Reaction>>;
 
+/// What one commit of a git-backed review did, as it was when the revision
+/// that contains it was recorded. A review keeps this rather than reading the
+/// repository later: an exported page has no repository to ask, and history
+/// that is rewritten afterwards would otherwise change under the review.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitInfo {
+    /// Who wrote it (the name git records; diffnote has no identities).
+    pub author: String,
+    /// When it was written, in the author's own offset.
+    #[serde(with = "time::serde::rfc3339")]
+    pub at: OffsetDateTime,
+    /// Its first line.
+    pub subject: String,
+    /// The rest of the message, if it has one (trailers included: the page
+    /// folds them away rather than the review dropping them).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub body: String,
+    /// What it did to each file it touched.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<CommitFile>,
+}
+
+/// One file a commit touched.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitFile {
+    pub path: String,
+    /// Where it was before, for a rename or a copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_path: Option<String>,
+    /// `added`, `modified`, `deleted`, `renamed`, `copied` or `changed`.
+    pub status: String,
+}
+
+/// What is known about the commits a review has seen, by full commit id:
+/// each is kept once, however many revisions have it in their trail. A save
+/// keeps only the ones some revision still names.
+pub type Commits = std::collections::BTreeMap<String, CommitInfo>;
+
 /// What is known about one file attached to a comment beyond its bytes -- the
 /// things the bytes cannot be asked for.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,6 +286,13 @@ pub struct Revision {
     /// contents are in the bundle's blob store.
     #[serde(default)]
     pub tree: Vec<TreeFile>,
+    /// The commits from the review's base to this revision's head, oldest
+    /// first, by full id: the trail this revision was reached by. What each
+    /// one is is in the bundle's commit store, so a commit that several
+    /// revisions have in their trail is kept once. Empty for a review of a
+    /// directory, which has no commits.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commits: Vec<String>,
 }
 
 /// One line of the JSONL document.

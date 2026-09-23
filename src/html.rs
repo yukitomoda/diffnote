@@ -834,10 +834,12 @@ mod tests {
                 snapshot_mode: SnapshotMode::Full,
                 files,
                 tree: Vec::new(),
+                commits: Vec::new(),
             }));
             let additions = Additions {
                 diff: Some((key, diff_text)),
                 blobs: vec![head.as_bytes().to_vec(), base.as_bytes().to_vec()],
+                commits: Vec::new(),
             };
             let loaded = bundle::load(&path).unwrap();
             bundle::save(&path, &loaded, &events, &additions).unwrap();
@@ -1273,6 +1275,7 @@ mod tests {
                     digest: digest(readme),
                 },
             ],
+            commits: Vec::new(),
         }));
         events.extend(extra);
         let additions = Additions {
@@ -1282,6 +1285,7 @@ mod tests {
                 R1_HEAD.as_bytes().to_vec(),
                 readme.as_bytes().to_vec(),
             ],
+            commits: Vec::new(),
         };
         bundle::save(&path, &bundle::load(&path).unwrap(), &events, &additions).unwrap();
         (dir, bundle::load(&path).unwrap())

@@ -481,6 +481,12 @@ fn add_revision(
         diffnote::model::Source::Files { .. } => m("main.add_revision.recorded_files").to_string(),
     };
     let is_git = matches!(source, diffnote::model::Source::Git(_));
+    // The trail this head was reached by, read while the repository is at
+    // hand: the review keeps it, since an exported page has nothing to ask.
+    let commits = match &source {
+        diffnote::model::Source::Git(g) => repo.log(&g.base, &g.head).unwrap_or_default(),
+        diffnote::model::Source::Files { .. } => Vec::new(),
+    };
     let mode = diffnote::record::pick_snapshot_mode(None, loaded.snapshot_mode(), &source);
     let mut new_events = Vec::new();
     if loaded.events.is_empty() {
@@ -501,6 +507,7 @@ fn add_revision(
             files: &files,
             new_files: &new_files,
             base_files: &base_files,
+            commits: &commits,
         },
         &|| confirm_snapshot_size(mode, is_git, tree_size),
         &*head_some,
@@ -1023,10 +1030,12 @@ fn init_git(
         snapshot_mode: bundle::SnapshotMode::Changed,
         files: Vec::new(),
         tree: Vec::new(),
+        commits: Vec::new(),
     }));
     let additions = bundle::Additions {
         diff: Some((digest, empty_diff)),
         blobs: Vec::new(),
+        commits: Vec::new(),
     };
     bundle::save(
         review_path,
@@ -1061,6 +1070,7 @@ fn init_files(review_path: &Path, dir: &Path, title: Option<String>, say: bool) 
         source: diffnote::model::Source::Files { base: None },
         snapshot_mode: bundle::SnapshotMode::Full,
         files: Vec::new(),
+        commits: Vec::new(),
         tree: tree
             .iter()
             .map(|(path, bytes)| diffnote::record::tree_file(path, bytes))
@@ -1070,6 +1080,7 @@ fn init_files(review_path: &Path, dir: &Path, title: Option<String>, say: bool) 
     let additions = bundle::Additions {
         diff: Some((digest, String::new())),
         blobs: tree.into_values().collect(),
+        commits: Vec::new(),
     };
     bundle::save(
         review_path,
@@ -1129,6 +1140,7 @@ fn cmd_edit(
     let mut loaded = bundle::load(&review_path)?;
     let repo = repo_of(repo)?;
     let mut fresh = FreshBundle(None);
+    let mut commits: Vec<(String, diffnote::model::CommitInfo)> = Vec::new();
     // A directory review: the bundle says so, or (with no bundle) --files or
     // the lack of a repository does.
     let directory_review = match loaded.source() {
@@ -1158,6 +1170,9 @@ fn cmd_edit(
         files_input(&loaded, &dir, &exclude)?
     } else {
         let range = git_range(&repo, &loaded, base.as_deref(), target.as_deref())?;
+        // The trail this head was reached by, read while the repository is at
+        // hand: the review keeps it, since an exported page has nothing to ask.
+        commits = repo.log(&range.base, &range.head).unwrap_or_default();
         git_input(repo, range)?
     };
     let Input {
@@ -1444,6 +1459,7 @@ fn cmd_edit(
             files: &files,
             new_files: &new_files,
             base_files: &base_files,
+            commits: &commits,
         },
         &|| confirm_snapshot_size(picked_mode, is_git, tree_size),
         &*head_some,

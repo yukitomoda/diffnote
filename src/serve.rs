@@ -1645,7 +1645,11 @@ impl Server {
         let loaded = bundle::load(&self.review).map_err(internal)?;
         let mut events = loaded.events.clone();
         events.extend(added);
-        let more = bundle::Additions { diff: None, blobs };
+        let more = bundle::Additions {
+            diff: None,
+            blobs,
+            commits: Vec::new(),
+        };
         bundle::save(&self.review, &loaded, &events, &more).map_err(internal)
     }
 
@@ -1954,6 +1958,7 @@ mod tests {
                 snapshot_mode: SnapshotMode::Full,
                 files,
                 tree: Vec::new(),
+                commits: Vec::new(),
             }),
             Event::Comment {
                 id: thread,
@@ -1970,6 +1975,7 @@ mod tests {
         let additions = Additions {
             diff: Some((key, diff_text)),
             blobs: vec![HEAD.as_bytes().to_vec(), BASE.as_bytes().to_vec()],
+            commits: Vec::new(),
         };
         let loaded = bundle::load(&path).unwrap();
         bundle::save(&path, &loaded, &events, &additions).unwrap();
@@ -3731,6 +3737,7 @@ mod tests {
         let more = Additions {
             diff: None,
             blobs: vec![g.as_bytes().to_vec()],
+            commits: Vec::new(),
         };
         bundle::save(&f.path, &loaded, &events, &more).unwrap();
         (f, g.to_string())
@@ -3821,6 +3828,7 @@ mod tests {
         let more = Additions {
             diff: None,
             blobs: files.into_iter().map(|(_, b)| b).collect(),
+            commits: Vec::new(),
         };
         bundle::save(&f.path, &loaded, &events, &more).unwrap();
         f
@@ -4177,6 +4185,7 @@ mod tests {
         let more = Additions {
             diff: None,
             blobs: vec![content.to_vec()],
+            commits: Vec::new(),
         };
         bundle::save(&g.f.path, &loaded, &events, &more).unwrap();
         let found = listing(&g.f, "?q=readme");

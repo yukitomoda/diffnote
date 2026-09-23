@@ -33,6 +33,10 @@ pub struct Capture<'a> {
     /// Base-side content of the files the diff touches, when the base isn't
     /// already in the bundle.
     pub base_files: &'a Tree,
+    /// The commits from the review's base to this head, oldest first (empty
+    /// for a review of a directory). Read by the caller, which has the
+    /// repository; kept by the review, which will not.
+    pub commits: &'a [(String, crate::model::CommitInfo)],
 }
 
 /// Reads the head content of the given paths (missing ones are skipped).
@@ -156,6 +160,7 @@ pub fn record_session(
         return Ok(Additions {
             diff: None,
             blobs: read.into_iter().map(|(_, b)| b).collect(),
+            commits: Vec::new(),
         });
     }
 
@@ -199,6 +204,7 @@ pub fn record_session(
             snapshot_mode: mode,
             files: capture.files.to_vec(),
             tree,
+            commits: capture.commits.iter().map(|(id, _)| id.clone()).collect(),
         }),
     );
     Ok(Additions {
@@ -207,6 +213,7 @@ pub fn record_session(
             capture.diff_text.to_string(),
         )),
         blobs,
+        commits: capture.commits.to_vec(),
     })
 }
 
@@ -352,6 +359,7 @@ mod tests {
                 files: &files,
                 new_files: &new_files,
                 base_files: &base_files,
+                commits: &[],
             },
             &|| {
                 mode_asked.set(mode_asked.get() + 1);
@@ -569,6 +577,7 @@ mod tests {
                 files: &files,
                 new_files: &new_files,
                 base_files: &base_files,
+                commits: &[],
             },
             &|| SnapshotMode::Changed,
             &|paths| head.some(paths),

@@ -14,6 +14,8 @@
 //!                          are their defaults)
 //! attachments.json          what is known about the attachments below beyond
 //!                          their bytes, by digest (left out if nothing is)
+//! commits.json              what each commit some revision was reached by
+//!                          said and touched, by commit id (git reviews only)
 //! diffs/<digest>.diff      one per recorded revision (its unified diff)
 //! blobs/<sha256 hex>       one per distinct file version, however many
 //!                          revisions have it
@@ -33,7 +35,7 @@
 
 use crate::messages::{m, mf};
 pub use crate::model::SnapshotMode;
-use crate::model::{Attachments, Event, Reactions, Revision, Settings, Source, TreeFile};
+use crate::model::{Attachments, Commits, Event, Reactions, Revision, Settings, Source, TreeFile};
 use anyhow::{Context, Result};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -52,6 +54,10 @@ pub struct Loaded {
     /// change is made here and saved with the bundle. A save keeps only what
     /// is about an attachment the bundle still holds.
     pub attached: Attachments,
+    /// What each commit of the revisions' trails is (see [`Commits`]). A save
+    /// keeps only the ones some revision still names, and adds whatever the
+    /// save brings with it.
+    pub commits: Commits,
     /// Existing `diffs/`/`blobs/` entries, carried through unchanged into
     /// the rewritten archive.
     carried_entries: Vec<(String, Vec<u8>)>,
@@ -181,6 +187,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
             settings: Settings::default(),
             reactions: Reactions::new(),
             attached: Attachments::new(),
+            commits: Commits::new(),
             carried_entries: Vec::new(),
         });
     }
@@ -203,6 +210,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
     let mut from_file: Option<serde_json::Map<String, serde_json::Value>> = None;
     let mut reactions = Reactions::new();
     let mut attached = Attachments::new();
+    let mut commits = Commits::new();
     let mut carried_entries = Vec::new();
 
     for i in 0..archive.len() {
@@ -240,6 +248,13 @@ pub fn load(path: &Path) -> Result<Loaded> {
                     &[("path", &path.display().to_string())],
                 )
             })?;
+        } else if name == "commits.json" {
+            commits = serde_json::from_slice(&bytes).with_context(|| {
+                mf(
+                    "bundle.commits_read_failed",
+                    &[("path", &path.display().to_string())],
+                )
+            })?;
         } else if name == "attachments.json" {
             attached = serde_json::from_slice(&bytes).with_context(|| {
                 mf(
@@ -265,6 +280,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
         settings,
         reactions,
         attached,
+        commits,
         carried_entries,
     })
 }
@@ -309,6 +325,8 @@ pub struct Additions {
     pub diff: Option<(String, String)>,
     /// File versions to put in the store (those already there are skipped).
     pub blobs: Vec<Vec<u8>>,
+    /// What the commits of a newly recorded revision's trail are.
+    pub commits: Vec<(String, crate::model::CommitInfo)>,
 }
 
 pub fn save(path: &Path, loaded: &Loaded, events: &[Event], additions: &Additions) -> Result<()> {
@@ -521,6 +539,32 @@ pub fn save_with(
             }
         }
 
+        // What the revisions' commits are: the ones this save brings, over
+        // the ones already known, kept down to what the events still name.
+        // A trail names a commit however many revisions it appears in, so
+        // each is written once.
+        let mut commits: Commits = loaded.commits.clone();
+        for (id, about) in &additions.commits {
+            commits.insert(id.clone(), about.clone());
+        }
+        let named: std::collections::HashSet<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Revision(r) => Some(r),
+                _ => None,
+            })
+            .flat_map(|r| r.commits.iter().map(String::as_str))
+            .collect();
+        commits.retain(|id, _| named.contains(id.as_str()));
+        if !commits.is_empty() {
+            writer.start_file("commits.json", options)?;
+            writer.write_all(
+                serde_json::to_string_pretty(&commits)
+                    .context(m("bundle.encode_failed"))?
+                    .as_bytes(),
+            )?;
+        }
+
         // What is known about the attachments, written last because it is the
         // entries above that say which are still here: one left out takes
         // what was known about it with it, and cannot be left behind.
@@ -585,6 +629,7 @@ mod tests {
             snapshot_mode,
             files,
             tree,
+            commits: Vec::new(),
         }
     }
 
@@ -632,6 +677,7 @@ mod tests {
                 "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-old\n+new\n".to_string(),
             )),
             blobs: vec![b"old content".to_vec(), b"new content".to_vec()],
+            commits: Vec::new(),
         };
         save(&path, &loaded, &events, &additions).unwrap();
 
@@ -673,6 +719,7 @@ mod tests {
         let additions = Additions {
             diff: None,
             blobs: vec![same.clone(), same.clone()],
+            commits: Vec::new(),
         };
         save(&path, &loaded, &[sample_event()], &additions).unwrap();
         let loaded = load(&path).unwrap();
@@ -681,6 +728,7 @@ mod tests {
         let additions = Additions {
             diff: None,
             blobs: vec![same, b"and one more".to_vec()],
+            commits: Vec::new(),
         };
         save(&path, &loaded, &loaded.events, &additions).unwrap();
         let loaded = load(&path).unwrap();
@@ -723,6 +771,7 @@ mod tests {
         let first = Additions {
             diff: Some(("sha256:first".to_string(), "first diff text".to_string())),
             blobs: Vec::new(),
+            commits: Vec::new(),
         };
         let events = vec![
             sample_event(),
@@ -739,6 +788,7 @@ mod tests {
         let second = Additions {
             diff: Some(("sha256:second".to_string(), "second diff text".to_string())),
             blobs: Vec::new(),
+            commits: Vec::new(),
         };
         let mut events = loaded.events.clone();
         events.push(revision("sha256:second", SnapshotMode::Changed));
@@ -785,6 +835,7 @@ mod tests {
                 .iter()
                 .map(|s| s.as_bytes().to_vec())
                 .collect(),
+            commits: Vec::new(),
         };
         save(&path, &load(&path).unwrap(), &events, &additions).unwrap();
         let loaded = load(&path).unwrap();
@@ -822,6 +873,7 @@ mod tests {
         let additions = Additions {
             diff: None,
             blobs: vec![b"stored".to_vec()],
+            commits: Vec::new(),
         };
         save(
             &path,
@@ -866,6 +918,7 @@ mod tests {
                 .iter()
                 .map(|s| s.as_bytes().to_vec())
                 .collect(),
+            commits: Vec::new(),
         };
         save(&path, &load(&path).unwrap(), &events, &additions).unwrap();
         let loaded = load(&path).unwrap();
@@ -1025,6 +1078,71 @@ mod tests {
         crate::review::toggle_reaction(&mut again.reactions, "c1", "👍", "a");
         save(&path, &again, &events, &Additions::default()).unwrap();
         assert!(!names(&path).contains(&"reactions.json".to_string()));
+    }
+
+    #[test]
+    fn a_commit_is_kept_once_however_many_trails_name_it_and_goes_with_the_last() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.diffnote");
+        let entries = |p: &Path| -> Vec<String> {
+            let mut a = ZipArchive::new(std::fs::File::open(p).unwrap()).unwrap();
+            (0..a.len())
+                .map(|i| a.by_index(i).unwrap().name().to_string())
+                .collect()
+        };
+        let about = |subject: &str| crate::model::CommitInfo {
+            author: "t".into(),
+            at: OffsetDateTime::now_utc(),
+            subject: subject.into(),
+            body: String::new(),
+            files: Vec::new(),
+        };
+        let trail = |key: &str, ids: &[&str]| {
+            let mut r = revision_with(key, SnapshotMode::Changed, Vec::new(), Vec::new());
+            r.commits = ids.iter().map(|s| s.to_string()).collect();
+            Event::Revision(r)
+        };
+
+        // Two revisions, the second reached through the first's commits.
+        let first = vec![sample_event(), trail("d1", &["aa", "bb"])];
+        let both = vec![
+            sample_event(),
+            trail("d1", &["aa", "bb"]),
+            trail("d2", &["aa", "bb", "cc"]),
+        ];
+        let loaded = load(&path).unwrap();
+        assert!(loaded.commits.is_empty());
+
+        let brought = Additions {
+            commits: vec![
+                ("aa".into(), about("first")),
+                ("bb".into(), about("second")),
+                ("cc".into(), about("third")),
+            ],
+            ..Additions::default()
+        };
+        save(&path, &loaded, &both, &brought).unwrap();
+        let loaded = load(&path).unwrap();
+        assert_eq!(loaded.commits.len(), 3, "one entry each, not one per trail");
+        assert_eq!(loaded.commits["cc"].subject, "third");
+        assert!(
+            !entry_names(&loaded).contains(&"commits.json"),
+            "not carried as an entry"
+        );
+
+        // Saved again with only the first revision: the commit only the
+        // second one's trail named goes with it.
+        save(&path, &loaded, &first, &Additions::default()).unwrap();
+        let loaded = load(&path).unwrap();
+        assert_eq!(
+            loaded.commits.keys().collect::<Vec<_>>(),
+            vec!["aa", "bb"],
+            "kept down to what a revision still names"
+        );
+        // And with no revision left, the file itself goes.
+        save(&path, &loaded, &[sample_event()], &Additions::default()).unwrap();
+        assert!(!entries(&path).contains(&"commits.json".to_string()));
+        assert!(load(&path).unwrap().commits.is_empty());
     }
 
     #[test]

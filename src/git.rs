@@ -9,11 +9,13 @@
 //! `A...B`, ...), and only its resolved output is interpreted.
 
 use crate::messages::{m, mf};
-use crate::model::GitSource;
+use crate::model::{CommitFile, CommitInfo, GitSource};
 use anyhow::{Context, Result, bail};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 /// One entry of a commit's tree (blobs only).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,6 +152,91 @@ impl Repo {
             .arg(&range.base)
             .arg(&range.head);
         run_text(cmd)
+    }
+
+    /// The commits from `base` to `head`, oldest first, with what each one
+    /// says and what it touched. Read once, when a revision is recorded: the
+    /// review keeps the answer (see [`crate::model::CommitInfo`]).
+    ///
+    /// Two passes of `git log`, because one format cannot carry both a
+    /// message and a file list without them running into each other. Each
+    /// asks for records separated by NUL, so nothing in a message or a path
+    /// can be mistaken for a separator.
+    pub fn log(&self, base: &str, head: &str) -> Result<Vec<(String, CommitInfo)>> {
+        let range = format!("{base}..{head}");
+        let mut said = self.git();
+        said.args([
+            "log",
+            "--reverse",
+            "-z",
+            "--format=%H\x1f%an\x1f%aI\x1f%s\x1f%b",
+        ])
+        .arg(&range);
+        let mut out: Vec<(String, CommitInfo)> = Vec::new();
+        for record in run_text(said)?.split('\0').filter(|r| !r.is_empty()) {
+            let mut field = record.split('\x1f');
+            let (Some(id), Some(author), Some(at), Some(subject)) =
+                (field.next(), field.next(), field.next(), field.next())
+            else {
+                continue;
+            };
+            let Ok(at) = OffsetDateTime::parse(at, &Rfc3339) else {
+                continue;
+            };
+            out.push((
+                id.to_string(),
+                CommitInfo {
+                    author: author.to_string(),
+                    at,
+                    subject: subject.to_string(),
+                    body: field.next().unwrap_or("").trim_end().to_string(),
+                    files: Vec::new(),
+                },
+            ));
+        }
+
+        let mut touched = self.git();
+        touched
+            .args(["log", "--reverse", "-z", "--format=\x01%H", "--name-status"])
+            .arg(&range);
+        let text = run_text(touched)?;
+        let mut at: Option<usize> = None;
+        let mut fields = text.split('\0').map(|f| f.trim_start_matches('\n'));
+        while let Some(field) = fields.next() {
+            if let Some(id) = field.strip_prefix('\x01') {
+                at = out.iter().position(|(known, _)| known == id);
+                continue;
+            }
+            let (Some(i), Some(status), false) = (at, field.chars().next(), field.is_empty())
+            else {
+                continue;
+            };
+            // `R100`/`C75` name where the file was as well as where it is.
+            let moved = matches!(status, 'R' | 'C');
+            let Some(first) = fields.next() else { break };
+            let (path, old_path) = if moved {
+                match fields.next() {
+                    Some(new) => (new.to_string(), Some(first.to_string())),
+                    None => break,
+                }
+            } else {
+                (first.to_string(), None)
+            };
+            out[i].1.files.push(CommitFile {
+                path,
+                old_path,
+                status: match status {
+                    'A' => "added",
+                    'D' => "deleted",
+                    'M' => "modified",
+                    'R' => "renamed",
+                    'C' => "copied",
+                    _ => "changed",
+                }
+                .to_string(),
+            });
+        }
+        Ok(out)
     }
 
     /// Whether `dir` is inside a git repository.
@@ -318,6 +405,75 @@ mod tests {
                 (c1.as_str(), c3.as_str())
             );
             assert_eq!(r.spec, "HEAD~2..HEAD");
+        });
+    }
+
+    #[test]
+    fn the_trail_from_base_to_head_is_read_oldest_first_with_what_each_commit_touched() {
+        with_repo(|p, repo, [c1, c2, c3]| {
+            // One more, with a message that has a body and a rename in it.
+            std::fs::rename(p.join("dir/b.txt"), p.join("dir/c.txt")).unwrap();
+            std::fs::write(p.join("new.txt"), "new\n").unwrap();
+            git_in(p, &["add", "-A"]);
+            git_in(
+                p,
+                &[
+                    "commit",
+                    "-q",
+                    "-m",
+                    "移動した\n\nなぜかというと、\nこうしたかったからです。\n\nCo-Authored-By: t <t@example.com>",
+                ],
+            );
+            let c4 = git_in(p, &["rev-parse", "HEAD"]);
+
+            let trail = repo.log(&c1, &c4).unwrap();
+            assert_eq!(
+                trail.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(),
+                vec![c2.clone(), c3.clone(), c4.clone()],
+                "oldest first, and never the base itself"
+            );
+            let (_, second) = &trail[0];
+            assert_eq!(second.subject, "c2");
+            assert_eq!(second.author, "t");
+            assert!(second.body.is_empty(), "a one-line message has no body");
+            assert_eq!(
+                second.files,
+                vec![CommitFile {
+                    path: "a.txt".into(),
+                    old_path: None,
+                    status: "modified".into(),
+                }]
+            );
+
+            let (_, last) = &trail[2];
+            assert_eq!(last.subject, "移動した");
+            assert!(
+                last.body
+                    .starts_with("なぜかというと、\nこうしたかったからです。")
+            );
+            assert!(
+                last.body.contains("Co-Authored-By:"),
+                "trailers are kept: the page folds them, the review doesn't drop them"
+            );
+            let mut files = last.files.clone();
+            files.sort_by(|a, b| a.path.cmp(&b.path));
+            assert_eq!(
+                files,
+                vec![
+                    CommitFile {
+                        path: "dir/c.txt".into(),
+                        old_path: Some("dir/b.txt".into()),
+                        status: "renamed".into(),
+                    },
+                    CommitFile {
+                        path: "new.txt".into(),
+                        old_path: None,
+                        status: "added".into(),
+                    },
+                ]
+            );
+            // Nothing between a commit and itself.
+            assert!(repo.log(&c3, &c3).unwrap().is_empty());
         });
     }
 
