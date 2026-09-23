@@ -41,6 +41,8 @@ cli:
       対象の git リポジトリ(省略時はカレント)。
     title: |-
       レビューのタイトル。
+    snapshot: |-
+      レビューに保存する範囲。`changed`(差分が触れたファイルだけ)か `full`(ツリー全体)。あとから変えられない。
 
   edit:
     about: |-
@@ -83,6 +85,8 @@ cli:
       git の中でも、ディレクトリのレビューにする。
     reopen: |-
       差分を計算せず、最後のリビジョンだけを開く(コメントの追加用)。
+    snapshot: |-
+      レビューに保存する範囲。まだレビューがないときだけ指定できる。`changed` か `full`。
 
   show:
     about: |-
@@ -335,6 +339,10 @@ main:
       下書きを {path} に保存できませんでした
 
   snapshot:
+    dir_changed_refused: |-
+      ディレクトリのレビューでは `--snapshot changed` は指定できません。不要なものは `.diffnoteignore` で除外してください
+    locked: |-
+      スナップショットの範囲は、レビューを作るときにだけ決められます(このレビューは {mode} です)
     ignore_hint: |-
       不要なものは `.diffnoteignore` で除外できます
     confirm_prompt: "代わりに `changed`(この差分が触れるファイルだけ)にしますか? [y/N] "

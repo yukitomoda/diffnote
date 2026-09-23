@@ -2182,3 +2182,74 @@ fn a_review_of_a_directory_has_a_timeline_with_no_commits_in_it() {
         "nothing to say about commits there are none of"
     );
 }
+
+#[test]
+fn the_snapshot_range_is_chosen_when_the_review_is_made_and_not_after() {
+    let env = Env::new();
+    let repo = repo_with_docs(&env);
+    let review = env.path("r.diffnote");
+    let arg = review.to_str().unwrap();
+    env.ok(&repo, &[], &["init", "-f", arg, "--snapshot", "full", "c1"]);
+    assert_eq!(
+        bundle::load(&review).unwrap().snapshot_mode(),
+        Some(bundle::SnapshotMode::Full),
+        "the review is made with it"
+    );
+    // What is recorded later keeps to it, without being asked again.
+    env.ok(&repo, &[("+C30", "ひとつ")], &["edit", "-f", arg, "c2"]);
+    let loaded = bundle::load(&review).unwrap();
+    assert!(
+        loaded
+            .revisions()
+            .all(|r| r.snapshot_mode == bundle::SnapshotMode::Full)
+    );
+    // (Revision 0 is `init`'s own, which records nothing; 1 is the first
+    // with a diff.)
+    assert!(
+        manifest_paths(&review, 1).contains(&"logo.bin".to_string()),
+        "a full snapshot keeps files the diff never touched: {:?}",
+        manifest_paths(&review, 1)
+    );
+
+    // Asking an existing review for another range is refused, not ignored.
+    let out = env.run(
+        &repo,
+        &[],
+        &["serve", "-f", arg, "--snapshot", "changed", "c2"],
+    );
+    assert!(!out.status.success());
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("レビューを作るとき"), "{said}");
+    assert!(
+        said.contains("full"),
+        "it says what the review already is: {said}"
+    );
+}
+
+#[test]
+fn a_directory_review_cannot_be_asked_for_a_changed_snapshot() {
+    let env = Env::new();
+    let dir = env.path("work");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    let arg = env.path("r.diffnote");
+    let out = env.run(
+        &dir,
+        &[],
+        &[
+            "init",
+            "-f",
+            arg.to_str().unwrap(),
+            "--files",
+            "--snapshot",
+            "changed",
+            ".",
+        ],
+    );
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains(".diffnoteignore"),
+        "it says what to do instead"
+    );
+    assert!(!arg.exists(), "and nothing was made");
+}

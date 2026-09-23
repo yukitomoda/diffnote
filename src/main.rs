@@ -92,6 +92,8 @@ enum Cmd {
         repo: Option<PathBuf>,
         #[arg(long, value_name = "TITLE", help = m("cli.init.title"))]
         title: Option<String>,
+        #[arg(long, value_enum, hide_possible_values = true, help = m("cli.init.snapshot"))]
+        snapshot: Option<diffnote::bundle::SnapshotMode>,
     },
     #[command(about = m("cli.edit.about"))]
     Edit {
@@ -144,6 +146,8 @@ enum Cmd {
         files: bool,
         #[arg(long, help = m("cli.serve.reopen"))]
         reopen: bool,
+        #[arg(long, value_enum, hide_possible_values = true, help = m("cli.serve.snapshot"))]
+        snapshot: Option<diffnote::bundle::SnapshotMode>,
     },
     #[command(about = m("cli.show.about"))]
     Show {
@@ -219,7 +223,8 @@ fn main() -> Result<()> {
             files,
             repo,
             title,
-        } => cmd_init(review, target, files, repo, title),
+            snapshot,
+        } => cmd_init(review, target, files, repo, title, snapshot),
         Cmd::Edit {
             review,
             target,
@@ -237,6 +242,7 @@ fn main() -> Result<()> {
                 base,
                 files,
                 reopen,
+                snapshot: None,
             },
             repo,
             snapshot,
@@ -253,6 +259,7 @@ fn main() -> Result<()> {
             base,
             files,
             reopen,
+            snapshot,
         } => cmd_serve(
             review,
             port,
@@ -263,6 +270,7 @@ fn main() -> Result<()> {
                 base,
                 files,
                 reopen,
+                snapshot,
             },
         ),
         Cmd::Export {
@@ -399,6 +407,9 @@ fn add_revision(
     target: Option<&str>,
     files: bool,
     apply: bool,
+    // What to keep, when this call is the one that makes the review. Refused
+    // earlier if the review already exists, so it can only apply here.
+    snapshot: Option<bundle::SnapshotMode>,
 ) -> Result<Option<String>> {
     let mut loaded = bundle::load(review_path)?;
     let explicit = base.is_some() || target.is_some();
@@ -487,7 +498,7 @@ fn add_revision(
         diffnote::model::Source::Git(g) => repo.log(&g.base, &g.head).unwrap_or_default(),
         diffnote::model::Source::Files { .. } => Vec::new(),
     };
-    let mode = diffnote::record::pick_snapshot_mode(None, loaded.snapshot_mode(), &source);
+    let mode = diffnote::record::pick_snapshot_mode(snapshot, loaded.snapshot_mode(), &source);
     let mut new_events = Vec::new();
     if loaded.events.is_empty() {
         new_events.push(Event::Meta {
@@ -547,6 +558,9 @@ struct Compare {
     /// Skip the diff entirely: reopen the last recorded revision as-is
     /// (`--reopen`), so nothing new is added.
     reopen: bool,
+    /// What a review made here keeps. Only when there is no review yet: the
+    /// range belongs to the review, and is decided once (see `init`).
+    snapshot: Option<bundle::SnapshotMode>,
 }
 
 fn cmd_serve(
@@ -561,9 +575,20 @@ fn cmd_serve(
         base,
         files,
         reopen,
+        snapshot,
     } = compare;
     if reopen && (target.is_some() || base.is_some() || files) {
         anyhow::bail!(m("main.reopen.conflicting_flags"));
+    }
+    // The range a review keeps is decided when it is made, and never again:
+    // asking for one over an existing review is refused rather than ignored.
+    if let Some(asked) = snapshot {
+        if let Some(mode) = bundle::load(&review).ok().and_then(|l| l.snapshot_mode()) {
+            anyhow::bail!(mf("main.snapshot.locked", &[("mode", mode_name(mode))]));
+        }
+        if files && asked == bundle::SnapshotMode::Changed {
+            anyhow::bail!(m("main.snapshot.dir_changed_refused"));
+        }
     }
     let explicit = target.is_some() || base.is_some();
     if !review.exists() {
@@ -600,6 +625,7 @@ fn cmd_serve(
             target.as_deref(),
             files,
             true,
+            snapshot,
         ) {
             Ok(said) => {
                 if let Some(said) = said {
@@ -630,7 +656,9 @@ fn cmd_serve(
     } else {
         let (review, git, target) = (review.clone(), git.clone(), target.clone());
         Some(std::sync::Arc::new(move |apply| {
-            add_revision(&review, &git, None, target.as_deref(), files, apply)
+            // Later rounds add to a review that exists: the range is the
+            // one it was made with.
+            add_revision(&review, &git, None, target.as_deref(), files, apply, None)
         }))
     };
     let options = diffnote::serve::Options {
@@ -966,6 +994,7 @@ fn cmd_init(
     files: bool,
     repo: Option<PathBuf>,
     title: Option<String>,
+    snapshot: Option<bundle::SnapshotMode>,
 ) -> Result<()> {
     if review_path.exists() {
         anyhow::bail!(mf(
@@ -980,10 +1009,24 @@ fn cmd_init(
             &repo,
             target.as_deref().unwrap_or("HEAD"),
             title,
+            snapshot.unwrap_or(bundle::SnapshotMode::Changed),
         );
+    }
+    // A directory review has nothing but its own snapshots to compare
+    // against, so it always keeps the whole tree.
+    if snapshot == Some(bundle::SnapshotMode::Changed) {
+        anyhow::bail!(m("main.snapshot.dir_changed_refused"));
     }
     let dir = PathBuf::from(target.as_deref().unwrap_or("."));
     init_files(&review_path, &dir, title, true)
+}
+
+/// What a snapshot mode is called on the command line.
+fn mode_name(mode: bundle::SnapshotMode) -> &'static str {
+    match mode {
+        bundle::SnapshotMode::Full => "full",
+        bundle::SnapshotMode::Changed => "changed",
+    }
 }
 
 /// The events every new bundle starts with: what it was made by.
@@ -1013,6 +1056,7 @@ fn init_git(
     repo: &diffnote::git::Repo,
     rev: &str,
     title: Option<String>,
+    snapshot: bundle::SnapshotMode,
 ) -> Result<()> {
     let commit = repo.commit_id(rev)?;
     let mut events = first_events();
@@ -1027,7 +1071,9 @@ fn init_git(
             head: commit.clone(),
             spec: rev.to_string(),
         }),
-        snapshot_mode: bundle::SnapshotMode::Changed,
+        // What every revision of this bundle will be recorded with: the
+        // mode belongs to the review, not to one revision of it.
+        snapshot_mode: snapshot,
         files: Vec::new(),
         tree: Vec::new(),
         commits: Vec::new(),
@@ -1116,6 +1162,7 @@ fn cmd_edit(
         base,
         files,
         reopen,
+        snapshot: _,
     } = compare;
     if reopen && (target.is_some() || base.is_some() || files) {
         anyhow::bail!(m("main.reopen.conflicting_flags"));
