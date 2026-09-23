@@ -392,14 +392,83 @@ def diffnote(*args, cwd=None, env=None, comments=None):
     return out
 
 
-def show(review):
-    return diffnote("show", "-f", review).stdout
+def member(review, name):
+    """One file out of the bundle, as text (empty when it has none)."""
+    out = subprocess.run(["unzip", "-p", review, name], capture_output=True, text=True, encoding="utf-8")
+    return out.stdout if out.returncode == 0 else ""
+
+
+def log(review):
+    """The review's events, parsed, in the order they were recorded."""
+    return [json.loads(l) for l in member(review, "review.jsonl").splitlines() if l.strip()]
+
+
+def _side(side):
+    """One side of an anchor as `path:line` or `path:first-last` (a range of
+    no lines is the point where they were, and is named by that line)."""
+    start, length = side.get("start", 0), side.get("len", 0)
+    at = str(start) if length <= 1 else "%d-%d" % (start, start + length - 1)
+    return "%s:%s" % (side.get("file", ""), at)
+
+
+def _where(anchor):
+    """Where a comment is anchored: the head side, then the base side it came
+    from. `GLOBAL` for the review, `ファイル全体: path` for a whole file."""
+    if not anchor:
+        return ""
+    scope = anchor.get("scope")
+    if scope == "global":
+        return "GLOBAL"
+    if scope == "file":
+        side = anchor.get("head") or anchor.get("base") or {}
+        return "ファイル全体: " + side.get("file", "")
+    head, base = anchor.get("head"), anchor.get("base")
+    # The base side is named only when it has lines of its own: a comment on
+    # an added line has a base side too, but it is the point the line was
+    # put at, which says nothing about where the comment is.
+    sides = []
+    if head:
+        sides.append(_side(head))
+    if base and (not head or base.get("len", 0) > 0):
+        sides.append(_side(base))
+    return " <- ".join(sides)
+
+
+def recorded(review):
+    """Everything the bundle records, as lines to search.
+
+    The tests ask "is this recorded?", and this answers it from the bundle
+    itself: the event log and the settings, rather than the output of a
+    command. One line per thing, so a test can look at a line at a time.
+    """
+    out = []
+    settings = member(review, "settings.json")
+    if settings:
+        for key, value in sorted(json.loads(settings).items()):
+            out.append("設定 %s=%s" % (key, value))
+    for e in log(review):
+        kind = e["kind"]
+        if kind == "comment":
+            out.append("コメント %s %s %s | %s" % (
+                e["id"], e["author"],
+                "返信" if e.get("parent") else "新規 " + _where(e.get("anchor")),
+                e["body"].replace("\n", " ")))
+        elif kind in ("resolve", "reopen"):
+            out.append("%s %s %s" % ("解決" if kind == "resolve" else "再開", e["parent"], e["author"]))
+        elif kind == "reanchor":
+            out.append("付け替え %s %s" % (e["parent"], _where(e.get("anchor"))))
+        elif kind == "pin":
+            out.append("固定 %s %d 個" % (e["revision"], len(e.get("files", []))))
+        elif kind == "revision":
+            out.append("リビジョン %s %s" % (e["id"], e["digest"]))
+        else:
+            out.append(kind)
+    return "\n".join(out) + "\n"
 
 
 def entries(review):
     """The number of events in the review's log."""
-    out = subprocess.run(["unzip", "-p", review, "review.jsonl"], capture_output=True, text=True, encoding="utf-8")
-    return len(out.stdout.splitlines())
+    return len(log(review))
 
 
 def zip_names(review):

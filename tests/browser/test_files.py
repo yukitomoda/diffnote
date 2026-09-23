@@ -5,7 +5,7 @@ import os
 import shutil
 import unittest
 
-from harness import BrowserCase, Served, entries, make_login_review, show, zip_names
+from harness import BrowserCase, Served, entries, make_login_review, recorded, zip_names
 
 CUR = ".diffnote-revision.is-current"
 TREE = f"{CUR} [data-diffnote-tree]"
@@ -127,7 +127,7 @@ class StoredFiles(FilesCase):
         b.set_value(".diffnote-compose textarea", "このファイル全体について")
         b.click(".diffnote-compose button[type=submit]")
         self.assertTrue(b.wait_count(f"{section('docs/README.md')} > details > .diffnote-thread", 1))
-        out = show(self.review)
+        out = recorded(self.review)
         self.assertIn("docs/README.md:3", out)
         self.assertIn("ファイル全体: docs/README.md", out)
         # After a reload only what has a thread remains (as an ordinary file).
@@ -153,7 +153,7 @@ class StoredFiles(FilesCase):
         self.assertTrue(b.wait_gone(more))
         self.assertEqual(b.count(rows), 1200)
         self.comment_on_line("big.txt", 750, "750 行目")
-        self.assertIn("big.txt:750", show(self.review))
+        self.assertIn("big.txt:750", recorded(self.review))
 
     def test_closing_a_file_removes_it_and_records_nothing(self):
         self.start(self.master)
@@ -202,8 +202,8 @@ class FilesFromGit(FilesCase):
         self.comment_on_line("docs/README.md", 3, "git から開いたファイル")
         self.assertEqual(len(zip_names(self.review)), len(names) + 1, "the file's content")
         self.assertEqual(entries(self.review), events + 2, "its entry for the revision, and the thread")
-        self.assertIn("[固定]", show(self.review))
-        self.assertIn("docs/README.md:3", show(self.review))
+        self.assertIn("固定 ", recorded(self.review))
+        self.assertIn("docs/README.md:3", recorded(self.review))
 
     def test_too_big_files_and_binary_files_are_refused_with_a_reason(self):
         self.start(self.master, cwd=self.repo)

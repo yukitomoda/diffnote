@@ -7,7 +7,7 @@ import json
 import time
 
 import harness
-from harness import BrowserCase, Served, add_settings, entries, make_calc_review, make_gaps_review, make_indent_review, make_login_review, show
+from harness import BrowserCase, Served, add_settings, entries, make_calc_review, make_gaps_review, make_indent_review, make_login_review, recorded
 import os
 import pathlib
 import shutil
@@ -103,7 +103,7 @@ class Replies(ServedCase):
         authors = b.js(f"Array.from(document.getElementById({card!r}).querySelectorAll('.diffnote-comment__author')).map(function(a){{return a.textContent}})")
         self.assertTrue(authors[-1].startswith("検証者"), authors)
         self.assertEqual(b.js(f"document.getElementById({card!r}).querySelector('textarea').value"), "")
-        self.assertIn("返信のテスト", show(self.review))
+        self.assertIn("返信のテスト", recorded(self.review))
 
     def test_resolving_and_reopening_change_the_card_and_the_counts(self):
         self.serve()
@@ -121,7 +121,7 @@ class Replies(ServedCase):
         b.js(f"document.getElementById({card!r}).querySelector('[data-diffnote-action]').click()")
         self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('[data-diffnote-action=resolve]')"))
         self.assertEqual(self.counts(), "スレッド 4 件(解決済み 1 件)")
-        self.assertIn("再オープン", show(self.review))
+        self.assertIn("再開 ", recorded(self.review))
 
     def test_pressing_resolve_twice_quickly_ends_as_the_last_press_says(self):
         self.serve()
@@ -270,7 +270,7 @@ class Replies(ServedCase):
         self.write("[data-diffnote-edit-form] textarea", "型は number を想定します。")
         b.js("document.querySelector('[data-diffnote-edit-form]').requestSubmit()")
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-edit-form]')"))
-        out = show(self.review)
+        out = recorded(self.review)
         self.assertIn("型は number を想定します。", out)
         self.assertNotIn("mul の型を確認してください。", out)
 
@@ -285,11 +285,11 @@ class Replies(ServedCase):
         self.assertIn("reviewer", warning, "whose it is")
         self.assertIn("このコメントだけが削除されます", warning)
         self.assertIn("返信 1 件は残り", warning)
-        self.assertIn("mul の型", show(self.review), "nothing is deleted before it is agreed")
+        self.assertIn("mul の型", recorded(self.review), "nothing is deleted before it is agreed")
         b.click(f"#{card} [data-diffnote-warn-ok]")
         self.assertTrue(b.wait(f"!!document.querySelector('#{card} [data-diffnote-deleted]')"))
         self.assertEqual(b.text(f"#{card} [data-diffnote-deleted]"), "このコメントは削除されました")
-        out = show(self.review)
+        out = recorded(self.review)
         self.assertNotIn("mul の型を確認してください。", out)
         self.assertIn("自分の返信", out, "the reply stays")
         self.assertTrue(b.js(f"!!document.getElementById({card!r})"), "so does the thread")
@@ -326,7 +326,7 @@ class Replies(ServedCase):
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-edit-form]') && document.body.textContent.includes('書き直した')"))
         self.assertFalse(b.js("document.body.textContent.includes('書き間違えた')"))
         self.assertTrue(self.same_page())
-        out = show(self.review)
+        out = recorded(self.review)
         self.assertIn("書き直した", out)
         self.assertNotIn("書き間違えた", out)
         # Cancelling leaves it alone.
@@ -335,7 +335,7 @@ class Replies(ServedCase):
         self.write("[data-diffnote-edit-form] textarea", "やっぱりやめた")
         b.js("Array.from(document.querySelectorAll('[data-diffnote-edit-form] button')).find(function(x){return x.textContent==='キャンセル'}).click()")
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-edit-form]')"))
-        self.assertIn("書き直した", show(self.review))
+        self.assertIn("書き直した", recorded(self.review))
 
     def test_a_reply_of_this_session_can_be_deleted_after_confirming(self):
         self.serve()
@@ -347,12 +347,12 @@ class Replies(ServedCase):
         self.assertTrue(b.wait_exists(f"{mine} [data-diffnote-warn]"), "asked first")
         b.click(f"{mine} [data-diffnote-warn-cancel]")
         self.assertTrue(b.wait(f"!document.querySelector({json.dumps(mine + ' [data-diffnote-warn]')})"))
-        self.assertIn("消したい返信", show(self.review), "declined: still there")
+        self.assertIn("消したい返信", recorded(self.review), "declined: still there")
         b.click(f"{mine} [data-diffnote-delete]")
         self.assertTrue(b.wait_exists(f"{mine} [data-diffnote-warn-ok]"))
         b.click(f"{mine} [data-diffnote-warn-ok]")
         self.assertTrue(b.wait("!document.body.textContent.includes('消したい返信')"))
-        self.assertNotIn("消したい返信", show(self.review))
+        self.assertNotIn("消したい返信", recorded(self.review))
         self.assertEqual(b.count("[data-diffnote-mine]"), 0)
         self.assertTrue(b.js(f"!!document.getElementById({card!r})"), "the thread stays")
 
@@ -369,7 +369,7 @@ class Replies(ServedCase):
         b.click("[data-diffnote-global] [data-diffnote-warn-ok]")
         self.assertTrue(b.wait("!document.body.textContent.includes('やっぱり要らない全体コメント')"))
         self.assertNotEqual(self.counts(), threads)
-        self.assertNotIn("やっぱり要らない全体コメント", show(self.review))
+        self.assertNotIn("やっぱり要らない全体コメント", recorded(self.review))
 
     def test_two_servers_at_once_keep_working_in_the_same_browser(self):
         self.serve()
@@ -390,7 +390,7 @@ class Replies(ServedCase):
         b.open(first.url.split("/?")[0] + "/")
         card = self.card("mul の型")
         self.reply_to(card, "二つのサーバーの間で")
-        self.assertIn("二つのサーバーの間で", show(self.review))
+        self.assertIn("二つのサーバーの間で", recorded(self.review))
 
     def test_the_screen_is_a_page_of_the_review_laid_out_as_the_review_is(self):
         self.serve()
@@ -464,7 +464,7 @@ class Replies(ServedCase):
         self.assertTrue(b.wait_exists("[data-diffnote-settings-dirty]"), "it says so")
         self.close_settings()
         self.assertFalse(b.js("document.querySelector('.diffnote-review-body').hidden"))
-        self.assertNotIn("新しいタイトル", show(self.review))
+        self.assertNotIn("新しいタイトル", recorded(self.review))
         self.assertIn("diffnote レビュー", b.text("[data-diffnote-screen-open]"))
         # Saved: the screen stays, and says so.
         self.open_settings()
@@ -475,10 +475,10 @@ class Replies(ServedCase):
         self.save_settings()
         self.assertIn("新しいタイトル", b.text("[data-diffnote-screen-open]"))
         self.assertTrue(self.same_page())
-        out = show(self.review)
-        self.assertIn("[設定] タイトル=新しいタイトル", out)
-        self.assertIn("[設定] 空白の違いを無視(初期表示)", out)
-        self.assertIn(f"[設定] 添付ファイルの上限={2 * 1024 * 1024} バイト", out)
+        out = recorded(self.review)
+        self.assertIn("設定 title=新しいタイトル", out)
+        self.assertIn("設定 ignore_whitespace=True", out)
+        self.assertIn(f"設定 attachment_limit={2 * 1024 * 1024}", out)
         self.assertTrue(b.js("document.querySelector('[data-diffnote-settings-save]').disabled"), "nothing more to save")
         # Back at the review: what it was told to start from does not change the page it is on.
         self.close_settings()
@@ -494,7 +494,7 @@ class Replies(ServedCase):
         b.set_value("[data-diffnote-setting-title]", "")
         self.save_settings()
         self.assertIn("diffnote レビュー", b.text("[data-diffnote-screen-open]"))
-        self.assertNotIn("タイトル=", show(self.review))
+        self.assertNotIn("タイトル=", recorded(self.review))
 
     def test_what_was_being_written_is_still_there_after_a_visit_to_the_settings(self):
         self.serve()
@@ -524,7 +524,7 @@ class Replies(ServedCase):
         b.click("[data-diffnote-settings-save]")
         self.assertTrue(b.wait("document.querySelector('[data-diffnote-screen] .diffnote-error').textContent.includes('指定してください')"))
         self.assertTrue(b.exists("[data-diffnote-screen]"), "stays to be put right")
-        self.assertNotIn("上限", show(self.review))
+        self.assertNotIn("上限", recorded(self.review))
 
     def test_a_file_over_the_limit_that_was_set_is_refused_on_the_page(self):
         self.serve()
@@ -612,22 +612,22 @@ class Replies(ServedCase):
     def test_quitting_without_saving_puts_the_review_back_as_it_was_when_the_server_started(self):
         self.serve()
         b = self.b
-        before = show(self.review)
+        before = recorded(self.review)
         card = self.card("mul の型")
         self.reply_to(card, "捨てる返信")
-        self.assertIn("捨てる返信", show(self.review))
+        self.assertIn("捨てる返信", recorded(self.review))
         self.assertFalse(b.exists("[data-diffnote-discard]"), "the way out is behind the arrow")
         b.click("[data-diffnote-quit-more]")
         self.assertTrue(b.wait_exists("[data-diffnote-discard]"))
         b.click("[data-diffnote-discard]")
         self.assertTrue(b.wait_exists("[data-diffnote-discard-confirm]"), "asked again")
-        self.assertIn("捨てる返信", show(self.review), "nothing is thrown away before it is confirmed")
+        self.assertIn("捨てる返信", recorded(self.review), "nothing is thrown away before it is confirmed")
         b.click("[data-diffnote-discard-confirm]")
         self.assertTrue(b.wait("!document.getElementById('app')"))
         told = b.js("document.body.textContent")
         self.assertIn("保存せずに終了しました", told)
         self.assertIn("破棄しました", told)
-        self.assertEqual(show(self.review), before)
+        self.assertEqual(recorded(self.review), before)
         self.assertTrue(any("保存せずに終了" in l for l in self.wait_said()), "the terminal says so too")
 
     def wait_said(self):
@@ -709,7 +709,7 @@ class Replies(ServedCase):
         self.reply_to(card, "終了前の返信")
         b.js(f"document.getElementById({card!r}).querySelector('[data-diffnote-action]').click()")
         deadline = time.time() + 8
-        while "解決" not in show(self.review) and time.time() < deadline:
+        while "解決" not in recorded(self.review) and time.time() < deadline:
             time.sleep(0.05)
         b.js("document.querySelector('[data-diffnote-shutdown]').click()")
         # (The page's own scripts are in its body, so look for the page going.)
@@ -747,7 +747,7 @@ class NewThreadsOnLines(ServedCase):
         row = self.gutter("new", 6)
         self.assertTrue(b.js(f"(function(){{var r=document.querySelector({row!r}).closest('tr'); var n=r.nextElementSibling; return r.classList.contains('diffnote-line--commented') && n.classList.contains('diffnote-thread-row') && n.textContent.includes('1 行へのコメント')}})()"))
         self.assertEqual(self.counts(), f"スレッド {before + 1} 件(解決済み 0 件)")
-        self.assertTrue(any("login.ts:6" in l for l in show(self.review).splitlines() if "新規" in l))
+        self.assertTrue(any("login.ts:6" in l for l in recorded(self.review).splitlines() if "新規" in l))
 
     def test_the_box_for_chosen_lines_has_a_button_that_copies_a_link_to_them(self):
         self.serve(self.login)
@@ -772,7 +772,7 @@ class NewThreadsOnLines(ServedCase):
         self.assertEqual(b.text(".diffnote-compose__where"), "src/auth/login.ts:9-12")
         self.send_box("ドラッグで選んだ範囲")
         self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row')"))
-        self.assertTrue(any("login.ts:9-12 <- src/auth/login.ts:8" in l for l in show(self.review).splitlines()), show(self.review))
+        self.assertTrue(any("login.ts:9-12 <- src/auth/login.ts:8" in l for l in recorded(self.review).splitlines()), recorded(self.review))
 
     def test_shift_click_extends_the_choice_and_a_draft_survives_choosing_again(self):
         self.serve(self.login)
@@ -869,7 +869,7 @@ class IgnoreWhitespaceDefault(ServedCase):
         self.assertEqual(b.count("tr.diffnote-line--removed"), 1)
         b.click("[data-diffnote-ignore-space]")
         self.assertTrue(b.wait("document.querySelectorAll('tr.diffnote-line--removed').length === 3"))
-        self.assertIn("空白", show(review), "the setting is what `show` says")
+        self.assertIn("設定 ignore_whitespace=True", recorded(review), "the review itself says so")
 
 
 class CompareWithAnEarlierRevision(ServedCase):
@@ -925,8 +925,8 @@ class CompareWithAnEarlierRevision(ServedCase):
         self.write(".diffnote-composer-row textarea", "比べた画面で書きました")
         b.js("document.querySelector('.diffnote-composer-row .diffnote-compose').requestSubmit()")
         self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row')"))
-        self.assertTrue(any("calc.py:9" in l for l in show(self.review).splitlines()), show(self.review))
-        self.assertIn("比べた画面で書きました", show(self.review))
+        self.assertTrue(any("calc.py:9" in l for l in recorded(self.review).splitlines()), recorded(self.review))
+        self.assertIn("比べた画面で書きました", recorded(self.review))
         # Back at the base: the thread is on the same line there.
         self.choose("")
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-compare-note]')"))
@@ -963,7 +963,7 @@ class CompareWithAnEarlierRevision(ServedCase):
         self.write(".diffnote-compose textarea", "a.txt 全体について")
         b.js("document.querySelector('.diffnote-compose').requestSubmit()")
         self.assertTrue(b.wait("!document.querySelector('.diffnote-compose-wrap')"), b.js("[...document.querySelectorAll('.diffnote-error')].map(e=>e.textContent).join('|')"))
-        self.assertTrue(any("ファイル全体: a.txt" in l for l in show(self.review).splitlines()), show(self.review))
+        self.assertTrue(any("ファイル全体: a.txt" in l for l in recorded(self.review).splitlines()), recorded(self.review))
 
     def test_a_file_marked_as_looked_at_stays_so_in_the_other_view(self):
         self.serve()
@@ -1019,7 +1019,7 @@ class Images(ServedCase):
         self.assertTrue(b.wait_exists(img))
         self.assertTrue(b.wait(f"document.querySelector({json.dumps(img)}).naturalWidth === 1"), "it loaded from the server")
         # Kept in the review as it is, and put in an export as it is.
-        self.assertIn("diffnote-image:", show(self.review))
+        self.assertIn("diffnote-image:", recorded(self.review))
         exported = b.js("fetch('/export').then(r => r.text())")
         self.assertIn("data:image/png;base64,iVBORw0KGgo", exported)
         # ... and that page, opened from a file, shows it (nothing to ask).
@@ -1476,7 +1476,7 @@ class AttachmentsScreen(ServedCase):
         b.click("[data-diffnote-attached-delete-ok]")
         self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-attached]').length === 0"))
         self.assertEqual(self.stored_images(), [])
-        self.assertIn(f"diffnote-image:{shown}", show(self.review), "what was written stays written")
+        self.assertIn(f"diffnote-image:{shown}", recorded(self.review), "what was written stays written")
         # The comment still says what it said; the image it named is just gone.
         b.click("[data-diffnote-screen-back]")
         self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('img.diffnote-image')"))
@@ -1682,7 +1682,7 @@ class EmojiTable(ServedCase):
         body = f"#{card} [data-diffnote-mine] .diffnote-comment__body"
         self.assertTrue(b.wait(f"!document.querySelector('.is-pending') && !!document.querySelector({json.dumps(body)})"))
         self.assertEqual(b.text(body), "承認 👍 🎉 時刻 12:30:45 :nope: :bug:", "code is left as it is")
-        self.assertIn(":+1: :tada:", show(self.review), "what was written is what is kept")
+        self.assertIn(":+1: :tada:", recorded(self.review), "what was written is what is kept")
         # The same in a page that only shows the review.
         exported = b.js("fetch('/export').then(r => r.text())")
         path = os.path.join(self.fresh("export"), "emoji.html")
@@ -1798,7 +1798,7 @@ class ThreadsOnFilesAndTheReview(ServedCase):
         b.js("document.querySelector('.diffnote-compose').requestSubmit()")
         self.assertTrue(b.wait(f"document.querySelectorAll('{CUR} [data-diffnote-global] .diffnote-thread').length === {before + 1} && !document.querySelector('.diffnote-compose-wrap')"))
         self.assertTrue(self.same_page())
-        self.assertIn("全体の方針について", show(self.review))
+        self.assertIn("全体の方針について", recorded(self.review))
 
     def test_a_table_and_struck_out_text_are_drawn_and_html_in_a_cell_is_text(self):
         self.serve()
@@ -1838,7 +1838,7 @@ class ThreadsOnFilesAndTheReview(ServedCase):
         self.write(".diffnote-compose textarea", "新しいファイルへ")
         b.js("document.querySelector('.diffnote-compose').requestSubmit()")
         self.assertTrue(b.wait("!document.querySelector('.diffnote-compose-wrap')"))
-        self.assertIn("new.txt:4-7", show(self.review))
+        self.assertIn("new.txt:4-7", recorded(self.review))
 
     def test_a_file_thread_is_added_to_the_file_and_the_box_can_be_closed_with_escape(self):
         self.serve()
@@ -1854,7 +1854,7 @@ class ThreadsOnFilesAndTheReview(ServedCase):
         cards = f"{file} > details > .diffnote-thread"
         self.assertTrue(b.wait(f"document.querySelectorAll({json.dumps(cards)}).length === 1"))
         self.assertEqual(b.text(cards + " .diffnote-thread__where"), "calc.py")
-        self.assertTrue(any("ファイル全体: calc.py" in l for l in show(self.review).splitlines()))
+        self.assertTrue(any("ファイル全体: calc.py" in l for l in recorded(self.review).splitlines()))
 
 
 class SideBySideLines(ServedCase):
@@ -1888,7 +1888,7 @@ class SideBySideLines(ServedCase):
         self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row')"))
         self.assertTrue(self.same_page())
         self.assertTrue(b.wait_exists(f"{CUR} {LOGIN} .diffnote-thread-row"))
-        out = show(self.review)
+        out = recorded(self.review)
         self.assertIn("追加した行について", out)
         line = [l for l in out.splitlines() if "login.ts:10" in l]
         self.assertTrue(line and "<-" not in line[0], out)
@@ -1904,7 +1904,7 @@ class SideBySideLines(ServedCase):
         self.write(".diffnote-composer-row textarea", "消した行について")
         b.js("document.querySelector('.diffnote-composer-row .diffnote-compose').requestSubmit()")
         self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row')"))
-        self.assertTrue(any("login.ts:8" in l for l in show(self.review).splitlines()), show(self.review))
+        self.assertTrue(any("login.ts:8" in l for l in recorded(self.review).splitlines()), recorded(self.review))
 
     def test_dragging_stays_on_the_side_it_started_on(self):
         self.serve_split()
@@ -2023,7 +2023,7 @@ class ExpandLeftOutLines(ServedCase):
         self.write(".diffnote-composer-row textarea", "ここも気になります")
         b.js("document.querySelector('.diffnote-composer-row .diffnote-compose').requestSubmit()")
         self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row')"))
-        self.assertIn("long.txt:50", show(self.review))
+        self.assertIn("long.txt:50", recorded(self.review))
         # The thread brought its own context in; what was shown stays shown.
         self.assertTrue(b.wait_exists(f"{CUR} table[data-diffnote-file='long.txt'] .diffnote-thread-row"))
         self.assertTrue(b.exists("tr[data-diffnote-new='30']"))
@@ -2068,7 +2068,7 @@ class ServeAddsTheLatestDiff(ServedCase):
         self.write(".diffnote-composer-row textarea", "ここを見てください")
         b.js("document.querySelector('.diffnote-composer-row .diffnote-compose').requestSubmit()")
         self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row')"))
-        self.assertIn("long.txt:20", show(self.review))
+        self.assertIn("long.txt:20", recorded(self.review))
 
     def test_with_no_commit_since_the_base_it_says_there_is_nothing_to_review_yet(self):
         review = os.path.join(self.fresh("review"), "none.diffnote")
@@ -2314,7 +2314,7 @@ class Reopen(ServedCase):
         b.reload(ready="!!document.querySelector('.diffnote-file')")
         card = self.card("20 行目を変えました。")
         self.reply_to(card, "了解です")
-        self.assertIn("了解です", show(review))
+        self.assertIn("了解です", recorded(review))
         self.assertEqual(b.js("document.querySelectorAll('[data-diffnote-revision-link]').length"), 1,
                          "the reply didn't add a revision")
 
