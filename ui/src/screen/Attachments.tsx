@@ -65,7 +65,7 @@ export function AttachmentsPane(props: AttachmentsProps) {
   };
   return <div data-diffnote-attachments-pane>
     <h2>{lib.m('ui.attachments.heading')}</h2>
-    <p class="diffnote-settings__note">{lib.m('ui.attachments.note')}</p>
+    <p class="diffnote-screen__note">{lib.m('ui.attachments.note')}</p>
     {listed.length === 0
       ? <p class="diffnote-attached__empty">{lib.m('ui.attachments.empty')}</p>
       : <><p class="diffnote-attached__total">{lib.mf('ui.attachments.total', { count: String(listed.length), size: lib.formatSize(total) })}</p><ul class="diffnote-attached">

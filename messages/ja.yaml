@@ -944,19 +944,25 @@ ui:
     settings_title: |-
       ユーザー設定(作者名など)
 
-  settings:
+  screen:
     nav_label: |-
       レビューの情報と設定
-    timeline_tab: |-
-      タイムライン
+    back_button: |-
+      レビューに戻る
+    title_button: |-
+      レビューの情報と設定を開く
     general_tab: |-
       全般
+    timeline_tab: |-
+      タイムライン
     settings_tab: |-
       設定
     attachments_tab: |-
       添付
     user_tab: |-
       ユーザー設定
+
+  settings:
     general_heading: |-
       全般
     pull_button: |-
@@ -1007,10 +1013,6 @@ ui:
       保存しました
     dirty_notice: |-
       保存していない変更があります
-    back_button: |-
-      レビューに戻る
-    title_button: |-
-      レビューの情報と設定を開く
 
   attachments:
     heading: |-

@@ -141,9 +141,9 @@ export function TimelinePane(props: TimelineProps) {
 
   return <div data-diffnote-timeline-pane>
     <h2>{lib.m('ui.timeline.heading')}</h2>
-    <p class="diffnote-settings__note">{lib.m('ui.timeline.note')}</p>
+    <p class="diffnote-screen__note">{lib.m('ui.timeline.note')}</p>
     {entries.length === 0
-      ? <p class="diffnote-settings__note">{lib.m('ui.timeline.empty')}</p>
+      ? <p class="diffnote-screen__note">{lib.m('ui.timeline.empty')}</p>
       : days.map(function (day) {
           return <section key={day.day} class="diffnote-timeline__day" data-diffnote-timeline-day={day.day}>
             <h3>{day.day}</h3>

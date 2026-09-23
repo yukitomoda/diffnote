@@ -83,7 +83,7 @@ class StaticExport(BrowserCase):
 
     def test_the_title_of_an_export_is_only_a_heading(self):
         b = self.b
-        self.assertFalse(b.exists("[data-diffnote-settings]"), "nothing to set in a page that only shows the review")
+        self.assertFalse(b.exists("[data-diffnote-screen-open]"), "nothing to set in a page that only shows the review")
         self.assertIn("diffnote レビュー", b.text(".diffnote-summary h1"))
 
     def test_the_view_menu_is_at_the_top_right_of_the_diff_and_shut_until_opened(self):

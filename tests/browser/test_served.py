@@ -75,7 +75,7 @@ class ServedCase(BrowserCase):
         return os.path.join(harness.USER_CONFIG_DIR, "config.json")
 
     def settings_section(self):
-        return self.b.js("(function(){var p=document.querySelector('[data-diffnote-settings-page]'); return p && p.dataset.diffnoteSettingsSection})()")
+        return self.b.js("(function(){var p=document.querySelector('[data-diffnote-screen]'); return p && p.dataset.diffnoteScreenSection})()")
 
     def set_author_via_user_settings(self, name):
         """Opens the settings screen from the sidebar chip (which goes straight
@@ -83,12 +83,12 @@ class ServedCase(BrowserCase):
         back to the review."""
         b = self.b
         b.click("[data-diffnote-user-settings]")
-        self.assertTrue(b.wait("(function(){var p=document.querySelector('[data-diffnote-settings-page]'); return p && p.dataset.diffnoteSettingsSection === 'user'})()"))
+        self.assertTrue(b.wait("(function(){var p=document.querySelector('[data-diffnote-screen]'); return p && p.dataset.diffnoteScreenSection === 'user'})()"))
         b.set_value("[data-diffnote-user-setting-author]", name)
         b.click("[data-diffnote-user-settings-save]")
         self.assertTrue(b.wait_exists("[data-diffnote-user-settings-saved]"))
-        b.click("[data-diffnote-settings-back]")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"))
+        b.click("[data-diffnote-screen-back]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"))
 
 
 class Replies(ServedCase):
@@ -177,7 +177,7 @@ class Replies(ServedCase):
     def test_the_export_button_gives_the_page_the_export_command_writes(self):
         self.serve()
         b = self.b
-        b.click("[data-diffnote-settings]")
+        b.click("[data-diffnote-screen-open]")
         self.assertTrue(b.wait_exists("[data-diffnote-export]"))
         self.assertEqual(b.js("document.querySelector('[data-diffnote-export]').getAttribute('href')"), "/export")
         # No `download` attribute: with a bare one the page (Preact) made it
@@ -194,7 +194,7 @@ class Replies(ServedCase):
     def test_the_download_button_gives_the_bundle_exactly_as_it_is(self):
         self.serve()
         b = self.b
-        b.click("[data-diffnote-settings]")
+        b.click("[data-diffnote-screen-open]")
         self.assertTrue(b.wait_exists("[data-diffnote-download]"))
         self.assertEqual(b.js("document.querySelector('[data-diffnote-download]').getAttribute('href')"), "/download")
         self.assertFalse(b.js("document.querySelector('[data-diffnote-download]').hasAttribute('download')"))
@@ -205,8 +205,8 @@ class Replies(ServedCase):
         self.assertEqual(b.js("window.__download.type"), "application/zip")
         self.assertEqual(b.js("window.__download.size"), os.path.getsize(self.review))
         # A reply made through the session is in it (the file on disk, byte for byte).
-        b.click("[data-diffnote-settings-back]")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"))
+        b.click("[data-diffnote-screen-back]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"))
         card = self.card("mul の型")
         self.reply_to(card, "ダウンロードの確認")
         b.js("fetch('/download',{credentials:'same-origin'}).then(function(r){return r.arrayBuffer().then(function(buf){window.__size2=buf.byteLength})})")
@@ -397,17 +397,17 @@ class Replies(ServedCase):
         b = self.b
         # Where the diff's own column starts, before leaving the review.
         diff_left = b.js("document.querySelector('%s section.diffnote-file').getBoundingClientRect().left" % CUR)
-        b.click("[data-diffnote-settings]")
-        self.assertTrue(b.wait_exists("[data-diffnote-settings-page]"))
+        b.click("[data-diffnote-screen-open]")
+        self.assertTrue(b.wait_exists("[data-diffnote-screen]"))
         got = b.js("""(() => {
-          const nav = document.querySelector('.diffnote-settings-nav');
-          const pane = document.querySelector('.diffnote-settings__pane');
+          const nav = document.querySelector('.diffnote-screen-nav');
+          const pane = document.querySelector('.diffnote-screen__pane');
           return { pane: pane.getBoundingClientRect().left,
                    width: pane.getBoundingClientRect().width,
                    sticky: getComputedStyle(nav).position,
                    groups: nav.querySelectorAll('ul').length,
-                   order: [...nav.querySelectorAll('[data-diffnote-settings-nav]')]
-                     .map(b => b.dataset.diffnoteSettingsNav) };
+                   order: [...nav.querySelectorAll('[data-diffnote-screen-nav]')]
+                     .map(b => b.dataset.diffnoteScreenNav) };
         })()""")
         self.assertAlmostEqual(got["pane"], diff_left, delta=1,
                                msg="the same column as the review, so nothing moves")
@@ -421,15 +421,15 @@ class Replies(ServedCase):
         """Opens the settings screen and switches to its 設定 section (the
         screen itself starts on 全般; see test_the_title_is_the_way_into..."""
         b = self.b
-        b.click("[data-diffnote-settings]")
-        self.assertTrue(b.wait_exists("[data-diffnote-settings-page]"))
-        b.click("[data-diffnote-settings-nav='settings']")
+        b.click("[data-diffnote-screen-open]")
+        self.assertTrue(b.wait_exists("[data-diffnote-screen]"))
+        b.click("[data-diffnote-screen-nav='settings']")
         self.assertTrue(b.wait_exists("[data-diffnote-setting-title]"))
 
     def close_settings(self):
         b = self.b
-        b.click("[data-diffnote-settings-back]")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"))
+        b.click("[data-diffnote-screen-back]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"))
 
     def save_settings(self):
         b = self.b
@@ -439,20 +439,20 @@ class Replies(ServedCase):
     def test_the_title_is_the_way_into_the_settings_screen_and_they_are_kept_in_the_review(self):
         self.serve()
         b = self.b
-        self.assertIn("diffnote レビュー", b.text("[data-diffnote-settings]"))
+        self.assertIn("diffnote レビュー", b.text("[data-diffnote-screen-open]"))
         self.assertFalse(b.exists("[data-diffnote-inline=title]"), "the old pencil is gone")
         # The title opens the screen, starting on 全般 (bundle info, actions).
-        b.click("[data-diffnote-settings]")
-        self.assertTrue(b.wait_exists("[data-diffnote-settings-page]"))
+        b.click("[data-diffnote-screen-open]")
+        self.assertTrue(b.wait_exists("[data-diffnote-screen]"))
         # A screen of its own: the review is out of the way (and not taken down).
         self.assertTrue(b.js("document.querySelector('.diffnote-review-body').hidden"))
-        self.assertEqual(b.js("document.querySelector('[data-diffnote-settings]').getAttribute('aria-pressed')"), "true")
+        self.assertEqual(b.js("document.querySelector('[data-diffnote-screen-open]').getAttribute('aria-pressed')"), "true")
         self.assertEqual(self.settings_section(), "general")
         info = b.text("[data-diffnote-bundle-info]")
         self.assertIn("リビジョン2 件", info)
         self.assertIn("画像0 件", info)
         # 設定 has the form.
-        b.click("[data-diffnote-settings-nav='settings']")
+        b.click("[data-diffnote-screen-nav='settings']")
         self.assertTrue(b.wait_exists("[data-diffnote-setting-title]"))
         self.assertEqual(self.settings_section(), "settings")
         self.assertEqual(b.value("[data-diffnote-setting-title]"), "")
@@ -465,7 +465,7 @@ class Replies(ServedCase):
         self.close_settings()
         self.assertFalse(b.js("document.querySelector('.diffnote-review-body').hidden"))
         self.assertNotIn("新しいタイトル", show(self.review))
-        self.assertIn("diffnote レビュー", b.text("[data-diffnote-settings]"))
+        self.assertIn("diffnote レビュー", b.text("[data-diffnote-screen-open]"))
         # Saved: the screen stays, and says so.
         self.open_settings()
         self.assertEqual(b.value("[data-diffnote-setting-title]"), "", "starts again from what is kept")
@@ -473,7 +473,7 @@ class Replies(ServedCase):
         b.js("document.querySelector('[data-diffnote-setting-ignore]').click()")
         b.set_value("[data-diffnote-setting-limit]", "2")
         self.save_settings()
-        self.assertIn("新しいタイトル", b.text("[data-diffnote-settings]"))
+        self.assertIn("新しいタイトル", b.text("[data-diffnote-screen-open]"))
         self.assertTrue(self.same_page())
         out = show(self.review)
         self.assertIn("[設定] タイトル=新しいタイトル", out)
@@ -488,12 +488,12 @@ class Replies(ServedCase):
         self.assertEqual(b.value("[data-diffnote-setting-limit]"), "2")
         time.sleep(0.2)  # (the screen listens for Escape once it has been drawn)
         b.escape()
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"), "Escape leaves it")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"), "Escape leaves it")
         # Emptied: the default heading comes back.
         self.open_settings()
         b.set_value("[data-diffnote-setting-title]", "")
         self.save_settings()
-        self.assertIn("diffnote レビュー", b.text("[data-diffnote-settings]"))
+        self.assertIn("diffnote レビュー", b.text("[data-diffnote-screen-open]"))
         self.assertNotIn("タイトル=", show(self.review))
 
     def test_what_was_being_written_is_still_there_after_a_visit_to_the_settings(self):
@@ -503,14 +503,14 @@ class Replies(ServedCase):
         box = f"#{card} .diffnote-reply textarea"
         self.write(box, "書きかけの返信")
         self.open_settings()
-        self.assertFalse(b.js("document.querySelector('[data-diffnote-settings-page]') === null"))
+        self.assertFalse(b.js("document.querySelector('[data-diffnote-screen]') === null"))
         self.close_settings()
         self.assertEqual(b.value(box), "書きかけの返信")
         self.assertTrue(self.same_page(), "the review was not built again")
         # A tab leaves the settings for the review too.
         self.open_settings()
         b.click("[data-diffnote-revision-link='0']")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"))
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"))
 
     def test_a_setting_that_is_not_a_number_or_out_of_range_is_told_and_nothing_is_kept(self):
         self.serve()
@@ -518,12 +518,12 @@ class Replies(ServedCase):
         self.open_settings()
         b.set_value("[data-diffnote-setting-limit]", "")
         b.click("[data-diffnote-settings-save]")
-        self.assertTrue(b.wait_exists("[data-diffnote-settings-page] .diffnote-error"))
-        self.assertIn("数字", b.text("[data-diffnote-settings-page] .diffnote-error"))
+        self.assertTrue(b.wait_exists("[data-diffnote-screen] .diffnote-error"))
+        self.assertIn("数字", b.text("[data-diffnote-screen] .diffnote-error"))
         b.set_value("[data-diffnote-setting-limit]", "500")
         b.click("[data-diffnote-settings-save]")
-        self.assertTrue(b.wait("document.querySelector('[data-diffnote-settings-page] .diffnote-error').textContent.includes('指定してください')"))
-        self.assertTrue(b.exists("[data-diffnote-settings-page]"), "stays to be put right")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-screen] .diffnote-error').textContent.includes('指定してください')"))
+        self.assertTrue(b.exists("[data-diffnote-screen]"), "stays to be put right")
         self.assertNotIn("上限", show(self.review))
 
     def test_a_file_over_the_limit_that_was_set_is_refused_on_the_page(self):
@@ -574,8 +574,8 @@ class Replies(ServedCase):
         self.assertEqual(b.value("[data-diffnote-user-setting-author]"), "")
         self.assertTrue(b.wait("document.activeElement === document.querySelector('[data-diffnote-user-setting-author]')"), "focused")
         self.assertTrue(b.js("document.querySelector('[data-diffnote-user-settings-save]').disabled"), "nothing changed yet")
-        b.click("[data-diffnote-settings-back]")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"))
+        b.click("[data-diffnote-screen-back]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"))
         self.set_author_via_user_settings("別の人")
         self.assertEqual(b.text("[data-diffnote-author]"), "別の人", "used for the rest of this session too")
         card = self.card("mul の型")
@@ -598,13 +598,13 @@ class Replies(ServedCase):
         self.assertTrue(b.wait_exists("[data-diffnote-user-setting-author]"))
         b.set_value("[data-diffnote-user-setting-author]", "あ" * 101)
         b.click("[data-diffnote-user-settings-save]")
-        self.assertTrue(b.wait("!!document.querySelector('[data-diffnote-settings-page] .diffnote-error')"))
+        self.assertTrue(b.wait("!!document.querySelector('[data-diffnote-screen] .diffnote-error')"))
         # A blank name clears the configured one (falls back to git's, or the login name --
         # whichever it is here, it is not "別の人" any more, and `config get` says so too).
         b.set_value("[data-diffnote-user-setting-author]", "   ")
         b.click("[data-diffnote-user-settings-save]")
         self.assertTrue(b.wait_exists("[data-diffnote-user-settings-saved]"))
-        b.click("[data-diffnote-settings-back]")
+        b.click("[data-diffnote-screen-back]")
         self.assertTrue(b.wait("document.querySelector('[data-diffnote-author]').textContent!=='別の人'"))
         got = harness.diffnote("config", "get", "author").stdout
         self.assertIn("設定されていません", got, got)
@@ -672,7 +672,7 @@ class Replies(ServedCase):
         self.assertTrue(b.wait_exists("[data-diffnote-user-setting-author]"))
         time.sleep(0.1)  # let the screen's own Escape listener (a useEffect) attach
         b.escape()
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"))
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"))
 
     def test_each_blank_line_in_a_comment_is_kept(self):
         self.serve()
@@ -778,8 +778,12 @@ class NewThreadsOnLines(ServedCase):
         self.serve(self.login)
         b = self.b
         b.click_at(self.gutter("new", 2))
+        # The page draws the choice before it can be extended: a person cannot
+        # press twice inside one frame, and the shift-click reads what is
+        # chosen now.
+        self.assertTrue(b.wait("document.querySelectorAll('.diffnote-select').length === 1"))
         b.click_at(self.gutter("new", 4), modifiers=8)
-        self.assertEqual(b.count(".diffnote-select"), 3)
+        self.assertTrue(b.wait("document.querySelectorAll('.diffnote-select').length === 3"))
         self.assertEqual(b.text(".diffnote-compose__where"), "src/auth/login.ts:2-4")
         self.write(".diffnote-composer-row textarea", "書きかけ")
         b.click_at(self.gutter("new", 5))
@@ -1276,9 +1280,9 @@ class Timeline(ServedCase):
 
     def open_timeline(self):
         b = self.b
-        b.click("[data-diffnote-settings]")
-        self.assertTrue(b.wait_exists("[data-diffnote-settings-page]"))
-        b.click("[data-diffnote-settings-nav='timeline']")
+        b.click("[data-diffnote-screen-open]")
+        self.assertTrue(b.wait_exists("[data-diffnote-screen]"))
+        b.click("[data-diffnote-screen-nav='timeline']")
         self.assertTrue(b.wait_exists("[data-diffnote-timeline-pane]"))
 
     def test_what_happened_is_listed_in_order_with_the_commits_each_revision_brought(self):
@@ -1312,12 +1316,12 @@ class Timeline(ServedCase):
         b.js("document.querySelector('[data-diffnote-timeline-run]').open = true")
         self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-timeline-thread]').length > 1"))
         b.click("[data-diffnote-timeline-thread]")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"), "the screen closes")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"), "the screen closes")
         self.assertTrue(b.wait("location.hash.includes('thread')"), "and the address says where it went")
         # And a revision entry goes to that revision's tab.
         self.open_timeline()
         b.click("[data-diffnote-timeline-revision]")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"))
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"))
         self.assertTrue(b.wait("!!document.querySelector('%s')" % CUR))
 
 
@@ -1343,9 +1347,9 @@ class AttachmentsScreen(ServedCase):
         screen asks for a fresh model as it opens: an upload doesn't bring
         one)."""
         b = self.b
-        b.click("[data-diffnote-settings]")
-        self.assertTrue(b.wait_exists("[data-diffnote-settings-page]"))
-        b.click("[data-diffnote-settings-nav='attachments']")
+        b.click("[data-diffnote-screen-open]")
+        self.assertTrue(b.wait_exists("[data-diffnote-screen]"))
+        b.click("[data-diffnote-screen-nav='attachments']")
         self.assertTrue(b.wait_exists("[data-diffnote-attachments-pane]"))
         self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-attached]').length === %d" % rows))
 
@@ -1447,7 +1451,7 @@ class AttachmentsScreen(ServedCase):
         where = b.text("[data-diffnote-attached-use]")
         self.assertTrue(where, "the comment's place is the link")
         b.click("[data-diffnote-attached-use]")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"), "the screen closes")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"), "the screen closes")
         self.assertTrue(b.wait(f"location.hash.includes('thread')"), "and the address says where it went")
 
     def test_an_attachment_is_deleted_after_confirming_and_the_comment_is_left_as_written(self):
@@ -1474,7 +1478,7 @@ class AttachmentsScreen(ServedCase):
         self.assertEqual(self.stored_images(), [])
         self.assertIn(f"diffnote-image:{shown}", show(self.review), "what was written stays written")
         # The comment still says what it said; the image it named is just gone.
-        b.click("[data-diffnote-settings-back]")
+        b.click("[data-diffnote-screen-back]")
         self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('img.diffnote-image')"))
         self.assertEqual(
             b.js(f"fetch(document.getElementById({card!r}).querySelector('img.diffnote-image').src, {{cache: 'reload'}}).then(r => r.status)"),
@@ -2129,7 +2133,7 @@ class ServeAddsTheLatestDiff(ServedCase):
         self.b.js("window.dispatchEvent(new Event('focus'))")
         time.sleep(0.5)
         self.assertFalse(self.b.exists("[data-diffnote-notice='pending']"))
-        self.b.click("[data-diffnote-settings]")
+        self.b.click("[data-diffnote-screen-open]")
         self.assertTrue(self.b.wait_exists("[data-diffnote-pull]"))
         self.b.click("[data-diffnote-pull]")
         self.assertTrue(self.b.wait("document.querySelector('[data-diffnote-pull-note]').textContent.includes('新しい変更はありません')"))
@@ -2284,11 +2288,11 @@ class Reopen(ServedCase):
         b = self.b
         self.assertEqual(entries(review), before, "nothing recorded at startup")
         self.assertEqual(b.js("document.querySelectorAll('[data-diffnote-revision-link]').length"), 1)
-        b.click("[data-diffnote-settings]")
-        self.assertTrue(b.wait_exists("[data-diffnote-settings-page]"))
+        b.click("[data-diffnote-screen-open]")
+        self.assertTrue(b.wait_exists("[data-diffnote-screen]"))
         self.assertFalse(b.exists("[data-diffnote-pull]"), "no way to pull, even on 全般: reopen adds nothing, ever")
-        b.click("[data-diffnote-settings-back]")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"))
+        b.click("[data-diffnote-screen-back]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"))
         b.js("window.dispatchEvent(new Event('focus'))")
         time.sleep(0.3)
         self.assertFalse(b.exists("[data-diffnote-notice='pending']"), "not even told about it")
@@ -2358,26 +2362,26 @@ class BrowserHistory(ServedCase):
     def test_back_and_forward_retrace_opening_and_closing_the_settings_screens(self):
         self.serve()
         b = self.b
-        self.assertFalse(b.exists("[data-diffnote-settings-page]"))
+        self.assertFalse(b.exists("[data-diffnote-screen]"))
         self.settle()
-        b.click("[data-diffnote-settings]")
-        self.assertTrue(b.wait_exists("[data-diffnote-settings-page]"))
+        b.click("[data-diffnote-screen-open]")
+        self.assertTrue(b.wait_exists("[data-diffnote-screen]"))
         self.assertEqual(self.settings_section(), "general")
         self.settle()
         b.click("[data-diffnote-user-settings]")
-        self.assertTrue(b.wait("(function(){var p=document.querySelector('[data-diffnote-settings-page]'); return p && p.dataset.diffnoteSettingsSection === 'user'})()"))
+        self.assertTrue(b.wait("(function(){var p=document.querySelector('[data-diffnote-screen]'); return p && p.dataset.diffnoteScreenSection === 'user'})()"))
         self.settle()
         b.js("history.back()")
-        self.assertTrue(b.wait("(function(){var p=document.querySelector('[data-diffnote-settings-page]'); return p && p.dataset.diffnoteSettingsSection === 'general'})()"))
+        self.assertTrue(b.wait("(function(){var p=document.querySelector('[data-diffnote-screen]'); return p && p.dataset.diffnoteScreenSection === 'general'})()"))
         self.settle()
         b.js("history.back()")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-settings-page]')"))
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"))
         self.settle()
         b.js("history.forward()")
-        self.assertTrue(b.wait("(function(){var p=document.querySelector('[data-diffnote-settings-page]'); return p && p.dataset.diffnoteSettingsSection === 'general'})()"))
+        self.assertTrue(b.wait("(function(){var p=document.querySelector('[data-diffnote-screen]'); return p && p.dataset.diffnoteScreenSection === 'general'})()"))
         self.settle()
         b.js("history.forward()")
-        self.assertTrue(b.wait("(function(){var p=document.querySelector('[data-diffnote-settings-page]'); return p && p.dataset.diffnoteSettingsSection === 'user'})()"))
+        self.assertTrue(b.wait("(function(){var p=document.querySelector('[data-diffnote-screen]'); return p && p.dataset.diffnoteScreenSection === 'user'})()"))
 
     def test_back_and_forward_retrace_a_thread_jump_from_the_sidebar(self):
         self.serve()

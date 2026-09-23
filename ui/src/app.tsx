@@ -10,8 +10,8 @@ import { interact } from './interact.ts';
 import { lib } from './lib.ts';
 import { server } from './transport.ts';
 import { Revision } from './Revision.tsx';
-import { QuitButton } from './settings/Quit.tsx';
-import { SettingsScreen } from './settings/Screen.tsx';
+import { QuitButton } from './screen/Quit.tsx';
+import { ReviewScreen } from './screen/Screen.tsx';
 import { useCompose } from './state/compose.ts';
 import { ActionsContext, ComposeContext, LinksContext, OpenedContext } from './state/contexts.ts';
 import { useOpened } from './state/opened.ts';
@@ -39,7 +39,7 @@ import {
 import type { At } from './lib.ts';
 import type { RevisionData, ViewModel } from './model.ts';
 import type { Links } from './state/contexts.ts';
-import type { PullNote } from './settings/General.tsx';
+import type { PullNote } from './screen/General.tsx';
 import { Icon } from './icon.tsx';
 
 function App(props: { model: ViewModel }) {
@@ -213,7 +213,7 @@ function App(props: { model: ViewModel }) {
     <div class="diffnote-topbar">
       <header class="diffnote-summary">
         <h1>{review.actions
-          ? <button type="button" class="diffnote-title" data-diffnote-settings title={lib.m('ui.settings.title_button')} aria-haspopup="dialog"
+          ? <button type="button" class="diffnote-title" data-diffnote-screen-open title={lib.m('ui.screen.title_button')} aria-haspopup="dialog"
               aria-pressed={screen === 'general' || screen === 'settings'} onClick={function () { showScreen(screen === 'general' ? null : 'general'); }}>{model.title || lib.m('html.default_title')}<Icon name="settings" class="diffnote-title__icon" /></button>
           : model.title || lib.m('html.default_title')}</h1>
         {model.base && <p data-diffnote-base class={against != null ? 'is-changed' : ''} title={against != null ? lib.m('ui.base.changed_title') : lib.m('ui.base.default_title')}>{lib.m('ui.base.label')}: {review.actions && current > 0
@@ -238,7 +238,7 @@ function App(props: { model: ViewModel }) {
       {model.interactive && <QuitButton />}
       </div>
     </div>
-    {screen != null && review.actions && <SettingsScreen section={screen} model={model} pending={review.pending} note={note} onPull={pull}
+    {screen != null && review.actions && <ReviewScreen section={screen} model={model} pending={review.pending} note={note} onPull={pull}
       saveSettings={review.actions.saveSettings} saveUserSettings={review.actions.saveUserSettings}
       removeAttached={review.actions.removeAttached}
       onShowThread={function (id) { links.go({ kind: 'thread', id: id }); }}

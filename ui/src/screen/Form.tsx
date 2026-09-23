@@ -52,9 +52,9 @@ export function SettingsFormPane(props: FormProps) {
       else setError(res.error || lib.m('ui.save_failed'));
     });
   };
-  return <form class="diffnote-settings__form" data-diffnote-settings-pane noValidate onSubmit={submit}>
+  return <form class="diffnote-screen__form" data-diffnote-screen-pane noValidate onSubmit={submit}>
     <h2>{lib.m('ui.settings.form_heading')}</h2>
-    <p class="diffnote-settings__note">{lib.m('ui.settings.form_note')}</p>
+    <p class="diffnote-screen__note">{lib.m('ui.settings.form_note')}</p>
     <label class="diffnote-field">
       <span>{lib.m('ui.settings.title_label')}</span>
       <input ref={first} type="text" maxlength={200} data-diffnote-setting-title value={title} placeholder={lib.m('ui.settings.title_placeholder')}
@@ -72,8 +72,8 @@ export function SettingsFormPane(props: FormProps) {
     {error && <p class="diffnote-error" role="alert">{error}</p>}
     <div class="diffnote-reply__buttons">
       <button type="submit" class="diffnote-button diffnote-button--primary" data-diffnote-settings-save disabled={busy || !dirty}>{lib.m('ui.save_button')}</button>
-      {saved && <span class="diffnote-settings__saved" data-diffnote-settings-saved role="status">{lib.m('ui.settings.saved_notice')}</span>}
-      {dirty && !saved && <span class="diffnote-settings__dirty" data-diffnote-settings-dirty>{lib.m('ui.settings.dirty_notice')}</span>}
+      {saved && <span class="diffnote-screen__saved" data-diffnote-settings-saved role="status">{lib.m('ui.settings.saved_notice')}</span>}
+      {dirty && !saved && <span class="diffnote-screen__dirty" data-diffnote-settings-dirty>{lib.m('ui.settings.dirty_notice')}</span>}
     </div>
   </form>;
 }

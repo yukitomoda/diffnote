@@ -19,7 +19,7 @@ import { Icon } from '../icon.tsx';
 const WIDE: Section[] = ['timeline', 'attachments'];
 
 function sectionLabel(key: Section) {
-  return lib.m('ui.settings.' + key + '_tab');
+  return lib.m('ui.screen.' + key + '_tab');
 }
 
 interface NavProps {
@@ -27,13 +27,13 @@ interface NavProps {
   onSelect(section: Section): void;
 }
 
-function SettingsNav(props: NavProps) {
-  return <nav class="diffnote-settings-nav" aria-label={lib.m('ui.settings.nav_label')}>
+function ScreenNav(props: NavProps) {
+  return <nav class="diffnote-screen-nav" aria-label={lib.m('ui.screen.nav_label')}>
     {SECTION_GROUPS.map(function (group, g) {
       return <ul key={g}>
         {group.map(function (key) {
-          return <li key={key}><button type="button" class={'diffnote-settings-nav__item' + (props.current === key ? ' is-current' : '')}
-            aria-current={props.current === key ? 'page' : undefined} data-diffnote-settings-nav={key}
+          return <li key={key}><button type="button" class={'diffnote-screen-nav__item' + (props.current === key ? ' is-current' : '')}
+            aria-current={props.current === key ? 'page' : undefined} data-diffnote-screen-nav={key}
             onClick={function () { props.onSelect(key); }}>{sectionLabel(key)}</button></li>;
         })}
       </ul>;
@@ -56,17 +56,17 @@ interface ScreenProps extends Omit<GeneralProps, 'model'> {
   placementOf: AttachmentsProps['placementOf'];
 }
 
-export function SettingsScreen(props: ScreenProps) {
+export function ReviewScreen(props: ScreenProps) {
   useEffect(function () {
     var key = function (e: KeyboardEvent) { if (e.key === 'Escape') props.onClose(); };
     document.addEventListener('keydown', key);
     return function () { document.removeEventListener('keydown', key); };
   }, []);
-  return <main class="diffnote-settings" data-diffnote-settings-page data-diffnote-settings-section={props.section}>
-    <p class="diffnote-settings__top"><button type="button" class="diffnote-button" data-diffnote-settings-back onClick={props.onClose}><Icon name="back" />{' '}{lib.m('ui.settings.back_button')}</button></p>
-    <div class="diffnote-settings__layout">
-      <SettingsNav current={props.section} onSelect={props.onSelect} />
-      <div class={'diffnote-settings__pane' + (WIDE.indexOf(props.section) >= 0 ? ' diffnote-settings__pane--wide' : '')}>
+  return <main class="diffnote-screen" data-diffnote-screen data-diffnote-screen-section={props.section}>
+    <p class="diffnote-screen__top"><button type="button" class="diffnote-button" data-diffnote-screen-back onClick={props.onClose}><Icon name="back" />{' '}{lib.m('ui.screen.back_button')}</button></p>
+    <div class="diffnote-screen__layout">
+      <ScreenNav current={props.section} onSelect={props.onSelect} />
+      <div class={'diffnote-screen__pane' + (WIDE.indexOf(props.section) >= 0 ? ' diffnote-screen__pane--wide' : '')}>
         {props.section === 'timeline' && <TimelinePane model={props.model}
           onShow={props.onShowThread} placementOf={props.placementOf} />}
         {props.section === 'general' && <GeneralPane model={props.model} pending={props.pending} note={props.note} onPull={props.onPull} />}
