@@ -143,7 +143,7 @@ pub fn render_export_with(
     client_page(loaded, None, limit)
 }
 
-/// The same app for `diffnote serve`: it can change the review, through the
+/// The same app for `diffnote review` / `open`: it can change the review, through the
 /// server that serves it. `editable` are the comments it may edit and delete.
 pub fn render_served_page(
     loaded: &crate::bundle::Loaded,

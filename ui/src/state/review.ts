@@ -37,7 +37,7 @@ export interface Review {
 // The model, and (on the served page) the changes that can be made to it.
 // A change is shown at once and put right by the server's answer. The answer
 // says what stamp the review had before the change: if that isn't the page's
-// (the review had changed under it: another `diffnote serve`, another tab), the whole
+// (the review had changed under it: another `diffnote review`, another tab), the whole
 // model is fetched again -- as it is whenever the window is looked at again
 // and the review's stamp is not the page's.
 export function useReview(initial: ViewModel): Review {

@@ -1,5 +1,5 @@
-//! `diffnote serve`: the review in a browser, from a small server that only
-//! this computer can reach.
+//! `diffnote review` and `diffnote open`: the review in a browser, from a
+//! small server that only this computer can reach.
 //!
 //! The page is the export's own (see `html`) with buttons on the threads. A
 //! button sends a small JSON request; the server appends to the bundle and
@@ -7,7 +7,7 @@
 //! the thread list), which the page swaps in place. Nothing is reloaded.
 //!
 //! The server keeps no state: every request loads the bundle, and a change
-//! saves it, so another `diffnote serve` at the same time is not overwritten
+//! saves it, so another `diffnote review` at the same time is not overwritten
 //! unseen (each request starts from what is on disk).
 //!
 //! Who may talk to it: it listens on `127.0.0.1` only; the address the
@@ -49,7 +49,7 @@ pub struct Options {
     /// Told `false`, it only looks: `Some` if there is something to take in,
     /// and nothing is written.
     pub refresh: Option<Refresher>,
-    /// The bundle as it was before `serve` did anything to it (the difference
+    /// The bundle as it was before the server did anything to it (the difference
     /// it added, the title): `Some(None)` if there was none. Where it is
     /// `None`, the bundle as the server finds it is taken.
     pub before: Option<Option<Vec<u8>>>,
@@ -188,7 +188,7 @@ fn percent_encode(text: &str) -> String {
 /// behavior and does no networking.
 pub struct Server {
     review: PathBuf,
-    /// The review as it was before `serve` did anything (`None`: there was
+    /// The review as it was before the server did anything (`None`: there was
     /// none), to go back to if the session is to be thrown away (「保存せずに終了」).
     original: Option<Vec<u8>>,
     discarded: std::sync::atomic::AtomicBool,
@@ -381,8 +381,8 @@ impl Server {
         self.discarded.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// Puts the review back as it was before `serve` did anything: as it was, or
-    /// not there at all if `serve` made it.
+    /// Puts the review back as it was before the server did anything: as it was, or
+    /// not there at all if the server made it.
     fn discard(&self) -> Result<(), Failure> {
         let Some(original) = &self.original else {
             std::fs::remove_file(&self.review).map_err(|e| internal(e.into()))?;
@@ -1322,7 +1322,7 @@ impl Server {
 
     /// Changes this machine's user settings (today, just `author`; see
     /// `diffnote config`): saved to the OS config file, so every bundle's
-    /// `init`/`serve` uses it from now on, not only this one. Also
+    /// `init`/`review`/`open` uses it from now on, not only this one. Also
     /// updates the name comments are written under for the rest of this
     /// session (an empty name clears the configured one: the session's name
     /// falls back through `--author`, git, and the login name, as it would

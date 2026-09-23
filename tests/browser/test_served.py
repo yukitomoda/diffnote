@@ -1,4 +1,4 @@
-"""`diffnote serve`'s page: replies,
+"""`diffnote review`'s page: replies,
 resolving, the version check, shutting down."""
 import unittest
 
@@ -1999,7 +1999,7 @@ def git_short(repo, rev):
 
 
 class ServeAddsTheLatestDiff(ServedCase):
-    """A commit made while `serve` runs is told on the page and taken in by
+    """A commit made while `diffnote review` runs is told on the page and taken in by
     its button. (What is recorded, and when, is in `tests/cli.rs`.)"""
 
     def open_page(self, server):
@@ -2049,13 +2049,13 @@ class ServeAddsTheLatestDiff(ServedCase):
 
 
 class Reopen(ServedCase):
-    """`serve --reopen`: the last saved revision only, with no pull button and
+    """`diffnote open`: the last saved revision only, with no pull button and
     a later commit changing nothing it shows."""
 
     def start_reopened(self, repo, review):
         self.repo = repo
         self.review = review
-        self.server = Served(review, cwd=repo, extra=["--reopen"], author="検証者")
+        self.server = Served(review, cwd=repo, command="open", author="検証者")
         self.addCleanup(self.server.stop)
         self.b = self.browser
         ready = "!!document.querySelector('.diffnote-file')"
@@ -2069,7 +2069,7 @@ class Reopen(ServedCase):
             {"file": "long.txt", "line": "TWENTY", "body": "20 行目を変えました。"},
         ])
         before = entries(review)
-        # A further commit, made after the review: --reopen never looks at it.
+        # A further commit, made after the review: `open` never looks at it.
         harness.write(repo, "long.txt", "x\n")
         harness.git(repo, "commit", "-q", "-am", "c3")
         self.start_reopened(repo, review)

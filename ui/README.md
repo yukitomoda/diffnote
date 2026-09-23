@@ -1,6 +1,6 @@
 # ui/
 
-The page that `diffnote export` writes and `diffnote serve` serves.
+The page that `diffnote export` writes and `diffnote review` / `open` serve.
 
 ## Building it
 
@@ -87,7 +87,7 @@ binary and every exported page carries it.
 
 ## The served page
 
-`diffnote serve` serves the same app with a server behind it. The model then has
+`diffnote review` / `open` serve the same app with a server behind it. The model then has
 `interactive: true` and `events` (how long the review's log was). The app changes
 the model in its state: a change is shown at once and put right by the server's
 answer, which says how many events the review has and how many the change added;

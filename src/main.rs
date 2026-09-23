@@ -87,8 +87,8 @@ enum Cmd {
         review: PathBuf,
         #[arg(value_name = "REV|DIR", help = m("cli.init.target"))]
         target: Option<String>,
-        #[arg(long, help = m("cli.init.files"))]
-        files: bool,
+        #[arg(long = "type", value_name = "TYPE", value_enum, hide_possible_values = true, help = m("cli.init.type"))]
+        kind: Option<ReviewType>,
         #[arg(long, value_name = "DIR", help = m("cli.init.repo"))]
         repo: Option<PathBuf>,
         #[arg(long, value_name = "TITLE", help = m("cli.init.title"))]
@@ -96,32 +96,39 @@ enum Cmd {
         #[arg(long, value_enum, hide_possible_values = true, help = m("cli.init.snapshot"))]
         snapshot: Option<diffnote::bundle::SnapshotMode>,
     },
-    #[command(about = m("cli.serve.about"))]
-    Serve {
+    #[command(about = m("cli.review.about"))]
+    Review {
         #[arg(
             short = 'f',
             long = "file",
             default_value = ".diffnote",
             hide_default_value = true,
-            help = m("cli.serve.review")
+            help = m("cli.review.review")
         )]
         review: PathBuf,
-        #[arg(long, value_name = "PORT", default_value_t = 0, help = m("cli.serve.port"))]
-        port: u16,
-        #[arg(long, help = m("cli.serve.open"))]
-        open: bool,
-        #[arg(long, value_name = "DIR", help = m("cli.serve.repo"))]
-        repo: Option<PathBuf>,
-        #[arg(value_name = "REV|DIR", help = m("cli.serve.target"))]
+        #[arg(value_name = "REV|DIR", help = m("cli.review.target"))]
         target: Option<String>,
-        #[arg(long, value_name = "REV|DIR", help = m("cli.serve.base"))]
+        #[arg(long, value_name = "REV|DIR", help = m("cli.review.base"))]
         base: Option<String>,
-        #[arg(long, help = m("cli.serve.files"))]
-        files: bool,
-        #[arg(long, help = m("cli.serve.reopen"))]
-        reopen: bool,
-        #[arg(long, value_enum, hide_possible_values = true, help = m("cli.serve.snapshot"))]
+        #[arg(long = "type", value_name = "TYPE", value_enum, hide_possible_values = true, help = m("cli.review.type"))]
+        kind: Option<ReviewType>,
+        #[arg(long, value_enum, hide_possible_values = true, help = m("cli.review.snapshot"))]
         snapshot: Option<diffnote::bundle::SnapshotMode>,
+        #[command(flatten)]
+        server: Server,
+    },
+    #[command(about = m("cli.open.about"))]
+    Open {
+        #[arg(
+            short = 'f',
+            long = "file",
+            default_value = ".diffnote",
+            hide_default_value = true,
+            help = m("cli.open.review")
+        )]
+        review: PathBuf,
+        #[command(flatten)]
+        server: Server,
     },
     #[command(about = m("cli.export.about"))]
     Export {
@@ -145,6 +152,25 @@ enum Cmd {
         #[command(subcommand)]
         action: ConfigAction,
     },
+}
+
+/// How the page is served: the same for `review` and `open`.
+#[derive(Debug, clap::Args)]
+struct Server {
+    #[arg(long, value_name = "PORT", default_value_t = 0, help = m("cli.server.port"))]
+    port: u16,
+    #[arg(long, help = m("cli.server.no_browser"))]
+    no_browser: bool,
+    #[arg(long, value_name = "DIR", help = m("cli.server.repo"))]
+    repo: Option<PathBuf>,
+}
+
+/// What a review is of: commits of a git repository, or a directory's files
+/// as they are (`raw`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum ReviewType {
+    Git,
+    Raw,
 }
 
 #[derive(Debug, Subcommand)]
@@ -183,34 +209,29 @@ fn main() -> Result<()> {
         Cmd::Init {
             review,
             target,
-            files,
+            kind,
             repo,
             title,
             snapshot,
-        } => cmd_init(review, target, files, repo, title, snapshot),
-        Cmd::Serve {
+        } => cmd_init(review, target, kind, repo, title, snapshot),
+        Cmd::Review {
             review,
-            port,
-            open,
-            repo,
             target,
             base,
-            files,
-            reopen,
+            kind,
             snapshot,
+            server,
         } => cmd_serve(
             review,
-            port,
-            open,
-            repo,
-            Compare {
+            server,
+            Some(Compare {
                 target,
                 base,
-                files,
-                reopen,
+                kind,
                 snapshot,
-            },
+            }),
         ),
+        Cmd::Open { review, server } => cmd_serve(review, server, None),
         Cmd::Export {
             review,
             output,
@@ -326,7 +347,7 @@ fn set_config_field(
     }
 }
 
-/// For `serve`, what it is given to compare: the
+/// For `review`, what it is given to compare: the
 /// changes from the base to the target are recorded as a revision of the
 /// bundle (made if there is none yet, for git), so that they can be reviewed in
 /// the browser.
@@ -343,7 +364,7 @@ fn add_revision(
     repo: &diffnote::git::Repo,
     base: Option<&str>,
     target: Option<&str>,
-    files: bool,
+    kind: Option<ReviewType>,
     apply: bool,
     // What to keep, when this call is the one that makes the review. Refused
     // earlier if the review already exists, so it can only apply here.
@@ -354,9 +375,18 @@ fn add_revision(
     let mut fresh = FreshBundle(None);
     let exclude = [review_path.to_path_buf()];
     let directory_review = match loaded.source() {
-        Some(diffnote::model::Source::Files { .. }) => true,
-        Some(diffnote::model::Source::Git(_)) => false,
-        None => explicit && files_mode(repo, files),
+        Some(source) => {
+            let raw = matches!(source, diffnote::model::Source::Files { .. });
+            // The type is the review's: asking for the other is a mistake.
+            if kind.is_some_and(|k| (k == ReviewType::Raw) != raw) {
+                anyhow::bail!(mf(
+                    "main.type.mismatch",
+                    &[("type", if raw { "raw" } else { "git" })]
+                ));
+            }
+            raw
+        }
+        None => explicit && raw_review(repo, kind)?,
     };
     let input = if directory_review {
         if loaded.source().is_none() {
@@ -487,37 +517,38 @@ fn repo_of(dir: Option<PathBuf>) -> Result<diffnote::git::Repo> {
     }
 }
 
-/// What `serve` is told to compare: the target, and (if there is no
-/// bundle yet) the base to start from; `files` makes it a directory review.
+/// What `review` is told to compare: the target, and (if there is no
+/// review yet) the base to start from and what the review is of.
 struct Compare {
     target: Option<String>,
     base: Option<String>,
-    files: bool,
-    /// Skip the diff entirely: reopen the last recorded revision as-is
-    /// (`--reopen`), so nothing new is added.
-    reopen: bool,
+    kind: Option<ReviewType>,
     /// What a review made here keeps. Only when there is no review yet: the
     /// range belongs to the review, and is decided once (see `init`).
     snapshot: Option<bundle::SnapshotMode>,
 }
 
-fn cmd_serve(
-    review: PathBuf,
-    port: u16,
-    open: bool,
-    repo: Option<PathBuf>,
-    compare: Compare,
-) -> Result<()> {
+/// `review` (with what to compare) and `open` (without: the review as it is
+/// recorded, nothing added) both serve the review in the browser.
+fn cmd_serve(review: PathBuf, server: Server, compare: Option<Compare>) -> Result<()> {
+    let Server {
+        port,
+        no_browser,
+        repo,
+    } = server;
+    let open = !no_browser;
+    let reopen = compare.is_none();
     let Compare {
         target,
         base,
-        files,
-        reopen,
+        kind,
         snapshot,
-    } = compare;
-    if reopen && (target.is_some() || base.is_some() || files) {
-        anyhow::bail!(m("main.reopen.conflicting_flags"));
-    }
+    } = compare.unwrap_or(Compare {
+        target: None,
+        base: None,
+        kind: None,
+        snapshot: None,
+    });
     // The range a review keeps is decided when it is made, and never again:
     // asking an existing review for another one is refused rather than
     // ignored. (Saying again what it already is, as with `--base`, is fine.)
@@ -527,15 +558,15 @@ fn cmd_serve(
         {
             anyhow::bail!(mf("main.snapshot.locked", &[("mode", mode_name(mode))]));
         }
-        if files && asked == bundle::SnapshotMode::Changed {
+        if kind == Some(ReviewType::Raw) && asked == bundle::SnapshotMode::Changed {
             anyhow::bail!(m("main.snapshot.dir_changed_refused"));
         }
     }
-    let explicit = target.is_some() || base.is_some();
+    let explicit = target.is_some() || base.is_some() || kind.is_some();
     if !review.exists() {
         if reopen {
             anyhow::bail!(mf(
-                "main.serve.reopen_no_bundle",
+                "main.serve.open_no_bundle",
                 &[("path", &review.display().to_string())]
             ));
         }
@@ -564,7 +595,7 @@ fn cmd_serve(
             &git,
             base.as_deref(),
             target.as_deref(),
-            files,
+            kind,
             true,
             snapshot,
         ) {
@@ -591,7 +622,7 @@ fn cmd_serve(
     }
     // The page's button: what was added to the target since (the base is
     // already the review's; a named commit doesn't move, `HEAD` does).
-    // `--reopen` has none: nothing should be added in this session at all.
+    // `open` has none: nothing should be added in this session at all.
     let refresher: Option<diffnote::serve::Refresher> = if reopen {
         None
     } else {
@@ -599,7 +630,7 @@ fn cmd_serve(
         Some(std::sync::Arc::new(move |apply| {
             // Later rounds add to a review that exists: the range is the
             // one it was made with.
-            add_revision(&review, &git, None, target.as_deref(), files, apply, None)
+            add_revision(&review, &git, None, target.as_deref(), kind, apply, None)
         }))
     };
     let options = diffnote::serve::Options {
@@ -711,7 +742,7 @@ struct Input {
 ///
 /// - With a bundle, the base is the one its first revision has; `base`, if
 ///   given, must be that same commit. The target is `HEAD` if none is named.
-/// - With none, `base` starts it (`serve --base main feature`); without `base`,
+/// - With none, `base` starts it (`review --base main feature`); without `base`,
 ///   the target alone is a commit's own changes (from its first parent).
 fn git_range(
     repo: &diffnote::git::Repo,
@@ -892,16 +923,22 @@ impl Drop for FreshBundle {
     }
 }
 
-/// Whether a review that has no bundle yet is one of directories: when asked
-/// for (`--files`), or when there is no git repository to make one from.
-fn files_mode(repo: &diffnote::git::Repo, files: bool) -> bool {
-    files || !repo.exists()
+/// Whether a review that has no bundle yet is of a directory as it is: when
+/// asked for (`--type raw`), or when there is no git repository to make one
+/// from. `--type git` without a repository is a mistake, not a fallback.
+fn raw_review(repo: &diffnote::git::Repo, kind: Option<ReviewType>) -> Result<bool> {
+    match kind {
+        Some(ReviewType::Raw) => Ok(true),
+        Some(ReviewType::Git) if !repo.exists() => anyhow::bail!(m("main.type.git_no_repo")),
+        Some(ReviewType::Git) => Ok(false),
+        None => Ok(!repo.exists()),
+    }
 }
 
 fn cmd_init(
     review_path: PathBuf,
     target: Option<String>,
-    files: bool,
+    kind: Option<ReviewType>,
     repo: Option<PathBuf>,
     title: Option<String>,
     snapshot: Option<bundle::SnapshotMode>,
@@ -913,7 +950,7 @@ fn cmd_init(
         ));
     }
     let repo = repo_of(repo)?;
-    if !files && repo.exists() {
+    if !raw_review(&repo, kind)? {
         return init_git(
             &review_path,
             &repo,
@@ -959,7 +996,7 @@ fn fresh_bundle(review_path: &Path, title: Option<&str>) -> Result<bundle::Loade
 }
 
 /// A git review that starts at a commit: the commit is the base, so that the
-/// next `serve` reviews what has changed since. Nothing is stored beyond the
+/// next `review` reviews what has changed since. Nothing is stored beyond the
 /// commit's id (git has the rest).
 fn init_git(
     review_path: &Path,

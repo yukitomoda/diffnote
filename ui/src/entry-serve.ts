@@ -1,4 +1,4 @@
-// The bundle of the page `diffnote serve` serves: the same app, plus the one
+// The bundle of the page `diffnote review` and `diffnote open` serve: the same app, plus the one
 // thing an exported page doesn't have -- a server to talk to.
 import { api } from './api.ts';
 import { start } from './app.tsx';

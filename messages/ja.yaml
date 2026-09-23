@@ -35,8 +35,8 @@ cli:
       作るレビューのパス(省略時は ./.diffnote)。
     target: |-
       基準にするコミット、またはディレクトリ(省略時は HEAD、git の外では `.`)。
-    files: |-
-      git の中でも、ディレクトリのレビューにする。
+    type: |-
+      レビューの種類。`git`(コミットを比べる)か `raw`(ディレクトリのファイルをそのまま比べる)。省略時は、git リポジトリの中なら `git`。
     repo: |-
       対象の git リポジトリ(省略時はカレント)。
     title: |-
@@ -44,27 +44,33 @@ cli:
     snapshot: |-
       レビューに保存する範囲。`changed`(差分が触れたファイルだけ)か `full`(ツリー全体)。あとから変えられない。
 
-  serve:
+  review:
     about: |-
-      レビューをブラウザで見る(自分のパソコンからだけ接続できる)。
+      最新のコミットまたはディレクトリの状態でリビジョンを更新して、ブラウザで開く。
     review: |-
       レビューのパス(省略時は ./.diffnote)。
-    port: |-
-      待ち受けるポート(省略時は自動)。
-    open: |-
-      起動したあと、ブラウザで開く。
-    repo: |-
-      対象の git リポジトリ(省略時はカレント)。
     target: |-
       レビューに加えるコミット、またはディレクトリ(省略時は HEAD)。
     base: |-
       比較の起点。まだレビューがないときだけ指定できる。
-    files: |-
-      git の中でも、ディレクトリのレビューにする。
-    reopen: |-
-      差分を計算せず、最後のリビジョンだけを開く(コメントの追加用)。
+    type: |-
+      レビューの種類。`git` か `raw`(ディレクトリのファイルをそのまま比べる)。レビューを作るときに決まり、あとから変えられない。
     snapshot: |-
       レビューに保存する範囲。まだレビューがないときだけ指定できる。`changed` か `full`。
+
+  open:
+    about: |-
+      既存のレビューをブラウザで開く。
+    review: |-
+      レビューのパス(省略時は ./.diffnote)。
+
+  server:
+    port: |-
+      待ち受けるポート(省略時は自動)。
+    no_browser: |-
+      ブラウザを開かない(URL だけを表示する)。
+    repo: |-
+      対象の git リポジトリ(省略時はカレント)。
 
   export:
     about: |-
@@ -145,12 +151,14 @@ main:
     recorded_files: |-
       ディレクトリの変更を記録しました
 
-  reopen:
-    conflicting_flags: |-
-      --reopen は、比較対象や --base、--files とは一緒に指定できません
+  type:
+    git_no_repo: |-
+      `--type git` は、git リポジトリの中でだけ指定できます
+    mismatch: |-
+      このレビューは {type} のレビューです。種類は変えられません
   serve:
-    reopen_no_bundle: |-
-      {path} がありません。--reopen には、すでにあるレビューが必要です
+    open_no_bundle: |-
+      {path} がありません。先に `diffnote review` でレビューを作ってください
     no_revision: |-
       {path} に、保存されたリビジョンがありません
     refresh_failed: |-
@@ -172,7 +180,7 @@ main:
     expand_limit_invalid: |-
       行数(0 以上の整数)か `all` を指定してください
     no_diff: |-
-      {path} に記録された差分がありません。先に `diffnote serve` で差分を記録してください
+      {path} に記録された差分がありません。先に `diffnote review` で差分を記録してください
     write_failed: |-
       {path} を書き込めませんでした
     wrote: |-
@@ -200,7 +208,7 @@ main:
     already_exists: |-
       {path} はすでに存在します
     git_done: |-
-      {rev}({commit}) を基準に {path} を作成しました。`diffnote serve` でレビューを始められます
+      {rev}({commit}) を基準に {path} を作成しました。`diffnote review` でレビューを始められます
     files_done: |-
       {count} 個のファイルを {path} に保存しました
 

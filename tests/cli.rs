@@ -1,5 +1,5 @@
 //! End-to-end tests: the real `diffnote` binary. A review is made the way a
-//! person makes one -- `serve` records what is reviewed, and its own HTTP
+//! person makes one -- `review` records what is reviewed, and its own HTTP
 //! API writes the comments (see `Served`) -- so the tests need nothing but
 //! Rust and git, on any platform.
 
@@ -67,7 +67,7 @@ impl Env {
     }
 }
 
-/// `diffnote serve` on a review, driven over its own HTTP API: the way the
+/// `diffnote review` (or `open`) on a review, driven over its own HTTP API: the way the
 /// page writes to a review, and so the way a test writes a comment.
 struct Served {
     child: std::process::Child,
@@ -289,22 +289,32 @@ impl Drop for Served {
 }
 
 impl Env {
-    /// Starts `diffnote serve -f review args...` in `cwd` and waits for it to
-    /// say where it is. A server that will not start fails the test with
+    /// Starts `diffnote review -f review args...` in `cwd` and waits for it
+    /// to say where it is. A server that will not start fails the test with
     /// what it said.
     fn serve(&self, cwd: &Path, review: &Path, args: &[&str]) -> Served {
+        self.start("review", cwd, review, args)
+    }
+
+    /// The same with `diffnote open`: the review as it is, nothing added.
+    fn open(&self, cwd: &Path, review: &Path) -> Served {
+        self.start("open", cwd, review, &[])
+    }
+
+    fn start(&self, command: &str, cwd: &Path, review: &Path, args: &[&str]) -> Served {
         use std::io::{BufRead, BufReader, Read};
         let mut child = Command::new(bin())
             .current_dir(cwd)
             .env("DIFFNOTE_CONFIG_DIR", self.path("user-config"))
-            .arg("serve")
+            .arg(command)
             .arg("-f")
             .arg(review)
+            .arg("--no-browser")
             .args(args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .expect("diffnote serve starts");
+            .expect("diffnote starts");
         let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
         let mut said = String::new();
         let url = loop {
@@ -321,7 +331,7 @@ impl Env {
                         let _ = err.read_to_string(&mut said);
                     }
                     let _ = child.wait();
-                    panic!("diffnote serve {args:?} did not start: {said}");
+                    panic!("diffnote {command} {args:?} did not start: {said}");
                 }
             }
         };
@@ -340,25 +350,33 @@ impl Env {
         }
     }
 
-    /// `diffnote serve` that is expected to refuse to start: gives back what
+    /// `diffnote review` that is expected to refuse to start: gives back what
     /// it said. One that starts after all is stopped and fails the test, so
     /// a refusal that goes missing cannot hang the suite.
     fn serve_refused(&self, cwd: &Path, review: &Path, args: &[&str]) -> String {
+        self.refused("review", cwd, review, args)
+    }
+
+    fn refused(&self, command: &str, cwd: &Path, review: &Path, args: &[&str]) -> String {
         use std::io::Read;
         let mut child = Command::new(bin())
             .current_dir(cwd)
             .env("DIFFNOTE_CONFIG_DIR", self.path("user-config"))
-            .arg("serve")
+            .arg(command)
             .arg("-f")
             .arg(review)
+            .arg("--no-browser")
             .args(args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .expect("diffnote serve runs");
+            .expect("diffnote runs");
         for _ in 0..100 {
             if let Ok(Some(status)) = child.try_wait() {
-                assert!(!status.success(), "serve {args:?} was expected to refuse");
+                assert!(
+                    !status.success(),
+                    "{command} {args:?} was expected to refuse"
+                );
                 let mut said = String::new();
                 child
                     .stderr
@@ -372,11 +390,11 @@ impl Env {
         }
         let _ = child.kill();
         let _ = child.wait();
-        panic!("serve {args:?} started, and was expected to refuse");
+        panic!("{command} {args:?} started, and was expected to refuse");
     }
 
     /// Adds what `args` names to `review` (making it, with `--base`, if it
-    /// is not there yet) and writes `notes` into it, through `serve` -- the
+    /// is not there yet) and writes `notes` into it, through `review` -- the
     /// way a person makes a review. Gives back the threads, in order.
     fn review(&self, cwd: &Path, review: &Path, args: &[&str], notes: &[Note]) -> Vec<String> {
         let served = self.serve(cwd, review, args);
@@ -1401,23 +1419,24 @@ fn serve_after_a_git_init_reviews_what_changed_since_and_then_reopens_that() {
 }
 
 #[test]
-fn reopen_refuses_a_comparison_target_and_a_bundle_with_no_revision_yet() {
+fn open_needs_a_review_and_takes_nothing_to_compare() {
     let env = Env::new();
     let repo = git_repo(&env);
     let review = env.path("review.diffnote");
     let review_arg = review.to_str().unwrap();
-    // No bundle at all yet: nothing to reopen.
-    let said = env.serve_refused(&repo, &review, &["--reopen"]);
-    assert!(said.contains("--reopen"), "{said}");
+    // No review at all yet: nothing to open, and it says how to make one.
+    let said = env.refused("open", &repo, &review, &[]);
+    assert!(said.contains("diffnote review"), "{said}");
     assert!(!review.exists());
     env.ok(&repo, &["init", "-f", review_arg, "c2"]);
-    // A comparison target makes no sense together with --reopen.
-    let said = env.serve_refused(&repo, &review, &["--reopen", "c3"]);
-    assert!(said.contains("--reopen"), "{said}");
+    // What to compare is `review`'s to be told, not `open`'s.
+    for asked in [&["c3"][..], &["--base", "c1"], &["--type", "git"]] {
+        env.refused("open", &repo, &review, asked);
+    }
 }
 
 #[test]
-fn reopen_works_for_a_directory_review_too() {
+fn open_works_for_a_directory_review_too() {
     let env = Env::new();
     let dir = env.path("project");
     std::fs::create_dir(&dir).unwrap();
@@ -1433,9 +1452,9 @@ fn reopen_works_for_a_directory_review_too() {
         &[Note::Line("a.txt", "two", "first")],
     );
     let revisions_before = bundle::load(&review).unwrap().revisions().count();
-    // The directory changes again, but --reopen ignores it entirely.
+    // The directory changes again, but `open` ignores it entirely.
     std::fs::write(dir.join("a.txt"), "one\ntwo\nthree\n").unwrap();
-    let served = env.serve(&dir, &review, &["--reopen"]);
+    let served = env.open(&dir, &review);
     served.reply(&threads[0], "second");
     served.stop();
     let loaded = bundle::load(&review).unwrap();
@@ -1454,10 +1473,13 @@ fn init_makes_a_file_review_outside_git_and_when_told_to_inside_it() {
     env.ok(&dir, &["init", "-f", review.to_str().unwrap()]);
     assert_eq!(bundle::load(&review).unwrap().revisions().count(), 1);
     assert!(git_sources(&review).is_empty());
-    // In a repository, `--files` takes the directory's files instead of a commit.
+    // In a repository, `--type raw` takes the directory's files instead of a commit.
     let repo = git_repo(&env);
     let review = env.path("files.diffnote");
-    let said = env.ok(&repo, &["init", "-f", review.to_str().unwrap(), "--files"]);
+    let said = env.ok(
+        &repo,
+        &["init", "-f", review.to_str().unwrap(), "--type", "raw"],
+    );
     assert!(said.contains("個のファイル"), "{said}");
     assert!(git_sources(&review).is_empty());
     assert!(count_blobs(&review) > 0);
@@ -1605,7 +1627,7 @@ fn nothing_to_review_leaves_no_bundle_and_says_what_to_do() {
     assert!(said.contains("差分がありません"), "{said}");
     assert!(!review.exists(), "the base alone is not kept");
     // A directory review with no base at all says what to do.
-    let said = env.serve_refused(&same, &review, &["--files", "."]);
+    let said = env.serve_refused(&same, &review, &["--type", "raw", "."]);
     assert!(said.contains("--base"), "{said}");
 }
 
@@ -1760,7 +1782,7 @@ fn a_review_of_a_directory_records_no_commits() {
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     let review = env.path("r.diffnote");
     let arg = review.to_str().unwrap();
-    env.ok(&dir, &["init", "-f", arg, "--files", "."]);
+    env.ok(&dir, &["init", "-f", arg, "--type", "raw", "."]);
     std::fs::write(dir.join("a.txt"), "two\n").unwrap();
     env.review(
         &dir,
@@ -1835,7 +1857,7 @@ fn a_review_of_a_directory_has_a_timeline_with_no_commits_in_it() {
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     let review = env.path("r.diffnote");
     let arg = review.to_str().unwrap();
-    env.ok(&dir, &["init", "-f", arg, "--files", "."]);
+    env.ok(&dir, &["init", "-f", arg, "--type", "raw", "."]);
     std::fs::write(dir.join("a.txt"), "two\n").unwrap();
     env.review(
         &dir,
@@ -1888,7 +1910,18 @@ fn the_snapshot_range_is_chosen_when_the_review_is_made_and_not_after() {
     );
 
     // Asking an existing review for another range is refused, not ignored.
-    let out = env.run(&repo, &["serve", "-f", arg, "--snapshot", "changed", "c2"]);
+    let out = env.run(
+        &repo,
+        &[
+            "review",
+            "-f",
+            arg,
+            "--no-browser",
+            "--snapshot",
+            "changed",
+            "c2",
+        ],
+    );
     assert!(!out.status.success());
     let said = String::from_utf8_lossy(&out.stderr);
     assert!(said.contains("レビューを作るとき"), "{said}");
@@ -1911,7 +1944,8 @@ fn a_directory_review_cannot_be_asked_for_a_changed_snapshot() {
             "init",
             "-f",
             arg.to_str().unwrap(),
-            "--files",
+            "--type",
+            "raw",
             "--snapshot",
             "changed",
             ".",
@@ -2043,7 +2077,7 @@ fn serve_says_when_there_is_nothing_yet_and_takes_a_directory_only_when_named() 
 }
 
 #[test]
-fn reopen_adds_to_the_last_revision_and_never_looks_at_a_later_commit() {
+fn open_adds_to_the_last_revision_and_never_looks_at_a_later_commit() {
     let env = Env::new();
     let repo = git_repo(&env);
     let review = env.path("review.diffnote");
@@ -2051,7 +2085,7 @@ fn reopen_adds_to_the_last_revision_and_never_looks_at_a_later_commit() {
     let threads = env.review(&repo, &review, &[], &[Note::Line("calc.txt", "d", "d は?")]);
     std::fs::write(repo.join("calc.txt"), "x\n").unwrap();
     git(&repo, &["commit", "-q", "-am", "c4"]);
-    let served = env.serve(&repo, &review, &["--reopen"]);
+    let served = env.open(&repo, &review);
     assert!(
         !served.said.contains("差分を記録しました"),
         "{}",
@@ -2067,4 +2101,35 @@ fn reopen_adds_to_the_last_revision_and_never_looks_at_a_later_commit() {
     let loaded = bundle::load(&review).unwrap();
     assert_eq!(loaded.revisions().count(), 2);
     assert_eq!(comment_bodies(&loaded), ["d は?", "了解です"]);
+}
+
+#[test]
+fn the_type_is_asked_for_when_a_review_is_made_and_cannot_be_changed() {
+    let env = Env::new();
+    let dir = env.path("plain");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    // `git` where there is no repository is a mistake, not a directory review.
+    let review = env.path("plain.diffnote");
+    let out = env.run(
+        &dir,
+        &["init", "-f", review.to_str().unwrap(), "--type", "git"],
+    );
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--type git"));
+    assert!(!review.exists());
+
+    // A git review asked to be a raw one (or the other way round) says what it is.
+    let repo = git_repo(&env);
+    let review = env.path("git.diffnote");
+    env.ok(&repo, &["init", "-f", review.to_str().unwrap(), "c1"]);
+    let said = env.serve_refused(&repo, &review, &["--type", "raw", "."]);
+    assert!(said.contains("git"), "{said}");
+    env.review(&repo, &review, &["--type", "git", "c2"], &[]);
+    assert_eq!(git_sources(&review).len(), 2, "saying what it is is fine");
+
+    let review = env.path("raw.diffnote");
+    env.ok(&dir, &["init", "-f", review.to_str().unwrap()]);
+    let said = env.serve_refused(&dir, &review, &["--type", "git", "."]);
+    assert!(said.contains("raw"), "{said}");
 }

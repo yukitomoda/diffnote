@@ -1,7 +1,7 @@
 """Helpers for the browser tests: a small Chrome DevTools client (standard
-library only), a headless Chrome, `diffnote serve`, and reviews to open.
+library only), a headless Chrome, `diffnote review`, and reviews to open.
 
-The reviews are made by the real `diffnote`: `serve` records the revisions
+The reviews are made by the real `diffnote`: `review` records the revisions
 and its own API writes the comments, the way a person makes one. So the
 tests need only Python, Chrome and a built `diffnote` (set DIFFNOTE_BIN,
 or `cargo build` for target/debug).
@@ -370,7 +370,7 @@ class Browser:
 # ---- diffnote ----------------------------------------------------------------
 
 def set_user_author(name):
-    """Sets the author name `edit`/`serve` fall back to when none is given
+    """Sets the author name `review`/`open` fall back to when none is given
     (the replacement for the removed `--author` flag: `diffnote config`,
     isolated to USER_CONFIG_DIR like every diffnote() call here)."""
     out = diffnote("config", "set", "author", name)
@@ -472,10 +472,11 @@ def zip_names(review):
 
 
 class Served:
-    """`diffnote serve` on a review."""
+    """`diffnote review` on a review (`command="open"`: `diffnote open`, the
+    review as it is)."""
 
-    def __init__(self, review, cwd=None, extra=(), author="tester"):
-        # `serve` has no --author of its own any more (diffnote config does
+    def __init__(self, review, cwd=None, extra=(), author="tester", command="review"):
+        # The server has no --author of its own any more (diffnote config does
         # its job): author=None starts it with whatever is already configured
         # (or, with nothing configured, git config then the login name);
         # otherwise it is set into the (isolated) user config first, for this
@@ -489,7 +490,7 @@ class Served:
             set_user_author(author)
         env = dict(os.environ)
         env["DIFFNOTE_CONFIG_DIR"] = USER_CONFIG_DIR
-        self.proc = subprocess.Popen([BIN, "serve", "-f", review, *extra],
+        self.proc = subprocess.Popen([BIN, command, "-f", review, "--no-browser", *extra],
                                      cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8")
         self.notices = []
         self.said = []
@@ -503,7 +504,7 @@ class Served:
             if m:
                 self.url = m.group(1)
                 break
-        assert self.url, "diffnote serve did not start"
+        assert self.url, "diffnote did not start"
         if author is not None and os.path.exists(config_file):
             os.remove(config_file)
 
@@ -616,7 +617,7 @@ def write_comments(server, repo, rev, revision, comments):
 
 def review_of(repo, review, target, comments=(), base=None, author="reviewer", extra=()):
     """Adds `target` to `review` (making it, with `base`, if it is not there
-    yet) and writes `comments` into it, through `serve`."""
+    yet) and writes `comments` into it, through `review`."""
     args = (["--base", base] if base else []) + [target, *extra]
     server = Served(review, cwd=repo, author=author, extra=args)
     try:
