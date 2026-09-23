@@ -486,19 +486,39 @@ class SideBySide(BrowserCase):
             # Wrapped (the default): the page never scrolls sideways.
             self.assertLessEqual(b.js(overflow), 1, layout)
             self.assertGreater(b.js(tall % cell), 40, f"{layout}: the long line takes more than one row")
-            # Not wrapped: one row a line, and the diff scrolls instead.
+            # Not wrapped: one row a line.
             b.click("[data-diffnote-view-menu]")
             b.click("[data-diffnote-wrap]")
             self.assertTrue(b.wait("document.body.classList.contains('diffnote-nowrap')"))
             self.assertLessEqual(b.js(tall % cell), 21, layout)
-            self.assertGreater(b.js(overflow), 100, layout)
             b.reload()
             self.assertTrue(b.wait_exists(table))
             self.assertTrue(b.js("document.body.classList.contains('diffnote-nowrap')"), "the choice is kept")
-        # Side by side, the two halves stay as wide as each other.
-        b.js("localStorage.setItem('diffnote-layout','split')")
+        # Unified, the diff scrolls sideways as a whole.
+        self.assertGreater(b.js(overflow), 100)
+
+    def test_unwrapped_side_by_side_each_side_scrolls_on_its_own(self):
+        b = self.b
+        b.open(self.long_url)
+        b.js("localStorage.setItem('diffnote-layout','split'); localStorage.setItem('diffnote-wrap','0')")
         b.reload()
         self.assertTrue(b.wait_exists("table.diffnote-diff--split"))
+        self.assertLessEqual(b.js("(function(){var s=document.querySelector('.diffnote-diff-scroll'); return s.scrollWidth - s.clientWidth})()"), 1,
+                             "the table itself doesn't scroll: each side does")
+        where = """(function(){var r=document.querySelector('table.diffnote-diff--split .diffnote-cell--removed.diffnote-line__content').parentElement;
+          return [r.children[1].querySelector('.diffnote-slide').getBoundingClientRect().left,
+                  r.children[3].querySelector('.diffnote-slide').getBoundingClientRect().left]})()"""
+        old0, new0 = b.js(where)
+        # The bar at the foot of the new side moves the new side only.
+        b.js("document.querySelector('[data-diffnote-split-bar=new]').scrollLeft = 200")
+        self.assertTrue(b.wait("(%s)[1] < %f" % (where, new0 - 150)))
+        self.assertAlmostEqual(b.js(where)[0], old0, delta=1)
+        # A sideways turn of the wheel over the old side moves the old side only.
+        b.js("""document.querySelector('table.diffnote-diff--split .diffnote-cell--removed.diffnote-line__content')
+          .dispatchEvent(new WheelEvent('wheel', {deltaX: 120, bubbles: true, cancelable: true}))""")
+        self.assertTrue(b.wait("(%s)[0] < %f" % (where, old0 - 100)))
+        self.assertLess(b.js(where)[1], new0 - 150, "and leaves the new side where it was")
+        # The two halves stay as wide as each other.
         widths = b.js("""(function(){var r=document.querySelector('table.diffnote-diff--split .diffnote-split-row');
           return [r.children[1].getBoundingClientRect().width, r.children[3].getBoundingClientRect().width]})()""")
         self.assertAlmostEqual(widths[0], widths[1], delta=1)

@@ -243,10 +243,20 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 }
 
 /* Side by side: the old file on the left, the new on the right, sharing the
-   width. Unwrapped, each half is as wide as the longest line of the file
-   (`--dn-cols`, in columns), and the table scrolls sideways as one. */
+   width. Unwrapped, each side scrolls on its own: its lines slide by
+   `--dn-x-old` / `--dn-x-new` (set by its scroll bar at the foot, which
+   stays in view) and are cut at the edge of their column. */
 .diffnote-diff--split { table-layout: fixed; }
-.diffnote-nowrap .diffnote-diff--split { min-width: calc(2 * (3.6em + 34px + var(--dn-cols, 0) * 1ch)); }
+.diffnote-split-bars { display: none; }
+.diffnote-nowrap .diffnote-diff-scroll:has(> .diffnote-diff--split) { overflow: visible; }
+.diffnote-nowrap .diffnote-diff--split .diffnote-line__content > code { display: block; overflow: hidden; }
+.diffnote-nowrap .diffnote-diff--split .diffnote-slide { display: inline-block; }
+.diffnote-nowrap .diffnote-diff--split .diffnote-side-old .diffnote-slide { transform: translateX(calc(-1 * var(--dn-x-old, 0px))); }
+.diffnote-nowrap .diffnote-diff--split .diffnote-side-new .diffnote-slide { transform: translateX(calc(-1 * var(--dn-x-new, 0px))); }
+.diffnote-nowrap .diffnote-split-bars { display: table-footer-group; }
+.diffnote-split-bars td { position: sticky; bottom: 0; z-index: 2; padding: 0; background: var(--diffnote-color-bg); border-top: 1px solid var(--diffnote-color-border); }
+.diffnote-split-bar { overflow-x: auto; overflow-y: hidden; }
+.diffnote-split-bar > div { height: 1px; }
 .diffnote-diff--split .diffnote-col-gutter { width: 3.6em; }
 .diffnote-diff--split .diffnote-line__content { width: auto; }
 .diffnote-diff--split .diffnote-line__gutter-new { border-left: 1px solid var(--diffnote-color-border); }

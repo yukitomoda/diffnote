@@ -1,5 +1,5 @@
 // The diff itself: one table of lines, or two side by side.
-import { useContext, useMemo, useState } from 'preact/hooks';
+import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { transport } from '../transport.ts';
 import { tokens } from '../markdown.tsx';
@@ -210,10 +210,10 @@ export function SplitTable(props: TableProps) {
         onMouseOver={compose ? function () { compose!.extend(function (side) { return (side === 'old' ? idxOf(l) : idxOf(r)) ?? null; }); } : undefined}>
         <td class={'diffnote-line__gutter-old diffnote-cell--' + kl + (shownL ? ' diffnote-gutter--commented' : '') + pl} style={shownL ? bars(idsL) : undefined}
           data-diffnote-old={l && l.o != null ? l.o : undefined} onMouseDown={begin(l, 'old')}>{l && l.o != null ? l.o : ''}</td>
-        <td class={'diffnote-line__content diffnote-cell--' + kl + pl}>{l && <code>{tokens(l.t, l.w)}</code>}</td>
+        <td class={'diffnote-line__content diffnote-side-old diffnote-cell--' + kl + pl}>{l && <code><span class="diffnote-slide">{tokens(l.t, l.w)}</span></code>}</td>
         <td class={'diffnote-line__gutter-new diffnote-cell--' + kr + (shownR ? ' diffnote-gutter--commented' : '') + pr} style={shownR ? bars(idsR) : undefined}
           data-diffnote-new={r && r.n != null ? r.n : undefined} onMouseDown={begin(r, 'new')}>{r && r.n != null ? r.n : ''}</td>
-        <td class={'diffnote-line__content diffnote-cell--' + kr + pr}>{r && <code>{tokens(r.t, r.w)}</code>}</td>
+        <td class={'diffnote-line__content diffnote-side-new diffnote-cell--' + kr + pr}>{r && <code><span class="diffnote-slide">{tokens(r.t, r.w)}</span></code>}</td>
       </tr>);
       // The box for the choice: under the pair that has its last row.
       var last = sel && !compose!.selecting ? flat[hi_].row : null;
@@ -232,14 +232,50 @@ export function SplitTable(props: TableProps) {
       });
     });
   });
-  // Without wrapping, both halves are as wide as the longest line of either,
-  // and the table scrolls as one.
-  var longest = 0;
+  // Without wrapping, each side scrolls on its own: its lines are slid along
+  // by how far its own scroll bar (at the foot, kept in view) has gone, and
+  // cut at the edge of their column. The scroll bars are as wide as the
+  // longest line of their side.
+  var longest = { old: 0, new: 0 };
   file.hunks.forEach(function (hunk) {
-    (hunk.rows || []).forEach(function (row) { longest = Math.max(longest, lib.columns(row.t)); });
+    (hunk.rows || []).forEach(function (row) {
+      var n = lib.columns(row.t);
+      if (row.o != null) longest.old = Math.max(longest.old, n);
+      if (row.n != null) longest.new = Math.max(longest.new, n);
+    });
   });
-  return <div class="diffnote-diff-scroll"><table class="diffnote-diff diffnote-diff--split" data-diffnote-file={file.path} style={'--dn-cols: ' + longest}>
+  var box = useRef<HTMLDivElement | null>(null);
+  var bar = function (side: Side) {
+    return <div class="diffnote-split-bar" data-diffnote-split-bar={side}
+      onScroll={function (e) { if (box.current) box.current.style.setProperty('--dn-x-' + side, e.currentTarget.scrollLeft + 'px'); }}>
+      <div style={'width: calc(' + longest[side] + 'ch + 34px)'} />
+    </div>;
+  };
+  // A sideways turn of the wheel (or Shift and the wheel) over a side moves
+  // that side's bar, and only it.
+  useEffect(function () {
+    var found = box.current;
+    if (!found) return undefined;
+    var el: HTMLDivElement = found;
+    var wheel = function (e: WheelEvent) {
+      if (!document.body.classList.contains('diffnote-nowrap')) return;
+      var dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
+      if (!dx || Math.abs(dx) < Math.abs(e.shiftKey ? 0 : e.deltaY)) return;
+      var cell = (e.target as Element).closest('td');
+      var row = cell && cell.parentElement;
+      if (!cell || !row || !row.classList.contains('diffnote-split-row')) return;
+      var side = Array.prototype.indexOf.call(row.children, cell) < 2 ? 'old' : 'new';
+      var scroller = el.querySelector<HTMLElement>('[data-diffnote-split-bar="' + side + '"]');
+      if (!scroller || scroller.scrollWidth <= scroller.clientWidth) return;
+      scroller.scrollLeft += dx;
+      e.preventDefault();
+    };
+    el.addEventListener('wheel', wheel, { passive: false });
+    return function () { el.removeEventListener('wheel', wheel); };
+  }, []);
+  return <div class="diffnote-diff-scroll" ref={box}><table class="diffnote-diff diffnote-diff--split" data-diffnote-file={file.path}>
     <colgroup><col class="diffnote-col-gutter" /><col /><col class="diffnote-col-gutter" /><col /></colgroup>
     <tbody>{out}</tbody>
+    <tfoot class="diffnote-split-bars"><tr><td /><td>{bar('old')}</td><td /><td>{bar('new')}</td></tr></tfoot>
   </table></div>;
 }
