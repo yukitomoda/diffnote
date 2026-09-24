@@ -726,6 +726,35 @@ class Replies(ServedCase):
 LOGIN = "table[data-diffnote-file='src/auth/login.ts']"
 
 
+class ViewKeptAcrossRuns(ServedCase):
+    """How the page is shown is kept in the user settings, so a later run --
+    on another port, which the browser keeps apart -- starts the same."""
+
+    def test_what_is_chosen_on_the_page_is_how_the_next_run_starts(self):
+        self.serve()
+        b = self.b
+        b.click("[data-diffnote-view-menu]")
+        # (Side by side is where a wide window starts: unified shows the choice.)
+        b.click("[data-diffnote-layout=unified]")
+        b.click("[data-diffnote-wrap]")
+        self.assertTrue(b.wait("document.body.classList.contains('diffnote-nowrap')"))
+        for _ in range(50):
+            if harness.user_view() == {"layout": "unified", "wrap": False}:
+                break
+            time.sleep(0.1)
+        self.assertEqual(harness.user_view(), {"layout": "unified", "wrap": False})
+        port = self.server.url.split(":")[2].split("/")[0]
+        self.server.stop()
+        # (author=None: the user settings are left as the page left them.)
+        again = Served(self.review, author=None, keep_view=True)
+        self.addCleanup(again.stop)
+        self.assertNotEqual(again.url.split(":")[2].split("/")[0], port, "another address, so nothing the browser kept")
+        b.open(again.url, ready="!!document.querySelector('.diffnote-file')")
+        self.assertTrue(b.wait_exists("table.diffnote-diff"))
+        self.assertFalse(b.exists("table.diffnote-diff--split"), "unified, as chosen")
+        self.assertTrue(b.js("document.body.classList.contains('diffnote-nowrap')"), "and not wrapped")
+
+
 class NewThreadsOnLines(ServedCase):
     def gutter(self, kind, n, table=LOGIN):
         return f"{CUR} {table} tr[data-diffnote-{kind}='{n}'] .diffnote-line__gutter-{kind}"

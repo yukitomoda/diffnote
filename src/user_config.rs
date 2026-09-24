@@ -18,6 +18,45 @@ pub struct UserConfig {
     /// リポジトリごとに違うことがあるが、これは一貫させるためのもの)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
+    /// 画面の表示の好み(レイアウト、折り返しなど)。どのレビューを開いても
+    /// 同じになるよう、ブラウザではなくここに置く(`review`/`open` のページ
+    /// はポートが毎回変わり、ブラウザの保存場所もそのたびに変わるため)。
+    #[serde(default, skip_serializing_if = "ViewPrefs::is_empty")]
+    pub view: ViewPrefs,
+}
+
+/// 表示の好み。決めていないもの(`None`)は、画面の既定値になる。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewPrefs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<Layout>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hide_resolved: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_scroll: Option<bool>,
+}
+
+impl ViewPrefs {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// `other` で決めたものだけを上書きする。
+    pub fn merge(&mut self, other: ViewPrefs) {
+        self.layout = other.layout.or(self.layout);
+        self.hide_resolved = other.hide_resolved.or(self.hide_resolved);
+        self.wrap = other.wrap.or(self.wrap);
+        self.sync_scroll = other.sync_scroll.or(self.sync_scroll);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Layout {
+    Unified,
+    Split,
 }
 
 /// 設定ファイルの場所。決めようがなければ(`HOME` が読めないなど)`None`。
@@ -99,16 +138,16 @@ mod tests {
     #[test]
     fn what_is_saved_is_what_load_returns_next() {
         with_test_config_dir(|dir| {
-            save(&UserConfig {
+            let config = UserConfig {
                 author: Some("山田 太郎".into()),
-            })
-            .unwrap();
-            assert_eq!(
-                load(),
-                UserConfig {
-                    author: Some("山田 太郎".into())
-                }
-            );
+                view: ViewPrefs {
+                    layout: Some(Layout::Split),
+                    wrap: Some(false),
+                    ..Default::default()
+                },
+            };
+            save(&config).unwrap();
+            assert_eq!(load(), config);
             assert!(dir.join("config.json").exists());
         });
     }

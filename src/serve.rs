@@ -1273,6 +1273,7 @@ impl Server {
             }
             ["api", "settings"] => self.set_settings(request.body),
             ["api", "user-settings"] => self.set_user_settings(request.body),
+            ["api", "view"] => self.set_view(request.body),
             ["api", "images"] => self.add_image(request.target, request.body),
             ["api", "attachments"] => self.add_attachment(request.target, request.body),
             ["api", "images", id, "delete"] => self.delete_attached("image", id),
@@ -1352,6 +1353,18 @@ impl Server {
         let loaded = bundle::load(&self.review).map_err(internal)?;
         let before = html::stamp(&loaded);
         self.model_answer(&before, serde_json::json!({}))
+    }
+
+    /// Keeps how the page is shown (layout, wrapping, ...) in this machine's
+    /// user settings, for every review and every run: what the body names
+    /// is changed, the rest is left as it was. Nothing on the page changes.
+    fn set_view(&self, body: &[u8]) -> Result<Reply, Failure> {
+        let asked: crate::user_config::ViewPrefs = serde_json::from_slice(body)
+            .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
+        let mut config = crate::user_config::load();
+        config.view.merge(asked);
+        crate::user_config::save(&config).map_err(internal)?;
+        Ok(Reply::json(200, &serde_json::json!({ "ok": true })))
     }
 
     /// Takes in what was added to the target since the server started, as a
@@ -2529,6 +2542,43 @@ mod tests {
                 _ => None,
             })
             .unwrap()
+    }
+
+    #[test]
+    fn how_the_page_is_shown_is_kept_in_the_user_settings_a_choice_at_a_time() {
+        crate::user_config::with_test_config_dir(|_| {
+            let f = fixture();
+            let view = || {
+                json(&f.request("GET", "/api/model", &[], ""))["model"]["user_settings"]["view"]
+                    .clone()
+            };
+            assert_eq!(view(), serde_json::Value::Null, "nothing chosen yet");
+            assert_eq!(
+                json(&f.post("/api/view", r#"{"layout":"split"}"#))["ok"],
+                true
+            );
+            assert_eq!(json(&f.post("/api/view", r#"{"wrap":false}"#))["ok"], true);
+            assert_eq!(
+                view(),
+                serde_json::json!({ "layout": "split", "wrap": false }),
+                "each choice is added to the others"
+            );
+            json(&f.post("/api/view", r#"{"layout":"unified","sync_scroll":true}"#));
+            assert_eq!(
+                view(),
+                serde_json::json!({ "layout": "unified", "wrap": false, "sync_scroll": true })
+            );
+            // What the page can't have is refused, and nothing is changed.
+            assert_eq!(f.post("/api/view", r#"{"layout":"sideways"}"#).status, 400);
+            assert_eq!(f.post("/api/view", r#"{"wrap":"no"}"#).status, 400);
+            assert_eq!(view()["layout"], "unified");
+            // The author, kept in the same file, is left alone, and the other way round.
+            json(&f.post("/api/user-settings", r#"{"author":"山田"}"#));
+            assert_eq!(view()["wrap"], false);
+            let config = crate::user_config::load();
+            assert_eq!(config.author.as_deref(), Some("山田"));
+            assert_eq!(config.view.wrap, Some(false));
+        });
     }
 
     #[test]

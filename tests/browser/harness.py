@@ -377,6 +377,33 @@ def set_user_author(name):
     assert out.returncode == 0, out.stdout + out.stderr
 
 
+def set_user_view(view):
+    """What the user settings say of how the page is shown (`None`: nothing,
+    so a served page starts from what the browser keeps, then its defaults).
+    Every served page reads it, so each `Served` starts from this."""
+    path = os.path.join(USER_CONFIG_DIR, "config.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            config = json.load(f)
+    except (OSError, ValueError):
+        config = {}
+    config.pop("view", None)
+    if view:
+        config["view"] = view
+    os.makedirs(USER_CONFIG_DIR, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(config, f)
+
+
+def user_view():
+    """How the page is shown, as the user settings keep it."""
+    try:
+        with open(os.path.join(USER_CONFIG_DIR, "config.json"), encoding="utf-8") as f:
+            return json.load(f).get("view", {})
+    except (OSError, ValueError):
+        return {}
+
+
 def diffnote(*args, cwd=None, env=None):
     """Runs `diffnote` and gives back what it did. Comments are not written
     this way any more: a review is made through the page's own API, which is
@@ -475,7 +502,7 @@ class Served:
     """`diffnote review` on a review (`command="open"`: `diffnote open`, the
     review as it is)."""
 
-    def __init__(self, review, cwd=None, extra=(), author="tester", command="review"):
+    def __init__(self, review, cwd=None, extra=(), author="tester", command="review", view=None, keep_view=False):
         # The server has no --author of its own any more (diffnote config does
         # its job): author=None starts it with whatever is already configured
         # (or, with nothing configured, git config then the login name);
@@ -488,6 +515,10 @@ class Served:
         config_file = os.path.join(USER_CONFIG_DIR, "config.json")
         if author is not None:
             set_user_author(author)
+        # What one test chose on its page is not the next one's to start with
+        # (unless the test is about just that: `keep_view`).
+        if not keep_view:
+            set_user_view(view)
         env = dict(os.environ)
         env["DIFFNOTE_CONFIG_DIR"] = USER_CONFIG_DIR
         self.proc = subprocess.Popen([BIN, command, "-f", review, "--no-browser", *extra],

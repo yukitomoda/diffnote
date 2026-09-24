@@ -291,7 +291,7 @@ export function start() {
   };
   lib.setMessages(read('diffnote-messages'));
   var model: ViewModel = read('diffnote-data');
-  startView(!!model.ignore_whitespace);
+  startView(!!model.ignore_whitespace, model.user_settings && model.user_settings.view);
   if (model.interactive) document.body.setAttribute('data-diffnote-api', '1');
   interact.install();
   render(<App model={model} />, document.getElementById('app')!);

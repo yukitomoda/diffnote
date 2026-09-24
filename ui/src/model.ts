@@ -167,6 +167,16 @@ export interface Settings {
 /** This machine's settings (`diffnote config`), which apply to every review. */
 export interface UserSettings {
   author?: string;
+  /** How the page is shown, kept for every review (served page only). */
+  view?: ViewPrefs;
+}
+
+/** How the page is shown, as the reader last chose it. */
+export interface ViewPrefs {
+  layout?: 'unified' | 'split';
+  hide_resolved?: boolean;
+  wrap?: boolean;
+  sync_scroll?: boolean;
 }
 
 /** A number of things, and how many bytes they are. */
