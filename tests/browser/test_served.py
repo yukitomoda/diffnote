@@ -846,8 +846,14 @@ class FileTree(ServedCase):
         # The check is the last thing on a file's row, at its right end.
         last = b.js("document.querySelector('%s .diffnote-filelist [data-diffnote-file-link=\"a/b/e/f/g\"]').parentElement.lastElementChild.dataset.diffnoteCheck" % CUR)
         self.assertEqual(last, "a/b/e/f/g")
+        # Before it is checked, the tick is there to see (faintly), in the list
+        # and on the file's own 確認済み button alike.
+        for where in (f"{CUR} [data-diffnote-check='a/b/e/f/g']", f"{CUR} [data-diffnote-viewed='a/b/e/f/h']"):
+            tick = "document.querySelector(%s)" % json.dumps(where + " .diffnote-tick svg")
+            self.assertTrue(b.js("!!" + tick), where)
+            self.assertNotEqual(b.js("getComputedStyle(%s).visibility" % tick), "hidden")
         b.click("[data-diffnote-check='a/b/e/f/g']")
-        self.assertTrue(b.wait("!!document.querySelector('[data-diffnote-check=\"a/b/e/f/g\"][aria-pressed=\"true\"]')"))
+        self.assertTrue(b.wait("!!document.querySelector('[data-diffnote-check=\"a/b/e/f/g\"][aria-pressed=\"true\"] .diffnote-tick.is-on')"))
         # A file is still reached by its row.
         b.click(f"{CUR} [data-diffnote-file-link='a/b/c/d']")
         self.assertTrue(b.wait("location.hash.includes('file')"))

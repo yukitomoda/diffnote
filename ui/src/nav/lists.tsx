@@ -46,7 +46,7 @@ export function FileList(props: ListProps) {
         ? open > 0 && <span class="diffnote-badge" data-diffnote-open-count title={lib.mf('ui.thread.open_count_title', { n: String(open) })}>{open}</span>
         : n > 0 && <span class="diffnote-badge">{n}</span>}
       <button type="button" class="diffnote-check" data-diffnote-check={f.path} aria-pressed={done}
-        title={done ? lib.m('ui.file.unmark_viewed_title') : lib.m('ui.file.mark_viewed_title')} onClick={function () { toggleViewed(f); }}>{done && <Icon name="check" />}</button>
+        title={done ? lib.m('ui.file.unmark_viewed_title') : lib.m('ui.file.mark_viewed_title')} onClick={function () { toggleViewed(f); }}><span class={'diffnote-tick' + (done ? ' is-on' : '')}><Icon name="check" /></span></button>
     </li>;
   };
   var rows = function (nodes: FileTreeNode[]): preact.ComponentChildren {
