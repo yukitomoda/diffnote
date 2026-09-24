@@ -863,6 +863,36 @@ class IgnoredFiles(ServedCase):
         self.assertIn("(1)", listed)
         self.assertIn("a/b/e/f/g", listed)
 
+    def test_a_file_is_left_out_from_its_own_menu_unless_it_has_threads(self):
+        self.serve(tree_review(self.root, "ignored-menu"))
+        b = self.b
+        shown = "[...document.querySelectorAll('%s section.diffnote-file')].map(function (s) { return s.dataset.diffnoteFile; })" % CUR
+        file = lambda p: f"{CUR} section.diffnote-file[data-diffnote-file='{p}']"
+        was_open = b.js(f"document.querySelector({json.dumps(file('a/b/c/d') + ' details')}).open")
+        b.click(f"{file('a/b/c/d')} [data-diffnote-file-menu]")
+        self.assertTrue(b.wait_exists(f"{file('a/b/c/d')} [data-diffnote-ignore-file]"))
+        self.assertEqual(b.js(f"document.querySelector({json.dumps(file('a/b/c/d') + ' details')}).open"), was_open,
+                         "the menu doesn't fold or open the file")
+        # Over the files after it (their headers are sticky layers too).
+        on_top = b.js("""(function (el) { var r = el.getBoundingClientRect();
+          return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === el; })(
+          document.querySelector(%s))""" % json.dumps(file('a/b/c/d') + " [data-diffnote-ignore-file]"))
+        self.assertTrue(on_top, "the menu is what is under the pointer")
+        b.click(f"{file('a/b/c/d')} [data-diffnote-ignore-file]")
+        self.assertTrue(b.wait(f"{shown}.length === 2"))
+        self.assertIn("/a/b/c/d", harness.member(self.review, "settings.json"))
+        self.assertIn("a/b/c/d", b.text(f"{CUR} [data-diffnote-ignored]"))
+        # A file with a thread would be shown all the same: the item says so.
+        b.click(f"{file('a/b/e/f/h')} [data-diffnote-file-menu]")
+        self.assertTrue(b.js(f"document.querySelector({json.dumps(file('a/b/e/f/h') + ' [data-diffnote-ignore-file]')}).disabled"))
+        # And a second file goes on the end of the list, the first kept.
+        b.escape()
+        b.click(f"{file('a/b/e/f/g')} [data-diffnote-file-menu]")
+        b.click(f"{file('a/b/e/f/g')} [data-diffnote-ignore-file]")
+        self.assertTrue(b.wait(f"{shown}.length === 1"))
+        self.assertIn("/a/b/c/d", harness.member(self.review, "settings.json"))
+        self.assertIn("/a/b/e/f/g", harness.member(self.review, "settings.json"))
+
 
 class FoldAll(ServedCase):
     """Every file of the revision opened, or folded, at once."""
@@ -1149,6 +1179,7 @@ class CompareWithAnEarlierRevision(ServedCase):
         section = f"{CUR} section.diffnote-file[data-diffnote-file='a.txt']"
         self.assertTrue(b.wait_exists(section), "a.txt is only here for its thread")
         self.assertEqual(b.count(f"{section} tr.diffnote-line--added"), 0, "it is not in what changed between the two")
+        b.click(f"{section} [data-diffnote-file-menu]")  # (the file's menu, then its item)
         b.click(f"{section} [data-diffnote-add=file]")
         self.write(".diffnote-compose textarea", "a.txt 全体について")
         b.js("document.querySelector('.diffnote-compose').requestSubmit()")
@@ -1999,10 +2030,12 @@ class ThreadsOnFilesAndTheReview(ServedCase):
         self.serve()
         b = self.b
         file = f"{CUR} section.diffnote-file[data-diffnote-file='calc.py']"
+        b.click(f"{file} [data-diffnote-file-menu]")  # (the file's menu, then its item)
         b.click(f"{file} [data-diffnote-add=file]")
         self.assertEqual(b.text(".diffnote-compose__where"), "calc.py へのコメント")
         b.escape()
         self.assertTrue(b.wait("!document.querySelector('.diffnote-compose-wrap')"))
+        b.click(f"{file} [data-diffnote-file-menu]")  # (the file's menu, then its item)
         b.click(f"{file} [data-diffnote-add=file]")
         self.write(".diffnote-compose textarea", "ファイル全体について")
         b.js("document.querySelector('.diffnote-compose').requestSubmit()")

@@ -176,6 +176,14 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 .diffnote-check { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; margin-left: 2px; background: transparent; border: 0; cursor: pointer; }
 .diffnote-filelist li.is-viewed a { color: var(--diffnote-color-muted); }
 /* A file header's 確認済み: the tick alone, a size up from the list's. */
+/* The file's menu sits left of 確認済み (both float right, the tick first). */
+/* (Its header is sticky, and so a layer of its own: while the menu is open it
+   goes over the headers after it, still under the bar above the diff.) */
+.diffnote-file > details > summary:has(.diffnote-file__menu [aria-expanded="true"]) { z-index: 7; }
+.diffnote-file__menu { float: right; margin-left: 2px; }
+.diffnote-file__menu .diffnote-comment__more { padding: 0 4px; font-size: 18px; line-height: 20px; }
+.diffnote-file__menu .diffnote-comment__panel { min-width: 13em; font-weight: 400; }
+.diffnote-comment__item:disabled { color: var(--diffnote-color-muted); cursor: default; background: none; }
 .diffnote-mini--check { float: right; margin-left: 8px; display: inline-flex; align-items: center; justify-content: center; padding: 0; background: none; border: 0; cursor: pointer; }
 .diffnote-mini--check .diffnote-tick { width: 20px; height: 20px; font-size: 14px; }
 .diffnote-badge { background: var(--diffnote-color-accent); color: #fff; border-radius: 1em; padding: 0 7px; font-size: 11px; line-height: 18px; }

@@ -5,7 +5,7 @@ import { server } from '../transport.ts';
 import { DiffTable, SplitTable } from './tables.jsx';
 import { htmlId } from '../dom.ts';
 import { useStore } from '@nanostores/preact';
-import { ComposeContext, OpenedContext } from '../state/contexts.ts';
+import { ActionsContext, ComposeContext, OpenedContext } from '../state/contexts.ts';
 import { isViewed, seen, toggleViewed } from '../state/viewed.ts';
 import { allFolded } from '../state/view.ts';
 import { Card } from '../thread/Card.tsx';
@@ -35,6 +35,7 @@ export function File(props: FileProps) {
   var setOpened = _[1];
   var missing = file.status === 'context' && file.hunks.length === 0;
   var compose = useContext(ComposeContext);
+  var actions = useContext(ActionsContext);
   var details = useRef<HTMLDetailsElement | null>(null);
   // 「すべて開く」「すべて閉じる」: followed when pressed, not when drawn.
   var fold = useStore(allFolded);
@@ -89,12 +90,28 @@ export function File(props: FileProps) {
   // A file that was looked at is not shown at all (with its threads): the
   // list at the side says so, and takes it back.
   if (isViewed(file, marks)) return null;
+  // What the file's menu offers (the served page only): a thread on the file
+  // as a whole, and leaving the file out of what is shown (the review's
+  // settings: a file only opened to look at, or brought in by its threads,
+  // isn't one the diff shows).
+  var canComment = !!compose && (!!file.opened || file.status !== 'context' || mine.length > 0);
+  var canIgnore = !!actions && file.status !== 'context';
   return <section class={'diffnote-file' + (kind === 'added' || kind === 'deleted' ? ' diffnote-file--' + kind : '')} id={'r' + ctx.rev + '-file-' + htmlId(file.path)} data-diffnote-file={file.path}>
     <details ref={details} open={startsOpen} onToggle={function (e) { if (e.currentTarget.open && !opened) setOpened(true); }}>
       <summary>
         {<button type="button" class="diffnote-mini--check" data-diffnote-viewed={file.path} title={lib.m('ui.file.viewed_title')}
           aria-label={lib.m('ui.file.viewed_button')}
           onClick={function (e) { e.preventDefault(); e.stopPropagation(); toggleViewed(file); }}><span class="diffnote-tick"><Icon name="check" /></span></button>}
+        {(canComment || canIgnore) && <FileMenu
+          onComment={canComment ? function () {
+            details.current!.open = true;
+            setOpened(true);
+            compose!.openScope('file', ctx.rev, file.path);
+          } : null}
+          onIgnore={canIgnore ? function () {
+            return actions!.saveSettings({ ignore: lib.withIgnored(ctx.model.settings && ctx.model.settings.ignore, file.path) });
+          } : null}
+          ignoreBlocked={mine.length > 0} />}
         {file.status !== 'binary' && stat.added + stat.removed > 0 && <span class="diffnote-stat" data-diffnote-stat title={lib.mf('ui.file.stat_title', { added: String(stat.added), removed: String(stat.removed) })}>
           <span class="diffnote-stat__add">+{stat.added}</span> <span class="diffnote-stat__del">−{stat.removed}</span>
           <span class="diffnote-stat__blocks" aria-hidden="true">{lib.diffBlocks(stat.added, stat.removed).map(function (k, i) { return <i key={i} class={'is-' + k}></i>; })}</span>
@@ -116,14 +133,7 @@ export function File(props: FileProps) {
             if (compose && compose!.sel && compose!.sel.path === file.path) compose!.close();
             files!.close(ctx.rev, file.path);
           }}>{lib.m('ui.file.close_button')}</button>}
-        {compose && (file.opened || file.status !== 'context' || mine.length > 0) && <button type="button" class="diffnote-icon-button" data-diffnote-add="file" title={lib.m('ui.file.add_comment_title')} aria-label={lib.m('ui.file.add_comment_title')}
-          onClick={function (e) {
-            e.preventDefault();
-            e.stopPropagation();
-            details.current!.open = true;
-            setOpened(true);
-            compose!.openScope('file', ctx.rev, file.path);
-          }}><Icon name="addComment" /></button>}
+
       </summary>
       {composing && <div class="diffnote-compose-wrap"><Composer scope="file" where={lib.mf('ui.compose.file_where', { path: file.path })} request={{ scope: 'file', revision: ctx.rev, file: file.path }} /></div>}
       {fileThreads.map(function (id) { return <Card key={id} rev={ctx.rev} thread={ctx.byId[id]} placement={ctx.placements[id]} />; })}
@@ -147,4 +157,55 @@ export function File(props: FileProps) {
       </section>}
     </details>
   </section>;
+}
+
+// The menu on a file's header (left of 確認済み): what can be done to the
+// file. Inside the <summary>, so nothing here may fold the file.
+interface FileMenuProps {
+  onComment: (() => void) | null;
+  onIgnore: (() => Promise<{ ok: boolean; error?: string }>) | null;
+  /** The file has threads: left out, it would be shown all the same. */
+  ignoreBlocked: boolean;
+}
+
+function FileMenu(props: FileMenuProps) {
+  var _o = useState(false);
+  var open = _o[0];
+  var setOpen = _o[1];
+  var _e = useState('');
+  var error = _e[0];
+  var setError = _e[1];
+  var box = useRef<HTMLSpanElement | null>(null);
+  useEffect(function () {
+    if (!open) return undefined;
+    var away = function (e: MouseEvent) { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
+    var key = function (e: KeyboardEvent) { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', key);
+    return function () {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('keydown', key);
+    };
+  }, [open]);
+  // (A click here is the menu's: the file doesn't fold or open for it.)
+  var own = function (then: () => void) {
+    return function (e: MouseEvent) { e.preventDefault(); e.stopPropagation(); then(); };
+  };
+  return <span class="diffnote-comment__menu diffnote-file__menu" ref={box} onClick={function (e) { e.preventDefault(); e.stopPropagation(); }}>
+    <button type="button" class="diffnote-comment__more" data-diffnote-file-menu aria-label={lib.m('ui.file.menu_label')} title={lib.m('ui.file.menu_label')}
+      aria-haspopup="true" aria-expanded={open} onClick={own(function () { setOpen(!open); setError(''); })}><Icon name="menu" /></button>
+    <span class="diffnote-comment__panel" hidden={!open}>
+      {props.onComment && <button type="button" class="diffnote-comment__item" data-diffnote-add="file"
+        onClick={own(function () { setOpen(false); props.onComment!(); })}>{lib.m('ui.file.menu_comment')}</button>}
+      {props.onIgnore && <button type="button" class="diffnote-comment__item" data-diffnote-ignore-file disabled={props.ignoreBlocked}
+        title={props.ignoreBlocked ? lib.m('ui.file.menu_ignore_blocked') : lib.m('ui.file.menu_ignore_title')}
+        onClick={own(function () {
+          props.onIgnore!().then(function (res) {
+            if (res.ok) setOpen(false);
+            else setError(res.error || lib.m('ui.save_failed'));
+          });
+        })}>{lib.m('ui.file.menu_ignore')}</button>}
+      {error && <span class="diffnote-error" role="alert">{error}</span>}
+    </span>
+  </span>;
 }

@@ -152,6 +152,8 @@ interface Lib {
   diffStat(file: FileData): { added: number; removed: number };
   columns(pieces: Token[] | null | undefined): number;
   fileTree(paths: string[]): FileTreeNode[];
+  ignoreLine(path: string): string;
+  withIgnored(text: string | undefined, path: string): string;
   diffBlocks(added: number, removed: number): string[];
   withoutSpaceChanges(file: FileData): FileData;
 
@@ -522,6 +524,23 @@ lib.EXPAND_STEP = 20;
 // with no rows) between them; a hunk whose place is shown whole, or shown up to it,
 // gives up its `@@` row (`quiet`). The added blocks have headers, so the rows can be told
 // their line numbers as those of a hunk.
+// The line of a `.gitignore` that names this one file and nothing else:
+// from the top (`/`), with what would be read as a pattern (`* ? [ \`, and
+// spaces at the end) written as itself.
+lib.ignoreLine = function (path) {
+  var line = '/' + path.replace(/[\\*?[]/g, '\\$&');
+  return line.replace(/ +$/, function (spaces) { return spaces.replace(/ /g, '\\ '); });
+};
+
+// The settings' list of files not to show, with this one added at the end
+// (as it is, if it is there already).
+lib.withIgnored = function (text, path) {
+  var line = lib.ignoreLine(path);
+  var lines = (text || '').replace(/\s+$/, '').split('\n').filter(function (l) { return l !== ''; });
+  if (lines.indexOf(line) >= 0) return (text || '').replace(/\s+$/, '');
+  return lines.concat([line]).join('\n');
+};
+
 // The files as a tree, in the order they come in. A directory that holds
 // only one thing, a directory or a file, is joined to it: `a/b/c/d`,
 // `a/b/e/f/g` and `a/b/e/f/h` are `a/b/` holding `c/d` and `e/f/`, which

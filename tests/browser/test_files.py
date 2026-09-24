@@ -123,6 +123,7 @@ class StoredFiles(FilesCase):
         self.open_tree()
         self.open_file("docs/README.md")
         self.comment_on_line("docs/README.md", 3, "この一文を詳しく")
+        b.click(f"{section('docs/README.md')} [data-diffnote-file-menu]")  # (the file's menu, then its item)
         b.click(f"{section('docs/README.md')} [data-diffnote-add=file]")
         b.set_value(".diffnote-compose textarea", "このファイル全体について")
         b.click(".diffnote-compose button[type=submit]")

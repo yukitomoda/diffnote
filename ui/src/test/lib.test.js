@@ -564,3 +564,19 @@ test('the files are a tree, with a directory that holds one thing joined to it',
   assert.deepEqual(shape(lib.fileTree(['d/f', 'd/e/g'])), [['d/', ['f=d/f', 'e/g=d/e/g']]]);
   assert.deepEqual(lib.fileTree([]), []);
 });
+
+test('a file is named in a .gitignore from the top, with what would be a pattern written as itself', () => {
+  assert.equal(lib.ignoreLine('src/a.rs'), '/src/a.rs');
+  assert.equal(lib.ignoreLine('a*b?[c].txt'), '/a\\*b\\?\\[c].txt');
+  assert.equal(lib.ignoreLine('back\\slash'), '/back\\\\slash');
+  assert.equal(lib.ignoreLine('#not-a-comment'), '/#not-a-comment');
+  assert.equal(lib.ignoreLine('!not-negated'), '/!not-negated');
+  assert.equal(lib.ignoreLine('ends '), '/ends\\ ');
+});
+
+test('a file is added to the end of the list once', () => {
+  assert.equal(lib.withIgnored('', 'a.txt'), '/a.txt');
+  assert.equal(lib.withIgnored(undefined, 'a.txt'), '/a.txt');
+  assert.equal(lib.withIgnored('# 生成物\n*.lock\n', 'b/c.txt'), '# 生成物\n*.lock\n/b/c.txt');
+  assert.equal(lib.withIgnored('/b/c.txt', 'b/c.txt'), '/b/c.txt', 'already there');
+});

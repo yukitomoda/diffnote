@@ -237,6 +237,28 @@ pub fn load(path: &Path) -> Result<Vec<Event>> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_line_the_page_writes_for_a_file_names_that_file_and_no_other() {
+        let settings = |text: &str| Settings {
+            ignore: text.to_string(),
+            ..Settings::default()
+        };
+        let m = ignore_matcher(&settings("/src/a.rs")).unwrap();
+        assert!(is_ignored(&m, "src/a.rs"));
+        assert!(!is_ignored(&m, "lib/src/a.rs"), "from the top only");
+        // What would be a pattern, written as itself (as `lib.ignoreLine` does).
+        let m = ignore_matcher(&settings(r"/a\*b\?\[c].txt")).unwrap();
+        assert!(is_ignored(&m, "a*b?[c].txt"));
+        assert!(!is_ignored(&m, "aXbYc.txt"));
+        let m = ignore_matcher(&settings("/#x\n/!y\n/ends\\ ")).unwrap();
+        assert!(is_ignored(&m, "#x") && is_ignored(&m, "!y") && is_ignored(&m, "ends "));
+        // A directory takes what is under it; comments and blank lines are none.
+        let m = ignore_matcher(&settings("# 生成物\n\ndist/")).unwrap();
+        assert!(is_ignored(&m, "dist/a.js") && is_ignored(&m, "web/dist/b.js"));
+        assert!(ignore_matcher(&settings("# only a comment\n")).is_none());
+    }
+
     use super::*;
     use crate::model::Anchor;
     use time::OffsetDateTime;
