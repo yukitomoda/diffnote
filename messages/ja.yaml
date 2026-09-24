@@ -961,7 +961,7 @@ ui:
     menu_comment: |-
       このファイルにコメント
     menu_ignore: |-
-      このファイルを表示しない
+      表示しないファイルに追加
     menu_ignore_title: |-
       レビューの設定の「表示しないファイル」に加えます(設定からいつでも戻せます)
     menu_ignore_blocked: |-
