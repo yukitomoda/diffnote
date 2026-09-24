@@ -835,6 +835,35 @@ def tree_review(root, name):
     return master
 
 
+class IgnoredFiles(ServedCase):
+    """The review's own list of files not to show (設定, as a .gitignore)."""
+
+    def test_files_named_in_the_settings_leave_the_page_and_are_listed_as_left_out(self):
+        self.serve(tree_review(self.root, "ignored"))
+        b = self.b
+        shown = "[...document.querySelectorAll('%s section.diffnote-file')].map(function (s) { return s.dataset.diffnoteFile; })" % CUR
+        self.assertEqual(sorted(b.js(shown)), ["a/b/c/d", "a/b/e/f/g", "a/b/e/f/h"])
+        b.click("[data-diffnote-screen-open]")
+        b.click("[data-diffnote-screen-nav='settings']")
+        self.assertTrue(b.wait_exists("[data-diffnote-setting-ignore-files]"))
+        # Not a pattern: said, and nothing changes.
+        b.set_value("[data-diffnote-setting-ignore-files]", "[z-a]")
+        b.click("[data-diffnote-settings-save]")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-screen-pane] .diffnote-error') && document.querySelector('[data-diffnote-screen-pane] .diffnote-error').textContent.includes('1 行目')"))
+        # `e/` would take g and h; h has a thread, so it stays.
+        b.set_value("[data-diffnote-setting-ignore-files]", "# 見なくてよい\ne/\n")
+        b.click("[data-diffnote-settings-save]")
+        self.assertTrue(b.wait_exists("[data-diffnote-settings-saved]"))
+        self.assertIn("e/", harness.member(self.review, "settings.json"))
+        b.click("[data-diffnote-screen-back]")
+        self.assertTrue(b.wait(f"{shown}.length === 2"))
+        self.assertEqual(sorted(b.js(shown)), ["a/b/c/d", "a/b/e/f/h"])
+        self.assertFalse(b.exists(f"{CUR} [data-diffnote-file-link='a/b/e/f/g']"), "not in the list either")
+        listed = b.text(f"{CUR} [data-diffnote-ignored]")
+        self.assertIn("(1)", listed)
+        self.assertIn("a/b/e/f/g", listed)
+
+
 class FoldAll(ServedCase):
     """Every file of the revision opened, or folded, at once."""
 

@@ -232,6 +232,10 @@ pub struct RevisionData {
     /// The thread ids in the order of the thread list (review-wide threads
     /// first, then by file and line).
     pub order: Vec<String>,
+    /// The diff's files the review leaves out (`settings.ignore`), which
+    /// `files` doesn't have: those with no thread on them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ignored: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -377,6 +381,7 @@ pub fn view_model_with(
     let views = revision_views(&shown);
     let threads = build_threads(&loaded.events);
     let blobs = loaded.blobs();
+    let leave_out = crate::review::ignore_matcher(&loaded.settings);
 
     // The latest revision (the one first looked at) gets the lines first.
     let mut budget = match limit {
@@ -387,7 +392,17 @@ pub fn view_model_with(
         .iter()
         .zip(&shown)
         .rev()
-        .map(|(view, s)| revision_data(&threads, view, &s.label, &s.at, &blobs, &mut budget))
+        .map(|(view, s)| {
+            revision_data(
+                &threads,
+                view,
+                &s.label,
+                &s.at,
+                &blobs,
+                &mut budget,
+                leave_out.as_ref(),
+            )
+        })
         .collect();
     revisions.reverse();
     let what_happened = timeline(loaded, &shown);
@@ -654,6 +669,7 @@ fn revision_data(
     at: &str,
     blobs: &crate::digest::Blobs,
     budget: &mut usize,
+    leave_out: Option<&ignore::gitignore::Gitignore>,
 ) -> RevisionData {
     let placed = place(threads, view, blobs);
     let in_diff: std::collections::HashSet<String> = view.diff.files.iter().map(file_key).collect();
@@ -692,7 +708,6 @@ fn revision_data(
             }
         })
         .collect();
-    carry_gap_lines(&mut files, view, blobs, syntax_set, budget);
 
     let mut placements = BTreeMap::new();
     for (thread, placement) in threads.iter().zip(&placed.placements) {
@@ -702,6 +717,23 @@ fn revision_data(
             placement_data(placement, color, placed.marks.was.get(&thread.root_id)),
         );
     }
+    // What the review leaves out: a file of the diff the settings name, with
+    // no thread on it (a thread is never hidden with its file).
+    let mut ignored = Vec::new();
+    if let Some(matcher) = leave_out {
+        let threaded: std::collections::HashSet<&str> =
+            placements.values().filter_map(placement_file).collect();
+        files.retain(|f| {
+            let out = f.status != "context"
+                && !threaded.contains(f.path.as_str())
+                && crate::review::is_ignored(matcher, &f.path);
+            if out {
+                ignored.push(f.path.clone());
+            }
+            !out
+        });
+    }
+    carry_gap_lines(&mut files, view, blobs, syntax_set, budget);
     let order = ordered_threads(threads, &placed.file_order, &placed.marks)
         .iter()
         .map(|t| t.root_id.to_string())
@@ -712,6 +744,18 @@ fn revision_data(
         files,
         placements,
         order,
+        ignored,
+    }
+}
+
+/// The file a thread is placed in, if it is in one.
+fn placement_file(p: &PlacementData) -> Option<&str> {
+    match p {
+        PlacementData::Global => None,
+        PlacementData::Line { file, .. }
+        | PlacementData::File { file, .. }
+        | PlacementData::Point { file, .. }
+        | PlacementData::Unplaced { file, .. } => Some(file),
     }
 }
 
@@ -887,6 +931,7 @@ pub fn compare_data(
         &after.at,
         &blobs,
         &mut budget,
+        crate::review::ignore_matcher(&loaded.settings).as_ref(),
     ))
 }
 

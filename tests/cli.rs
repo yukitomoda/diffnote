@@ -2206,3 +2206,56 @@ fn init_over_a_review_that_is_there_asks_and_replaces_it_only_when_told_yes() {
     let out = env.answering(&repo, &["init", "-f", arg, "c2"], "YES\n");
     assert!(out.status.success());
 }
+
+#[test]
+fn files_the_review_leaves_out_are_not_shown_but_are_still_recorded() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    let served = env.serve(&repo, &review, &["--base", "c1", "c2"]);
+    let files = |model: &serde_json::Value| -> Vec<String> {
+        model["revisions"][0]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["path"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let model = served.api("/api/model", None);
+    assert_eq!(files(&model["model"]), ["README.md", "calc.txt"]);
+    let set = served.api(
+        "/api/settings",
+        Some(serde_json::json!({ "ignore": "*.md\n" })),
+    );
+    assert_eq!(files(&set["model"]), ["calc.txt"]);
+    assert_eq!(
+        set["model"]["revisions"][0]["ignored"],
+        serde_json::json!(["README.md"]),
+        "what is left out is said"
+    );
+    served.stop();
+    // The export leaves it out too; the diff itself is still whole.
+    let model = model_of(&exported(&env, &repo, &review));
+    assert_eq!(files(&model), ["calc.txt"]);
+    let loaded = bundle::load(&review).unwrap();
+    let diff = loaded
+        .revision_diff(loaded.revisions().last().unwrap())
+        .unwrap();
+    assert!(diff.contains("README.md"), "{diff}");
+    // A thread on a file left out brings it back.
+    env.review(
+        &repo,
+        &review,
+        &[],
+        &[Note::File("README.md", "これは見たい")],
+    );
+    let model = model_of(&exported(&env, &repo, &review));
+    let last = model["revisions"].as_array().unwrap().len() - 1;
+    let shown: Vec<&str> = model["revisions"][last]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert!(shown.contains(&"README.md"), "{shown:?}");
+}

@@ -468,7 +468,14 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
 .diffnote-field > span:first-child { font-weight: 600; }
 .diffnote-field input[type="text"], .diffnote-field input[type="number"] { font: inherit; padding: 4px 8px; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; box-sizing: border-box; }
 .diffnote-field input[type="text"] { width: 100%; }
-.diffnote-field input:focus { outline: 2px solid var(--diffnote-color-accent); outline-offset: -1px; }
+.diffnote-field input:focus, .diffnote-field textarea:focus { outline: 2px solid var(--diffnote-color-accent); outline-offset: -1px; }
+.diffnote-field > span:first-child small { display: block; margin-top: 2px; color: var(--diffnote-color-muted); font-weight: 400; }
+.diffnote-field__code { width: 100%; box-sizing: border-box; padding: 6px 8px; font-family: var(--diffnote-font-mono); font-size: 12.5px; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; resize: vertical; }
+/* The files the review leaves out, at the foot of the file list: named, not shown. */
+.diffnote-filelist__ignored { margin: 4px 0 0; font-size: 12px; color: var(--diffnote-color-muted); }
+.diffnote-filelist__ignored summary { cursor: pointer; padding: 2px 8px; }
+.diffnote-filelist__ignored ul { list-style: none; margin: 2px 0 0; padding: 0 8px 0 20px; }
+.diffnote-filelist__ignored li { font-family: var(--diffnote-font-mono); word-break: break-all; padding: 1px 0; }
 .diffnote-field--check { flex-direction: row; align-items: flex-start; gap: 8px; }
 .diffnote-field--check small { display: block; margin-top: 2px; color: var(--diffnote-color-muted); font-weight: 400; }
 .diffnote-field__unit { display: flex; align-items: center; gap: 6px; }

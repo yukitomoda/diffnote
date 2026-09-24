@@ -20,6 +20,9 @@ export function SettingsFormPane(props: FormProps) {
   var _w = useState(!!settings.ignore_whitespace);
   var ignore = _w[0];
   var setIgnore = _w[1];
+  var _i = useState(settings.ignore || '');
+  var leaveOut = _i[0];
+  var setLeaveOut = _i[1];
   var _l = useState(String(lib.bytesToMB(settings.attachment_limit || 0)));
   var limit = _l[0];
   var setLimit = _l[1];
@@ -36,7 +39,8 @@ export function SettingsFormPane(props: FormProps) {
   useEffect(function () { if (first.current) first.current.focus(); }, []);
   // What is here is not what is kept.
   var dirty = title.trim() !== (settings.title || '').trim() || ignore !== !!settings.ignore_whitespace
-    || lib.mbToBytes(limit) !== settings.attachment_limit;
+    || lib.mbToBytes(limit) !== settings.attachment_limit
+    || leaveOut.trimEnd() !== (settings.ignore || '');
   var touched = function <T>(set: (v: T) => void) { return function (v: T) { set(v); setSaved(false); setError(''); }; };
   var submit = function (e: Event) {
     e.preventDefault();
@@ -46,7 +50,7 @@ export function SettingsFormPane(props: FormProps) {
     if (bytes < 1024 || bytes > 100 * 1024 * 1024) { setError(lib.m('ui.settings.attachment_limit_out_of_range')); return; }
     setBusy(true);
     setError('');
-    props.save({ title: title, ignore_whitespace: ignore, attachment_limit: bytes }).then(function (res) {
+    props.save({ title: title, ignore_whitespace: ignore, attachment_limit: bytes, ignore: leaveOut }).then(function (res) {
       setBusy(false);
       if (res.ok) setSaved(true);
       else setError(res.error || lib.m('ui.save_failed'));
@@ -63,6 +67,12 @@ export function SettingsFormPane(props: FormProps) {
     <label class="diffnote-field diffnote-field--check">
       <input type="checkbox" data-diffnote-setting-ignore checked={ignore} onChange={function (e) { touched(setIgnore)(e.currentTarget.checked); }} />
       <span>{lib.m('ui.settings.ignore_ws_label')}<small>{lib.m('ui.settings.ignore_ws_hint')}</small></span>
+    </label>
+    <label class="diffnote-field">
+      <span>{lib.m('ui.settings.ignore_files_label')}<small>{lib.m('ui.settings.ignore_files_hint')}</small></span>
+      <textarea rows={5} spellcheck={false} class="diffnote-field__code" data-diffnote-setting-ignore-files value={leaveOut}
+        placeholder={lib.m('ui.settings.ignore_files_placeholder')}
+        onInput={function (e) { touched(setLeaveOut)(e.currentTarget.value); }} />
     </label>
     <label class="diffnote-field">
       <span>{lib.m('ui.settings.attach_limit_label')}</span>

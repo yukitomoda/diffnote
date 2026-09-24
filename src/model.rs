@@ -120,6 +120,12 @@ pub struct Settings {
     /// are, stay as they are.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ignore_whitespace: bool,
+    /// Files the page leaves out of the diff, written as a `.gitignore` is
+    /// (one pattern a line, `#` for a comment, `!` to take one back). Only
+    /// what is shown: the diff itself is kept whole, so a change to this
+    /// holds for every revision, and can be taken back.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub ignore: String,
 }
 
 fn default_attachment_limit() -> u64 {
@@ -132,6 +138,7 @@ impl Default for Settings {
             attachment_limit: DEFAULT_ATTACHMENT_LIMIT,
             title: None,
             ignore_whitespace: false,
+            ignore: String::new(),
         }
     }
 }

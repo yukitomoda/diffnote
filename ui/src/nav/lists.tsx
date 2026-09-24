@@ -25,6 +25,8 @@ export function FileList(props: ListProps) {
   var byPath: Record<string, (typeof ctx.revision.files)[number]> = {};
   ctx.revision.files.forEach(function (f) { byPath[f.path] = f; });
   var tree = lib.fileTree(ctx.revision.files.map(function (f) { return f.path; }));
+  // What the review leaves out (its settings): named here, not shown.
+  var ignored = ctx.revision.ignored || [];
   var file = function (node: FileTreeNode) {
     var f = byPath[node.path!];
     var done = isViewed(f, marks);
@@ -60,7 +62,12 @@ export function FileList(props: ListProps) {
   };
   return <details class="diffnote-side" open>
     <summary>{lib.m('ui.tree.files_summary')}{files.length > 0 && <>{' '}<span class="diffnote-badge diffnote-badge--viewed" data-diffnote-viewed-count title={lib.m('ui.tree.viewed_count_title')}><Icon name="check" />{' '}{files.filter(function (f) { return isViewed(f, marks); }).length}/{files.length}</span></>}</summary>
-    <nav class="diffnote-filelist"><ul>{rows(tree)}</ul></nav>
+    <nav class="diffnote-filelist"><ul>{rows(tree)}</ul>
+      {ignored.length > 0 && <details class="diffnote-filelist__ignored" data-diffnote-ignored>
+        <summary title={lib.m('ui.tree.ignored_title')}>{lib.mf('ui.tree.ignored_summary', { n: String(ignored.length) })}</summary>
+        <ul>{ignored.map(function (p) { return <li key={p}>{p}</li>; })}</ul>
+      </details>}
+    </nav>
   </details>;
 }
 

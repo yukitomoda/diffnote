@@ -363,6 +363,12 @@ serve:
     タイトルが長すぎます(200 文字まで)
   ignore_whitespace_invalid: |-
     空白の設定が正しくありません
+  ignore_not_string: |-
+    無視するファイルは、文字で指定してください
+  ignore_too_long: |-
+    無視するファイルの指定が長すぎます(20000 文字まで)
+  ignore_invalid: |-
+    無視するファイルの {line} 行目が、正しい書き方ではありません: {error}
   attachment_limit_invalid: |-
     添付の上限が正しくありません
   attachment_limit_range: |-
@@ -832,6 +838,12 @@ ui:
       開いたとき、空白の違いを無視して表示する
     ignore_ws_hint: |-
       (初期表示だけの設定です)
+    ignore_files_label: |-
+      表示しないファイル
+    ignore_files_hint: |-
+      (.gitignore と同じ書き方で、1 行に 1 つ。差分に出さなくなります。スレッドのあるファイルは出します)
+    ignore_files_placeholder: |-
+      例: *.lock
     attach_limit_label: |-
       添付 1 つあたりの上限
     saved_notice: |-
@@ -974,6 +986,10 @@ ui:
   tree:
     files_summary: |-
       ファイル
+    ignored_summary: |-
+      表示しないファイル({n})
+    ignored_title: |-
+      レビューの設定で、差分に出さないことにしたファイルです
     viewed_count_title: |-
       確認済みにしたファイル / ファイル数
     loading: |-

@@ -1448,10 +1448,37 @@ impl Server {
                 Some(bytes)
             }
         };
+        // The files to leave out, as a `.gitignore` is written: kept as it is
+        // written (its comments too), once every line of it is a pattern.
+        let leave_out = match value.get("ignore") {
+            None => None,
+            Some(v) => {
+                let text = v.as_str().ok_or_else(|| bad("serve.ignore_not_string"))?;
+                if text.chars().count() > 20_000 {
+                    return Err(bad("serve.ignore_too_long"));
+                }
+                if let Some((line, why)) = review::ignore_error(text) {
+                    return Err(Failure(
+                        400,
+                        mf(
+                            "serve.ignore_invalid",
+                            &[("line", &line.to_string()), ("error", &why)],
+                        ),
+                    ));
+                }
+                Some(text.trim_end().to_string())
+            }
+        };
         let mut loaded = bundle::load(&self.review).map_err(internal)?;
         let before = html::stamp(&loaded);
         let titled = title.is_some_and(|t| review::set_title(&mut loaded.settings, &t));
         let mut others = false;
+        if let Some(text) = leave_out
+            && loaded.settings.ignore != text
+        {
+            loaded.settings.ignore = text;
+            others = true;
+        }
         if let Some(on) = ignore {
             others |= review::set_ignore_whitespace(&mut loaded.settings, on);
         }
@@ -2552,6 +2579,44 @@ mod tests {
                 _ => None,
             })
             .unwrap()
+    }
+
+    #[test]
+    fn the_files_to_leave_out_are_kept_as_written_and_a_file_with_a_thread_stays() {
+        let f = fixture();
+        let files = |reply: &Reply| -> Vec<String> {
+            json(reply)["model"]["revisions"][0]["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f["path"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let set = f.post("/api/settings", r##"{"ignore":"# 生成物\n*.txt\n"}"##);
+        assert_eq!(json(&set)["ok"], true, "{}", text(&set));
+        let loaded = bundle::load(&f.path).unwrap();
+        assert_eq!(
+            loaded.settings.ignore, "# 生成物\n*.txt",
+            "as written, comments too"
+        );
+        // The one file has a thread: it is not hidden with the file.
+        assert_eq!(files(&set), ["f.txt"]);
+        // What is not a pattern is refused, saying which line, and nothing is kept.
+        let bad = f.post("/api/settings", r#"{"ignore":"ok.txt\n[z-a]"}"#);
+        assert_eq!(bad.status, 400);
+        assert!(
+            json(&bad)["error"].as_str().unwrap().contains("2 行目"),
+            "{}",
+            text(&bad)
+        );
+        assert_eq!(
+            bundle::load(&f.path).unwrap().settings.ignore,
+            "# 生成物\n*.txt"
+        );
+        assert_eq!(f.post("/api/settings", r#"{"ignore":3}"#).status, 400);
+        // Emptied: nothing left out, and nothing kept in settings.json for it.
+        json(&f.post("/api/settings", r#"{"ignore":""}"#));
+        assert_eq!(bundle::load(&f.path).unwrap().settings.ignore, "");
     }
 
     #[test]

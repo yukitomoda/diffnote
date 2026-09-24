@@ -67,6 +67,37 @@ pub fn set_ignore_whitespace(settings: &mut Settings, wanted: bool) -> bool {
     true
 }
 
+/// The files the review leaves out of what it shows (`settings.ignore`),
+/// as a matcher: `None` if it names none. A line that isn't a pattern is
+/// passed over here (the settings screen refuses one: see [`ignore_error`]).
+pub fn ignore_matcher(settings: &Settings) -> Option<ignore::gitignore::Gitignore> {
+    if settings.ignore.trim().is_empty() {
+        return None;
+    }
+    let mut builder = ignore::gitignore::GitignoreBuilder::new("");
+    for line in settings.ignore.lines() {
+        let _ = builder.add_line(None, line);
+    }
+    builder.build().ok().filter(|g| !g.is_empty())
+}
+
+/// Whether `path` is one the review leaves out.
+pub fn is_ignored(matcher: &ignore::gitignore::Gitignore, path: &str) -> bool {
+    matcher.matched_path_or_any_parents(path, false).is_ignore()
+}
+
+/// The first line of `text` that is not a pattern `.gitignore` can take, and
+/// why (for the settings screen to say).
+pub fn ignore_error(text: &str) -> Option<(usize, String)> {
+    let mut builder = ignore::gitignore::GitignoreBuilder::new("");
+    for (i, line) in text.lines().enumerate() {
+        if let Err(e) = builder.add_line(None, line) {
+            return Some((i + 1, e.to_string()));
+        }
+    }
+    None
+}
+
 /// `author` reacting to a comment with `emoji`: taken back if it was there,
 /// added if not. Whether the reaction is there now.
 pub fn toggle_reaction(

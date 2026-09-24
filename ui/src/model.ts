@@ -96,6 +96,8 @@ export interface RevisionData {
   placements: Record<string, Placement>;
   /** The thread ids in the order of the thread list. */
   order: string[];
+  /** The diff's files the review leaves out (`Settings.ignore`). */
+  ignored?: string[];
 }
 
 // ---- a comment's text -----------------------------------------------------
@@ -162,6 +164,8 @@ export interface Settings {
   attachment_limit: number;
   title?: string;
   ignore_whitespace?: boolean;
+  /** Files left out of what is shown, written as a `.gitignore` is. */
+  ignore?: string;
 }
 
 /** This machine's settings (`diffnote config`), which apply to every review. */
