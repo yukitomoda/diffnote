@@ -193,21 +193,49 @@ CHROME_FLAGS = [
 class Browser:
     """A headless Chrome with one page, and helpers to look at it."""
 
-    def __init__(self):
-        self.profile = tempfile.mkdtemp(prefix="dn-chrome-")
-        self.proc = subprocess.Popen(
-            [find_chrome(), *CHROME_FLAGS, "--remote-debugging-port=0",
-             f"--user-data-dir={self.profile}", "--window-size=1500,900", "about:blank"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        port_file = os.path.join(self.profile, "DevToolsActivePort")
-        for _ in range(200):
-            if os.path.exists(port_file):
+    def __init__(self, attempts=3):
+        # A Chrome that is slow to come up (a busy CI machine) is waited on for
+        # its port; one that never says it is started again, not read half-way.
+        for attempt in range(attempts):
+            self.profile = tempfile.mkdtemp(prefix="dn-chrome-")
+            self.proc = subprocess.Popen(
+                [find_chrome(), *CHROME_FLAGS, "--remote-debugging-port=0",
+                 f"--user-data-dir={self.profile}", "--window-size=1500,900", "about:blank"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            port = self._port(os.path.join(self.profile, "DevToolsActivePort"))
+            if port:
                 break
-            time.sleep(0.05)
-        with open(port_file) as f:
-            port = int(f.readline())
+            self._stop()
+        else:
+            raise RuntimeError(f"Chrome did not start ({attempts} tries)")
         self.cdp = Cdp(port)
         self.cdp.call("Page.enable")
+
+    def _port(self, port_file, timeout=30):
+        """The port Chrome says it listens on, once it has written all of it
+        (the file can be there, and empty, a moment before); `None` if it
+        doesn't within `timeout`, or stops."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.proc.poll() is not None:
+                return None
+            try:
+                with open(port_file) as f:
+                    line = f.readline()
+                if line.endswith("\n") and line.strip().isdigit():
+                    return int(line)
+            except OSError:
+                pass
+            time.sleep(0.05)
+        return None
+
+    def _stop(self):
+        try:
+            self.proc.kill()
+            self.proc.wait(timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        shutil.rmtree(self.profile, ignore_errors=True)
 
     def close(self):
         """Stop it, and be sure it is stopped.
