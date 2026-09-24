@@ -31,6 +31,7 @@ import {
 import { isViewed, seen, toggleViewed } from './state/viewed.ts';
 import {
   hideResolved,
+  sidebarWidth,
   wrapLines,
   ignoreWhitespace,
   layout as shownLayout,
@@ -198,6 +199,11 @@ function App(props: { model: ViewModel }) {
   }
   var hide = useStore(hideResolved);
   var wrap = useStore(wrapLines);
+  var paneWidth = useStore(sidebarWidth);
+  // The left column's width, for the review and the screens alike.
+  useLayoutEffect(function () {
+    document.documentElement.style.setProperty('--diffnote-sidebar-w', paneWidth + 'px');
+  }, [paneWidth]);
   var ignoreSpace = useStore(ignoreWhitespace);
   var layout = useStore(shownLayout);
   // Two columns need the room, for as long as the page is open.

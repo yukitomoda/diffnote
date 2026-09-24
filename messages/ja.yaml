@@ -700,6 +700,8 @@ ui:
       左の一覧を隠して、差分を広く表示します
     show_title: |-
       左の一覧を表示します
+    resize_title: |-
+      ドラッグして幅を変えます(ダブルクリックで元の幅)
 
   timeline:
     heading: |-

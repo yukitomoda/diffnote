@@ -755,6 +755,60 @@ class ViewKeptAcrossRuns(ServedCase):
         self.assertTrue(b.js("document.body.classList.contains('diffnote-nowrap')"), "and not wrapped")
 
 
+class SidebarWidth(ServedCase):
+    """The left pane's right edge is dragged to make it wider or narrower,
+    and the width is kept with the user settings."""
+
+    WIDTH = "Math.round(document.querySelector('.diffnote-revision.is-current .diffnote-sidebar').getBoundingClientRect().width)"
+
+    def width(self):
+        return self.b.js(self.WIDTH)
+
+    def becomes(self, width):
+        """Waits for the pane to be `width` wide (the page draws a moment later)."""
+        return self.b.wait(f"{self.WIDTH} === {width}")
+
+    def drag_by(self, dx):
+        b = self.b
+        x, y = b.center("[data-diffnote-sidebar-resize]")
+        b.cdp.mouse("mouseMoved", x, y)
+        b.cdp.mouse("mousePressed", x, y, 1)
+        for i in range(1, 9):
+            b.cdp.mouse("mouseMoved", x + dx * i / 8, y, 1)
+        b.cdp.mouse("mouseReleased", x + dx, y)
+
+    def kept(self, width):
+        for _ in range(50):
+            if harness.user_view().get("sidebar_width") == width:
+                return True
+            time.sleep(0.1)
+        return False
+
+    def test_dragging_the_edge_changes_the_width_and_it_is_kept(self):
+        self.serve()
+        b = self.b
+        start = self.width()
+        diff = "document.querySelector('.diffnote-revision.is-current .diffnote-viewbar').getBoundingClientRect().left"
+        diff0 = b.js(diff)
+        self.drag_by(120)
+        self.assertTrue(self.becomes(start + 120), self.width())
+        self.assertAlmostEqual(b.js(diff), diff0 + 120, delta=2, msg="the diff makes room")
+        self.assertTrue(self.kept(start + 120), harness.user_view())
+        # Not narrower than its least, however far it is taken.
+        self.drag_by(-1000)
+        self.assertTrue(self.becomes(180), self.width())
+        # The keys move it too, and a double click puts it back as it was.
+        b.js("document.querySelector('[data-diffnote-sidebar-resize]').focus()")
+        b.cdp.key("ArrowRight", "ArrowRight", 39)
+        self.assertTrue(self.becomes(196), self.width())
+        b.js("document.querySelector('[data-diffnote-sidebar-resize]').dispatchEvent(new MouseEvent('dblclick', {bubbles: true}))")
+        self.assertTrue(self.becomes(start), self.width())
+        # The screens beside the review keep to the same column.
+        b.click("[data-diffnote-screen-open]")
+        self.assertTrue(b.wait_exists("[data-diffnote-screen]"))
+        self.assertAlmostEqual(b.js("document.querySelector('.diffnote-screen-nav').getBoundingClientRect().width"), start, delta=2)
+
+
 class NewThreadsOnLines(ServedCase):
     def gutter(self, kind, n, table=LOGIN):
         return f"{CUR} {table} tr[data-diffnote-{kind}='{n}'] .diffnote-line__gutter-{kind}"

@@ -177,6 +177,7 @@ export interface ViewPrefs {
   hide_resolved?: boolean;
   wrap?: boolean;
   sync_scroll?: boolean;
+  sidebar_width?: number;
 }
 
 /** A number of things, and how many bytes they are. */

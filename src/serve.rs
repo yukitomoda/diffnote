@@ -27,6 +27,8 @@ use ulid::Ulid;
 
 /// Bigger bodies (a comment is text) are refused.
 const MAX_BODY: usize = 1024 * 1024;
+/// The widths (px) the left pane can be kept at.
+const SIDEBAR_WIDTHS: std::ops::RangeInclusive<u32> = 120..=1600;
 
 /// The cookie that carries the token. Its name has the port in it: cookies are
 /// kept per host, not per port, so two servers on this machine (each with its
@@ -1361,6 +1363,14 @@ impl Server {
     fn set_view(&self, body: &[u8]) -> Result<Reply, Failure> {
         let asked: crate::user_config::ViewPrefs = serde_json::from_slice(body)
             .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
+        // (The page keeps the width in its own bounds; anything far outside
+        // them didn't come from it.)
+        if asked
+            .sidebar_width
+            .is_some_and(|w| !(SIDEBAR_WIDTHS).contains(&w))
+        {
+            return Err(Failure(400, m("serve.body_unreadable").into()));
+        }
         let mut config = crate::user_config::load();
         config.view.merge(asked);
         crate::user_config::save(&config).map_err(internal)?;
@@ -2564,9 +2574,15 @@ mod tests {
                 "each choice is added to the others"
             );
             json(&f.post("/api/view", r#"{"layout":"unified","sync_scroll":true}"#));
+            assert_eq!(f.post("/api/view", r#"{"sidebar_width":5}"#).status, 400);
+            assert_eq!(
+                json(&f.post("/api/view", r#"{"sidebar_width":360}"#))["ok"],
+                true
+            );
+            assert_eq!(view()["sidebar_width"], 360);
             assert_eq!(
                 view(),
-                serde_json::json!({ "layout": "unified", "wrap": false, "sync_scroll": true })
+                serde_json::json!({ "layout": "unified", "wrap": false, "sync_scroll": true, "sidebar_width": 360 })
             );
             // What the page can't have is refused, and nothing is changed.
             assert_eq!(f.post("/api/view", r#"{"layout":"sideways"}"#).status, 400);

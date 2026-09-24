@@ -47,7 +47,7 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-revisions__at { font-weight: 400; color: var(--diffnote-color-muted); }
 
 /* A revision: file list on the left, the changes on the right. */
-.diffnote-revision { display: grid; grid-template-columns: 280px minmax(0, 1fr); column-gap: 16px; align-items: start; padding: 0 16px 48px; }
+.diffnote-revision { display: grid; grid-template-columns: var(--diffnote-sidebar-w, 280px) minmax(0, 1fr); column-gap: 16px; align-items: start; padding: 0 16px 48px; }
 .diffnote-revision > * { grid-column: 2; min-width: 0; }
 .diffnote-revision__title { display: none; }
 .diffnote-js .diffnote-revision:not(.is-current) { display: none; }
@@ -238,6 +238,7 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 .diffnote-file > details > .diffnote-thread { margin: 8px 12px; }
 
 @media (max-width: 900px) {
+  .diffnote-sidebar__resize { display: none; }
   .diffnote-topbar { height: auto; flex-wrap: wrap; gap: 4px 12px; padding: 6px 12px; }
   .diffnote-revision { display: block; padding: 0 8px 32px; }
   .diffnote-sidebar { position: static; height: auto; max-height: 60vh; margin: 8px 0; border-right: 0; }
@@ -350,6 +351,13 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
    button that brings them back, and the diff has the rest. */
 .diffnote-revision.is-sidebar-hidden { grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; }
 .diffnote-revision.is-sidebar-hidden .diffnote-user { display: none; }
+/* The pane's right edge, to drag. It sits over the pane's border, a little
+   wider than it, and shows itself when pointed at or focused. */
+.diffnote-sidebar__resize { position: absolute; top: 0; bottom: 0; right: -5px; width: 9px; z-index: 3; cursor: col-resize; touch-action: none; }
+.diffnote-sidebar__resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 3px; border-radius: 2px; background: transparent; transition: background 0.1s; }
+.diffnote-sidebar__resize:hover::after, .diffnote-sidebar__resize:focus-visible::after, .diffnote-resizing .diffnote-sidebar__resize::after { background: var(--diffnote-color-accent); }
+.diffnote-sidebar__resize:focus { outline: none; }
+body.diffnote-resizing { cursor: col-resize; user-select: none; }
 .diffnote-viewmenu { position: relative; margin-left: auto; }
 .diffnote-viewmenu__panel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 14em; padding: 6px; background: var(--diffnote-color-bg); color: var(--diffnote-color-fg); border: 1px solid var(--diffnote-color-border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18); font-size: 13px; }
 .diffnote-viewmenu__panel[hidden] { display: none; }
@@ -414,7 +422,7 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
    left, so that going in and coming back moves nothing. */
 .diffnote-screen { padding: 12px 16px 48px; }
 .diffnote-screen__top { margin: 0 0 8px; }
-.diffnote-screen__layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); column-gap: 16px; align-items: start; }
+.diffnote-screen__layout { display: grid; grid-template-columns: var(--diffnote-sidebar-w, 280px) minmax(0, 1fr); column-gap: 16px; align-items: start; }
 .diffnote-screen-nav { position: sticky; top: calc(var(--diffnote-topbar-h) + 12px); padding-right: 8px; border-right: 1px solid var(--diffnote-color-border); }
 /* What the review holds, then what is set. */
 .diffnote-screen-nav ul + ul { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--diffnote-color-border); }

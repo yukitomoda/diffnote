@@ -36,6 +36,9 @@ pub struct ViewPrefs {
     pub wrap: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sync_scroll: Option<bool>,
+    /// 左のペインの幅(px)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_width: Option<u32>,
 }
 
 impl ViewPrefs {
@@ -49,6 +52,7 @@ impl ViewPrefs {
         self.hide_resolved = other.hide_resolved.or(self.hide_resolved);
         self.wrap = other.wrap.or(self.wrap);
         self.sync_scroll = other.sync_scroll.or(self.sync_scroll);
+        self.sidebar_width = other.sidebar_width.or(self.sidebar_width);
     }
 }
 

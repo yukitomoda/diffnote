@@ -43,6 +43,28 @@ export const wrapLines = atom(true);
 export const syncScroll = atom(true);
 export const ignoreWhitespace = atom(false);
 
+/** How wide the left pane is (px), and the bounds of what it may be. */
+export const SIDEBAR_DEFAULT = 280;
+export const SIDEBAR_MIN = 180;
+export const sidebarWidth = atom(SIDEBAR_DEFAULT);
+
+/** The width, kept inside the bounds: not under the least, and never so
+ * wide the diff has no room (600px, or half the window if that is less). */
+export function sidebarBounds(width: number, windowWidth: number): number {
+  var most = Math.max(SIDEBAR_MIN, Math.min(600, Math.floor(windowWidth / 2)));
+  return Math.round(Math.min(most, Math.max(SIDEBAR_MIN, width)));
+}
+
+/**
+ * The pane's width: `keepIt` once it is where it was taken to (at the end of
+ * a drag), not at every step of the way there.
+ */
+export function setSidebarWidth(width: number, keepIt: boolean): void {
+  var w = sidebarBounds(width, window.innerWidth);
+  sidebarWidth.set(w);
+  if (keepIt) remember('diffnote-sidebar-w', String(w), { sidebar_width: w });
+}
+
 /**
  * Whether the lists beside the diff are out of the way just now. Not kept:
  * it is for making room for a moment, so a page opened again has them back.
@@ -102,6 +124,8 @@ export function startView(reviewIgnoresWhitespace: boolean, saved?: ViewPrefs): 
   hideResolved.set(flag(pref.hide_resolved, 'diffnote-hide-resolved', '1'));
   wrapLines.set(flag(pref.wrap, 'diffnote-wrap', '1'));
   syncScroll.set(flag(pref.sync_scroll, 'diffnote-sync-scroll', '1'));
+  const width = pref.sidebar_width || Number(kept('diffnote-sidebar-w', '')) || SIDEBAR_DEFAULT;
+  sidebarWidth.set(sidebarBounds(width, window.innerWidth));
   ignoreWhitespace.set(reviewIgnoresWhitespace);
 }
 

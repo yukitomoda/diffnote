@@ -9,7 +9,7 @@ import { FileList, ThreadList } from './nav/lists.tsx';
 import { useStore } from '@nanostores/preact';
 import { OpenedContext } from './state/contexts.ts';
 import { isViewed, seen } from './state/viewed.ts';
-import { setSidebarHidden, sidebarHidden } from './state/view.ts';
+import { SIDEBAR_DEFAULT, setSidebarHidden, setSidebarWidth, sidebarHidden, sidebarWidth } from './state/view.ts';
 import { Card } from './thread/Card.tsx';
 import { Composer } from './thread/Composer.tsx';
 import type { RevisionData, ThreadData, ViewModel } from './model.ts';
@@ -103,6 +103,7 @@ export function Revision(props: RevisionProps) {
   return <section class={'diffnote-revision is-current' + (hidden ? ' is-sidebar-hidden' : '')} id={'rev-' + rev} data-diffnote-revision={rev}>
     <h2 class="diffnote-revision__title">{revision.label}</h2>
     <aside class="diffnote-sidebar">
+      {!hidden && <SidebarResize />}
       <div class="diffnote-sidebar__lists" id={'rev-' + rev + '-lists'} hidden={hidden}>
         <FileList ctx={listOrder} />
         {model.threads.length > 0 && <ThreadList ctx={listOrder} />}
@@ -131,4 +132,42 @@ export function Revision(props: RevisionProps) {
     </section>}
     {files.map(function (f) { return <File key={rev + ':' + f.path} file={f} ctx={ctx} />; })}
   </section>;
+}
+
+/**
+ * The right edge of the left pane, to be dragged (or, focused, moved with
+ * the arrow keys) to make the pane wider or narrower. A double click puts it
+ * back as it was at first. The width is kept once the drag ends.
+ */
+function SidebarResize() {
+  var width = useStore(sidebarWidth);
+  var drag = function (e: PointerEvent) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    var handle = e.currentTarget as HTMLElement;
+    var from = e.clientX;
+    var start = sidebarWidth.get();
+    handle.setPointerCapture(e.pointerId);
+    document.body.classList.add('diffnote-resizing');
+    var move = function (m: PointerEvent) { setSidebarWidth(start + m.clientX - from, false); };
+    var done = function () {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', done);
+      handle.removeEventListener('pointercancel', done);
+      document.body.classList.remove('diffnote-resizing');
+      setSidebarWidth(sidebarWidth.get(), true);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', done);
+    handle.addEventListener('pointercancel', done);
+  };
+  var key = function (e: KeyboardEvent) {
+    var step = e.key === 'ArrowLeft' ? -16 : e.key === 'ArrowRight' ? 16 : 0;
+    if (!step) return;
+    e.preventDefault();
+    setSidebarWidth(sidebarWidth.get() + step, true);
+  };
+  return <div class="diffnote-sidebar__resize" data-diffnote-sidebar-resize role="separator" aria-orientation="vertical"
+    aria-valuenow={width} tabIndex={0} title={lib.m('ui.sidebar.resize_title')} aria-label={lib.m('ui.sidebar.resize_title')}
+    onPointerDown={drag} onKeyDown={key} onDblClick={function () { setSidebarWidth(SIDEBAR_DEFAULT, true); }} />;
 }
