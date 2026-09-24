@@ -813,27 +813,54 @@ class SidebarWidth(ServedCase):
         self.assertAlmostEqual(b.js("document.querySelector('.diffnote-screen-nav').getBoundingClientRect().width"), start, delta=2)
 
 
+def tree_review(root, name):
+    """A review of `a/b/c/d`, `a/b/e/f/g` and `a/b/e/f/h`, each changed, with a
+    thread on `h` (so that one file starts open: a page counts as loaded when
+    a diff shows)."""
+    repo = os.path.join(root, name)
+    os.makedirs(repo)
+    harness.git(repo, "init", "-q", "-b", "main")
+    paths = ["a/b/c/d", "a/b/e/f/g", "a/b/e/f/h"]
+    for p in paths:
+        harness.write(repo, p, "one\n")
+    harness.git(repo, "add", "-A")
+    harness.git(repo, "commit", "-q", "-m", "c1")
+    harness.git(repo, "tag", "c1")
+    for p in paths:
+        harness.write(repo, p, "two\n")
+    harness.git(repo, "commit", "-q", "-am", "c2")
+    harness.git(repo, "tag", "c2")
+    master = os.path.join(root, name + ".diffnote")
+    harness.review_of(repo, master, "c2", base="c1", comments=[{"file": "a/b/e/f/h", "line": "two", "body": "x"}])
+    return master
+
+
+class FoldAll(ServedCase):
+    """Every file of the revision opened, or folded, at once."""
+
+    def test_the_buttons_open_and_fold_every_file_and_draw_what_they_open(self):
+        self.serve(tree_review(self.root, "fold"))
+        b = self.b
+        opened = "[...document.querySelectorAll('%s section.diffnote-file > details')].map(function (d) { return d.open; })" % CUR
+        self.assertEqual(sorted(b.js(opened)), [False, False, True], "as they start: the one with a thread open")
+        b.click(f"{CUR} [data-diffnote-open-all]")
+        self.assertTrue(b.wait(f"{opened}.every(function (o) {{ return o; }})"))
+        self.assertTrue(b.wait("document.querySelectorAll('%s section.diffnote-file table.diffnote-diff').length === 3" % CUR),
+                        "a file opened this way is drawn")
+        b.click(f"{CUR} [data-diffnote-fold-all]")
+        self.assertTrue(b.wait(f"{opened}.every(function (o) {{ return !o; }})"))
+        # Pressed again, it does it again (after one was opened by hand).
+        b.click(f"{CUR} section.diffnote-file[data-diffnote-file='a/b/c/d'] summary")
+        self.assertTrue(b.wait(f"{opened}.some(function (o) {{ return o; }})"))
+        b.click(f"{CUR} [data-diffnote-fold-all]")
+        self.assertTrue(b.wait(f"{opened}.every(function (o) {{ return !o; }})"))
+
+
 class FileTree(ServedCase):
     """The files beside the diff, as a tree of their directories."""
 
     def test_directories_that_hold_one_thing_are_joined_and_the_check_is_at_the_right(self):
-        repo = os.path.join(self.root, "tree")
-        os.makedirs(repo)
-        harness.git(repo, "init", "-q", "-b", "main")
-        paths = ["a/b/c/d", "a/b/e/f/g", "a/b/e/f/h"]
-        for p in paths:
-            harness.write(repo, p, "one\n")
-        harness.git(repo, "add", "-A")
-        harness.git(repo, "commit", "-q", "-m", "c1")
-        harness.git(repo, "tag", "c1")
-        for p in paths:
-            harness.write(repo, p, "two\n")
-        harness.git(repo, "commit", "-q", "-am", "c2")
-        harness.git(repo, "tag", "c2")
-        master = os.path.join(self.root, "tree.diffnote")
-        # (A thread keeps one file open: the page counts as loaded when a diff shows.)
-        harness.review_of(repo, master, "c2", base="c1", comments=[{"file": "a/b/e/f/h", "line": "two", "body": "x"}])
-        self.serve(master)
+        self.serve(tree_review(self.root, "tree"))
         b = self.b
         shape = b.js("""(function walk(ul) {
           return [...ul.children].map(function (li) {

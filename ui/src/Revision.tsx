@@ -9,7 +9,7 @@ import { FileList, ThreadList } from './nav/lists.tsx';
 import { useStore } from '@nanostores/preact';
 import { OpenedContext } from './state/contexts.ts';
 import { isViewed, seen } from './state/viewed.ts';
-import { SIDEBAR_DEFAULT, setSidebarHidden, setSidebarWidth, sidebarHidden, sidebarWidth } from './state/view.ts';
+import { SIDEBAR_DEFAULT, foldAll, setSidebarHidden, setSidebarWidth, sidebarHidden, sidebarWidth } from './state/view.ts';
 import { Card } from './thread/Card.tsx';
 import { Composer } from './thread/Composer.tsx';
 import type { RevisionData, ThreadData, ViewModel } from './model.ts';
@@ -124,7 +124,13 @@ export function Revision(props: RevisionProps) {
       {props.compose && <div class="diffnote-add"><button type="button" class="diffnote-button" data-diffnote-add="global"
         onClick={function () { props.compose!.openScope('global', rev); }}>{lib.m('ui.compose.global_button')}</button></div>}
       {props.override && <p class="diffnote-compare-note" data-diffnote-compare-note tabindex={0} title={props.overrideNote!.tip} aria-label={props.overrideNote!.short + '。' + props.overrideNote!.tip}>{props.overrideNote!.short}<Icon name="warning" class="diffnote-compare-note__icon" /></p>}
-      <ViewMenu resolved={lib.counts(model.threads).resolved} interactive={!!model.interactive} />
+      <div class="diffnote-viewbar__end">
+        <button type="button" class="diffnote-icon-button" data-diffnote-open-all title={lib.m('ui.viewbar.open_all')} aria-label={lib.m('ui.viewbar.open_all')}
+          onClick={function () { foldAll(true); }}><Icon name="openAll" /></button>
+        <button type="button" class="diffnote-icon-button" data-diffnote-fold-all title={lib.m('ui.viewbar.fold_all')} aria-label={lib.m('ui.viewbar.fold_all')}
+          onClick={function () { foldAll(false); }}><Icon name="foldAll" /></button>
+        <ViewMenu resolved={lib.counts(model.threads).resolved} interactive={!!model.interactive} />
+      </div>
     </div>
     {(globals.length > 0 || props.compose) && <section class="diffnote-global-comments" data-diffnote-global>
       {props.compose && props.compose.scope && props.compose.scope.kind === 'global' && props.compose.scope.rev === rev && <div class="diffnote-compose-wrap"><Composer scope="global" where={lib.m('ui.compose.global_where')} request={{ scope: 'global', revision: rev }} /></div>}

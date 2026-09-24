@@ -1,5 +1,5 @@
 // One file of the diff, open or folded away.
-import { useContext, useMemo, useRef, useState } from 'preact/hooks';
+import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { server } from '../transport.ts';
 import { DiffTable, SplitTable } from './tables.jsx';
@@ -7,6 +7,7 @@ import { htmlId } from '../dom.ts';
 import { useStore } from '@nanostores/preact';
 import { ComposeContext, OpenedContext } from '../state/contexts.ts';
 import { isViewed, seen, toggleViewed } from '../state/viewed.ts';
+import { allFolded } from '../state/view.ts';
 import { Card } from '../thread/Card.tsx';
 import { Composer } from '../thread/Composer.tsx';
 import type { Token } from '../model.ts';
@@ -35,6 +36,15 @@ export function File(props: FileProps) {
   var missing = file.status === 'context' && file.hunks.length === 0;
   var compose = useContext(ComposeContext);
   var details = useRef<HTMLDetailsElement | null>(null);
+  // 「すべて開く」「すべて閉じる」: followed when pressed, not when drawn.
+  var fold = useStore(allFolded);
+  var foldSeen = useRef(fold ? fold.at : 0);
+  useEffect(function () {
+    if (!fold || fold.at === foldSeen.current) return;
+    foldSeen.current = fold.at;
+    if (details.current) details.current.open = fold.open;
+    if (fold.open) setOpened(true);
+  }, [fold]);
   // The lines of the diff's left-out places that have been shown (their pieces,
   // by new line number): kept by number, so they stay when the places change.
   var _g = useState({});

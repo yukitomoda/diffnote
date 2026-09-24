@@ -66,6 +66,19 @@ export function setSidebarWidth(width: number, keepIt: boolean): void {
 }
 
 /**
+ * The last time every file was opened or folded at once (`at` counts, so
+ * the same twice is still a change). A file follows it when it changes,
+ * not when it is first drawn: a revision switched to later starts as its
+ * files always do.
+ */
+export const allFolded = atom<{ open: boolean; at: number } | null>(null);
+
+export function foldAll(open: boolean): void {
+  var last = allFolded.get();
+  allFolded.set({ open: open, at: last ? last.at + 1 : 1 });
+}
+
+/**
  * Whether the lists beside the diff are out of the way just now. Not kept:
  * it is for making room for a moment, so a page opened again has them back.
  */

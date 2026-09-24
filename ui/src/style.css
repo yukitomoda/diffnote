@@ -361,6 +361,8 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 /* The view menu, at the top right of the diff. */
 .diffnote-viewbar { grid-column: 2; display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; position: sticky; top: var(--diffnote-topbar-h); z-index: 8; height: var(--diffnote-viewbar-h); padding-bottom: 6px; background: var(--diffnote-color-bg); }
 .diffnote-viewbar .diffnote-add { padding: 0; }
+.diffnote-viewbar__end { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+.diffnote-viewbar__end .diffnote-viewmenu { margin-left: 6px; }
 /* The lists put away for a moment: the column is then no wider than the
    button that brings them back, and the diff has the rest. */
 .diffnote-revision.is-sidebar-hidden { grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; }

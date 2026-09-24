@@ -693,6 +693,12 @@ ui:
     global_where: |-
       レビュー全体へのコメント
 
+  viewbar:
+    open_all: |-
+      すべてのファイルを開く
+    fold_all: |-
+      すべてのファイルを閉じる
+
   sidebar:
     hide_title: |-
       左の一覧を隠して、差分を広く表示します
