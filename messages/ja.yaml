@@ -756,6 +756,8 @@ ui:
       解決済みを隠す
     wrap_label: |-
       長い行を折り返す
+    sync_scroll_label: |-
+      左右のスクロールを同期
 
   user:
     settings_title: |-

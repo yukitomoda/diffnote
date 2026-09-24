@@ -356,6 +356,7 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 .diffnote-viewmenu__panel hr { margin: 4px 0; border: 0; border-top: 1px solid var(--diffnote-color-border); }
 .diffnote-viewmenu__head { margin: 2px 8px 4px; font-size: 11.5px; color: var(--diffnote-color-muted); }
 .diffnote-viewmenu__item { display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; padding: 5px 8px; font: inherit; font-size: 13px; color: inherit; background: none; border: 0; border-radius: 6px; text-align: left; cursor: pointer; white-space: nowrap; }
+.diffnote-viewmenu__sub { padding-left: 22px; }
 .diffnote-viewmenu__item:hover { background: var(--diffnote-color-gutter); }
 .diffnote-viewmenu__item input { position: absolute; opacity: 0; pointer-events: none; }
 .diffnote-viewmenu__mark { flex: none; display: inline-flex; justify-content: center; width: 1.15em; color: var(--diffnote-color-accent); }

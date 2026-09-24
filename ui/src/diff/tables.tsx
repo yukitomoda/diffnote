@@ -1,5 +1,7 @@
 // The diff itself: one table of lines, or two side by side.
 import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useStore } from '@nanostores/preact';
+import { syncScroll } from '../state/view.ts';
 import { lib } from '../lib.ts';
 import { transport } from '../transport.ts';
 import { tokens } from '../markdown.tsx';
@@ -235,7 +237,8 @@ export function SplitTable(props: TableProps) {
   // Without wrapping, each side scrolls on its own: its lines are slid along
   // by how far its own scroll bar (at the foot, kept in view) has gone, and
   // cut at the edge of their column. The scroll bars are as wide as the
-  // longest line of their side.
+  // longest line of their side -- or, when the two move together, both as
+  // wide as the longer, so that either can take the other anywhere it goes.
   var longest = { old: 0, new: 0 };
   file.hunks.forEach(function (hunk) {
     (hunk.rows || []).forEach(function (row) {
@@ -245,14 +248,34 @@ export function SplitTable(props: TableProps) {
     });
   });
   var box = useRef<HTMLDivElement | null>(null);
+  var together = useStore(syncScroll);
+  var scrolled = function (side: Side, x: number) {
+    var el = box.current;
+    if (!el) return;
+    el.style.setProperty('--dn-x-' + side, x + 'px');
+    if (!together) return;
+    // The other side goes where this one went (setting it to where it
+    // already is moves nothing, so this doesn't come back round).
+    var other = side === 'old' ? 'new' : 'old';
+    el.style.setProperty('--dn-x-' + other, x + 'px');
+    var bar = el.querySelector<HTMLElement>('[data-diffnote-split-bar="' + other + '"]');
+    if (bar && bar.scrollLeft !== x) bar.scrollLeft = x;
+  };
+  // Turned on while the two are apart: the new side's place is where both go.
+  useEffect(function () {
+    var el = box.current;
+    var bar = el && el.querySelector<HTMLElement>('[data-diffnote-split-bar="new"]');
+    if (together && bar) scrolled('new', bar.scrollLeft);
+  }, [together]);
   var bar = function (side: Side) {
+    var cols = together ? Math.max(longest.old, longest.new) : longest[side];
     return <div class="diffnote-split-bar" data-diffnote-split-bar={side}
-      onScroll={function (e) { if (box.current) box.current.style.setProperty('--dn-x-' + side, e.currentTarget.scrollLeft + 'px'); }}>
-      <div style={'width: calc(' + longest[side] + 'ch + 34px)'} />
+      onScroll={function (e) { scrolled(side, e.currentTarget.scrollLeft); }}>
+      <div style={'width: calc(' + cols + 'ch + 34px)'} />
     </div>;
   };
   // A sideways turn of the wheel (or Shift and the wheel) over a side moves
-  // that side's bar, and only it.
+  // that side's bar (and, when they move together, the other with it).
   useEffect(function () {
     var found = box.current;
     if (!found) return undefined;
