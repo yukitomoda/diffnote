@@ -557,8 +557,6 @@ ui:
     キャンセル
   confirm_cancel: |-
     やめる
-  copy_button: |-
-    コピー
 
   api:
     unreachable: |-
@@ -954,8 +952,6 @@ ui:
       閉じる
     add_comment_title: |-
       このファイルにコメントする
-    add_comment_button: |-
-      コメント
     missing_note: |-
       このファイルは、今の差分に含まれていません
     binary_note: |-

@@ -1,6 +1,7 @@
 // A thread's card: its comments, and the box to reply in.
 import { useContext, useEffect, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
+import { Icon } from '../icon.tsx';
 import { useAutoGrow } from '../dom.ts';
 import { ActionsContext } from '../state/contexts.ts';
 import { Comment } from './Comment.jsx';
@@ -32,7 +33,7 @@ export function Card(props: CardProps) {
   >
     <summary>
       {color && <span class="diffnote-thread__swatch" style={'background:' + color}></span>}{t.resolved ? lib.m('ui.thread.resolved') : lib.m('ui.thread.unresolved')}{loc && <>{' '}<span class="diffnote-thread__where">{loc}</span></>}{absent && lib.m('ui.absence.' + absent.absence)}{loc &&
-      <button type="button" class="diffnote-copy" data-diffnote-copy={loc + '@' + (props.rev + 1)} title={lib.m('ui.copy.location_title')}>{lib.m('ui.copy_button')}</button>}
+      <button type="button" class="diffnote-copy diffnote-icon-button" data-diffnote-copy={loc + '@' + (props.rev + 1)} title={lib.m('ui.copy.location_title')} aria-label={lib.m('ui.copy.location_title')}><Icon name="copy" /></button>}
     </summary>
     {absent && absent.was.length > 0 && <pre class="diffnote-deleted__snippet">{absent.was.join('\n') + '\n'}</pre>}
     {t.comments.map(function (c, i) {

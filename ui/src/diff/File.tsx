@@ -97,7 +97,7 @@ export function File(props: FileProps) {
           // path it moved from is written, and a folded file shows it too.
           ? <span class="diffnote-file__from" data-diffnote-renamed-from={file.old_path}>{lib.mf('ui.file.renamed_suffix_from', { old: file.old_path })}</span>
           : lib.m('ui.file.renamed_suffix'))}</h2>
-        <button type="button" class="diffnote-copy" data-diffnote-copy={file.path} title={lib.m('ui.copy.path_title')}>{lib.m('ui.copy_button')}</button>
+        <button type="button" class="diffnote-copy diffnote-icon-button" data-diffnote-copy={file.path} title={lib.m('ui.copy.path_title')} aria-label={lib.m('ui.copy.path_title')}><Icon name="copy" /></button>
         {file.opened && files && <button type="button" class="diffnote-mini" data-diffnote-close title={lib.m('ui.file.close_title')}
           onClick={function (e) {
             e.preventDefault();
@@ -106,14 +106,14 @@ export function File(props: FileProps) {
             if (compose && compose!.sel && compose!.sel.path === file.path) compose!.close();
             files!.close(ctx.rev, file.path);
           }}>{lib.m('ui.file.close_button')}</button>}
-        {compose && (file.opened || file.status !== 'context' || mine.length > 0) && <button type="button" class="diffnote-mini" data-diffnote-add="file" title={lib.m('ui.file.add_comment_title')}
+        {compose && (file.opened || file.status !== 'context' || mine.length > 0) && <button type="button" class="diffnote-icon-button" data-diffnote-add="file" title={lib.m('ui.file.add_comment_title')} aria-label={lib.m('ui.file.add_comment_title')}
           onClick={function (e) {
             e.preventDefault();
             e.stopPropagation();
             details.current!.open = true;
             setOpened(true);
             compose!.openScope('file', ctx.rev, file.path);
-          }}>{lib.m('ui.file.add_comment_button')}</button>}
+          }}><Icon name="addComment" /></button>}
       </summary>
       {composing && <div class="diffnote-compose-wrap"><Composer scope="file" where={lib.mf('ui.compose.file_where', { path: file.path })} request={{ scope: 'file', revision: ctx.rev, file: file.path }} /></div>}
       {fileThreads.map(function (id) { return <Card key={id} rev={ctx.rev} thread={ctx.byId[id]} placement={ctx.placements[id]} />; })}

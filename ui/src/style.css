@@ -87,6 +87,10 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-global-comments .diffnote-compose-wrap { padding: 8px 0 0; }
 .diffnote-copy, .diffnote-mini { margin-left: 8px; padding: 0 7px; font: inherit; font-size: 11px; font-weight: 400; line-height: 18px; color: var(--diffnote-color-muted); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 4px; cursor: pointer; vertical-align: baseline; }
 .diffnote-copy:hover, .diffnote-mini:hover { color: var(--diffnote-color-fg); border-color: var(--diffnote-color-muted); }
+/* A button that is only an icon (コピー, コメント): no box until pointed at. */
+.diffnote-icon-button { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 22px; margin-left: 4px; padding: 0; font-size: 16px; line-height: 1; color: var(--diffnote-color-muted); background: none; border: 0; border-radius: 4px; cursor: pointer; vertical-align: middle; }
+.diffnote-icon-button:hover, .diffnote-icon-button:focus-visible { color: var(--diffnote-color-fg); background: var(--diffnote-color-border); }
+.diffnote-icon-button.is-done { color: #1a7f37; }
 .diffnote-copy.is-done { color: #1a7f37; border-color: #1a7f37; }
 body[data-diffnote-api] .diffnote-line__gutter-old, body[data-diffnote-api] .diffnote-line__gutter-new { cursor: pointer; }
 body[data-diffnote-api] .diffnote-line__gutter-new { position: relative; }

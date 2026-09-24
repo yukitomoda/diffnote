@@ -1,6 +1,7 @@
 // The box a new thread is written in.
 import { useContext, useEffect, useRef } from 'preact/hooks';
 import { lib } from '../lib.ts';
+import { Icon } from '../icon.tsx';
 import { useAutoGrow } from '../dom.ts';
 import { ComposeContext } from '../state/contexts.ts';
 import { useAttach } from './attach.jsx';
@@ -27,7 +28,7 @@ export function Composer(props: ComposerProps) {
   return <div>
     <form class="diffnote-compose" data-diffnote-scope={props.scope} style={c!.pending ? 'display:none' : undefined}
       onSubmit={function (e) { e.preventDefault(); send(); }}>
-      <div class="diffnote-compose__head"><div class="diffnote-compose__where">{props.where}</div>{props.copy && <button type="button" class="diffnote-copy" data-diffnote-copy={props.copy} title={lib.m('ui.copy.range_title')}>{lib.m('ui.copy_button')}</button>}<span class="diffnote-attach-bar">{attach.picker(function () { return box.current; })}</span></div>
+      <div class="diffnote-compose__head"><div class="diffnote-compose__where">{props.where}</div>{props.copy && <button type="button" class="diffnote-copy diffnote-icon-button" data-diffnote-copy={props.copy} title={lib.m('ui.copy.range_title')} aria-label={lib.m('ui.copy.range_title')}><Icon name="copy" /></button>}<span class="diffnote-attach-bar">{attach.picker(function () { return box.current; })}</span></div>
       <textarea ref={box} rows={3} placeholder={lib.m('ui.compose.placeholder')} value={c!.draft} {...attach.handlers}
         onInput={function (e) { c!.setDraft(e.currentTarget.value); }}
         onKeyDown={function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }}></textarea>

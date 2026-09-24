@@ -111,12 +111,18 @@ function jumpTo(id: string) {
 // Copy buttons (file paths, thread locations). Handled before anything else
 // sees the click, since they sit inside <summary> elements.
 function copyText(text: string, button: HTMLElement) {
+  // Said by the button itself for a moment: a tick where its icon was, and
+  // 「コピーしました」 as what it is called.
   function done() {
-    var before = button.textContent;
-    button.textContent = lib.m('ui.copied');
+    if (button.classList.contains('is-done')) return;
+    var before = Array.prototype.slice.call(button.childNodes) as Node[];
+    var title = button.getAttribute('title');
+    button.replaceChildren(iconNode('check'));
+    button.setAttribute('title', lib.m('ui.copied'));
     button.classList.add('is-done');
     setTimeout(function () {
-      button.textContent = before;
+      button.replaceChildren.apply(button, before);
+      if (title != null) button.setAttribute('title', title);
       button.classList.remove('is-done');
     }, 1400);
   }

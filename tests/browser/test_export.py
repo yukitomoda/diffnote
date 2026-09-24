@@ -207,8 +207,15 @@ class StaticExport(BrowserCase):
         b = self.b
         b.stub_clipboard()
         was_open = b.js(f"document.querySelector('{CUR} section.diffnote-file details').open")
+        button = f"document.querySelector('{CUR} section.diffnote-file summary .diffnote-copy')"
+        title = b.js(f"{button}.title")
         b.click(f"{CUR} section.diffnote-file summary .diffnote-copy")
         self.assertEqual(b.js("window.__copied"), "calc.py")
+        # The button (an icon) says so for a moment, then is as it was.
+        self.assertTrue(b.wait(f"{button}.classList.contains('is-done') && {button}.title === 'コピーしました'"))
+        self.assertTrue(b.wait(f"!{button}.classList.contains('is-done')", timeout=4))
+        self.assertEqual(b.js(f"{button}.title"), title)
+        self.assertEqual(b.js(f"{button}.querySelectorAll('svg').length"), 1)
         self.assertEqual(b.js(f"document.querySelector('{CUR} section.diffnote-file details').open"), was_open,
                          "the button does not fold the file")
         sel = self.card("mul の型")
