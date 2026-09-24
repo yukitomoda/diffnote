@@ -550,3 +550,17 @@ test('a line is as wide as its columns: a tab to the next stop, a wide character
   assert.equal(lib.columns([]), 0);
   assert.equal(lib.columns(undefined), 0);
 });
+
+test('the files are a tree, with a directory that holds one thing joined to it', () => {
+  const shape = (nodes) => nodes.map((n) => n.path ? n.label + '=' + n.path : [n.label, shape(n.children)]);
+  assert.deepEqual(shape(lib.fileTree(['a/b/c/d', 'a/b/e/f/g', 'a/b/e/f/h'])),
+    [['a/b/', ['c/d=a/b/c/d', ['e/f/', ['g=a/b/e/f/g', 'h=a/b/e/f/h']]]]]);
+  // Files at the top, and the order the files come in.
+  assert.deepEqual(shape(lib.fileTree(['README.md', 'src/b.rs', 'src/a.rs', 'Cargo.toml'])),
+    ['README.md=README.md', ['src/', ['b.rs=src/b.rs', 'a.rs=src/a.rs']], 'Cargo.toml=Cargo.toml']);
+  // A lone file down a chain is one row with its whole path.
+  assert.deepEqual(shape(lib.fileTree(['x/y/z.txt'])), ['x/y/z.txt=x/y/z.txt']);
+  // A directory with a file and a directory is not joined to either.
+  assert.deepEqual(shape(lib.fileTree(['d/f', 'd/e/g'])), [['d/', ['f=d/f', 'e/g=d/e/g']]]);
+  assert.deepEqual(lib.fileTree([]), []);
+});

@@ -112,7 +112,7 @@ class StoredFiles(FilesCase):
         self.open_tree()
         self.open_file("docs/README.md")
         self.assertEqual(self.file_paths(), ["src/auth/login.ts", "docs/README.md"], "after the diff's files")
-        self.assertTrue(b.js("Array.from(document.querySelectorAll(%s)).some(function(a){return a.textContent==='docs/README.md'})"
+        self.assertTrue(b.js("Array.from(document.querySelectorAll(%s)).some(function(a){return a.dataset.diffnoteFileLink==='docs/README.md'})"
                              % json.dumps(f"{CUR} .diffnote-filelist a")))
         self.assertTrue(self.same_page())
         self.assertEqual((entries(self.review), zip_names(self.review)), (events, names), "looking records nothing")
@@ -163,7 +163,7 @@ class StoredFiles(FilesCase):
         events = entries(self.review)
         b.click(f"{section('src/util/b.ts')} [data-diffnote-close]")
         self.assertFalse(b.exists(section("src/util/b.ts")))
-        self.assertFalse(b.js("Array.from(document.querySelectorAll(%s)).some(function(a){return a.textContent==='src/util/b.ts'})"
+        self.assertFalse(b.js("Array.from(document.querySelectorAll(%s)).some(function(a){return a.dataset.diffnoteFileLink==='src/util/b.ts'})"
                               % json.dumps(f"{CUR} .diffnote-filelist a")))
         self.assertEqual(entries(self.review), events)
 

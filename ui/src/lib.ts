@@ -108,6 +108,15 @@ export interface AttachmentUse {
 /** What is read of a row to say which threads and cards are on it. */
 export type LineNumbers = Pick<Row, 'o' | 'n'>;
 
+/** A row of the file list's tree: a directory (with what is in it), or a
+ * file (`path`). A directory that holds only one thing is written together
+ * with it (`a/b/`, `c/d`), so the tree is only as deep as it has to be. */
+export interface FileTreeNode {
+  label: string;
+  path?: string;
+  children: FileTreeNode[];
+}
+
 /** A piece of a line, and whether it is one of the words that changed. */
 export type MarkedPiece = [kind: string | null, text: string, changed: boolean];
 
@@ -142,6 +151,7 @@ interface Lib {
   pairRows(rows: Row[]): { left: Row | null; right: Row | null }[];
   diffStat(file: FileData): { added: number; removed: number };
   columns(pieces: Token[] | null | undefined): number;
+  fileTree(paths: string[]): FileTreeNode[];
   diffBlocks(added: number, removed: number): string[];
   withoutSpaceChanges(file: FileData): FileData;
 
@@ -512,6 +522,45 @@ lib.EXPAND_STEP = 20;
 // with no rows) between them; a hunk whose place is shown whole, or shown up to it,
 // gives up its `@@` row (`quiet`). The added blocks have headers, so the rows can be told
 // their line numbers as those of a hunk.
+// The files as a tree, in the order they come in. A directory that holds
+// only one thing, a directory or a file, is joined to it: `a/b/c/d`,
+// `a/b/e/f/g` and `a/b/e/f/h` are `a/b/` holding `c/d` and `e/f/`, which
+// holds `g` and `h`.
+lib.fileTree = function (paths) {
+  interface Dir { dirs: Map<string, Dir>; order: (string | { file: string; path: string })[] }
+  var root: Dir = { dirs: new Map(), order: [] };
+  paths.forEach(function (path) {
+    var parts = path.split('/');
+    var at = root;
+    parts.slice(0, -1).forEach(function (name) {
+      var next = at.dirs.get(name);
+      if (!next) {
+        next = { dirs: new Map(), order: [] };
+        at.dirs.set(name, next);
+        at.order.push(name);
+      }
+      at = next;
+    });
+    at.order.push({ file: parts[parts.length - 1], path: path });
+  });
+  var nodes = function (dir: Dir): FileTreeNode[] {
+    return dir.order.map(function (entry) {
+      if (typeof entry !== 'string') return { label: entry.file, path: entry.path, children: [] };
+      var label = entry + '/';
+      var inner = dir.dirs.get(entry)!;
+      // Down a run of directories that each hold one thing.
+      while (inner.order.length === 1) {
+        var only = inner.order[0];
+        if (typeof only !== 'string') return { label: label + only.file, path: only.path, children: [] };
+        label += only + '/';
+        inner = inner.dirs.get(only)!;
+      }
+      return { label: label, children: nodes(inner) };
+    });
+  };
+  return nodes(root);
+};
+
 // How wide a line is, in the columns of a fixed-width font: a tab takes a
 // tab stop (8) and a wide character (CJK, full-width forms) two. For a table
 // that doesn't wrap its lines to make room for the longest one.

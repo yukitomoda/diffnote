@@ -813,6 +813,46 @@ class SidebarWidth(ServedCase):
         self.assertAlmostEqual(b.js("document.querySelector('.diffnote-screen-nav').getBoundingClientRect().width"), start, delta=2)
 
 
+class FileTree(ServedCase):
+    """The files beside the diff, as a tree of their directories."""
+
+    def test_directories_that_hold_one_thing_are_joined_and_the_check_is_at_the_right(self):
+        repo = os.path.join(self.root, "tree")
+        os.makedirs(repo)
+        harness.git(repo, "init", "-q", "-b", "main")
+        paths = ["a/b/c/d", "a/b/e/f/g", "a/b/e/f/h"]
+        for p in paths:
+            harness.write(repo, p, "one\n")
+        harness.git(repo, "add", "-A")
+        harness.git(repo, "commit", "-q", "-m", "c1")
+        harness.git(repo, "tag", "c1")
+        for p in paths:
+            harness.write(repo, p, "two\n")
+        harness.git(repo, "commit", "-q", "-am", "c2")
+        harness.git(repo, "tag", "c2")
+        master = os.path.join(self.root, "tree.diffnote")
+        # (A thread keeps one file open: the page counts as loaded when a diff shows.)
+        harness.review_of(repo, master, "c2", base="c1", comments=[{"file": "a/b/e/f/h", "line": "two", "body": "x"}])
+        self.serve(master)
+        b = self.b
+        shape = b.js("""(function walk(ul) {
+          return [...ul.children].map(function (li) {
+            var dir = li.querySelector(':scope > .diffnote-filelist__dirname');
+            return dir ? [dir.textContent, walk(li.querySelector(':scope > ul'))]
+                       : li.querySelector('a').textContent + '=' + li.querySelector('a').dataset.diffnoteFileLink;
+          });
+        })(document.querySelector('%s .diffnote-filelist > ul'))""" % CUR)
+        self.assertEqual(shape, [["a/b/", ["c/d=a/b/c/d", ["e/f/", ["g=a/b/e/f/g", "h=a/b/e/f/h"]]]]])
+        # The check is the last thing on a file's row, at its right end.
+        last = b.js("document.querySelector('%s .diffnote-filelist [data-diffnote-file-link=\"a/b/e/f/g\"]').parentElement.lastElementChild.dataset.diffnoteCheck" % CUR)
+        self.assertEqual(last, "a/b/e/f/g")
+        b.click("[data-diffnote-check='a/b/e/f/g']")
+        self.assertTrue(b.wait("!!document.querySelector('[data-diffnote-check=\"a/b/e/f/g\"][aria-pressed=\"true\"]')"))
+        # A file is still reached by its row.
+        b.click(f"{CUR} [data-diffnote-file-link='a/b/c/d']")
+        self.assertTrue(b.wait("location.hash.includes('file')"))
+
+
 class NewThreadsOnLines(ServedCase):
     def gutter(self, kind, n, table=LOGIN):
         return f"{CUR} {table} tr[data-diffnote-{kind}='{n}'] .diffnote-line__gutter-{kind}"

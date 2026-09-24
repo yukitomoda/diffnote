@@ -148,7 +148,11 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-error { margin: 6px 0 0; color: #cf222e; font-size: 12.5px; }
 .diffnote-thread__where { font-family: var(--diffnote-font-mono); font-size: 12px; font-weight: 400; color: var(--diffnote-color-muted); }
 .diffnote-filelist ul { list-style: none; margin: 0; padding: 0; }
-.diffnote-filelist li { display: flex; align-items: center; justify-content: space-between; gap: 6px; border-radius: 6px; }
+.diffnote-filelist li { border-radius: 6px; }
+.diffnote-filelist__file { display: flex; align-items: center; gap: 6px; }
+/* A directory: its name, then what is in it, a step in. */
+.diffnote-filelist__dirname { display: block; padding: 3px 8px; font-family: var(--diffnote-font-mono); color: var(--diffnote-color-muted); word-break: break-all; }
+.diffnote-filelist__dir > ul { margin-left: 10px; padding-left: 4px; border-left: 1px solid var(--diffnote-color-border); }
 .diffnote-filelist a { flex: 1; min-width: 0; padding: 3px 8px; color: var(--diffnote-color-fg); text-decoration: none; font-family: var(--diffnote-font-mono); word-break: break-all; border-radius: 6px; }
 .diffnote-filelist a:hover { background: var(--diffnote-color-gutter); }
 .diffnote-filelist a.is-visible { background: var(--diffnote-color-hunk-bg); }
