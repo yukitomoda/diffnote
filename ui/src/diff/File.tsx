@@ -82,8 +82,9 @@ export function File(props: FileProps) {
   return <section class={'diffnote-file' + (kind === 'added' || kind === 'deleted' ? ' diffnote-file--' + kind : '')} id={'r' + ctx.rev + '-file-' + htmlId(file.path)} data-diffnote-file={file.path}>
     <details ref={details} open={startsOpen} onToggle={function (e) { if (e.currentTarget.open && !opened) setOpened(true); }}>
       <summary>
-        {<button type="button" class="diffnote-mini diffnote-mini--check" data-diffnote-viewed={file.path} title={lib.m('ui.file.viewed_title')}
-          onClick={function (e) { e.preventDefault(); e.stopPropagation(); toggleViewed(file); }}><span class="diffnote-tick"><Icon name="check" /></span>{lib.m('ui.file.viewed_button')}</button>}
+        {<button type="button" class="diffnote-mini--check" data-diffnote-viewed={file.path} title={lib.m('ui.file.viewed_title')}
+          aria-label={lib.m('ui.file.viewed_button')}
+          onClick={function (e) { e.preventDefault(); e.stopPropagation(); toggleViewed(file); }}><span class="diffnote-tick"><Icon name="check" /></span></button>}
         {file.status !== 'binary' && stat.added + stat.removed > 0 && <span class="diffnote-stat" data-diffnote-stat title={lib.mf('ui.file.stat_title', { added: String(stat.added), removed: String(stat.removed) })}>
           <span class="diffnote-stat__add">+{stat.added}</span> <span class="diffnote-stat__del">−{stat.removed}</span>
           <span class="diffnote-stat__blocks" aria-hidden="true">{lib.diffBlocks(stat.added, stat.removed).map(function (k, i) { return <i key={i} class={'is-' + k}></i>; })}</span>
