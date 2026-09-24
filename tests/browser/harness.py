@@ -263,13 +263,28 @@ class Browser:
         shutil.rmtree(self.profile, ignore_errors=True)
 
     # -- page --
+    # The page that was there answers `ready` too until the new one takes
+    # its place: it is marked first, and waited on to be gone.
+    GONE = "!window.__dnLeaving"
+
     def open(self, url, ready="!!document.querySelector('.diffnote-diff')"):
-        self.cdp.call("Page.navigate", url=url)
-        assert self.cdp.wait(f"document.readyState==='complete' && {ready}"), f"{url} did not load"
+        self._leave()
+        went = self.cdp.call("Page.navigate", url=url).get("result", {})
+        if "loaderId" not in went:
+            # Only the `#...` moved: the same page stays (and is the new one).
+            self.cdp.js("window.__dnLeaving = false")
+        assert self.cdp.wait(f"{self.GONE} && document.readyState==='complete' && {ready}"), f"{url} did not load"
 
     def reload(self, ready="!!document.querySelector('.diffnote-diff')"):
+        self._leave()
         self.cdp.call("Page.reload")
-        assert self.cdp.wait(f"document.readyState==='complete' && {ready}")
+        assert self.cdp.wait(f"{self.GONE} && document.readyState==='complete' && {ready}")
+
+    def _leave(self):
+        try:
+            self.cdp.js("window.__dnLeaving = true")
+        except RuntimeError:
+            pass
 
     def js(self, expression):
         return self.cdp.js(expression)
