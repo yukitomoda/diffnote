@@ -794,8 +794,12 @@ class SidebarWidth(ServedCase):
         self.assertTrue(self.becomes(start + 120), self.width())
         self.assertAlmostEqual(b.js(diff), diff0 + 120, delta=2, msg="the diff makes room")
         self.assertTrue(self.kept(start + 120), harness.user_view())
-        # Not narrower than its least, however far it is taken.
-        self.drag_by(-1000)
+        # Not wider than half the window (or 1000px), however far it is taken.
+        half = min(1000, b.js("Math.floor(innerWidth / 2)"))
+        self.drag_by(2000)
+        self.assertTrue(self.becomes(half), self.width())
+        # Nor narrower than its least.
+        self.drag_by(-2000)
         self.assertTrue(self.becomes(180), self.width())
         # The keys move it too, and a double click puts it back as it was.
         b.js("document.querySelector('[data-diffnote-sidebar-resize]').focus()")

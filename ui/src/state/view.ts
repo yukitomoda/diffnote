@@ -49,9 +49,9 @@ export const SIDEBAR_MIN = 180;
 export const sidebarWidth = atom(SIDEBAR_DEFAULT);
 
 /** The width, kept inside the bounds: not under the least, and never so
- * wide the diff has no room (600px, or half the window if that is less). */
+ * wide the diff has no room (1000px, or half the window if that is less). */
 export function sidebarBounds(width: number, windowWidth: number): number {
-  var most = Math.max(SIDEBAR_MIN, Math.min(600, Math.floor(windowWidth / 2)));
+  var most = Math.max(SIDEBAR_MIN, Math.min(1000, Math.floor(windowWidth / 2)));
   return Math.round(Math.min(most, Math.max(SIDEBAR_MIN, width)));
 }
 
