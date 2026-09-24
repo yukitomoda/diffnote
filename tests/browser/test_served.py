@@ -838,6 +838,10 @@ def tree_review(root, name):
 class IgnoredFiles(ServedCase):
     """The review's own list of files not to show (設定, as a .gitignore)."""
 
+    def left_out(self):
+        """The files listed as left out, by path, in order."""
+        return self.b.js("[...document.querySelectorAll('%s [data-diffnote-ignored-file]')].map(function (e) { return e.dataset.diffnoteIgnoredFile; })" % CUR)
+
     def test_files_named_in_the_settings_leave_the_page_and_are_listed_as_left_out(self):
         self.serve(tree_review(self.root, "ignored"))
         b = self.b
@@ -859,9 +863,8 @@ class IgnoredFiles(ServedCase):
         self.assertTrue(b.wait(f"{shown}.length === 2"))
         self.assertEqual(sorted(b.js(shown)), ["a/b/c/d", "a/b/e/f/h"])
         self.assertFalse(b.exists(f"{CUR} [data-diffnote-file-link='a/b/e/f/g']"), "not in the list either")
-        listed = b.text(f"{CUR} [data-diffnote-ignored]")
-        self.assertIn("(1)", listed)
-        self.assertIn("a/b/e/f/g", listed)
+        self.assertIn("(1)", b.text(f"{CUR} [data-diffnote-ignored] summary"))
+        self.assertEqual(self.left_out(), ["a/b/e/f/g"])
 
     def test_a_file_is_left_out_from_its_own_menu_unless_it_has_threads(self):
         self.serve(tree_review(self.root, "ignored-menu"))
@@ -881,7 +884,7 @@ class IgnoredFiles(ServedCase):
         b.click(f"{file('a/b/c/d')} [data-diffnote-ignore-file]")
         self.assertTrue(b.wait(f"{shown}.length === 2"))
         self.assertIn("/a/b/c/d", harness.member(self.review, "settings.json"))
-        self.assertIn("a/b/c/d", b.text(f"{CUR} [data-diffnote-ignored]"))
+        self.assertEqual(self.left_out(), ["a/b/c/d"])
         # A file with a thread would be shown all the same: the item says so.
         b.click(f"{file('a/b/e/f/h')} [data-diffnote-file-menu]")
         self.assertTrue(b.js(f"document.querySelector({json.dumps(file('a/b/e/f/h') + ' [data-diffnote-ignore-file]')}).disabled"))
@@ -890,6 +893,10 @@ class IgnoredFiles(ServedCase):
         b.click(f"{file('a/b/e/f/g')} [data-diffnote-file-menu]")
         b.click(f"{file('a/b/e/f/g')} [data-diffnote-ignore-file]")
         self.assertTrue(b.wait(f"{shown}.length === 1"))
+        # Listed as a tree, like the files above: `a/b/` holding `c/d` and `e/f/g`.
+        self.assertEqual(self.left_out(), ["a/b/c/d", "a/b/e/f/g"])
+        labels = b.js("[...document.querySelectorAll('%s [data-diffnote-ignored] .diffnote-filelist__dirname, %s [data-diffnote-ignored-file]')].map(function (e) { return e.textContent; })" % (CUR, CUR))
+        self.assertEqual(labels, ["a/b/", "c/d", "e/f/g"])
         self.assertIn("/a/b/c/d", harness.member(self.review, "settings.json"))
         self.assertIn("/a/b/e/f/g", harness.member(self.review, "settings.json"))
 

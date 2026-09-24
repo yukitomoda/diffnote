@@ -51,6 +51,16 @@ export function FileList(props: ListProps) {
         title={done ? lib.m('ui.file.unmark_viewed_title') : lib.m('ui.file.mark_viewed_title')} onClick={function () { toggleViewed(f); }}><span class={'diffnote-tick' + (done ? ' is-on' : '')}><Icon name="check" /></span></button>
     </li>;
   };
+  // The files left out, as a tree like the files above: named, nothing to press.
+  var names = function (nodes: FileTreeNode[]): preact.ComponentChildren {
+    return nodes.map(function (node) {
+      if (node.path != null) return <li key={node.path} title={node.path} data-diffnote-ignored-file={node.path}>{node.label}</li>;
+      return <li key={'dir:' + node.label} class="diffnote-filelist__dir">
+        <span class="diffnote-filelist__dirname">{node.label}</span>
+        <ul>{names(node.children)}</ul>
+      </li>;
+    });
+  };
   var rows = function (nodes: FileTreeNode[]): preact.ComponentChildren {
     return nodes.map(function (node) {
       if (node.path != null) return file(node);
@@ -65,7 +75,7 @@ export function FileList(props: ListProps) {
     <nav class="diffnote-filelist"><ul>{rows(tree)}</ul>
       {ignored.length > 0 && <details class="diffnote-filelist__ignored" data-diffnote-ignored>
         <summary title={lib.m('ui.tree.ignored_title')}>{lib.mf('ui.tree.ignored_summary', { n: String(ignored.length) })}</summary>
-        <ul>{ignored.map(function (p) { return <li key={p}>{p}</li>; })}</ul>
+        <ul>{names(lib.fileTree(ignored))}</ul>
       </details>}
     </nav>
   </details>;
