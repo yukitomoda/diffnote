@@ -1111,7 +1111,7 @@ ui:
     repos_note: |-
       見つかったリポジトリです。レビューに含めるものにチェックを付けてください。
     add_path_label: |-
-      もっと深い場所のリポジトリを追加する
+      リポジトリを追加する
     add_path_placeholder: |-
       例: tools/vendor/lib
     add_button: |-
