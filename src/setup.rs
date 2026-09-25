@@ -216,24 +216,12 @@ impl Setup {
     /// What reviewing `path` (empty: the one repository) from `rev` would
     /// take in.
     pub fn preview(&self, path: &str, rev: &str) -> Result<Preview> {
-        let repo = self.repo_of(path)?;
-        let id = repo.commit_id(rev)?;
-        let head = repo.commit_id("HEAD")?;
-        Ok(Preview {
-            commit: commit_ref(&repo, &id)?,
-            commits: repo.count_commits(&id, &head)?,
-            files: repo.count_changed_files(&id, &head)?,
-        })
+        preview_of(&self.repo_of(path)?, rev)
     }
 
     /// A repository named by hand (one deeper than they are looked for).
     pub fn repo_at(&self, path: &str) -> Result<RepoInfo> {
-        let path = clean_path(path)?;
-        if !self.project.join(&path).join(".git").exists() {
-            bail!(mf("setup.repo_not_found", &[("path", &path)]));
-        }
-        describe_repo(&Repo::at(self.project.join(&path)), path.clone())
-            .map_err(|why| anyhow::anyhow!("{path}: {why}"))
+        repo_info(&self.project, path)
     }
 
     /// The directory's files as they are, which a `raw` review keeps.
@@ -302,6 +290,52 @@ impl Setup {
         }
         Ok(Repo::at(self.project.join(path)))
     }
+}
+
+/// A repository under `project`, named by its path, as the page shows it:
+/// its branch, its `HEAD`, and the commits it can be reviewed from.
+pub fn repo_info(project: &Path, path: &str) -> Result<RepoInfo> {
+    let path = clean_path(path)?;
+    if !project.join(&path).join(".git").exists() {
+        bail!(mf("setup.repo_not_found", &[("path", &path)]));
+    }
+    describe_repo(&Repo::at(project.join(&path)), path.clone())
+        .map_err(|why| anyhow::anyhow!("{path}: {why}"))
+}
+
+/// What reviewing `repo` from `rev` (up to its `HEAD`) would take in.
+pub fn preview_of(repo: &Repo, rev: &str) -> Result<Preview> {
+    let id = repo.commit_id(rev)?;
+    let head = repo.commit_id("HEAD")?;
+    Ok(Preview {
+        commit: commit_ref(repo, &id)?,
+        commits: repo.count_commits(&id, &head)?,
+        files: repo.count_changed_files(&id, &head)?,
+    })
+}
+
+/// One repository to add to a review of several, from `rev`: as it is
+/// recorded (its `HEAD` now is what the next revision compares).
+pub fn repo_from(project: &Path, path: &str, rev: &str) -> Result<RepoSource> {
+    let path = clean_path(path)?;
+    if !project.join(&path).join(".git").exists() {
+        bail!(mf("setup.repo_not_found", &[("path", &path)]));
+    }
+    let git = Repo::at(project.join(&path));
+    let rev = rev.trim();
+    if rev.is_empty() {
+        bail!(mf("setup.repo_base_missing", &[("path", &path)]));
+    }
+    let base = git.commit_id(rev)?;
+    let head = git.commit_id("HEAD")?;
+    Ok(RepoSource {
+        path,
+        range: GitSource {
+            spec: format!("{rev}..HEAD"),
+            base,
+            head,
+        },
+    })
 }
 
 /// The repositories a `workspace` choice names, under `project`, each from
@@ -477,7 +511,14 @@ mod tests {
         let d = setup_in(dir.path()).describe().unwrap();
         assert_eq!(d.kind, "git");
         assert!(d.kinds.git.ok && d.kinds.raw.ok && !d.kinds.workspace.ok);
-        assert!(d.kinds.workspace.why.as_deref().unwrap().contains("見つかりません"));
+        assert!(
+            d.kinds
+                .workspace
+                .why
+                .as_deref()
+                .unwrap()
+                .contains("見つかりません")
+        );
         assert!(d.repos.is_empty());
         let git = d.git.unwrap();
         assert_eq!(git.path, "");

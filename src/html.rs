@@ -170,40 +170,28 @@ pub fn render_export_with(
 }
 
 /// The same app for `diffnote review` / `open`: it can change the review, through the
-/// server that serves it. `editable` are the comments it may edit and delete.
+/// server that serves it.
 pub fn render_served_page(
     loaded: &crate::bundle::Loaded,
-    editable: Vec<String>,
-    changed: Vec<String>,
-    author: String,
-    refreshable: bool,
-    bundle_size: u64,
-    setup: Option<crate::setup::Description>,
+    served: Served,
 ) -> anyhow::Result<String> {
-    client_page(
-        loaded,
-        Some(Served {
-            editable,
-            changed,
-            author,
-            refreshable,
-            bundle_size,
-            setup,
-        }),
-        ExpandLimit::Lines(0),
-    )
+    client_page(loaded, Some(served), ExpandLimit::Lines(0))
 }
 
-/// What the served page is given beyond the review: the comments it may
-/// change, those of them changed in this session, the author, whether it
-/// can pull, the bundle size, and the first screen while there is no review.
-struct Served {
-    editable: Vec<String>,
-    changed: Vec<String>,
-    author: String,
-    refreshable: bool,
-    bundle_size: u64,
-    setup: Option<crate::setup::Description>,
+/// What the served page is given beyond the review.
+pub struct Served {
+    /// The comments it may edit and delete, and those of them changed in
+    /// this session.
+    pub editable: Vec<String>,
+    pub changed: Vec<String>,
+    pub author: String,
+    /// Whether it can pull.
+    pub refreshable: bool,
+    pub bundle_size: u64,
+    /// The first screen, while there is no review.
+    pub setup: Option<crate::setup::Description>,
+    /// A review of several repositories: which, as it is now.
+    pub workspace: Option<WorkspaceInfo>,
 }
 
 fn client_page(
@@ -213,15 +201,7 @@ fn client_page(
 ) -> anyhow::Result<String> {
     let interactive = served.is_some();
     let data = if let Some(served) = served {
-        served_model_json(
-            loaded,
-            served.editable,
-            served.changed,
-            served.author,
-            served.refreshable,
-            served.bundle_size,
-            served.setup,
-        )?
+        served_model_json(loaded, served)?
     } else {
         view_model_json(loaded, limit)?
     };
@@ -850,9 +830,9 @@ pub(crate) mod tokens;
 mod viewmodel;
 mod words;
 pub use viewmodel::{
-    ExpandLimit, OpenedData, ViewModel, bundle_info, chunk_data, compare_data, lines_json,
-    opened_data, served_model_json, stamp, thread_json, tree_json, view_model, view_model_for,
-    view_model_json, view_model_with,
+    ExpandLimit, OpenedData, ViewModel, WorkspaceInfo, WorkspaceRepo, bundle_info, chunk_data,
+    compare_data, lines_json, opened_data, served_model_json, stamp, thread_json, tree_json,
+    view_model, view_model_for, view_model_json, view_model_with,
 };
 
 #[cfg(test)]

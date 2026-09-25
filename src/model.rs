@@ -130,6 +130,11 @@ pub struct Settings {
     /// holds for every revision, and can be taken back.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub ignore: String,
+    /// The repositories a review of several is of now, each from its base
+    /// (see [`crate::review::repos_of`]): the ones added or taken out on the
+    /// page since the review was made. `None`: the first revision's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repos: Option<Vec<RepoSource>>,
 }
 
 fn default_attachment_limit() -> u64 {
@@ -143,6 +148,7 @@ impl Default for Settings {
             title: None,
             ignore_whitespace: false,
             ignore: String::new(),
+            repos: None,
         }
     }
 }

@@ -58,6 +58,26 @@ pub fn set_title(settings: &mut Settings, wanted: &str) -> bool {
     true
 }
 
+/// The repositories a review of several is of now, each from where it is
+/// reviewed: what the settings say, else the first revision's. `None` for a
+/// review of one repository or of a directory.
+pub fn repos_of(loaded: &crate::bundle::Loaded) -> Option<Vec<crate::model::RepoSource>> {
+    if let Some(repos) = &loaded.settings.repos {
+        return Some(repos.clone());
+    }
+    loaded.revisions().next().and_then(|r| match &r.source {
+        crate::model::Source::Workspace(w) => Some(w.repos.clone()),
+        _ => None,
+    })
+}
+
+/// Makes `repos` the review's repositories from the next revision on.
+/// Earlier revisions, and the threads on them, stay as they are.
+pub fn set_repos(settings: &mut Settings, mut repos: Vec<crate::model::RepoSource>) {
+    repos.sort_by(|a, b| a.path.cmp(&b.path));
+    settings.repos = Some(repos);
+}
+
 /// Makes ignoring white space `wanted`; whether that changed anything.
 pub fn set_ignore_whitespace(settings: &mut Settings, wanted: bool) -> bool {
     if settings.ignore_whitespace == wanted {
@@ -237,6 +257,54 @@ pub fn load(path: &Path) -> Result<Vec<Event>> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn the_repositories_are_what_the_settings_say_else_the_first_revisions() {
+        use crate::model::{GitSource, RepoSource, Revision, Source, WorkspaceSource};
+        let repo = |path: &str| RepoSource {
+            path: path.to_string(),
+            range: GitSource {
+                base: "b".into(),
+                head: "h".into(),
+                spec: "b..h".into(),
+            },
+        };
+        let mut loaded = crate::bundle::empty();
+        assert_eq!(repos_of(&loaded), None, "nothing yet");
+        loaded.events.push(Event::Revision(Revision {
+            id: ulid::Ulid::new(),
+            created_at: time::OffsetDateTime::now_utc(),
+            digest: "d".into(),
+            source: Source::Workspace(WorkspaceSource {
+                repos: vec![repo("a"), repo("m")],
+            }),
+            snapshot_mode: crate::model::SnapshotMode::Changed,
+            files: Vec::new(),
+            tree: Vec::new(),
+            commits: Vec::new(),
+        }));
+        let paths = |l: &crate::bundle::Loaded| {
+            repos_of(l).map(|r| r.iter().map(|r| r.path.clone()).collect::<Vec<_>>())
+        };
+        assert_eq!(paths(&loaded), Some(vec!["a".to_string(), "m".to_string()]));
+        // Changed on the page: the settings say, sorted, whatever the first
+        // revision was.
+        set_repos(
+            &mut loaded.settings,
+            vec![repo("m"), repo("deep/z"), repo("a")],
+        );
+        assert_eq!(
+            paths(&loaded),
+            Some(vec!["a".to_string(), "deep/z".to_string(), "m".to_string()])
+        );
+        set_repos(&mut loaded.settings, Vec::new());
+        assert_eq!(
+            paths(&loaded),
+            Some(Vec::new()),
+            "none left is still an answer"
+        );
+    }
 
     #[test]
     fn a_line_the_page_writes_for_a_file_names_that_file_and_no_other() {
@@ -259,7 +327,6 @@ mod tests {
         assert!(ignore_matcher(&settings("# only a comment\n")).is_none());
     }
 
-    use super::*;
     use crate::model::Anchor;
     use time::OffsetDateTime;
     use ulid::Ulid;

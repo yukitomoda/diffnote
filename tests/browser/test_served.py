@@ -2562,3 +2562,57 @@ class FirstScreen(ServedCase):
         files = b.js("[...document.querySelectorAll('%s section.diffnote-file')].map(function (s) { return s.dataset.diffnoteFile; })" % CUR)
         self.assertEqual(files, ["backend/repo-a/a.txt"])
         self.assertIn("1 リポジトリ", b.text("[data-diffnote-base]"))
+
+
+class Repositories(ServedCase):
+    """リポジトリ on the settings screen of a review of several: the ones it
+    is of, one taken out, one added. (What that does to the next revision
+    is in `tests/cli.rs`.)"""
+
+    def test_a_repository_is_taken_out_and_one_added_from_the_screen(self):
+        project = project_of_repos(self.root, "repos")
+        self.review = os.path.join(project, "r.diffnote")
+        self.server = Served(self.review, cwd=project, author="検証者", extra=["--type", "workspace"])
+        self.addCleanup(self.server.stop)
+        b = self.b = self.browser
+        b.open(self.server.url, ready="!!document.querySelector('.diffnote-file')")
+        b.click("[data-diffnote-screen-open]")
+        self.assertTrue(b.wait_exists("[data-diffnote-screen-nav=repos]"))
+        b.click("[data-diffnote-screen-nav=repos]")
+        self.assertTrue(b.wait_exists("[data-diffnote-repos-pane]"))
+        rows = lambda: b.js("[...document.querySelectorAll('[data-diffnote-repo]')].map(function (li) { return li.dataset.diffnoteRepo; })")
+        self.assertEqual(rows(), ["backend/repo-a", "mobile-app"])
+        self.assertFalse(b.exists("[data-diffnote-repo-away]"), "both are here")
+        # Taken out, after being asked once more.
+        b.click("[data-diffnote-repo='mobile-app'] [data-diffnote-repo-remove]")
+        self.assertTrue(b.wait_exists("[data-diffnote-repo='mobile-app'] [data-diffnote-repo-remove-confirm]"))
+        self.assertEqual(rows(), ["backend/repo-a", "mobile-app"], "not yet")
+        b.click("[data-diffnote-repo='mobile-app'] [data-diffnote-repo-remove-confirm]")
+        self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-repo]').length === 1"))
+        self.assertEqual(rows(), ["backend/repo-a"])
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-repo-remove]').disabled"), "the last one stays")
+        self.assertIn("1 リポジトリ", b.text("[data-diffnote-base]"))
+        # It is now offered again, being under the directory; added from
+        # a commit chosen as on the first screen.
+        self.assertTrue(b.wait_exists("[data-diffnote-repo-pick='mobile-app']"))
+        b.click("[data-diffnote-repo-pick='mobile-app']")
+        self.assertTrue(b.wait_exists("[data-diffnote-repo-adding='mobile-app']"))
+        self.assertIn("1 コミット、2 ファイル", b.text("[data-diffnote-repo-adding='mobile-app'] input:checked + span small"))
+        b.click("[data-diffnote-repo-add]")
+        self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-repo]').length === 2"))
+        self.assertEqual(rows(), ["backend/repo-a", "mobile-app"])
+        self.assertFalse(b.exists("[data-diffnote-repo-adding]"))
+        self.assertIn("2 リポジトリ", b.text("[data-diffnote-base]"))
+        # A path that is no repository is refused where it was typed.
+        b.set_value("[data-diffnote-repo-path]", "docs")
+        b.click("[data-diffnote-repo-look]")
+        self.assertTrue(b.wait_exists("[data-diffnote-repo-add-error]"))
+        settings = json.loads(harness.member(self.review, "settings.json"))
+        self.assertEqual([r["path"] for r in settings["repos"]], ["backend/repo-a", "mobile-app"])
+
+    def test_a_review_of_one_repository_has_no_such_screen(self):
+        self.serve()
+        b = self.b
+        b.click("[data-diffnote-screen-open]")
+        self.assertTrue(b.wait_exists("[data-diffnote-screen-nav=settings]"))
+        self.assertFalse(b.exists("[data-diffnote-screen-nav=repos]"))

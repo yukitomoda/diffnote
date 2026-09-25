@@ -266,6 +266,14 @@ serve:
   comment_id_invalid: |-
     コメントの ID が不正です
 
+  repos:
+    not_several: |-
+      このレビューは、複数のリポジトリのレビューではありません
+    not_in: |-
+      {path} は、このレビューに入っていません
+    last: |-
+      最後のリポジトリは外せません(レビューには 1 つ以上のリポジトリが必要です)
+
   stats:
     threads: |-
       スレッド {n} 件
@@ -823,6 +831,8 @@ ui:
       添付
     user_tab: |-
       ユーザー設定
+    repos_tab: |-
+      リポジトリ
 
   settings:
     general_heading: |-
@@ -1138,6 +1148,32 @@ ui:
       ベースを指定してください
     base_unchecked: |-
       ベースの確認が終わるまでお待ちください
+
+  repos:
+    heading: |-
+      リポジトリ
+    note: |-
+      このレビューに入っているリポジトリです。外すと次のリビジョンから含まれなくなります(これまでのリビジョンとコメントはそのまま残ります)。追加すると、選んだベースから次のリビジョンに入ります。
+    base: |-
+      ベース: {id}
+    away: |-
+      手元にありません
+    remove_button: |-
+      外す
+    remove_confirm: |-
+      次のリビジョンから外します。よろしいですか?
+    last_title: |-
+      最後のリポジトリは外せません
+    add_heading: |-
+      リポジトリを追加する
+    pick_button: |-
+      選ぶ
+    path_label: |-
+      パスで指定する
+    look_button: |-
+      確認
+    add_button: |-
+      追加する
 
   empty:
     heading: |-

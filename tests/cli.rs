@@ -2643,6 +2643,201 @@ fn the_first_screen_elsewhere_keeps_the_directory_as_it_is_and_leaves_nothing_if
 }
 
 #[test]
+fn repositories_are_added_and_taken_out_on_the_page_from_the_next_revision_on() {
+    let env = Env::new();
+    let root = project(&env);
+    let deep = root.join("a/b/c/d/e/deep");
+    std::fs::create_dir_all(&deep).unwrap();
+    git(&deep, &["init", "-q", "-b", "main"]);
+    std::fs::write(deep.join("d.txt"), "one\n").unwrap();
+    git(&deep, &["add", "-A"]);
+    git(&deep, &["commit", "-q", "-m", "d1"]);
+    let review = root.join("review.diffnote");
+    let threads = env.review(
+        &root,
+        &review,
+        &["--type", "workspace"],
+        &[Note::Line("mobile-app/m.txt", "two", "mobile two")],
+    );
+    let served = env.serve(&root, &review, &[]);
+    let model = served.api("/api/model", None);
+    let repos = model["model"]["workspace"]["repos"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(repos.len(), 2);
+    assert_eq!(repos[1]["path"], "mobile-app");
+    assert_eq!(repos[1]["present"], true);
+    assert_eq!(repos[1]["base"].as_str().unwrap().len(), 7);
+    // Others under the directory, and one named by hand.
+    assert_eq!(
+        served.api("/api/repos/found", None)["found"],
+        serde_json::json!([])
+    );
+    let (status, _, body) = http(
+        served.port,
+        "GET",
+        "/api/repos/at?path=mobile-app",
+        &served.cookie,
+        None,
+    );
+    assert_eq!(status, 400, "already in: {body}");
+    let info = served.api("/api/repos/at?path=a/b/c/d/e/deep", None)["repo"].clone();
+    assert_eq!(info["path"], "a/b/c/d/e/deep");
+    let preview =
+        served.api("/api/repos/preview?path=a/b/c/d/e/deep&rev=HEAD", None)["preview"].clone();
+    assert_eq!(preview["subject"], "d1");
+    // Taken out: gone from the next revision, kept in the one so far.
+    let answer = served.api(
+        "/api/repos/remove",
+        Some(serde_json::json!({ "path": "mobile-app" })),
+    );
+    let repos = answer["model"]["workspace"]["repos"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(repos.len(), 1);
+    assert_eq!(repos[0]["path"], "backend/repo-a");
+    assert_eq!(
+        answer["model"]["base"]["repos"].as_array().unwrap().len(),
+        1
+    );
+    let (status, _, body) = http(
+        served.port,
+        "POST",
+        "/api/repos/remove",
+        &served.cookie,
+        Some(r#"{"path":"backend/repo-a"}"#),
+    );
+    assert_eq!(status, 400, "the last one stays: {body}");
+    let mobile = root.join("mobile-app");
+    std::fs::write(mobile.join("m.txt"), "one\ntwo\nthree\n").unwrap();
+    git(&mobile, &["commit", "-q", "-am", "c3"]);
+    // The next revision is of what is left, and a commit in what was
+    // taken out is nothing to it.
+    assert!(
+        served.refresh(),
+        "the review is of one repository now: a revision of that"
+    );
+    // (Its diff is of repo-a alone; the page still shows the file the
+    // thread from before is on, as it does any file a thread is on.)
+    let files: Vec<String> = bundle::load(&review)
+        .unwrap()
+        .revisions()
+        .nth(1)
+        .unwrap()
+        .files
+        .iter()
+        .filter_map(|f| f.new_path.clone())
+        .collect();
+    assert_eq!(files, ["backend/repo-a/a.txt"]);
+    assert!(!served.refresh(), "and nothing more");
+    // Added, from HEAD: in the next revision on, from there.
+    let answer = served.api(
+        "/api/repos",
+        Some(serde_json::json!({ "path": "a/b/c/d/e/deep", "base": "HEAD" })),
+    );
+    let repos = answer["model"]["workspace"]["repos"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        repos
+            .iter()
+            .map(|r| r["path"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["a/b/c/d/e/deep", "backend/repo-a"]
+    );
+    let (status, _, body) = http(
+        served.port,
+        "POST",
+        "/api/repos",
+        &served.cookie,
+        Some(r#"{"path":"a/b/c/d/e/deep","base":"HEAD"}"#),
+    );
+    assert_eq!(status, 400, "twice: {body}");
+    let (status, _, body) = http(
+        served.port,
+        "POST",
+        "/api/repos",
+        &served.cookie,
+        Some(r#"{"path":"docs","base":"HEAD"}"#),
+    );
+    assert_eq!(status, 400, "not a repository: {body}");
+    assert!(served.refresh(), "a revision with it in, from its HEAD");
+    assert!(!served.refresh());
+    std::fs::write(deep.join("d.txt"), "one\ntwo\n").unwrap();
+    git(&deep, &["commit", "-q", "-am", "d2"]);
+    assert!(served.refresh());
+    served.reply(&threads[0], "still there");
+    served.stop();
+    let sources = workspace_sources(&review);
+    assert_eq!(sources.len(), 4);
+    assert_eq!(
+        sources[0]
+            .repos
+            .iter()
+            .map(|r| r.path.as_str())
+            .collect::<Vec<_>>(),
+        ["backend/repo-a", "mobile-app"],
+        "the first revision is as it was"
+    );
+    assert_eq!(
+        sources[1]
+            .repos
+            .iter()
+            .map(|r| r.path.as_str())
+            .collect::<Vec<_>>(),
+        ["backend/repo-a"]
+    );
+    assert_eq!(
+        sources[3]
+            .repos
+            .iter()
+            .map(|r| r.path.as_str())
+            .collect::<Vec<_>>(),
+        ["a/b/c/d/e/deep", "backend/repo-a"]
+    );
+    assert_eq!(sources[3].repos[0].range.base, commit_id(&deep, "HEAD~1"));
+    let last = bundle::load(&review).unwrap();
+    let files: Vec<String> = last
+        .revisions()
+        .last()
+        .unwrap()
+        .files
+        .iter()
+        .filter_map(|f| f.new_path.clone())
+        .collect();
+    assert_eq!(
+        files,
+        ["a/b/c/d/e/deep/d.txt", "backend/repo-a/a.txt"],
+        "each from its base; mobile-app's commit is not here"
+    );
+    assert_eq!(comment_bodies(&last), ["mobile two", "still there"]);
+    // A repository taken out that is gone from the disk too is nothing to
+    // warn about; a review of one repository has no repositories to manage.
+    std::fs::rename(&mobile, env.path("elsewhere")).unwrap();
+    let served = env.open(&root, &review);
+    assert!(
+        !served.said.contains("見つからないリポジトリ"),
+        "{}",
+        served.said
+    );
+    served.stop();
+    let repo = git_repo(&env);
+    let one = env.path("one.diffnote");
+    let served = env.serve(&repo, &one, &["--base", "c1"]);
+    assert!(
+        served.api("/api/model", None)["model"]
+            .get("workspace")
+            .is_none()
+    );
+    let (status, _, _) = http(served.port, "GET", "/api/repos/found", &served.cookie, None);
+    assert_eq!(status, 400);
+    served.stop();
+}
+
+#[test]
 fn what_a_project_of_repositories_cannot_be_told_is_refused() {
     let env = Env::new();
     let root = project(&env);

@@ -513,6 +513,16 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
 .diffnote-setup__add-row { display: flex; gap: 6px; }
 .diffnote-setup__add-row input { flex: 1; min-width: 0; }
 .diffnote-empty h2 { margin-top: 24px; }
+.diffnote-repos { list-style: none; margin: 0 0 16px; padding: 0; }
+.diffnote-repos__item { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--diffnote-color-border); }
+.diffnote-repos__base, .diffnote-repos__away { font-size: 12.5px; color: var(--diffnote-color-muted); }
+.diffnote-repos__away { color: #9a6700; }
+.diffnote-repos__remove { margin-left: auto; }
+.diffnote-repos__confirm { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.diffnote-repos--found .diffnote-repos__item { border-bottom: 0; padding: 2px 0; }
+.diffnote-repos__adding { margin: 12px 0; padding: 10px 12px; background: var(--diffnote-color-gutter); border-radius: 8px; }
+.diffnote-repos__adding > p { margin: 0 0 6px; }
+.diffnote-screen h3 { margin: 18px 0 6px; font-size: 14px; }
 .diffnote-screen__info { margin: 14px 0; padding: 10px 12px; background: var(--diffnote-color-gutter); border-radius: 8px; }
 .diffnote-screen__info h3 { margin: 0 0 6px; font-size: 12.5px; color: var(--diffnote-color-muted); }
 .diffnote-screen__info div { display: flex; gap: 12px; }

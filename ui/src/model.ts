@@ -361,6 +361,17 @@ export interface ViewModel {
   refreshable?: boolean;
   /** The first screen, while there is no review yet (served page only). */
   setup?: SetupData;
+  /** A review of several repositories: which, as it is now (served page only). */
+  workspace?: { repos: WorkspaceRepo[] };
+}
+
+/** One repository of a review of several, as the settings screen lists it. */
+export interface WorkspaceRepo {
+  path: string;
+  /** The base's id, short. */
+  base: string;
+  /** Whether it is where the review says, from where the page is served. */
+  present: boolean;
 }
 
 // ---- what the server answers ----------------------------------------------

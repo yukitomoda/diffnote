@@ -8,6 +8,8 @@ import { TimelinePane } from './Timeline.jsx';
 import { SettingsFormPane } from './Form.jsx';
 import { GeneralPane } from './General.jsx';
 import { UserSettingsPane } from './User.jsx';
+import { ReposPane } from './Repos.jsx';
+import type { ReposProps } from './Repos.tsx';
 import type { ViewModel } from '../model.ts';
 import type { GeneralProps } from './General.tsx';
 import type { FormProps } from './Form.tsx';
@@ -24,6 +26,8 @@ function sectionLabel(key: Section) {
 
 interface NavProps {
   current: Section;
+  /** Sections this review has no use for (a review of one repository has no repositories to manage). */
+  hidden: Section[];
   onSelect(section: Section): void;
 }
 
@@ -31,7 +35,7 @@ function ScreenNav(props: NavProps) {
   return <nav class="diffnote-screen-nav" aria-label={lib.m('ui.screen.nav_label')}>
     {SECTION_GROUPS.map(function (group, g) {
       return <ul key={g}>
-        {group.map(function (key) {
+        {group.filter(function (key) { return props.hidden.indexOf(key) < 0; }).map(function (key) {
           return <li key={key}><button type="button" class={'diffnote-screen-nav__item' + (props.current === key ? ' is-current' : '')}
             aria-current={props.current === key ? 'page' : undefined} data-diffnote-screen-nav={key}
             onClick={function () { props.onSelect(key); }}>{sectionLabel(key)}</button></li>;
@@ -51,6 +55,8 @@ interface ScreenProps extends Omit<GeneralProps, 'model'> {
   onClose(): void;
   saveSettings: FormProps['save'];
   saveUserSettings: UserProps['save'];
+  addRepo: ReposProps['add'];
+  removeRepo: ReposProps['remove'];
   removeAttached: AttachmentsProps['remove'];
   onShowThread: AttachmentsProps['onShow'];
   placementOf: AttachmentsProps['placementOf'];
@@ -62,15 +68,17 @@ export function ReviewScreen(props: ScreenProps) {
     document.addEventListener('keydown', key);
     return function () { document.removeEventListener('keydown', key); };
   }, []);
+  var hidden: Section[] = props.model.workspace ? [] : ['repos'];
   return <main class="diffnote-screen" data-diffnote-screen data-diffnote-screen-section={props.section}>
     <p class="diffnote-screen__top"><button type="button" class="diffnote-button" data-diffnote-screen-back onClick={props.onClose}><Icon name="back" />{' '}{lib.m('ui.screen.back_button')}</button></p>
     <div class="diffnote-screen__layout">
-      <ScreenNav current={props.section} onSelect={props.onSelect} />
+      <ScreenNav current={props.section} hidden={hidden} onSelect={props.onSelect} />
       <div class={'diffnote-screen__pane' + (WIDE.indexOf(props.section) >= 0 ? ' diffnote-screen__pane--wide' : '')}>
         {props.section === 'timeline' && <TimelinePane model={props.model}
           onShow={props.onShowThread} placementOf={props.placementOf} />}
         {props.section === 'general' && <GeneralPane model={props.model} pending={props.pending} note={props.note} onPull={props.onPull} />}
         {props.section === 'settings' && <SettingsFormPane model={props.model} save={props.saveSettings} />}
+        {props.section === 'repos' && props.model.workspace && <ReposPane model={props.model} add={props.addRepo} remove={props.removeRepo} />}
         {props.section === 'attachments' && <AttachmentsPane model={props.model} remove={props.removeAttached}
           onShow={props.onShowThread} placementOf={props.placementOf} />}
         {props.section === 'user' && <UserSettingsPane model={props.model} save={props.saveUserSettings} />}

@@ -426,13 +426,16 @@ fn add_revision(
                 diffnote::model::Source::Workspace(w) => Some(w),
                 _ => None,
             });
+            // (Or the repositories themselves are not the last revision's:
+            // one added or taken out since.)
             let moved = last.is_none_or(|w| {
-                repos.iter().any(|r| {
-                    w.repos
-                        .iter()
-                        .find(|k| k.path == r.path)
-                        .is_none_or(|k| k.range.head != r.range.head)
-                })
+                w.repos.len() != repos.len()
+                    || repos.iter().any(|r| {
+                        w.repos
+                            .iter()
+                            .find(|k| k.path == r.path)
+                            .is_none_or(|k| k.range.head != r.range.head)
+                    })
             });
             return Ok(moved.then(String::new));
         }
@@ -1097,8 +1100,8 @@ fn kind_of(
 /// its head now, and the ones that aren't where the review says they are
 /// (kept as last recorded, so nothing of them is lost or read).
 ///
-/// - With a bundle, the repositories and their bases are its first
-///   revision's; each head is its `HEAD` now.
+/// - With a bundle, the repositories and their bases are the review's now
+///   (see `review::repos_of`); each head is its `HEAD` now.
 /// - With none, the repositories are the ones `chosen` (on the first screen,
 ///   each from the commit chosen there), else those found under `project`,
 ///   each from where its work left the default branch (see
@@ -1121,8 +1124,11 @@ fn workspace_range(
                     _ => None,
                 })
                 .unwrap_or(first);
+            // The repositories as they are now: added or taken out on the
+            // page since (a taken-out one is in no revision from here on).
+            let known = review::repos_of(loaded).unwrap_or_default();
             let mut repos = Vec::new();
-            for known in &first.repos {
+            for known in &known {
                 let git = diffnote::git::Repo::at(project.join(&known.path));
                 let head = if git.exists() {
                     git.commit_id("HEAD")?
@@ -1281,8 +1287,15 @@ fn workspace_input(
         ));
     }
     let parts_some = parts.clone();
+    // What tells one revision of several repositories from another: the
+    // diff, and which repositories at which commits it is of (a repository
+    // added or taken out is a new revision even where the diff is not).
+    let stamp = repos.iter().fold(diff_text.clone(), |mut s, r| {
+        s.push_str(&format!("\n{} {}", r.path, r.range.head));
+        s
+    });
     Ok(Input {
-        digest: digest(&diff_text),
+        digest: digest(&stamp),
         tree_size,
         source: diffnote::model::Source::Workspace(diffnote::model::WorkspaceSource { repos }),
         files,

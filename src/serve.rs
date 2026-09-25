@@ -506,7 +506,23 @@ impl Server {
         model.bundle = Some(html::bundle_info(loaded, size, model.revisions.len()));
         model.user_settings = Some(crate::user_config::load());
         model.setup = self.first_screen()?;
+        model.workspace = self.workspace_of(loaded);
         Ok(model)
+    }
+
+    /// A review of several repositories: which, as it is now, and whether
+    /// each is here (see `review::repos_of`).
+    fn workspace_of(&self, loaded: &bundle::Loaded) -> Option<html::WorkspaceInfo> {
+        review::repos_of(loaded).map(|repos| html::WorkspaceInfo {
+            repos: repos
+                .iter()
+                .map(|r| html::WorkspaceRepo {
+                    path: r.path.clone(),
+                    base: r.range.base.chars().take(7).collect(),
+                    present: self.git.repo(&r.path).exists(),
+                })
+                .collect(),
+        })
     }
 
     /// The first screen, while the review is still to be made.
@@ -528,21 +544,15 @@ impl Server {
         let Ok(loaded) = bundle::load(&self.review) else {
             return Vec::new();
         };
-        // A review of several: the repositories that aren't where the review
-        // says (their files are only what the bundle stores).
-        if let Some(crate::model::Source::Workspace(_)) = loaded.source() {
-            let mut away: Vec<String> = loaded
-                .revisions()
-                .filter_map(|r| match &r.source {
-                    crate::model::Source::Workspace(w) => Some(w.repos.iter()),
-                    _ => None,
-                })
-                .flatten()
+        // A review of several: the repositories (as it is of them now) that
+        // aren't where the review says (their files are only what the
+        // bundle stores).
+        if let Some(repos) = review::repos_of(&loaded) {
+            let away: Vec<String> = repos
+                .iter()
                 .filter(|r| !self.git.repo(&r.path).exists())
                 .map(|r| r.path.clone())
                 .collect();
-            away.sort();
-            away.dedup();
             return if away.is_empty() {
                 Vec::new()
             } else {
@@ -633,6 +643,9 @@ impl Server {
             ("GET", "/api/setup/preview") => self.setup_preview(query),
             ("GET", "/api/setup/repo") => self.setup_repo(query),
             ("GET", "/api/setup/raw") => self.setup_raw(),
+            ("GET", "/api/repos/found") => self.repos_found(),
+            ("GET", "/api/repos/at") => self.repo_at(query),
+            ("GET", "/api/repos/preview") => self.repo_preview(query),
             ("GET", p) if p.starts_with("/api/images/") => self.image(&p["/api/images/".len()..]),
             ("GET", p) if p.starts_with("/api/attachments/") => {
                 self.attachment(&p["/api/attachments/".len()..], query)
@@ -659,16 +672,20 @@ impl Server {
             let setup = self
                 .first_screen()
                 .map_err(|e| anyhow::anyhow!("{}", e.1))?;
+            let workspace = self.workspace_of(&l);
             html::render_served_page(
                 &l,
-                editable,
-                changed,
-                self.author(),
-                self.refresh.is_some(),
-                std::fs::metadata(&self.review)
-                    .map(|m| m.len())
-                    .unwrap_or(0),
-                setup,
+                html::Served {
+                    editable,
+                    changed,
+                    author: self.author(),
+                    refreshable: self.refresh.is_some(),
+                    bundle_size: std::fs::metadata(&self.review)
+                        .map(|m| m.len())
+                        .unwrap_or(0),
+                    setup,
+                    workspace,
+                },
             )
         }) {
             Ok(page) => Reply::html(200, page),
@@ -1341,6 +1358,8 @@ impl Server {
             ["api", "attachments", id, "delete"] => self.delete_attached("file", id),
             ["api", "refresh"] => self.refresh(),
             ["api", "setup"] => self.setup_create(request.body),
+            ["api", "repos"] => self.add_repo(request.body),
+            ["api", "repos", "remove"] => self.remove_repo(request.body),
             ["api", "comments", id, "edit"] => self.edit_comment(id, request.body),
             ["api", "comments", id, "delete"] => self.delete_comment(id),
             ["api", "comments", id, "react"] => self.react(id, request.body),
@@ -1515,6 +1534,115 @@ impl Server {
             200,
             &serde_json::json!({ "ok": true, "message": said }),
         ))
+    }
+
+    /// The repositories a review of several is of now, and the project
+    /// they are under. Refused for a review of one, or of a directory.
+    fn repos_now(&self) -> Result<(bundle::Loaded, Vec<crate::model::RepoSource>), Failure> {
+        let loaded = bundle::load(&self.review).map_err(internal)?;
+        match review::repos_of(&loaded) {
+            Some(repos) => Ok((loaded, repos)),
+            None => Err(Failure(400, m("serve.repos.not_several").into())),
+        }
+    }
+
+    /// The repositories under the directory that the review isn't of (yet).
+    fn repos_found(&self) -> Reply {
+        let (_, repos) = match self.repos_now() {
+            Ok(now) => now,
+            Err(Failure(status, message)) => return Reply::error(status, &message),
+        };
+        match crate::files::find_repos(&self.git.dir) {
+            Ok(found) => {
+                let others: Vec<String> = found
+                    .into_iter()
+                    .filter(|p| !repos.iter().any(|r| &r.path == p))
+                    .collect();
+                Self::answer("found", others)
+            }
+            Err(e) => Reply::error(500, &e.to_string()),
+        }
+    }
+
+    /// A repository to add, by its path: where it stands and what it can be
+    /// reviewed from (see `crate::setup`).
+    fn repo_at(&self, query: &str) -> Reply {
+        let (_, repos) = match self.repos_now() {
+            Ok(now) => now,
+            Err(Failure(status, message)) => return Reply::error(status, &message),
+        };
+        let path = query_param(query, "path").unwrap_or_default();
+        match crate::setup::repo_info(&self.git.dir, &path) {
+            Ok(info) if repos.iter().any(|r| r.path == info.path) => {
+                Reply::error(400, &mf("setup.repo_twice", &[("path", &info.path)]))
+            }
+            Ok(info) => Self::answer("repo", info),
+            Err(e) => Reply::error(400, &e.to_string()),
+        }
+    }
+
+    /// What reviewing a repository (by path) from `rev` would take in.
+    fn repo_preview(&self, query: &str) -> Reply {
+        if let Err(Failure(status, message)) = self.repos_now() {
+            return Reply::error(status, &message);
+        }
+        let path = query_param(query, "path").unwrap_or_default();
+        let rev = query_param(query, "rev").unwrap_or_default();
+        let repo = match crate::setup::repo_info(&self.git.dir, &path) {
+            Ok(info) => self.git.repo(&info.path),
+            Err(e) => return Reply::error(400, &e.to_string()),
+        };
+        match crate::setup::preview_of(&repo, rev.trim()) {
+            Ok(preview) => Self::answer("preview", preview),
+            Err(e) => Reply::error(400, &e.to_string()),
+        }
+    }
+
+    /// Adds a repository to a review of several, from the commit chosen:
+    /// it is in the next revision on. Kept in the review's settings.
+    fn add_repo(&self, body: &[u8]) -> Result<Reply, Failure> {
+        let (mut loaded, mut repos) = self.repos_now()?;
+        let value: serde_json::Value = serde_json::from_slice(body)
+            .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
+        let path = value["path"].as_str().unwrap_or_default();
+        let base = value["base"].as_str().unwrap_or_default();
+        let repo = crate::setup::repo_from(&self.git.dir, path, base)
+            .map_err(|e| Failure(400, e.to_string()))?;
+        if repos.iter().any(|r| r.path == repo.path) {
+            return Err(Failure(
+                400,
+                mf("setup.repo_twice", &[("path", &repo.path)]),
+            ));
+        }
+        let before = html::stamp(&loaded);
+        repos.push(repo);
+        review::set_repos(&mut loaded.settings, repos);
+        let events = loaded.events.clone();
+        self.save(&loaded, &events)?;
+        self.count(|s| s.settings += 1);
+        self.model_answer(&before, serde_json::json!({}))
+    }
+
+    /// Takes a repository out of a review of several: no revision from here
+    /// on has it; the ones so far, and their threads, stay. Not the last one.
+    fn remove_repo(&self, body: &[u8]) -> Result<Reply, Failure> {
+        let (mut loaded, repos) = self.repos_now()?;
+        let value: serde_json::Value = serde_json::from_slice(body)
+            .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
+        let path = value["path"].as_str().unwrap_or_default();
+        if !repos.iter().any(|r| r.path == path) {
+            return Err(Failure(400, mf("serve.repos.not_in", &[("path", path)])));
+        }
+        if repos.len() == 1 {
+            return Err(Failure(400, m("serve.repos.last").into()));
+        }
+        let before = html::stamp(&loaded);
+        let kept: Vec<_> = repos.into_iter().filter(|r| r.path != path).collect();
+        review::set_repos(&mut loaded.settings, kept);
+        let events = loaded.events.clone();
+        self.save(&loaded, &events)?;
+        self.count(|s| s.settings += 1);
+        self.model_answer(&before, serde_json::json!({}))
     }
 
     fn refresh(&self) -> Result<Reply, Failure> {
@@ -3426,9 +3554,19 @@ mod tests {
             "embedded"
         );
         // (The served page asks the server instead.)
-        let served =
-            html::render_served_page(&loaded, Vec::new(), Vec::new(), "a".into(), false, 0, None)
-                .unwrap();
+        let served = html::render_served_page(
+            &loaded,
+            html::Served {
+                editable: Vec::new(),
+                changed: Vec::new(),
+                author: "a".into(),
+                refreshable: false,
+                bundle_size: 0,
+                setup: None,
+                workspace: None,
+            },
+        )
+        .unwrap();
         assert!(!served.contains("data:image/png"));
     }
 

@@ -85,6 +85,24 @@ pub struct ViewModel {
     /// what it is drawn from (see `crate::setup`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub setup: Option<crate::setup::Description>,
+    /// A review of several repositories: which, as it is now (served page
+    /// only; the page adds and takes out).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<WorkspaceInfo>,
+}
+
+#[derive(Serialize)]
+pub struct WorkspaceInfo {
+    pub repos: Vec<WorkspaceRepo>,
+}
+
+#[derive(Serialize)]
+pub struct WorkspaceRepo {
+    pub path: String,
+    /// The base's id, short.
+    pub base: String,
+    /// Whether it is where the review says, from where the page is served.
+    pub present: bool,
 }
 
 #[derive(Serialize)]
@@ -443,6 +461,7 @@ pub fn view_model_with(
         user_settings: None,
         refreshable: false,
         setup: None,
+        workspace: None,
         base: loaded.revisions().next().map(|r| match &r.source {
             crate::model::Source::Git(g) => BaseData::Git {
                 id: g.base.chars().take(7).collect(),
@@ -450,9 +469,9 @@ pub fn view_model_with(
             crate::model::Source::Files { .. } => BaseData::Files {
                 at: rfc3339(r.created_at),
             },
-            crate::model::Source::Workspace(w) => BaseData::Workspace {
-                repos: w
-                    .repos
+            crate::model::Source::Workspace(_) => BaseData::Workspace {
+                repos: crate::review::repos_of(loaded)
+                    .unwrap_or_default()
                     .iter()
                     .map(|repo| RepoBase {
                         path: repo.path.clone(),
@@ -499,22 +518,22 @@ pub fn view_model_json(
 /// The same for the served page, which may change the review.
 pub fn served_model_json(
     loaded: &crate::bundle::Loaded,
-    editable: Vec<String>,
-    changed: Vec<String>,
-    author: String,
-    refreshable: bool,
-    bundle_size: u64,
-    setup: Option<crate::setup::Description>,
+    served: super::Served,
 ) -> anyhow::Result<String> {
     let mut model = view_model_for(loaded, true)?;
-    model.editable = editable;
-    model.changed = changed;
-    model.author = Some(author);
-    model.refreshable = refreshable;
+    model.editable = served.editable;
+    model.changed = served.changed;
+    model.author = Some(served.author);
+    model.refreshable = served.refreshable;
     model.settings = Some(loaded.settings.clone());
-    model.bundle = Some(bundle_info(loaded, bundle_size, model.revisions.len()));
+    model.bundle = Some(bundle_info(
+        loaded,
+        served.bundle_size,
+        model.revisions.len(),
+    ));
     model.user_settings = Some(crate::user_config::load());
-    model.setup = setup;
+    model.setup = served.setup;
+    model.workspace = served.workspace;
     model_json(&model)
 }
 

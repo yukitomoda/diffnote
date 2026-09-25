@@ -12,7 +12,7 @@ import { lib } from '../lib.ts';
 import type { At, PageState } from '../lib.ts';
 
 /** The settings screens, in the order the nav lists them. */
-export const SECTIONS = ['timeline', 'general', 'settings', 'attachments', 'user'] as const;
+export const SECTIONS = ['timeline', 'general', 'settings', 'repos', 'attachments', 'user'] as const;
 export type Section = (typeof SECTIONS)[number];
 
 /**
@@ -24,7 +24,7 @@ export type Section = (typeof SECTIONS)[number];
  */
 export const SECTION_GROUPS: Section[][] = [
   ['general', 'timeline', 'attachments'],
-  ['settings', 'user'],
+  ['settings', 'repos', 'user'],
 ];
 
 /** Where the page is. One value, not four, so that a move is one change: the

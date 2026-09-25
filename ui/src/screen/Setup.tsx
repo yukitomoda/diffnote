@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { server } from '../transport.ts';
-import type { ReviewKind, SetupData, SetupPreview, SetupRaw, SetupRepo } from '../model.ts';
+import type { Answer, ReviewKind, SetupData, SetupPreview, SetupRaw, SetupRepo } from '../model.ts';
 import { MANUAL, candidateLabel, choiceOf, previewText, problemOf, stateOf, withRepo } from './setup.ts';
 import type { RepoRow, SetupState } from './setup.ts';
 
@@ -15,12 +15,14 @@ interface BaseProps {
   row: RepoRow;
   /** The row's name in the page (a review of several has many). */
   id: string;
+  /** Asks the server what reviewing the repository from a commit typed in would take in. */
+  preview(path: string, rev: string): Promise<Answer<{ preview: SetupPreview }>>;
   onChange(row: RepoRow): void;
 }
 
 // Which commit a repository is reviewed from: one of the ones offered, or
 // one typed in, which the server is asked about as it is typed.
-function BasePicker(props: BaseProps) {
+export function BasePicker(props: BaseProps) {
   var row = props.row;
   var latest = useRef(0);
   var ask = function (rev: string) {
@@ -28,7 +30,7 @@ function BasePicker(props: BaseProps) {
     // (Typing there is choosing it.)
     if (!rev.trim()) { props.onChange(Object.assign({}, row, { base: MANUAL, manual: rev, preview: null, error: '', checking: false })); return; }
     props.onChange(Object.assign({}, row, { base: MANUAL, manual: rev, preview: null, error: '', checking: true }));
-    server().get<{ preview: SetupPreview }>('/api/setup/preview?repo=' + encodeURIComponent(row.info.path) + '&rev=' + encodeURIComponent(rev.trim()))
+    props.preview(row.info.path, rev.trim())
       .then(function (res) {
         if (latest.current !== n) return;
         // (What the row is by now, not what it was when the question was asked.)
@@ -68,7 +70,7 @@ function BasePicker(props: BaseProps) {
   </div>;
 }
 
-function RepoHead(props: { info: SetupRepo }) {
+export function RepoHead(props: { info: SetupRepo }) {
   var info = props.info;
   return <p class="diffnote-setup__repo-head">
     {info.branch ? lib.mf('ui.setup.on_branch', { branch: info.branch }) : lib.m('ui.setup.detached')}
@@ -138,6 +140,9 @@ export function SetupScreen(props: { setup: SetupData }) {
     });
   };
   var kindLabel = function (kind: ReviewKind) { return lib.m('ui.setup.kind_' + kind); };
+  var preview = function (path: string, rev: string) {
+    return server().get<{ preview: SetupPreview }>('/api/setup/preview?repo=' + encodeURIComponent(path) + '&rev=' + encodeURIComponent(rev));
+  };
   return <main class="diffnote-screen diffnote-setup" data-diffnote-setup>
     <form class="diffnote-screen__form diffnote-setup__form" noValidate onSubmit={submit}>
       <h2>{lib.m('ui.setup.heading')}</h2>
@@ -158,7 +163,7 @@ export function SetupScreen(props: { setup: SetupData }) {
       {state.kind === 'git' && state.git && <fieldset class="diffnote-setup__group" data-diffnote-setup-git>
         <legend>{lib.m('ui.setup.base_label')}</legend>
         <RepoHead info={state.git.info} />
-        <BasePicker row={state.git} id="git" onChange={function (row) { change({ git: row }); }} />
+        <BasePicker row={state.git} id="git" preview={preview} onChange={function (row) { change({ git: row }); }} />
       </fieldset>}
 
       {state.kind === 'workspace' && <fieldset class="diffnote-setup__group" data-diffnote-setup-repos>
@@ -176,7 +181,7 @@ export function SetupScreen(props: { setup: SetupData }) {
             </summary>
             {row.on && <>
               <RepoHead info={row.info} />
-              <BasePicker row={row} id={'repo-' + i} onChange={function (changed) { setRepo(i, changed); }} />
+              <BasePicker row={row} id={'repo-' + i} preview={preview} onChange={function (changed) { setRepo(i, changed); }} />
             </>}
           </details>;
         })}
