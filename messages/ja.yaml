@@ -1084,12 +1084,13 @@ ui:
     base_label: |-
       ベース(ここから先の変更をレビューします)
     name_fork: |-
-      {branch} から分かれたところ
+      {branch} からの分岐点
     name_branch: |-
       {branch} の先端
     name_head: |-
-      今のコミット(HEAD)
-    name_join: " = "
+      HEAD
+    name_join: " / "
+    why_join: "・"
     manual: |-
       指定する
     manual_placeholder: |-
@@ -1097,9 +1098,9 @@ ui:
     checking: |-
       確認しています…
     preview: |-
-      {commits} コミット、{files} ファイルが対象になります
+      {commits} コミット、{files} ファイル
     preview_none: |-
-      まだ差分はありません。ここから先の変更が対象になります
+      差分なし
     on_branch: |-
       ブランチ: {branch}
     detached: |-

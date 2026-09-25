@@ -4,12 +4,12 @@ import { lib } from '../lib.ts';
 import { MANUAL, baseOf, candidateLabel, choiceOf, previewText, problemOf, rowOf, stateOf, withRepo } from '../screen/setup.ts';
 
 lib.setMessages({
-  'ui.setup.name_fork': '{branch} から分かれたところ',
+  'ui.setup.name_fork': '{branch} からの分岐点',
   'ui.setup.name_branch': '{branch} の先端',
-  'ui.setup.name_head': '今のコミット(HEAD)',
-  'ui.setup.name_join': ' = ',
+  'ui.setup.name_head': 'HEAD',
+  'ui.setup.name_join': ' / ',
   'ui.setup.preview': '{commits} コミット、{files} ファイル',
-  'ui.setup.preview_none': 'まだ差分はありません',
+  'ui.setup.preview_none': '差分なし',
 });
 
 const commit = (id, subject) => ({ id, short: id.slice(0, 7), subject });
@@ -23,10 +23,10 @@ const setup = (kind, git, repos) => ({
 });
 
 test('a candidate is named by every name it goes by, and what it would review is said', () => {
-  assert.equal(candidateLabel(fork), 'main から分かれたところ');
-  assert.equal(candidateLabel(tip), 'main の先端 = 今のコミット(HEAD)');
+  assert.equal(candidateLabel(fork), 'main からの分岐点');
+  assert.equal(candidateLabel(tip), 'main の先端 / HEAD');
   assert.equal(previewText(3, 5), '3 コミット、5 ファイル');
-  assert.equal(previewText(0, 0), 'まだ差分はありません');
+  assert.equal(previewText(0, 0), '差分なし');
 });
 
 test('the screen starts from what the directory looks like, with the best base chosen', () => {

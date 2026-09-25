@@ -2522,8 +2522,8 @@ class FirstScreen(ServedCase):
         self.assertFalse(b.js("document.querySelector('[data-diffnote-setup-kind=raw]').disabled"))
         # On main at its tip: one commit offered, by all its names, with nothing to review yet.
         self.assertEqual(b.count("[data-diffnote-setup-base=git] input[type=radio]"), 2, "the one offered, and 指定する")
-        self.assertIn("main から分かれたところ = main の先端 = 今のコミット(HEAD)", b.text("[data-diffnote-setup-base=git]"))
-        self.assertIn("まだ差分はありません", b.text("[data-diffnote-setup-base=git] input:checked + span small"))
+        self.assertIn("main からの分岐点 / main の先端 / HEAD", b.text("[data-diffnote-setup-base=git]"))
+        self.assertIn("差分なし", b.text("[data-diffnote-setup-base=git] input:checked + span"))
         # Typed in: what it would review is said as it is typed, and a
         # mistake is said too.
         b.set_value("[data-diffnote-setup-rev]", "nope")
@@ -2554,7 +2554,7 @@ class FirstScreen(ServedCase):
         self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
         b.click("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-include]")
         self.assertTrue(b.wait_exists("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-base]"))
-        self.assertIn("1 コミット、1 ファイル", b.text("[data-diffnote-setup-repo='backend/repo-a'] input:checked + span small"))
+        self.assertIn("1 コミット、1 ファイル", b.text("[data-diffnote-setup-repo='backend/repo-a'] input:checked + span"))
         self.assertFalse(b.exists("[data-diffnote-setup-repo='mobile-app'] [data-diffnote-setup-base]"), "left out: its base is not asked")
         self.assertFalse(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
         # A path that is no repository is refused where it is typed.
@@ -2601,7 +2601,7 @@ class Repositories(ServedCase):
         self.assertTrue(b.wait_exists("[data-diffnote-repo-pick='mobile-app']"))
         b.click("[data-diffnote-repo-pick='mobile-app']")
         self.assertTrue(b.wait_exists("[data-diffnote-repo-adding='mobile-app']"))
-        self.assertIn("1 コミット、2 ファイル", b.text("[data-diffnote-repo-adding='mobile-app'] input:checked + span small"))
+        self.assertIn("1 コミット、2 ファイル", b.text("[data-diffnote-repo-adding='mobile-app'] input:checked + span"))
         b.click("[data-diffnote-repo-add]")
         self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-repo]').length === 2"))
         self.assertEqual(rows(), ["backend/repo-a", "mobile-app"])

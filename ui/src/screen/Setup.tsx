@@ -45,11 +45,13 @@ export function BasePicker(props: BaseProps) {
   current.current = row;
   return <div class="diffnote-setup__base" data-diffnote-setup-base={props.id}>
     {row.info.candidates.map(function (c) {
+      // The commit, then why it is offered and what it would review, faint;
+      // what the commit says is the tooltip.
       return <label key={c.rev} class="diffnote-setup__option">
         <input type="radio" name={'base-' + props.id} value={c.rev} checked={row.base === c.rev}
           onChange={function () { props.onChange(Object.assign({}, row, { base: c.rev })); }} />
-        <span>{candidateLabel(c)} <code>{c.short}</code> <span class="diffnote-setup__subject">{c.subject}</span>
-          <small>{previewText(c.commits, c.files)}</small></span>
+        <span><code title={c.subject}>{c.short}</code>
+          <span class="diffnote-setup__why">{candidateLabel(c)}{lib.m('ui.setup.why_join')}{previewText(c.commits, c.files)}</span></span>
       </label>;
     })}
     <label class="diffnote-setup__option">
@@ -62,7 +64,8 @@ export function BasePicker(props: BaseProps) {
         {row.base === MANUAL && <small data-diffnote-setup-preview class={row.error ? 'diffnote-error' : ''}>
           {row.checking ? lib.m('ui.setup.checking')
             : row.error ? row.error
-            : row.preview ? <>{row.preview.short} {row.preview.subject}: {previewText(row.preview.commits, row.preview.files)}</>
+            : row.preview ? <><code title={row.preview.subject}>{row.preview.short}</code>
+                <span class="diffnote-setup__why">{row.preview.subject}{lib.m('ui.setup.why_join')}{previewText(row.preview.commits, row.preview.files)}</span></>
             : ''}
         </small>}
       </span>
