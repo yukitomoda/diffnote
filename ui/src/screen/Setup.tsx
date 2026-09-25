@@ -163,7 +163,7 @@ export function SetupScreen(props: { setup: SetupData }) {
 
       {state.kind === 'workspace' && <fieldset class="diffnote-setup__group" data-diffnote-setup-repos>
         <legend>{lib.m('ui.setup.repos_label')}</legend>
-        <p class="diffnote-screen__note">{lib.mf('ui.setup.repos_note', { depth: String(setup.depth) })}</p>
+        <p class="diffnote-screen__note">{lib.m('ui.setup.repos_note')}</p>
         {state.repos.map(function (row, i) {
           return <details key={row.info.path} class={'diffnote-setup__repo' + (row.on ? '' : ' is-off')} data-diffnote-setup-repo={row.info.path} open={row.on}>
             <summary>

@@ -1099,7 +1099,7 @@ ui:
     repos_label: |-
       リポジトリ
     repos_note: |-
-      見つかったリポジトリです({depth} 階層まで探しました)。含めないものはチェックを外してください。
+      見つかったリポジトリです。含めないものはチェックを外してください。
     add_path_label: |-
       もっと深い場所のリポジトリを追加する
     add_path_placeholder: |-
@@ -1121,7 +1121,7 @@ ui:
     snapshot_label: |-
       レビューに保存するファイル
     snapshot_changed: |-
-      差分が触れたファイルだけ(おすすめ)
+      差分が触れたファイルだけ(推奨)
     snapshot_full: |-
       すべてのファイル
     snapshot_hint: |-
