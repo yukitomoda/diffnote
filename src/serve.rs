@@ -55,6 +55,10 @@ pub struct Options {
     /// it added, the title): `Some(None)` if there was none. Where it is
     /// `None`, the bundle as the server finds it is taken.
     pub before: Option<Option<Vec<u8>>>,
+    /// The first screen, for a review that doesn't exist yet: what it asks,
+    /// and what makes the review from the answers. Until the review is made,
+    /// the page is this screen.
+    pub setup: Option<std::sync::Arc<crate::setup::Setup>>,
 }
 
 /// See [`Options::refresh`].
@@ -195,6 +199,8 @@ pub struct Server {
     original: Option<Vec<u8>>,
     discarded: std::sync::atomic::AtomicBool,
     refresh: Option<Refresher>,
+    /// See [`Options::setup`].
+    setup: Option<std::sync::Arc<crate::setup::Setup>>,
     /// The name comments are written under: `--author` or the default, and
     /// what the page sets for the rest of the session.
     author: std::sync::Mutex<String>,
@@ -346,6 +352,7 @@ impl Server {
                 .unwrap_or_else(|| std::fs::read(&options.review).ok()),
             discarded: Default::default(),
             refresh: options.refresh.clone(),
+            setup: options.setup.clone(),
             author: std::sync::Mutex::new(author::resolve(options.author.as_deref())),
             explicit_author: options.author.clone(),
             token,
@@ -498,7 +505,16 @@ impl Server {
             .unwrap_or(0);
         model.bundle = Some(html::bundle_info(loaded, size, model.revisions.len()));
         model.user_settings = Some(crate::user_config::load());
+        model.setup = self.first_screen()?;
         Ok(model)
+    }
+
+    /// The first screen, while the review is still to be made.
+    fn first_screen(&self) -> Result<Option<crate::setup::Description>, Failure> {
+        match &self.setup {
+            Some(setup) if !self.review.exists() => setup.describe().map(Some).map_err(internal),
+            _ => Ok(None),
+        }
     }
 
     fn git(&self) -> Option<&dyn html::CommitFiles> {
@@ -614,6 +630,9 @@ impl Server {
             ("GET", "/api/model") => self.model(),
             ("GET", "/api/version") => self.version(),
             ("GET", "/api/compare") => self.compare(query),
+            ("GET", "/api/setup/preview") => self.setup_preview(query),
+            ("GET", "/api/setup/repo") => self.setup_repo(query),
+            ("GET", "/api/setup/raw") => self.setup_raw(),
             ("GET", p) if p.starts_with("/api/images/") => self.image(&p["/api/images/".len()..]),
             ("GET", p) if p.starts_with("/api/attachments/") => {
                 self.attachment(&p["/api/attachments/".len()..], query)
@@ -637,6 +656,9 @@ impl Server {
         match bundle::load(&self.review).and_then(|l| {
             let editable = self.editable(&l);
             let changed = self.changed(&l);
+            let setup = self
+                .first_screen()
+                .map_err(|e| anyhow::anyhow!("{}", e.1))?;
             html::render_served_page(
                 &l,
                 editable,
@@ -646,6 +668,7 @@ impl Server {
                 std::fs::metadata(&self.review)
                     .map(|m| m.len())
                     .unwrap_or(0),
+                setup,
             )
         }) {
             Ok(page) => Reply::html(200, page),
@@ -1317,6 +1340,7 @@ impl Server {
             ["api", "images", id, "delete"] => self.delete_attached("image", id),
             ["api", "attachments", id, "delete"] => self.delete_attached("file", id),
             ["api", "refresh"] => self.refresh(),
+            ["api", "setup"] => self.setup_create(request.body),
             ["api", "comments", id, "edit"] => self.edit_comment(id, request.body),
             ["api", "comments", id, "delete"] => self.delete_comment(id),
             ["api", "comments", id, "react"] => self.react(id, request.body),
@@ -1415,6 +1439,84 @@ impl Server {
 
     /// Takes in what was added to the target since the server started, as a
     /// new revision (the page is told, and keeps showing what it showed).
+    /// The first screen's questions (see `crate::setup`): only while the
+    /// review is still to be made.
+    fn first_screen_of(&self) -> Result<&crate::setup::Setup, Failure> {
+        match &self.setup {
+            None => Err(Failure(400, m("setup.not_available").into())),
+            Some(_) if self.review.exists() => Err(Failure(400, m("setup.already_made").into())),
+            Some(setup) => Ok(setup),
+        }
+    }
+
+    fn answer<T: serde::Serialize>(what: &str, value: T) -> Reply {
+        Reply::json(200, &serde_json::json!({ "ok": true, what: value }))
+    }
+
+    /// What reviewing a repository (`repo`; none: the one repository) from
+    /// `rev` would take in.
+    fn setup_preview(&self, query: &str) -> Reply {
+        let setup = match self.first_screen_of() {
+            Ok(setup) => setup,
+            Err(Failure(status, message)) => return Reply::error(status, &message),
+        };
+        let repo = query_param(query, "repo").unwrap_or_default();
+        let rev = query_param(query, "rev").unwrap_or_default();
+        match setup.preview(&repo, rev.trim()) {
+            Ok(preview) => Self::answer("preview", preview),
+            Err(e) => Reply::error(400, &e.to_string()),
+        }
+    }
+
+    /// A repository named by hand, to add to a review of several.
+    fn setup_repo(&self, query: &str) -> Reply {
+        let setup = match self.first_screen_of() {
+            Ok(setup) => setup,
+            Err(Failure(status, message)) => return Reply::error(status, &message),
+        };
+        match setup.repo_at(&query_param(query, "path").unwrap_or_default()) {
+            Ok(repo) => Self::answer("repo", repo),
+            Err(e) => Reply::error(400, &e.to_string()),
+        }
+    }
+
+    /// The directory's files as they are, which a `raw` review would keep.
+    fn setup_raw(&self) -> Reply {
+        let setup = match self.first_screen_of() {
+            Ok(setup) => setup,
+            Err(Failure(status, message)) => return Reply::error(status, &message),
+        };
+        match setup.raw() {
+            Ok(raw) => Self::answer("raw", raw),
+            Err(e) => Reply::error(500, &e.to_string()),
+        }
+    }
+
+    /// Makes the review as the screen chose. From then on the page is the
+    /// review (it asks for it again).
+    fn setup_create(&self, body: &[u8]) -> Result<Reply, Failure> {
+        let setup = self.first_screen_of()?;
+        let mut choice: crate::setup::Choice = serde_json::from_slice(body)
+            .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
+        // A title as `設定` keeps it: one line, and none if it says nothing.
+        choice.title = choice
+            .title
+            .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|t| !t.is_empty());
+        setup
+            .check(&choice)
+            .map_err(|e| Failure(400, e.to_string()))?;
+        let said = (setup.create)(&choice).map_err(|e| Failure(500, e.to_string()))?;
+        if !self.review.exists() {
+            return Err(internal(anyhow::anyhow!(m("serve.refresh_nothing"))));
+        }
+        println!("{said}");
+        Ok(Reply::json(
+            200,
+            &serde_json::json!({ "ok": true, "message": said }),
+        ))
+    }
+
     fn refresh(&self) -> Result<Reply, Failure> {
         let Some(refresh) = &self.refresh else {
             return Err(Failure(400, m("serve.refresh_unavailable").into()));
@@ -2073,6 +2175,7 @@ mod tests {
                 repo,
                 refresh: None,
                 before: None,
+                setup: None,
             },
             4242,
         );
@@ -2544,6 +2647,7 @@ mod tests {
                 repo: None,
                 refresh: None,
                 before: None,
+                setup: None,
             },
             4242,
         );
@@ -2836,6 +2940,7 @@ mod tests {
                     }
                 })),
                 before: None,
+                setup: None,
             },
             4242,
         );
@@ -2906,6 +3011,7 @@ mod tests {
                 repo: None,
                 refresh: None,
                 before: None,
+                setup: None,
             },
             4242,
         );
@@ -3321,7 +3427,7 @@ mod tests {
         );
         // (The served page asks the server instead.)
         let served =
-            html::render_served_page(&loaded, Vec::new(), Vec::new(), "a".into(), false, 0)
+            html::render_served_page(&loaded, Vec::new(), Vec::new(), "a".into(), false, 0, None)
                 .unwrap();
         assert!(!served.contains("data:image/png"));
     }
@@ -3452,6 +3558,7 @@ mod tests {
                 repo: None,
                 refresh: None,
                 before: None,
+                setup: None,
             },
             4243,
         );
@@ -4468,6 +4575,7 @@ mod tests {
                 repo: Some(g.f.path.parent().unwrap().to_path_buf()),
                 refresh: None,
                 before: None,
+                setup: None,
             },
             4242,
         );
@@ -4606,6 +4714,7 @@ mod tests {
             repo: Some(elsewhere.path().to_path_buf()),
             refresh: None,
             before: None,
+            setup: None,
         };
         let err = run(&options, |_, _| panic!("must not start")).unwrap_err();
         assert!(
@@ -4652,6 +4761,7 @@ mod tests {
             repo: None,
             refresh: None,
             before: None,
+            setup: None,
         };
         let (sender, receiver) = std::sync::mpsc::channel();
         let thread = std::thread::spawn(move || {

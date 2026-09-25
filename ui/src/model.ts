@@ -246,6 +246,75 @@ export type BaseData =
   /** A review of several repositories: each one's base commit. */
   | { kind: 'workspace'; repos: { path: string; id: string }[] };
 
+// ---- the first screen ------------------------------------------------------
+
+/** A commit, as the first screen names it. */
+export interface SetupCommit {
+  id: string;
+  short: string;
+  subject: string;
+}
+
+/** One commit a repository can be reviewed from, and what that would review. */
+export interface SetupCandidate extends SetupCommit {
+  /** What to ask for it by. */
+  rev: string;
+  /** The names it goes by: where the work left the default branch, that
+   * branch's tip, or `HEAD` itself. */
+  names: { kind: 'fork' | 'branch' | 'head'; branch?: string }[];
+  commits: number;
+  files: number;
+}
+
+export interface SetupRepo {
+  /** Relative to the directory; empty for the one repository. */
+  path: string;
+  branch: string | null;
+  head: SetupCommit;
+  default_branch: string | null;
+  candidates: SetupCandidate[];
+}
+
+export interface SetupKind {
+  ok: boolean;
+  why?: string;
+}
+
+export type ReviewKind = 'git' | 'workspace' | 'raw';
+
+/** What the first screen starts from (see `src/setup.rs`). */
+export interface SetupData {
+  review: string;
+  /** The kind the directory looks like. */
+  kind: ReviewKind;
+  kinds: Record<ReviewKind, SetupKind>;
+  git: SetupRepo | null;
+  repos: SetupRepo[];
+  depth: number;
+  title?: string;
+  snapshot?: 'changed' | 'full';
+}
+
+/** What choosing a commit would review. */
+export interface SetupPreview extends SetupCommit {
+  commits: number;
+  files: number;
+}
+
+export interface SetupRaw {
+  files: number;
+  bytes: number;
+}
+
+/** What the first screen asks for (see `Choice` in `src/setup.rs`). */
+export interface SetupChoice {
+  kind: ReviewKind;
+  title?: string;
+  snapshot?: 'changed' | 'full';
+  base?: string;
+  repos?: { path: string; base: string }[];
+}
+
 export interface ViewModel {
   version: number;
   /**
@@ -290,6 +359,8 @@ export interface ViewModel {
    * started.
    */
   refreshable?: boolean;
+  /** The first screen, while there is no review yet (served page only). */
+  setup?: SetupData;
 }
 
 // ---- what the server answers ----------------------------------------------

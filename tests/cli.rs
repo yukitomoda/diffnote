@@ -419,6 +419,15 @@ impl Env {
         served.stop();
         threads
     }
+
+    /// Makes `review` as `review args...` does (`--base ...`, say) and stops
+    /// at once: what it said about it.
+    fn make(&self, cwd: &Path, review: &Path, args: &[&str]) -> String {
+        let served = self.serve(cwd, review, args);
+        let said = served.said.clone();
+        served.stop();
+        said
+    }
 }
 
 fn bundle_names(path: &Path) -> Vec<String> {
@@ -458,7 +467,7 @@ fn a_directory_review_over_several_sessions() {
     let review = env.path("review.diffnote");
     let review_arg = review.to_str().unwrap();
 
-    let out = env.ok(&dir, &["init", "-f", review_arg, "."]);
+    let out = env.make(&dir, &review, &["--base", "."]);
     assert!(out.contains("2 個のファイルを"), "{out}");
     assert_eq!(count_blobs(&review), 2);
 
@@ -554,8 +563,7 @@ fn an_unchanged_directory_reopens_the_last_diff_and_records_nothing_new() {
     std::fs::create_dir(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     let review = env.path("review.diffnote");
-    let review_arg = review.to_str().unwrap();
-    env.ok(&dir, &["init", "-f", review_arg, "."]);
+    env.make(&dir, &review, &["--base", "."]);
     std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
     env.review(
         &dir,
@@ -876,8 +884,7 @@ fn a_directory_review_keeps_the_full_tree_and_refuses_to_be_told_otherwise() {
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     std::fs::write(dir.join("b.txt"), "x\n").unwrap();
     let review = env.path("review.diffnote");
-    let review_arg = review.to_str().unwrap();
-    env.ok(&dir, &["init", "-f", review_arg, "."]);
+    env.make(&dir, &review, &["--base", "."]);
     std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
 
     // `changed` can't work here, so it is an error, not something quietly
@@ -1030,14 +1037,14 @@ fn exported(env: &Env, repo: &Path, review: &Path) -> String {
 }
 
 #[test]
-fn a_title_given_at_init_names_the_export() {
+fn a_title_given_when_the_review_is_made_names_the_export() {
     let env = Env::new();
     let repo = git_repo(&env);
     let review = env.path("review.diffnote");
-    let arg = review.to_str().unwrap();
-    env.ok(
+    env.make(
         &repo,
-        &["init", "-f", arg, "--title", "ログイン改修 <v2>", "c1"],
+        &review,
+        &["--title", "ログイン改修 <v2>", "--base", "c1"],
     );
     env.review(
         &repo,
@@ -1067,22 +1074,13 @@ fn without_a_title_the_export_keeps_the_default_heading() {
 }
 
 #[test]
-fn a_directory_review_takes_a_title_at_init() {
+fn a_directory_review_takes_a_title_when_it_is_made() {
     let env = Env::new();
     let dir = env.path("proj");
     std::fs::create_dir(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     let review = env.path("d.diffnote");
-    env.ok(
-        &dir,
-        &[
-            "init",
-            "-f",
-            review.to_str().unwrap(),
-            "--title",
-            "設計レビュー",
-        ],
-    );
+    env.make(&dir, &review, &["--title", "設計レビュー", "--base", "."]);
     assert_eq!(titles(&review), ["設計レビュー"]);
     assert_eq!(
         model_of(&exported_dir(&env, &dir, &review))["title"],
@@ -1236,8 +1234,7 @@ fn review_with_left_out_lines(env: &Env) -> (PathBuf, PathBuf) {
     };
     std::fs::write(dir.join("a.txt"), text("ten", "thirty")).unwrap();
     let review = env.path("review.diffnote");
-    let review_arg = review.to_str().unwrap();
-    env.ok(&dir, &["init", "-f", review_arg, "."]);
+    env.make(&dir, &review, &["--base", "."]);
     std::fs::write(dir.join("a.txt"), text("TEN", "THIRTY")).unwrap();
     env.review(
         &dir,
@@ -1357,58 +1354,81 @@ fn commit_id(repo: &Path, rev: &str) -> String {
 }
 
 #[test]
-fn init_in_a_git_repository_takes_a_commit_as_the_base_head_by_default() {
+fn a_base_alone_makes_a_review_that_starts_there_with_nothing_to_show_yet() {
     let env = Env::new();
     let repo = git_repo(&env);
     let review = env.path("review.diffnote");
-    let review_arg = review.to_str().unwrap();
-    let said = env.ok(&repo, &["init", "-f", review_arg]);
+    let said = env.make(&repo, &review, &["--base", "HEAD"]);
     assert!(said.contains("HEAD") && said.contains("基準"), "{said}");
+    assert!(said.contains("差分がまだありません"), "{said}");
     let sources = git_sources(&review);
-    assert_eq!(sources.len(), 1);
+    assert_eq!(
+        sources.len(),
+        1,
+        "the base is recorded, as a revision with nothing in it"
+    );
     let head = commit_id(&repo, "HEAD");
     assert_eq!(
         (sources[0].base.as_str(), sources[0].head.as_str()),
         (head.as_str(), head.as_str())
     );
-    assert_eq!(sources[0].spec, "HEAD");
+    assert_eq!(sources[0].spec, "HEAD..HEAD");
     // The commit's id is all it stores: git has the rest.
     assert_eq!(count_blobs(&review), 0);
-    // It is an existing bundle now.
-    let again = env.run(&repo, &["init", "-f", review_arg]);
-    assert!(!again.status.success());
+    // A title can only be given then.
+    let said = env.serve_refused(&repo, &review, &["--title", "遅い"]);
+    assert!(said.contains("タイトル"), "{said}");
+    // The page has nothing to show, and says so, until something is committed.
+    let served = env.serve(&repo, &review, &[]);
+    let model = served.api("/api/model", None);
+    assert_eq!(model["model"]["revisions"].as_array().unwrap().len(), 0);
+    assert_eq!(model["model"]["base"]["kind"], "git");
+    assert!(
+        model["model"].get("setup").is_none(),
+        "not the first screen: the review is made"
+    );
+    std::fs::write(repo.join("calc.txt"), "a\nB\nc\nd\ne\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "c4"]);
+    assert!(served.refresh());
+    served.note(&Note::Line("calc.txt", "e", "e が増えた"));
+    served.stop();
+    let sources = git_sources(&review);
+    assert_eq!(sources.len(), 2);
+    assert_eq!(sources[1].base, head);
+    assert_eq!(sources[1].head, commit_id(&repo, "HEAD"));
+    assert_eq!(sources[1].spec, "HEAD..HEAD");
 }
 
 #[test]
-fn init_takes_a_branch_a_tag_or_an_id_and_refuses_what_is_not_a_commit() {
+fn a_base_takes_a_branch_a_tag_or_an_id_and_refuses_what_is_not_a_commit() {
     let env = Env::new();
     let repo = git_repo(&env);
     let base = commit_id(&repo, "c1");
     for (name, rev) in [("tag", "c1"), ("branch", "main"), ("id", base.as_str())] {
         let review = env.path(&format!("{name}.diffnote"));
-        env.ok(&repo, &["init", "-f", review.to_str().unwrap(), rev]);
+        env.make(&repo, &review, &["--base", rev]);
         let want = commit_id(&repo, rev);
-        assert_eq!(git_sources(&review)[0].head, want, "{name}");
-        assert_eq!(git_sources(&review)[0].spec, rev);
+        assert_eq!(git_sources(&review)[0].base, want, "{name}");
+        assert_eq!(
+            git_sources(&review)[0].head,
+            commit_id(&repo, "HEAD"),
+            "{name}"
+        );
+        assert_eq!(git_sources(&review)[0].spec, format!("{rev}..HEAD"));
     }
     let review = env.path("bad.diffnote");
-    let bad = env.run(
-        &repo,
-        &["init", "-f", review.to_str().unwrap(), "no-such-branch"],
-    );
-    assert!(!bad.status.success());
-    assert!(String::from_utf8_lossy(&bad.stderr).contains("no-such-branch"));
+    let said = env.serve_refused(&repo, &review, &["--base", "no-such-branch"]);
+    assert!(said.contains("no-such-branch"), "{said}");
     assert!(!review.exists(), "nothing is written for a bad ref");
 }
 
 #[test]
-fn serve_after_a_git_init_reviews_what_changed_since_and_then_reopens_that() {
+fn review_after_a_base_reviews_what_changed_since_and_then_reopens_that() {
     let env = Env::new();
     let repo = git_repo(&env);
     let review = env.path("review.diffnote");
-    let review_arg = review.to_str().unwrap();
-    env.ok(&repo, &["init", "-f", review_arg, "c2"]);
     // HEAD is c3: what has changed since c2 is reviewed, without being told.
+    env.make(&repo, &review, &["--base", "c2"]);
     env.review(
         &repo,
         &review,
@@ -1416,23 +1436,27 @@ fn serve_after_a_git_init_reviews_what_changed_since_and_then_reopens_that() {
         &[Note::Line("calc.txt", "d", "d を追加した理由は?")],
     );
     let sources = git_sources(&review);
-    assert_eq!(sources.len(), 2, "the base, then what was reviewed since");
-    assert_eq!(sources[1].base, commit_id(&repo, "c2"));
-    assert_eq!(sources[1].head, commit_id(&repo, "c3"));
+    assert_eq!(
+        sources.len(),
+        1,
+        "what was reviewed since the base, and nothing else"
+    );
+    assert_eq!(sources[0].base, commit_id(&repo, "c2"));
+    assert_eq!(sources[0].head, commit_id(&repo, "c3"));
     let loaded = bundle::load(&review).unwrap();
     assert_eq!(comment_bodies(&loaded), ["d を追加した理由は?"]);
     // HEAD hasn't moved: the same revision again (to reply to what is there),
     // not a new one.
     env.review(&repo, &review, &[], &[]);
-    assert_eq!(git_sources(&review).len(), 2);
+    assert_eq!(git_sources(&review).len(), 1);
     // A new commit: reviewed from where the last review stopped.
     std::fs::write(repo.join("calc.txt"), "a\nB\nc\nd\ne\n").unwrap();
     git(&repo, &["commit", "-q", "-am", "c4"]);
     env.review(&repo, &review, &[], &[Note::Line("calc.txt", "e", "e も")]);
     let sources = git_sources(&review);
-    assert_eq!(sources.len(), 3);
-    assert_eq!(sources[2].base, commit_id(&repo, "c2"), "the base stays");
-    assert_eq!(sources[2].head, commit_id(&repo, "HEAD"));
+    assert_eq!(sources.len(), 2);
+    assert_eq!(sources[1].base, commit_id(&repo, "c2"), "the base stays");
+    assert_eq!(sources[1].head, commit_id(&repo, "HEAD"));
 }
 
 #[test]
@@ -1440,12 +1464,11 @@ fn open_needs_a_review_and_takes_nothing_to_compare() {
     let env = Env::new();
     let repo = git_repo(&env);
     let review = env.path("review.diffnote");
-    let review_arg = review.to_str().unwrap();
     // No review at all yet: nothing to open, and it says how to make one.
     let said = env.refused("open", &repo, &review, &[]);
     assert!(said.contains("diffnote review"), "{said}");
     assert!(!review.exists());
-    env.ok(&repo, &["init", "-f", review_arg, "c2"]);
+    env.make(&repo, &review, &["--base", "c2"]);
     // What to compare is `review`'s to be told, not `open`'s.
     for asked in [&["c3"][..], &["--base", "c1"], &["--type", "git"]] {
         env.refused("open", &repo, &review, asked);
@@ -1459,8 +1482,7 @@ fn open_works_for_a_directory_review_too() {
     std::fs::create_dir(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     let review = env.path("review.diffnote");
-    let review_arg = review.to_str().unwrap();
-    env.ok(&dir, &["init", "-f", review_arg, "."]);
+    env.make(&dir, &review, &["--base", "."]);
     std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
     let threads = env.review(
         &dir,
@@ -1487,16 +1509,13 @@ fn init_makes_a_file_review_outside_git_and_when_told_to_inside_it() {
     std::fs::create_dir(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     let review = env.path("plain.diffnote");
-    env.ok(&dir, &["init", "-f", review.to_str().unwrap()]);
+    env.make(&dir, &review, &["--base", "."]);
     assert_eq!(bundle::load(&review).unwrap().revisions().count(), 1);
     assert!(git_sources(&review).is_empty());
     // In a repository, `--type raw` takes the directory's files instead of a commit.
     let repo = git_repo(&env);
     let review = env.path("files.diffnote");
-    let said = env.ok(
-        &repo,
-        &["init", "-f", review.to_str().unwrap(), "--type", "raw"],
-    );
+    let said = env.make(&repo, &review, &["--type", "raw", "--base", "."]);
     assert!(said.contains("個のファイル"), "{said}");
     assert!(git_sources(&review).is_empty());
     assert!(count_blobs(&review) > 0);
@@ -1535,9 +1554,15 @@ fn the_target_is_compared_with_the_base_and_ranges_are_not_accepted() {
             .contains("ベース")
     );
     env.review(&repo, &review, &["--base", "c2", "c3"], &[]);
-    // Nothing named and no bundle: it says what to do.
+    // Nothing named and no bundle: the page asks (the first screen), and
+    // nothing is written until it answers.
     let none = env.path("none.diffnote");
-    assert!(env.serve_refused(&repo, &none, &[]).contains("init"));
+    let served = env.serve(&repo, &none, &[]);
+    assert_eq!(
+        served.api("/api/model", None)["model"]["setup"]["kind"],
+        "git"
+    );
+    served.stop();
     assert!(!none.exists());
 }
 
@@ -1631,20 +1656,29 @@ fn a_base_directory_compares_two_directories_in_one_step() {
 }
 
 #[test]
-fn nothing_to_review_leaves_no_bundle_and_says_what_to_do() {
+fn equal_directories_keep_the_base_with_nothing_to_show_and_a_base_is_needed_to_start() {
     let env = Env::new();
     let (old, _) = two_directories(&env);
     let review = env.path("review.diffnote");
-    // Two equal directories: nothing to review, and the base alone is not kept.
+    // Two equal directories: nothing to review yet, and the base is kept
+    // for what changes from here on (as `--base HEAD` is in git).
     let same = env.path("same");
     std::fs::create_dir(&same).unwrap();
     std::fs::write(same.join("a.txt"), "one\ntwo\n").unwrap();
     std::fs::write(same.join("gone.txt"), "bye\n").unwrap();
-    let said = env.serve_refused(&same, &review, &["--base", old.to_str().unwrap(), "."]);
-    assert!(said.contains("差分がありません"), "{said}");
-    assert!(!review.exists(), "the base alone is not kept");
+    let said = env.make(&same, &review, &["--base", old.to_str().unwrap(), "."]);
+    assert!(said.contains("差分がまだありません"), "{said}");
+    assert_eq!(bundle::load(&review).unwrap().revisions().count(), 1);
+    std::fs::write(same.join("a.txt"), "one\nthree\n").unwrap();
+    env.review(
+        &same,
+        &review,
+        &["."],
+        &[Note::Line("a.txt", "three", "three?")],
+    );
+    assert_eq!(bundle::load(&review).unwrap().revisions().count(), 2);
     // A directory review with no base at all says what to do.
-    let said = env.serve_refused(&same, &review, &["--type", "raw", "."]);
+    let said = env.serve_refused(&same, &env.path("none.diffnote"), &["--type", "raw", "."]);
     assert!(said.contains("--base"), "{said}");
 }
 
@@ -1655,8 +1689,7 @@ fn a_directory_bundle_compares_every_session_with_the_first_snapshot() {
     std::fs::create_dir(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     let review = env.path("review.diffnote");
-    let review_arg = review.to_str().unwrap();
-    env.ok(&dir, &["init", "-f", review_arg]);
+    env.make(&dir, &review, &["--base", "."]);
     std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
     env.review(
         &dir,
@@ -1683,7 +1716,7 @@ fn a_directory_bundle_compares_every_session_with_the_first_snapshot() {
 }
 
 #[test]
-fn init_and_serve_work_on_the_repository_named_from_anywhere() {
+fn review_works_on_the_repository_named_from_anywhere() {
     let env = Env::new();
     let repo = git_repo(&env);
     // Run from a directory that is not in a repository.
@@ -1691,12 +1724,8 @@ fn init_and_serve_work_on_the_repository_named_from_anywhere() {
     std::fs::create_dir(&elsewhere).unwrap();
     let repo_arg = repo.to_str().unwrap();
     let review = env.path("review.diffnote");
-    let review_arg = review.to_str().unwrap();
-    env.ok(
-        &elsewhere,
-        &["init", "-f", review_arg, "--repo", repo_arg, "c1"],
-    );
-    assert_eq!(git_sources(&review)[0].head, commit_id(&repo, "c1"));
+    env.make(&elsewhere, &review, &["--repo", repo_arg, "--base", "c1"]);
+    assert_eq!(git_sources(&review)[0].base, commit_id(&repo, "c1"));
     env.review(
         &elsewhere,
         &review,
@@ -1798,8 +1827,7 @@ fn a_review_of_a_directory_records_no_commits() {
     std::fs::create_dir(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     let review = env.path("r.diffnote");
-    let arg = review.to_str().unwrap();
-    env.ok(&dir, &["init", "-f", arg, "--type", "raw", "."]);
+    env.make(&dir, &review, &["--type", "raw", "--base", "."]);
     std::fs::write(dir.join("a.txt"), "two\n").unwrap();
     env.review(
         &dir,
@@ -1874,7 +1902,7 @@ fn a_review_of_a_directory_has_a_timeline_with_no_commits_in_it() {
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     let review = env.path("r.diffnote");
     let arg = review.to_str().unwrap();
-    env.ok(&dir, &["init", "-f", arg, "--type", "raw", "."]);
+    env.make(&dir, &review, &["--type", "raw", "--base", "."]);
     std::fs::write(dir.join("a.txt"), "two\n").unwrap();
     env.review(
         &dir,
@@ -1899,7 +1927,7 @@ fn the_snapshot_range_is_chosen_when_the_review_is_made_and_not_after() {
     let repo = repo_with_docs(&env);
     let review = env.path("r.diffnote");
     let arg = review.to_str().unwrap();
-    env.ok(&repo, &["init", "-f", arg, "--snapshot", "full", "c1"]);
+    env.make(&repo, &review, &["--snapshot", "full", "--base", "c1"]);
     assert_eq!(
         bundle::load(&review).unwrap().snapshot_mode(),
         Some(bundle::SnapshotMode::Full),
@@ -1918,12 +1946,10 @@ fn the_snapshot_range_is_chosen_when_the_review_is_made_and_not_after() {
             .revisions()
             .all(|r| r.snapshot_mode == bundle::SnapshotMode::Full)
     );
-    // (Revision 0 is `init`'s own, which records nothing; 1 is the first
-    // with a diff.)
     assert!(
-        manifest_paths(&review, 1).contains(&"logo.bin".to_string()),
+        manifest_paths(&review, 0).contains(&"logo.bin".to_string()),
         "a full snapshot keeps files the diff never touched: {:?}",
-        manifest_paths(&review, 1)
+        manifest_paths(&review, 0)
     );
 
     // Asking an existing review for another range is refused, not ignored.
@@ -1955,22 +1981,13 @@ fn a_directory_review_cannot_be_asked_for_a_changed_snapshot() {
     std::fs::create_dir(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     let arg = env.path("r.diffnote");
-    let out = env.run(
+    let said = env.serve_refused(
         &dir,
-        &[
-            "init",
-            "-f",
-            arg.to_str().unwrap(),
-            "--type",
-            "raw",
-            "--snapshot",
-            "changed",
-            ".",
-        ],
+        &arg,
+        &["--type", "raw", "--snapshot", "changed", "--base", "."],
     );
-    assert!(!out.status.success());
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains(".diffnoteignore"),
+        said.contains(".diffnoteignore"),
         "it says what to do instead"
     );
     assert!(!arg.exists(), "and nothing was made");
@@ -2006,23 +2023,18 @@ fn serve_takes_in_later_commits_when_asked_but_a_named_commit_does_not_move() {
     let env = Env::new();
     let repo = git_repo(&env);
     let review = env.path("review.diffnote");
-    let review_arg = review.to_str().unwrap();
-    env.ok(&repo, &["init", "-f", review_arg, "c2"]);
+    let said = env.make(&repo, &review, &["--base", "c2"]);
+    assert!(said.contains("差分を記録しました"), "{said}");
     let served = env.serve(&repo, &review, &[]);
-    assert!(
-        served.said.contains("差分を記録しました"),
-        "{}",
-        served.said
-    );
-    assert_eq!(git_sources(&review).len(), 2);
+    assert_eq!(git_sources(&review).len(), 1);
     // A commit made while it runs: taken in once, when asked.
     std::fs::write(repo.join("calc.txt"), "a\nB\nc\nd\ne\n").unwrap();
     git(&repo, &["commit", "-q", "-am", "c4"]);
-    assert_eq!(git_sources(&review).len(), 2, "not before it is asked for");
+    assert_eq!(git_sources(&review).len(), 1, "not before it is asked for");
     assert!(served.refresh());
     let sources = git_sources(&review);
-    assert_eq!(sources.len(), 3);
-    assert_eq!(sources[2].head, commit_id(&repo, "HEAD"));
+    assert_eq!(sources.len(), 2);
+    assert_eq!(sources[1].head, commit_id(&repo, "HEAD"));
     assert!(!served.refresh(), "and only once");
     served.stop();
 
@@ -2032,7 +2044,7 @@ fn serve_takes_in_later_commits_when_asked_but_a_named_commit_does_not_move() {
     git(&repo, &["commit", "-q", "-am", "c5"]);
     assert!(!served.refresh());
     served.stop();
-    assert_eq!(git_sources(&review).len(), 3);
+    assert_eq!(git_sources(&review).len(), 2);
 }
 
 #[test]
@@ -2040,7 +2052,7 @@ fn quitting_without_saving_takes_back_what_serve_added_and_a_bundle_it_made() {
     let env = Env::new();
     let repo = git_repo(&env);
     let review = env.path("review.diffnote");
-    env.ok(&repo, &["init", "-f", review.to_str().unwrap(), "c1"]);
+    env.make(&repo, &review, &["--base", "c1"]);
     let before = std::fs::read(&review).unwrap();
     let served = env.serve(&repo, &review, &[]);
     served.note(&Note::Global("消える"));
@@ -2064,7 +2076,7 @@ fn serve_says_when_there_is_nothing_yet_and_a_directory_review_follows_where_it_
     let env = Env::new();
     let repo = git_repo(&env);
     let review = env.path("review.diffnote");
-    env.ok(&repo, &["init", "-f", review.to_str().unwrap(), "HEAD"]);
+    env.make(&repo, &review, &["--base", "HEAD"]);
     let served = env.serve(&repo, &review, &[]);
     assert!(
         served.said.contains("差分がまだありません"),
@@ -2078,7 +2090,7 @@ fn serve_says_when_there_is_nothing_yet_and_a_directory_review_follows_where_it_
     std::fs::create_dir(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     let review = env.path("dir.diffnote");
-    env.ok(&dir, &["init", "-f", review.to_str().unwrap()]);
+    env.make(&dir, &review, &["--base", "."]);
     std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
     // With no directory named, the one it is run in is taken in, as git's
     // `HEAD` would be.
@@ -2112,7 +2124,7 @@ fn open_adds_to_the_last_revision_and_never_looks_at_a_later_commit() {
     let env = Env::new();
     let repo = git_repo(&env);
     let review = env.path("review.diffnote");
-    env.ok(&repo, &["init", "-f", review.to_str().unwrap(), "c2"]);
+    env.make(&repo, &review, &["--base", "c2"]);
     let threads = env.review(&repo, &review, &[], &[Note::Line("calc.txt", "d", "d は?")]);
     std::fs::write(repo.join("calc.txt"), "x\n").unwrap();
     git(&repo, &["commit", "-q", "-am", "c4"]);
@@ -2130,7 +2142,7 @@ fn open_adds_to_the_last_revision_and_never_looks_at_a_later_commit() {
     );
     served.stop();
     let loaded = bundle::load(&review).unwrap();
-    assert_eq!(loaded.revisions().count(), 2);
+    assert_eq!(loaded.revisions().count(), 1);
     assert_eq!(comment_bodies(&loaded), ["d は?", "了解です"]);
 }
 
@@ -2142,69 +2154,23 @@ fn the_type_is_asked_for_when_a_review_is_made_and_cannot_be_changed() {
     std::fs::write(dir.join("a.txt"), "one\n").unwrap();
     // `git` where there is no repository is a mistake, not a directory review.
     let review = env.path("plain.diffnote");
-    let out = env.run(
-        &dir,
-        &["init", "-f", review.to_str().unwrap(), "--type", "git"],
-    );
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("--type git"));
+    let said = env.serve_refused(&dir, &review, &["--type", "git"]);
+    assert!(said.contains("--type git"), "{said}");
     assert!(!review.exists());
 
     // A git review asked to be a raw one (or the other way round) says what it is.
     let repo = git_repo(&env);
     let review = env.path("git.diffnote");
-    env.ok(&repo, &["init", "-f", review.to_str().unwrap(), "c1"]);
+    env.make(&repo, &review, &["--base", "c1"]);
     let said = env.serve_refused(&repo, &review, &["--type", "raw", "."]);
     assert!(said.contains("git"), "{said}");
     env.review(&repo, &review, &["--type", "git", "c2"], &[]);
     assert_eq!(git_sources(&review).len(), 2, "saying what it is is fine");
 
     let review = env.path("raw.diffnote");
-    env.ok(&dir, &["init", "-f", review.to_str().unwrap()]);
+    env.make(&dir, &review, &["--base", "."]);
     let said = env.serve_refused(&dir, &review, &["--type", "git", "."]);
     assert!(said.contains("raw"), "{said}");
-}
-
-#[test]
-fn init_over_a_review_that_is_there_asks_and_replaces_it_only_when_told_yes() {
-    let env = Env::new();
-    let repo = git_repo(&env);
-    let review = env.path("review.diffnote");
-    let arg = review.to_str().unwrap();
-    env.ok(&repo, &["init", "-f", arg, "--title", "前のレビュー", "c1"]);
-    env.review(&repo, &review, &["c2"], &[Note::Global("前のコメント")]);
-    let before = std::fs::read(&review).unwrap();
-
-    // Anything but yes, and no answer at all, leave it as it was.
-    for answer in ["", "n\n", "no\n", "はい\n"] {
-        let out = env.answering(&repo, &["init", "-f", arg, "c3"], answer);
-        assert!(!out.status.success(), "{answer:?}");
-        let said = String::from_utf8_lossy(&out.stderr);
-        assert!(
-            said.contains("上書き") && said.contains("そのまま"),
-            "{said}"
-        );
-        assert_eq!(std::fs::read(&review).unwrap(), before, "{answer:?}");
-    }
-    // A mistake in what is asked for leaves it as it was too, even after a yes.
-    let out = env.answering(&repo, &["init", "-f", arg, "no-such-commit"], "y\n");
-    assert!(!out.status.success());
-    assert_eq!(std::fs::read(&review).unwrap(), before);
-
-    // Yes: a new review, with nothing of the old one in it.
-    let out = env.answering(&repo, &["init", "-f", arg, "c3"], "y\n");
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let loaded = bundle::load(&review).unwrap();
-    assert_eq!(loaded.revisions().count(), 1);
-    assert!(comment_bodies(&loaded).is_empty());
-    assert_eq!(diffnote::review::title(&loaded.settings), None);
-    assert_eq!(git_sources(&review)[0].base, commit_id(&repo, "c3"));
-    let out = env.answering(&repo, &["init", "-f", arg, "c2"], "YES\n");
-    assert!(out.status.success());
 }
 
 #[test]
@@ -2297,9 +2263,9 @@ fn a_project_of_repositories_is_reviewed_as_one_each_from_where_it_left_main() {
     let env = Env::new();
     let root = project(&env);
     let review = root.join("review.diffnote");
-    // Nothing said: the directory has repositories under it, so it is a
-    // review of them, each from where its branch left `main`.
-    let served = env.serve(&root, &review, &[]);
+    // `workspace`: the repositories under the directory, each from where
+    // its branch left `main`.
+    let served = env.serve(&root, &review, &["--type", "workspace"]);
     assert!(served.said.contains("2 個のリポジトリ"), "{}", served.said);
     let threads = [served.note(&Note::Line("backend/repo-a/a.txt", "two", "why two?"))];
     let files: Vec<String> = served.api("/api/model", None)["model"]["revisions"][0]["files"]
@@ -2390,45 +2356,290 @@ fn a_project_of_repositories_is_reviewed_as_one_each_from_where_it_left_main() {
     assert_eq!(first, ["backend/repo-a/a.txt", "mobile-app/m.txt"]);
 }
 
+/// The first screen (`review` with nothing said and no review): what it
+/// is given, and what it makes.
 #[test]
-fn init_in_a_project_of_repositories_starts_each_at_its_head() {
+fn the_first_screen_in_a_repository_offers_the_bases_and_makes_the_review_chosen() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    git(&repo, &["checkout", "-q", "-b", "feature", "c2"]);
+    std::fs::write(repo.join("calc.txt"), "a\nB\nc\nf\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "f1"]);
+    let review = env.path("review.diffnote");
+    let served = env.serve(&repo, &review, &["--title", "先に"]);
+    assert!(!review.exists(), "nothing until it is answered");
+    // The page itself carries the screen.
+    let (status, _, page) = http(served.port, "GET", "/", &served.cookie, None);
+    assert_eq!(status, 200);
+    assert!(page.contains("\"setup\":{"), "the page is the first screen");
+    let setup = served.api("/api/model", None)["model"]["setup"].clone();
+    assert_eq!(setup["kind"], "git");
+    assert_eq!(setup["title"], "先に");
+    assert_eq!(setup["kinds"]["git"]["ok"], true);
+    assert_eq!(setup["kinds"]["workspace"]["ok"], false);
+    assert_eq!(setup["kinds"]["raw"]["ok"], true);
+    assert_eq!(setup["git"]["branch"], "feature");
+    assert_eq!(setup["git"]["default_branch"], "main");
+    let candidates = setup["git"]["candidates"].as_array().unwrap();
+    // c2 is where feature left main; c3 main's tip; f1 HEAD.
+    assert_eq!(candidates.len(), 3);
+    assert_eq!(candidates[0]["id"], commit_id(&repo, "c2"));
+    assert_eq!(candidates[0]["names"][0]["kind"], "fork");
+    assert_eq!(candidates[0]["names"][0]["branch"], "main");
+    assert_eq!(
+        (
+            candidates[0]["commits"].as_u64(),
+            candidates[0]["files"].as_u64()
+        ),
+        (Some(1), Some(1))
+    );
+    assert_eq!(candidates[1]["rev"], "main");
+    assert_eq!(candidates[2]["rev"], "HEAD");
+    assert_eq!(
+        (
+            candidates[2]["commits"].as_u64(),
+            candidates[2]["files"].as_u64()
+        ),
+        (Some(0), Some(0))
+    );
+    // A commit typed in is looked at before it is chosen.
+    let preview = served.api("/api/setup/preview?repo=&rev=c1", None)["preview"].clone();
+    assert_eq!(preview["subject"], "c1");
+    assert_eq!(
+        (preview["commits"].as_u64(), preview["files"].as_u64()),
+        (Some(2), Some(2))
+    );
+    let (status, _, body) = http(
+        served.port,
+        "GET",
+        "/api/setup/preview?rev=nope",
+        &served.cookie,
+        None,
+    );
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("nope"), "{body}");
+    // A wrong answer makes nothing.
+    let (status, _, body) = http(
+        served.port,
+        "POST",
+        "/api/setup",
+        &served.cookie,
+        Some(r#"{"kind":"git","base":"nope"}"#),
+    );
+    assert_eq!(status, 400, "{body}");
+    assert!(!review.exists());
+    // The answer: reviewed from c1, with a title, keeping everything.
+    let made = served.api(
+        "/api/setup",
+        Some(serde_json::json!({
+            "kind": "git", "base": "c1", "title": "  ログイン  改修 ", "snapshot": "full",
+        })),
+    );
+    assert!(
+        made["message"]
+            .as_str()
+            .unwrap()
+            .contains("差分を記録しました"),
+        "{made}"
+    );
+    assert!(review.exists());
+    let sources = git_sources(&review);
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].base, commit_id(&repo, "c1"));
+    assert_eq!(sources[0].head, commit_id(&repo, "HEAD"));
+    assert_eq!(sources[0].spec, "c1..HEAD");
+    let loaded = bundle::load(&review).unwrap();
+    assert_eq!(
+        diffnote::review::title(&loaded.settings),
+        Some("ログイン 改修")
+    );
+    assert_eq!(loaded.snapshot_mode(), Some(bundle::SnapshotMode::Full));
+    // From here on the page is the review: the screen is gone, and asks refused.
+    let model = served.api("/api/model", None);
+    assert!(model["model"].get("setup").is_none());
+    assert_eq!(model["model"]["revisions"].as_array().unwrap().len(), 1);
+    let (status, _, body) = http(
+        served.port,
+        "POST",
+        "/api/setup",
+        &served.cookie,
+        Some(r#"{"kind":"raw"}"#),
+    );
+    assert_eq!(status, 400, "{body}");
+    // What is committed while it runs is taken in as usual.
+    std::fs::write(repo.join("calc.txt"), "a\nB\nc\nf\ng\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "f2"]);
+    assert!(served.refresh());
+    served.note(&Note::Line("calc.txt", "g", "g?"));
+    served.stop();
+    assert_eq!(git_sources(&review).len(), 2);
+    assert_eq!(comment_bodies(&bundle::load(&review).unwrap()), ["g?"]);
+}
+
+#[test]
+fn the_first_screen_in_a_project_of_repositories_takes_each_ones_base_and_more_by_hand() {
     let env = Env::new();
     let root = project(&env);
+    // One more, deeper than they are looked for.
+    let deep = root.join("a/b/c/d/e/deep");
+    std::fs::create_dir_all(&deep).unwrap();
+    git(&deep, &["init", "-q", "-b", "main"]);
+    std::fs::write(deep.join("d.txt"), "one\n").unwrap();
+    git(&deep, &["add", "-A"]);
+    git(&deep, &["commit", "-q", "-m", "d1"]);
     let review = root.join("review.diffnote");
-    let said = env.ok(&root, &["init", "-f", review.to_str().unwrap()]);
-    assert!(said.contains("2 個のリポジトリ"), "{said}");
-    let sources = workspace_sources(&review);
-    for r in &sources[0].repos {
-        assert_eq!(r.range.base, r.range.head);
-        assert_eq!(r.range.head, commit_id(&root.join(&r.path), "HEAD"));
-    }
-    // Nothing since: said so. A commit in one: reviewed from there.
     let served = env.serve(&root, &review, &[]);
-    assert!(
-        served.said.contains("差分がまだありません"),
-        "{}",
-        served.said
+    let setup = served.api("/api/model", None)["model"]["setup"].clone();
+    assert_eq!(setup["kind"], "workspace");
+    assert_eq!(setup["kinds"]["git"]["ok"], false);
+    assert_eq!(setup["depth"], 4);
+    let paths: Vec<&str> = setup["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["backend/repo-a", "mobile-app"]);
+    assert_eq!(
+        setup["repos"][0]["candidates"][0]["names"][0]["kind"],
+        "fork"
     );
+    let added = served.api("/api/setup/repo?path=a/b/c/d/e/deep", None)["repo"].clone();
+    assert_eq!(added["path"], "a/b/c/d/e/deep");
+    assert_eq!(
+        added["candidates"].as_array().unwrap().len(),
+        1,
+        "on main, at its tip: one and the same"
+    );
+    for bad in ["docs", "../out", "nowhere"] {
+        let (status, _, body) = http(
+            served.port,
+            "GET",
+            &format!("/api/setup/repo?path={bad}"),
+            &served.cookie,
+            None,
+        );
+        assert_eq!(status, 400, "{bad}: {body}");
+    }
+    // Chosen: repo-a from main (its one commit reviewed), the deep one from
+    // HEAD, and mobile-app left out.
+    let made = served.api(
+        "/api/setup",
+        Some(serde_json::json!({
+            "kind": "workspace",
+            "repos": [
+                { "path": "a/b/c/d/e/deep", "base": "HEAD" },
+                { "path": "backend/repo-a", "base": "main" },
+            ],
+        })),
+    );
+    assert!(
+        made["message"]
+            .as_str()
+            .unwrap()
+            .contains("2 個のリポジトリ"),
+        "{made}"
+    );
+    let sources = workspace_sources(&review);
+    assert_eq!(sources.len(), 1);
+    let repos = &sources[0].repos;
+    assert_eq!(
+        repos.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
+        ["a/b/c/d/e/deep", "backend/repo-a"]
+    );
+    assert_eq!(repos[0].range.base, repos[0].range.head);
+    assert_eq!(
+        repos[1].range.base,
+        commit_id(&root.join("backend/repo-a"), "main")
+    );
+    assert_eq!(
+        repos[1].range.head,
+        commit_id(&root.join("backend/repo-a"), "HEAD")
+    );
+    let files: Vec<String> = served.api("/api/model", None)["model"]["revisions"][0]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(files, ["backend/repo-a/a.txt"]);
     served.stop();
-    let repo_a = root.join("backend/repo-a");
-    std::fs::write(repo_a.join("a.txt"), "one\ntwo\nthree\n").unwrap();
-    git(&repo_a, &["commit", "-q", "-am", "c3"]);
+    // Later rounds follow what was chosen: a commit in the deep one counts,
+    // one in mobile-app doesn't.
+    let mobile = root.join("mobile-app");
+    std::fs::write(mobile.join("m.txt"), "one\ntwo\nthree\n").unwrap();
+    git(&mobile, &["commit", "-q", "-am", "c3"]);
+    env.serve(&root, &review, &[]).stop();
+    assert_eq!(workspace_sources(&review).len(), 1);
+    std::fs::write(deep.join("d.txt"), "one\ntwo\n").unwrap();
+    git(&deep, &["commit", "-q", "-am", "d2"]);
     env.review(
         &root,
         &review,
         &[],
-        &[Note::Line("backend/repo-a/a.txt", "three", "and three")],
+        &[Note::Line("a/b/c/d/e/deep/d.txt", "two", "deep two")],
     );
-    let files: Vec<String> = bundle::load(&review)
-        .unwrap()
-        .revisions()
-        .last()
-        .unwrap()
-        .files
-        .iter()
-        .filter_map(|f| f.new_path.clone())
-        .collect();
-    assert_eq!(files, ["backend/repo-a/a.txt"]);
+    let sources = workspace_sources(&review);
+    assert_eq!(sources.len(), 2);
+    assert_eq!(sources[1].repos[0].range.head, commit_id(&deep, "HEAD"));
+}
+
+#[test]
+fn the_first_screen_elsewhere_keeps_the_directory_as_it_is_and_leaves_nothing_if_quit() {
+    let env = Env::new();
+    let dir = env.path("plain");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "two\n").unwrap();
+    let review = env.path("plain.diffnote");
+    // Quit without answering: nothing is left behind.
+    let served = env.serve(&dir, &review, &[]);
+    let setup = served.api("/api/model", None)["model"]["setup"].clone();
+    assert_eq!(setup["kind"], "raw");
+    assert_eq!(setup["kinds"]["git"]["ok"], false);
+    assert_eq!(setup["kinds"]["workspace"]["ok"], false);
+    let raw = served.api("/api/setup/raw", None)["raw"].clone();
+    assert_eq!(
+        (raw["files"].as_u64(), raw["bytes"].as_u64()),
+        (Some(2), Some(8))
+    );
+    served.discard();
+    assert!(!review.exists());
+    // Answered: the directory as it is, whole.
+    let served = env.serve(&dir, &review, &[]);
+    let made = served.api(
+        "/api/setup",
+        Some(serde_json::json!({ "kind": "raw", "title": "設計" })),
+    );
+    assert!(
+        made["message"].as_str().unwrap().contains("2 個のファイル"),
+        "{made}"
+    );
+    assert_eq!(count_blobs(&review), 2);
+    assert!(git_sources(&review).is_empty());
+    assert_eq!(
+        served.api("/api/model", None)["model"]["revisions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    std::fs::write(dir.join("a.txt"), "one\nmore\n").unwrap();
+    assert!(served.refresh());
+    served.note(&Note::Line("a.txt", "more", "more?"));
+    served.stop();
+    let loaded = bundle::load(&review).unwrap();
+    assert_eq!(diffnote::review::title(&loaded.settings), Some("設計"));
+    assert_eq!(loaded.revisions().count(), 2);
+    assert_eq!(comment_bodies(&loaded), ["more?"]);
+    // A review that is there is opened, not asked about again.
+    let served = env.serve(&dir, &review, &[]);
+    assert!(
+        served.api("/api/model", None)["model"]
+            .get("setup")
+            .is_none()
+    );
+    served.stop();
 }
 
 #[test]
@@ -2448,7 +2659,7 @@ fn what_a_project_of_repositories_cannot_be_told_is_refused() {
     let said = env.serve_refused(&root, &review, &["--type", "workspace", "--base", "main"]);
     assert!(said.contains("--base"), "{said}");
     assert!(!review.exists());
-    env.serve(&root, &review, &[]).stop();
+    env.serve(&root, &review, &["--type", "workspace"]).stop();
     let said = env.serve_refused(&root, &review, &["HEAD"]);
     assert!(
         said.contains("--base") || said.contains("比較対象"),

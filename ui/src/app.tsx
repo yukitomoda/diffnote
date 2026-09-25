@@ -12,6 +12,7 @@ import { server } from './transport.ts';
 import { Revision } from './Revision.tsx';
 import { QuitButton } from './screen/Quit.tsx';
 import { ReviewScreen } from './screen/Screen.tsx';
+import { EmptyReview, SetupScreen } from './screen/Setup.tsx';
 import { useCompose } from './state/compose.ts';
 import { ActionsContext, ComposeContext, LinksContext, OpenedContext } from './state/contexts.ts';
 import { useOpened } from './state/opened.ts';
@@ -218,10 +219,13 @@ function App(props: { model: ViewModel }) {
     interact.reset();
   }, [hide, wrap, current, layout]);
 
+  // No review yet: the page is the first screen, which makes one. Nothing
+  // else of the page may write (the settings screens would make the file).
+  var making = !!model.setup && model.revisions.length === 0;
   return <article class="diffnote-review">
     <div class="diffnote-topbar">
       <header class="diffnote-summary">
-        <h1>{review.actions
+        <h1>{review.actions && !making
           ? <button type="button" class="diffnote-title" data-diffnote-screen-open title={lib.m('ui.screen.title_button')} aria-haspopup="dialog"
               aria-pressed={screen === 'general' || screen === 'settings'} onClick={function () { showScreen(screen === 'general' ? null : 'general'); }}>{model.title || lib.m('html.default_title')}<Icon name="settings" class="diffnote-title__icon" /></button>
           : model.title || lib.m('html.default_title')}</h1>
@@ -248,7 +252,7 @@ function App(props: { model: ViewModel }) {
       {model.interactive && <QuitButton />}
       </div>
     </div>
-    {screen != null && review.actions && <ReviewScreen section={screen} model={model} pending={review.pending} note={note} onPull={pull}
+    {screen != null && review.actions && !making && <ReviewScreen section={screen} model={model} pending={review.pending} note={note} onPull={pull}
       saveSettings={review.actions.saveSettings} saveUserSettings={review.actions.saveUserSettings}
       removeAttached={review.actions.removeAttached}
       onShowThread={function (id) { links.go({ kind: 'thread', id: id }); }}
@@ -259,13 +263,16 @@ function App(props: { model: ViewModel }) {
     <ActionsContext.Provider value={review.actions}>
       <ComposeContext.Provider value={compose}>
         <OpenedContext.Provider value={openedFiles}>
-          <Revision key={current} model={model} index={current} hideResolved={hide} layout={layout} ignoreSpace={ignoreSpace} compose={compose} override={override}
+          {making ? <SetupScreen setup={model.setup!} />
+            : model.revisions.length === 0 ? <EmptyReview refreshable={!!review.actions && !!model.refreshable}
+                busy={!!(note && note.busy)} note={note ? note.text : null} failed={!!(note && note.failed)} onPull={pull} />
+            : <Revision key={current} model={model} index={current} hideResolved={hide} layout={layout} ignoreSpace={ignoreSpace} compose={compose} override={override}
             overrideNote={override ? {
               short: model.revisions[against!].label + ' .. ' + model.revisions[current].label,
               tip: lib.m('ui.base.select_tip'),
             } : null}
             author={review.actions ? model.author : null} userSettingsOpen={screen === 'user'}
-            onToggleUserSettings={review.actions && function () { showScreen(screen === 'user' ? null : 'user'); }} />
+            onToggleUserSettings={review.actions && function () { showScreen(screen === 'user' ? null : 'user'); }} />}
         </OpenedContext.Provider>
       </ComposeContext.Provider>
     </ActionsContext.Provider>

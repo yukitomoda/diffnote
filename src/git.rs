@@ -218,6 +218,43 @@ impl Repo {
             .map(str::to_string)
     }
 
+    /// The branch `HEAD` is on, or `None` when it is on none (detached).
+    pub fn current_branch(&self) -> Option<String> {
+        let mut cmd = self.git();
+        cmd.args(["symbolic-ref", "--quiet", "--short", "HEAD"]);
+        run_text(cmd)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// The first line of what the commit `rev` names says.
+    pub fn subject(&self, rev: &str) -> Result<String> {
+        let mut cmd = self.git();
+        cmd.args(["log", "-1", "--format=%s"]).arg(rev).arg("--");
+        Ok(run_text(cmd)?.trim().to_string())
+    }
+
+    /// How many commits `base..head` has.
+    pub fn count_commits(&self, base: &str, head: &str) -> Result<usize> {
+        let mut cmd = self.git();
+        cmd.args(["rev-list", "--count"])
+            .arg(format!("{base}..{head}"))
+            .arg("--");
+        let out = run_text(cmd)?;
+        out.trim()
+            .parse()
+            .map_err(|_| anyhow::anyhow!(mf("git.commit_unresolved", &[("rev", base)])))
+    }
+
+    /// How many files differ between the trees of `base` and `head`.
+    pub fn count_changed_files(&self, base: &str, head: &str) -> Result<usize> {
+        let mut cmd = self.git();
+        cmd.args(["diff", "--name-only", "-z", base, head, "--"]);
+        let out = run(cmd)?;
+        Ok(out.split(|b| *b == 0).filter(|p| !p.is_empty()).count())
+    }
+
     /// Where `a` and `b` last met: their nearest common ancestor.
     pub fn merge_base(&self, a: &str, b: &str) -> Result<String> {
         let mut cmd = self.git();
@@ -541,6 +578,25 @@ mod tests {
                 repo.default_base().unwrap(),
                 git_in(p, &["rev-parse", "HEAD"])
             );
+        });
+    }
+
+    #[test]
+    fn what_a_range_holds_is_counted_and_a_commit_is_named_by_its_subject() {
+        with_repo(|p, repo, c| {
+            assert_eq!(repo.current_branch().as_deref(), Some("main"));
+            assert_eq!(repo.subject("HEAD").unwrap(), "c3");
+            assert_eq!(repo.subject(&c[0]).unwrap(), "c1");
+            assert_eq!(repo.count_commits(&c[0], "HEAD").unwrap(), 2);
+            assert_eq!(repo.count_commits("HEAD", "HEAD").unwrap(), 0);
+            // Files: a.txt was rewritten by every commit; dir/b.txt never was.
+            assert_eq!(repo.count_changed_files(&c[0], "HEAD").unwrap(), 1);
+            assert_eq!(repo.count_changed_files("HEAD", "HEAD").unwrap(), 0);
+            // Detached: on no branch.
+            git_in(p, &["checkout", "-q", &c[1]]);
+            assert_eq!(repo.current_branch(), None);
+            assert!(repo.subject("no-such-rev").is_err());
+            assert!(repo.count_commits("no-such-rev", "HEAD").is_err());
         });
     }
 

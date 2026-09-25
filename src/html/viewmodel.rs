@@ -81,6 +81,10 @@ pub struct ViewModel {
     /// What happened to the review, oldest first.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub timeline: Vec<TimelineEntry>,
+    /// The first screen, while there is no review yet (served page only):
+    /// what it is drawn from (see `crate::setup`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup: Option<crate::setup::Description>,
 }
 
 #[derive(Serialize)]
@@ -395,6 +399,11 @@ pub fn view_model_with(
     limit: ExpandLimit,
 ) -> anyhow::Result<ViewModel> {
     let shown = shown_revisions(loaded)?;
+    // A review with nothing to show yet (its base is recorded, and nothing
+    // since) is a page only while it can take something in.
+    if shown.is_empty() && !interactive {
+        anyhow::bail!(m("html.no_diff_recorded"));
+    }
     let views = revision_views(&shown);
     let threads = build_threads(&loaded.events);
     let blobs = loaded.blobs();
@@ -433,6 +442,7 @@ pub fn view_model_with(
         bundle: None,
         user_settings: None,
         refreshable: false,
+        setup: None,
         base: loaded.revisions().next().map(|r| match &r.source {
             crate::model::Source::Git(g) => BaseData::Git {
                 id: g.base.chars().take(7).collect(),
@@ -494,6 +504,7 @@ pub fn served_model_json(
     author: String,
     refreshable: bool,
     bundle_size: u64,
+    setup: Option<crate::setup::Description>,
 ) -> anyhow::Result<String> {
     let mut model = view_model_for(loaded, true)?;
     model.editable = editable;
@@ -503,6 +514,7 @@ pub fn served_model_json(
     model.settings = Some(loaded.settings.clone());
     model.bundle = Some(bundle_info(loaded, bundle_size, model.revisions.len()));
     model.user_settings = Some(crate::user_config::load());
+    model.setup = setup;
     model_json(&model)
 }
 

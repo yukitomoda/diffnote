@@ -929,7 +929,7 @@ class Workspace(ServedCase):
     def test_the_page_shows_the_repositories_files_bases_and_commits_apart(self):
         project = project_of_repos(self.root, "ws")
         self.review = os.path.join(project, "ws.diffnote")
-        self.server = Served(self.review, cwd=project, author="検証者")
+        self.server = Served(self.review, cwd=project, author="検証者", extra=["--type", "workspace"])
         self.addCleanup(self.server.stop)
         b = self.b = self.browser
         b.open(self.server.url, ready="!!document.querySelector('.diffnote-file')")
@@ -2306,8 +2306,7 @@ class ServeAddsTheLatestDiff(ServedCase):
     def test_the_pull_button_takes_in_a_commit_made_after_the_server_started(self):
         repo = make_gaps_review(self.root, name="pulled")[1]
         review = os.path.join(self.fresh("review"), "pulled.diffnote")
-        assert harness.diffnote("init", "-f", review, "c1", cwd=repo).returncode == 0
-        self.open_page(Served(review, cwd=repo))
+        self.open_page(Served(review, cwd=repo, extra=["--base", "c1"]))
         b = self.b
         self.assertEqual(b.js("document.querySelectorAll('[data-diffnote-revision-link]').length"), 1, "one revision: its tab is shown")
         harness.write(repo, "long.txt", "".join(f"new {n}\n" for n in range(1, 101)))
@@ -2358,8 +2357,7 @@ class Reopen(ServedCase):
     def test_nothing_is_added_at_start_and_no_pull_button_is_offered(self):
         repo = harness.make_gaps_review(self.root, name="reopen1")[1]
         review = os.path.join(self.fresh("review"), "reopen1.diffnote")
-        assert harness.diffnote("init", "-f", review, "c1", cwd=repo).returncode == 0
-        harness.review_of(repo, review, "c2", comments=[
+        harness.review_of(repo, review, "c2", base="c1", comments=[
             {"file": "long.txt", "line": "TWENTY", "body": "20 行目を変えました。"},
         ])
         before = entries(review)
@@ -2491,3 +2489,76 @@ class BrowserHistory(ServedCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FirstScreen(ServedCase):
+    """`diffnote review` with nothing said and no review: the page is the
+    first screen, which makes the review from what is chosen on it. (What
+    it offers and what it makes is in `tests/cli.rs`; here, that the page
+    shows it and sends it.)"""
+
+    def start(self, cwd, name):
+        self.review = os.path.join(cwd, name + ".diffnote")
+        self.server = Served(self.review, cwd=cwd, author="検証者")
+        self.addCleanup(self.server.stop)
+        b = self.b = self.browser
+        b.open(self.server.url, ready="!!document.querySelector('[data-diffnote-setup]')")
+        return b
+
+    def create(self):
+        """Presses 「レビューを作る」 and waits for the page to come back as the review."""
+        b = self.b
+        b.js("window.__marker='first-screen'")
+        b.click("[data-diffnote-setup-create]")
+        self.assertTrue(b.wait("!window.__marker && document.readyState==='complete' && !!document.querySelector('[data-diffnote-revision-link]')", timeout=15))
+        self.assertFalse(b.exists("[data-diffnote-setup]"))
+
+    def test_in_a_repository_a_base_is_chosen_or_typed_and_the_review_is_made(self):
+        repo = harness.make_gaps_review(self.root, name="first-git")[1]
+        b = self.start(repo, "first")
+        self.assertFalse(os.path.exists(self.review), "nothing until it is answered")
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-kind=git]').checked"))
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-kind=workspace]').disabled"), "no repositories under a repository")
+        self.assertFalse(b.js("document.querySelector('[data-diffnote-setup-kind=raw]').disabled"))
+        # On main at its tip: one commit offered, by all its names, with nothing to review yet.
+        self.assertEqual(b.count("[data-diffnote-setup-base=git] input[type=radio]"), 2, "the one offered, and 指定する")
+        self.assertIn("main から分かれたところ = main の先端 = 今のコミット(HEAD)", b.text("[data-diffnote-setup-base=git]"))
+        self.assertIn("まだ差分はありません", b.text("[data-diffnote-setup-base=git] input:checked + span small"))
+        # Typed in: what it would review is said as it is typed, and a
+        # mistake is said too.
+        b.set_value("[data-diffnote-setup-rev]", "nope")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-setup-preview]').textContent.includes('nope')"))
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
+        b.set_value("[data-diffnote-setup-rev]", "c1")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-setup-preview]').textContent.includes('1 コミット、1 ファイル')"))
+        self.assertFalse(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
+        b.set_value("[data-diffnote-setup-title]", "最初の画面から")
+        b.click("[data-diffnote-setup-snapshot=full]")
+        self.create()
+        self.assertTrue(os.path.exists(self.review))
+        self.assertEqual(b.count("[data-diffnote-revision-link]"), 1)
+        self.assertEqual(b.text(".diffnote-title"), "最初の画面から")
+        self.assertEqual(b.text("[data-diffnote-base] code"), harness.git(repo, "rev-parse", "--short=7", "c1"))
+        self.assertEqual(json.loads(harness.member(self.review, "settings.json"))["title"], "最初の画面から")
+        self.assertIn('"snapshot_mode":"full"', harness.member(self.review, "review.jsonl"))
+
+    def test_in_a_project_of_repositories_each_is_offered_and_one_can_be_left_out(self):
+        project = project_of_repos(self.root, "first-ws")
+        b = self.start(project, "first")
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-kind=workspace]').checked"))
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-kind=git]').disabled"))
+        repos = b.js("[...document.querySelectorAll('[data-diffnote-setup-repo]')].map(function (d) { return d.dataset.diffnoteSetupRepo; })")
+        self.assertEqual(repos, ["backend/repo-a", "mobile-app"])
+        self.assertIn("1 コミット、1 ファイル", b.text("[data-diffnote-setup-repo='backend/repo-a'] input:checked + span small"))
+        self.assertIn("1 コミット、2 ファイル", b.text("[data-diffnote-setup-repo='mobile-app'] input:checked + span small"))
+        # A path that is no repository is refused where it is typed.
+        b.set_value("[data-diffnote-setup-add-path]", "docs")
+        b.click("[data-diffnote-setup-add]")
+        self.assertTrue(b.wait_exists("[data-diffnote-setup-add-error]"))
+        # mobile-app left out: the review is of repo-a alone.
+        b.click("[data-diffnote-setup-repo='mobile-app'] [data-diffnote-setup-include]")
+        self.assertFalse(b.exists("[data-diffnote-setup-repo='mobile-app'] [data-diffnote-setup-base]"), "its base is no longer asked")
+        self.create()
+        files = b.js("[...document.querySelectorAll('%s section.diffnote-file')].map(function (s) { return s.dataset.diffnoteFile; })" % CUR)
+        self.assertEqual(files, ["backend/repo-a/a.txt"])
+        self.assertIn("1 リポジトリ", b.text("[data-diffnote-base]"))

@@ -61,7 +61,8 @@ struct Marks {
 }
 
 /// The revisions that have a diff to show, each with its label, diff and
-/// tree (a fresh `init` snapshot has no diff, so is left out).
+/// tree (a first revision that only records the base has no diff, so is
+/// left out). None at all is for the caller to mind.
 struct Shown<'a> {
     label: String,
     /// When it was recorded (RFC 3339, UTC): the page says it in the reader's
@@ -125,9 +126,6 @@ fn shown_revisions(loaded: &crate::bundle::Loaded) -> anyhow::Result<Vec<Shown<'
             tree: loaded.manifest(revision),
         });
     }
-    if shown.is_empty() {
-        anyhow::bail!(m("html.no_diff_recorded"));
-    }
     Ok(shown)
 }
 
@@ -180,17 +178,33 @@ pub fn render_served_page(
     author: String,
     refreshable: bool,
     bundle_size: u64,
+    setup: Option<crate::setup::Description>,
 ) -> anyhow::Result<String> {
     client_page(
         loaded,
-        Some((editable, changed, author, refreshable, bundle_size)),
+        Some(Served {
+            editable,
+            changed,
+            author,
+            refreshable,
+            bundle_size,
+            setup,
+        }),
         ExpandLimit::Lines(0),
     )
 }
 
-/// What the served page is given: the comments it may change, those of them
-/// changed in this session, the author, whether it can pull, the bundle size.
-type Served = (Vec<String>, Vec<String>, String, bool, u64);
+/// What the served page is given beyond the review: the comments it may
+/// change, those of them changed in this session, the author, whether it
+/// can pull, the bundle size, and the first screen while there is no review.
+struct Served {
+    editable: Vec<String>,
+    changed: Vec<String>,
+    author: String,
+    refreshable: bool,
+    bundle_size: u64,
+    setup: Option<crate::setup::Description>,
+}
 
 fn client_page(
     loaded: &crate::bundle::Loaded,
@@ -198,8 +212,16 @@ fn client_page(
     limit: ExpandLimit,
 ) -> anyhow::Result<String> {
     let interactive = served.is_some();
-    let data = if let Some((editable, changed, author, refreshable, size)) = served {
-        served_model_json(loaded, editable, changed, author, refreshable, size)?
+    let data = if let Some(served) = served {
+        served_model_json(
+            loaded,
+            served.editable,
+            served.changed,
+            served.author,
+            served.refreshable,
+            served.bundle_size,
+            served.setup,
+        )?
     } else {
         view_model_json(loaded, limit)?
     };

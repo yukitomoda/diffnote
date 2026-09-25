@@ -28,35 +28,21 @@ cli:
 
     {all-args}
 
-  init:
-    about: |-
-      レビューを新しく作り、比較の基準を決める。
-    review: |-
-      作るレビューのパス(省略時は ./.diffnote)。
-    target: |-
-      基準にするコミット、またはディレクトリ(省略時は HEAD、git の外では `.`)。
-    type: |-
-      レビューの種類。`git`(コミットを比べる)、`workspace`(下にある複数のリポジトリをまとめて)、`raw`(ディレクトリのファイルをそのまま比べる)。省略時は、ディレクトリの状態から決める。
-    repo: |-
-      対象の git リポジトリ(省略時はカレント)。
-    title: |-
-      レビューのタイトル。
-    snapshot: |-
-      レビューに保存する範囲。`changed`(差分が触れたファイルだけ)か `full`(ツリー全体)。あとから変えられない。
-
   review:
     about: |-
-      最新のコミットまたはディレクトリの状態でリビジョンを更新して、ブラウザで開く。
+      レビューをブラウザで開く。まだ無ければ作る(何も指定しなければ画面で設定する)。あれば、最新のコミットやディレクトリの状態を取り込む。
     review: |-
       レビューのパス(省略時は ./.diffnote)。
     target: |-
       レビューに加えるコミット、またはディレクトリ(省略時は、git なら HEAD、raw ならカレントディレクトリ)。
     base: |-
-      比較の起点。まだレビューがないときだけ指定できる。
+      比較の起点(例: `--base main`)。まだレビューがないときだけ指定でき、画面を開かずに作る。
     type: |-
-      レビューの種類。`git`、`workspace`(下にある複数のリポジトリをまとめて)、`raw`(ディレクトリのファイルをそのまま比べる)。レビューを作るときに決まり、あとから変えられない。
+      レビューの種類。`git`(コミットを比べる)、`workspace`(下にある複数のリポジトリをまとめて)、`raw`(ディレクトリのファイルをそのまま比べる)。レビューを作るときに決まり、あとから変えられない。
     snapshot: |-
-      レビューに保存する範囲。まだレビューがないときだけ指定できる。`changed` か `full`。
+      レビューに保存する範囲。まだレビューがないときだけ指定できる。`changed`(差分が触れたファイルだけ)か `full`(ツリー全体)。
+    title: |-
+      レビューのタイトル。まだレビューがないときだけ指定できる(あとは画面の設定で変えられる)。
 
   open:
     about: |-
@@ -117,9 +103,12 @@ main:
   output_path_missing: |-
     出力パスを指定してください(例: `diffnote export out.html`)
   no_bundle: |-
-    {path} がありません。レビューするコミットを指定するか、先に `diffnote init` を実行してください
+    {path} がありません。`diffnote review` を何も指定せずに実行すると、画面で作れます
   needs_a_base: |-
-    比較の起点を `--base DIR` で指定するか、先に `diffnote init` を実行してください
+    比較の起点を `--base DIR` で指定するか、何も指定せずに実行して画面で作ってください
+  title:
+    locked: |-
+      タイトルは、レビューを作るときにだけ指定できます(あとは画面の設定で変えられます)
   warning_prefix: |-
     警告: {warning}
   notice_prefix: |-
@@ -152,6 +141,12 @@ main:
       ディレクトリの変更を記録しました
     recorded_workspace: |-
       {n} 個のリポジトリの差分を記録しました
+    started_git: |-
+      {base}({commit}) を基準にレビューを作りました。ここから先のコミットがレビューの対象です
+    started_workspace: |-
+      {n} 個のリポジトリを基準に、レビューを作りました。ここから先のコミットがレビューの対象です
+    started_files: |-
+      {count} 個のファイルを保存しました。ここから先の変更がレビューの対象です
 
   type:
     git_no_repo: |-
@@ -170,7 +165,7 @@ main:
     no_diff_at_all: |-
       レビューする差分がありません
     no_diff_yet: |-
-      注意: レビューする差分がまだありません。コミットを重ねてから、もう一度実行してください
+      注意: レビューする差分がまだありません。コミットしてから、画面の「最新を取り込む」を押すか、もう一度実行してください
     at: |-
       {url}
     opening_browser: |-
@@ -206,7 +201,7 @@ main:
     dir_bundle: |-
       このバンドルはディレクトリのレビューです(コミットは指定できません)
     no_target: |-
-      レビューするコミットを指定するか、先に `diffnote init` を実行してください
+      レビューするコミットを指定するか(例: `--base main`)、何も指定せずに実行して画面で作ってください
 
   files_input:
     no_snapshot: |-
@@ -216,17 +211,6 @@ main:
     mismatch: |-
       {dir} は、このバンドルのベースと違います。ベースは変えられません
 
-  init:
-    confirm_overwrite: "{path} はすでに存在します。上書きして、新しいレビューを作りますか? [y/N] "
-    kept: |-
-      {path} はそのままにしました
-    git_done: |-
-      {rev}({commit}) を基準に {path} を作成しました。`diffnote review` でレビューを始められます
-    files_done: |-
-      {count} 個のファイルを {path} に保存しました
-    workspace_done: |-
-      {count} 個のリポジトリを、それぞれの HEAD を基準に {path} に記録しました。`diffnote review` でレビューを始められます
-
   snapshot:
     dir_changed_refused: |-
       ディレクトリのレビューでは `--snapshot changed` は指定できません。不要なものは `.diffnoteignore` で除外してください
@@ -235,6 +219,35 @@ main:
     ignore_hint: |-
       不要なものは `.diffnoteignore` で除外できます
     confirm_prompt: "代わりに `changed`(この差分が触れるファイルだけ)にしますか? [y/N] "
+
+# --- 最初の設定画面(setup.rs) --------------------------------------------
+setup:
+  not_in_a_repo: |-
+    ここは git リポジトリの中ではありません
+  no_commits: |-
+    リポジトリにコミットがありません
+  no_repos: |-
+    このディレクトリの下に git リポジトリが見つかりません({depth} 階層まで探しました)
+  repo_not_found: |-
+    {path} に git リポジトリがありません
+  repo_path_invalid: |-
+    リポジトリのパスは、このディレクトリからの相対パスで指定してください({path})
+  repo_twice: |-
+    {path} が重複しています
+  repo_base_missing: |-
+    {path} のベースを指定してください
+  base_missing: |-
+    ベースにするコミットを指定してください
+  repos_missing: |-
+    リポジトリを 1 つ以上選んでください
+  kind_invalid: |-
+    レビューの種類 {kind} はありません
+  not_available: |-
+    この起動では、レビューを作れません
+  already_made: |-
+    レビューはもう作られています
+  made: |-
+    レビューを作りました
 
 # --- 実行時のメッセージ(serve.rs、ブラウザの画面が受け取るもの) -----------
 serve:
@@ -1038,6 +1051,101 @@ ui:
       取り込めませんでした
     new_commits_notice: |-
       新しいコミットがあります
+
+  setup:
+    heading: |-
+      レビューを作る
+    intro: |-
+      {review} に新しいレビューを作ります。作ったあとは、そのままレビューを始められます。
+    kind_label: |-
+      レビューの対象
+    kind_git: |-
+      このリポジトリのコミット
+    kind_git_hint: |-
+      ベースにするコミットから HEAD までの変更をレビューします。
+    kind_workspace: |-
+      このディレクトリの下にある複数のリポジトリ
+    kind_workspace_hint: |-
+      リポジトリごとにベースを決めて、まとめて 1 つのレビューにします。
+    kind_raw: |-
+      このディレクトリのファイルをそのまま
+    kind_raw_hint: |-
+      今の状態を保存し、ここから先の変更をレビューします(git は使いません)。
+    base_label: |-
+      ベース(ここから先の変更をレビューします)
+    name_fork: |-
+      {branch} から分かれたところ
+    name_branch: |-
+      {branch} の先端
+    name_head: |-
+      今のコミット(HEAD)
+    name_join: " = "
+    manual: |-
+      指定する
+    manual_placeholder: |-
+      ブランチ名、タグ、コミット ID
+    checking: |-
+      確認しています…
+    preview: |-
+      {commits} コミット、{files} ファイルが対象になります
+    preview_none: |-
+      まだ差分はありません。ここから先の変更が対象になります
+    on_branch: |-
+      ブランチ: {branch}
+    detached: |-
+      ブランチなし
+    head: |-
+      HEAD: {short} {subject}
+    repos_label: |-
+      リポジトリ
+    repos_note: |-
+      見つかったリポジトリです({depth} 階層まで探しました)。含めないものはチェックを外してください。
+    add_path_label: |-
+      もっと深い場所のリポジトリを追加する
+    add_path_placeholder: |-
+      例: tools/vendor/lib
+    add_button: |-
+      追加
+    add_twice: |-
+      {path} はもう入っています
+    raw_label: |-
+      保存する内容
+    raw_files: |-
+      {files} 個のファイル({size})を、今の状態のまま保存します。
+    raw_loading: |-
+      ファイルを数えています…
+    title_label: |-
+      タイトル
+    title_placeholder: |-
+      (あとから設定で変えられます)
+    snapshot_label: |-
+      レビューに保存するファイル
+    snapshot_changed: |-
+      差分が触れたファイルだけ(おすすめ)
+    snapshot_full: |-
+      すべてのファイル
+    snapshot_hint: |-
+      「すべて」にすると、レビューを受け取った人がリポジトリを持っていなくても、差分にないファイルを開けます。作ったあとは変えられません。
+    create_button: |-
+      レビューを作る
+    creating: |-
+      作っています…
+    not_a_repo: |-
+      ここは git リポジトリではありません
+    no_repos_chosen: |-
+      リポジトリを 1 つ以上選んでください
+    base_needed: |-
+      ベースを指定してください
+    base_unchecked: |-
+      ベースの確認が終わるまでお待ちください
+
+  empty:
+    heading: |-
+      まだ差分がありません
+    note: |-
+      ベースから先の変更がレビューの対象です。コミット(または変更)してから、「最新を取り込む」を押してください。
+    note_open: |-
+      ベースから先の変更がレビューの対象です。`diffnote review` を実行すると取り込めます。
 
   base:
     workspace: |-

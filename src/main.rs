@@ -75,27 +75,6 @@ fn command() -> clap::Command {
 
 #[derive(Debug, Subcommand)]
 enum Cmd {
-    #[command(about = m("cli.init.about"))]
-    Init {
-        #[arg(
-            short = 'f',
-            long = "file",
-            default_value = ".diffnote",
-            hide_default_value = true,
-            help = m("cli.init.review")
-        )]
-        review: PathBuf,
-        #[arg(value_name = "REV|DIR", help = m("cli.init.target"))]
-        target: Option<String>,
-        #[arg(long = "type", value_name = "TYPE", value_enum, hide_possible_values = true, help = m("cli.init.type"))]
-        kind: Option<ReviewType>,
-        #[arg(long, value_name = "DIR", help = m("cli.init.repo"))]
-        repo: Option<PathBuf>,
-        #[arg(long, value_name = "TITLE", help = m("cli.init.title"))]
-        title: Option<String>,
-        #[arg(long, value_enum, hide_possible_values = true, help = m("cli.init.snapshot"))]
-        snapshot: Option<diffnote::bundle::SnapshotMode>,
-    },
     #[command(about = m("cli.review.about"))]
     Review {
         #[arg(
@@ -114,6 +93,8 @@ enum Cmd {
         kind: Option<ReviewType>,
         #[arg(long, value_enum, hide_possible_values = true, help = m("cli.review.snapshot"))]
         snapshot: Option<diffnote::bundle::SnapshotMode>,
+        #[arg(long, value_name = "TITLE", help = m("cli.review.title"))]
+        title: Option<String>,
         #[command(flatten)]
         server: Server,
     },
@@ -226,20 +207,13 @@ fn main() -> Result<()> {
         Cli::from_arg_matches(&command().get_matches())?
     };
     match cli.command {
-        Cmd::Init {
-            review,
-            target,
-            kind,
-            repo,
-            title,
-            snapshot,
-        } => cmd_init(review, target, kind, repo, title, snapshot),
         Cmd::Review {
             review,
             target,
             base,
             kind,
             snapshot,
+            title,
             server,
         } => cmd_serve(
             review,
@@ -249,6 +223,7 @@ fn main() -> Result<()> {
                 base,
                 kind,
                 snapshot,
+                title,
             }),
         ),
         Cmd::Open { review, server } => cmd_serve(review, server, None),
@@ -379,17 +354,47 @@ fn set_config_field(
 ///
 /// Nothing is written if the diff is empty or is already recorded (or if
 /// `apply` is off: then it only says whether there is something to add).
+/// What `add_revision` is asked to add, and how.
+struct Ask<'a> {
+    base: Option<&'a str>,
+    target: Option<&'a str>,
+    kind: Option<ReviewType>,
+    /// A review of several repositories made by this call: which ones, each
+    /// from where (as chosen on the first screen). `None`: the ones found
+    /// under the directory, each from its default base.
+    repos: Option<Vec<diffnote::model::RepoSource>>,
+    /// What a review made by this call keeps. Refused earlier if the review
+    /// already exists, so it can only apply here.
+    snapshot: Option<bundle::SnapshotMode>,
+    /// Its title, likewise.
+    title: Option<&'a str>,
+    /// Whether to record what is found (`false`: only say whether there is
+    /// anything, and write nothing).
+    apply: bool,
+    /// Whether someone is at the terminal to answer a question (a full
+    /// snapshot that is big). From the page, there is no one.
+    terminal: bool,
+}
+
+/// Adds what `ask` names to the review at `review_path`, making the review
+/// if there is none: what it did, in a line, or `None` when there was
+/// nothing to add. A review made here is kept even with nothing to show yet
+/// (its base is what it records; what comes later is reviewed from it).
 fn add_revision(
     review_path: &Path,
     repo: &diffnote::git::Repo,
-    base: Option<&str>,
-    target: Option<&str>,
-    kind: Option<ReviewType>,
-    apply: bool,
-    // What to keep, when this call is the one that makes the review. Refused
-    // earlier if the review already exists, so it can only apply here.
-    snapshot: Option<bundle::SnapshotMode>,
+    ask: Ask,
 ) -> Result<Option<String>> {
+    let Ask {
+        base,
+        target,
+        kind,
+        repos: chosen,
+        snapshot,
+        title,
+        apply,
+        terminal,
+    } = ask;
     let mut loaded = bundle::load(review_path)?;
     let explicit = base.is_some() || target.is_some() || kind.is_some();
     let mut fresh = FreshBundle(None);
@@ -404,17 +409,17 @@ fn add_revision(
             }
             Some(is)
         }
-        // (A review of several repositories needs no base or target to start.)
-        None if explicit || kind == Some(ReviewType::Workspace) => {
-            Some(kind_of(repo, project, kind)?)
-        }
+        // (Repositories chosen by hand may all be deeper than they are
+        // looked for: the choice is what counts.)
+        None if chosen.is_some() => Some(ReviewType::Workspace),
+        None if explicit => Some(kind_of(repo, project, kind)?),
         None => None,
     };
     let input = if review_kind == Some(ReviewType::Workspace) {
         if base.is_some() || target.is_some() {
             anyhow::bail!(m("main.workspace.no_target"));
         }
-        let (repos, away) = workspace_range(&loaded, project)?;
+        let (repos, away) = workspace_range(&loaded, project, chosen)?;
         if !apply {
             // Only the heads: has any repository moved since the last revision?
             let last = loaded.revisions().last().and_then(|r| match &r.source {
@@ -453,7 +458,14 @@ fn add_revision(
             let Some(base_dir) = base else {
                 anyhow::bail!(m("main.needs_a_base"));
             };
-            init_files(review_path, Path::new(base_dir), None, false)?;
+            let count = start_files(review_path, Path::new(base_dir), title)?;
+            println!(
+                "{}",
+                mf(
+                    "main.add_revision.started_files",
+                    &[("count", &count.to_string())]
+                )
+            );
             fresh = FreshBundle(Some(review_path.to_path_buf()));
             loaded = bundle::load(review_path)?;
         } else if let Some(base_dir) = base {
@@ -492,7 +504,14 @@ fn add_revision(
         }
         git_input(repo.clone(), range)?
     };
-    if input.diff_text.trim().is_empty() || loaded.revisions().any(|r| r.digest == input.digest) {
+    // A review that has revisions already gets one only for something new.
+    // (One made by this call, with nothing to add: kept, with its base.)
+    let first = loaded.revisions().next().is_none();
+    if !first
+        && (input.diff_text.trim().is_empty()
+            || loaded.revisions().any(|r| r.digest == input.digest))
+    {
+        fresh.keep();
         return Ok(None);
     }
     let Input {
@@ -506,7 +525,17 @@ fn add_revision(
         head_some,
         head_all,
     } = input;
+    let nothing_yet = diff_text.trim().is_empty();
     let said = match &source {
+        // Only the base so far: what comes later is reviewed from it.
+        diffnote::model::Source::Git(g) if nothing_yet => {
+            let short = |id: &str| id[..id.len().min(10)].to_string();
+            let named = g.spec.split_once("..").map_or(g.spec.as_str(), |(b, _)| b);
+            mf(
+                "main.add_revision.started_git",
+                &[("base", named), ("commit", &short(&g.base))],
+            )
+        }
         diffnote::model::Source::Git(g) => {
             let short = |id: &str| id[..id.len().min(10)].to_string();
             mf(
@@ -514,6 +543,10 @@ fn add_revision(
                 &[("from", &short(&g.base)), ("to", &short(&g.head))],
             )
         }
+        diffnote::model::Source::Workspace(w) if nothing_yet => mf(
+            "main.add_revision.started_workspace",
+            &[("n", &w.repos.len().to_string())],
+        ),
         diffnote::model::Source::Workspace(w) => mf(
             "main.add_revision.recorded_workspace",
             &[("n", &w.repos.len().to_string())],
@@ -545,6 +578,10 @@ fn add_revision(
     let mode = diffnote::record::pick_snapshot_mode(snapshot, loaded.snapshot_mode(), &source);
     let mut new_events = Vec::new();
     if loaded.events.is_empty() {
+        // The review is made by this call: what it is called is set now.
+        if let Some(title) = title {
+            review::set_title(&mut loaded.settings, title);
+        }
         new_events.push(Event::Meta {
             version: 1,
             created_at: OffsetDateTime::now_utc(),
@@ -564,7 +601,7 @@ fn add_revision(
             base_files: &base_files,
             commits: &commits,
         },
-        &|| confirm_snapshot_size(mode, is_git, tree_size),
+        &|| confirm_snapshot_size(mode, is_git && terminal, tree_size),
         &*head_some,
         head_all,
     )?;
@@ -600,8 +637,10 @@ struct Compare {
     base: Option<String>,
     kind: Option<ReviewType>,
     /// What a review made here keeps. Only when there is no review yet: the
-    /// range belongs to the review, and is decided once (see `init`).
+    /// range belongs to the review, and is decided once.
     snapshot: Option<bundle::SnapshotMode>,
+    /// Its title, likewise (afterwards, the page's 設定 changes it).
+    title: Option<String>,
 }
 
 /// `review` (with what to compare) and `open` (without: the review as it is
@@ -619,12 +658,17 @@ fn cmd_serve(review: PathBuf, server: Server, compare: Option<Compare>) -> Resul
         base,
         kind,
         snapshot,
+        title,
     } = compare.unwrap_or(Compare {
         target: None,
         base: None,
         kind: None,
         snapshot: None,
+        title: None,
     });
+    if title.is_some() && review.exists() {
+        anyhow::bail!(m("main.title.locked"));
+    }
     // The range a review keeps is decided when it is made, and never again:
     // asking an existing review for another one is refused rather than
     // ignored. (Saying again what it already is, as with `--base`, is fine.)
@@ -639,37 +683,16 @@ fn cmd_serve(review: PathBuf, server: Server, compare: Option<Compare>) -> Resul
         }
     }
     let git = repo_of(repo.clone())?;
-    // A project of repositories needs nothing said to start: what to compare
-    // is each repository's own. (Said as `--type workspace`, from here on.)
-    let kind = match kind {
-        None if !reopen
-            && !review.exists()
-            && target.is_none()
-            && base.is_none()
-            && !git.exists()
-            && !diffnote::files::find_repos(Path::new("."))
-                .unwrap_or_default()
-                .is_empty() =>
-        {
-            Some(ReviewType::Workspace)
-        }
-        k => k,
-    };
     let explicit = target.is_some() || base.is_some() || kind.is_some();
-    if !review.exists() {
-        if reopen {
-            anyhow::bail!(mf(
-                "main.serve.open_no_bundle",
-                &[("path", &review.display().to_string())]
-            ));
-        }
-        if !explicit {
-            anyhow::bail!(mf(
-                "main.no_bundle",
-                &[("path", &review.display().to_string())]
-            ));
-        }
+    if reopen && !review.exists() {
+        anyhow::bail!(mf(
+            "main.serve.open_no_bundle",
+            &[("path", &review.display().to_string())]
+        ));
     }
+    // No review yet, and nothing said of what it is to be: the page asks
+    // (the first screen), and makes the review from the answers.
+    let first_screen = !reopen && !review.exists() && !explicit;
     // What was asked for is added to the review, so it can be reviewed here (a
     // failure to do what was asked stops; one to do what was not, only says so).
     // As the review was before any of this: what「保存せずに終了」goes back to.
@@ -681,15 +704,20 @@ fn cmd_serve(review: PathBuf, server: Server, compare: Option<Compare>) -> Resul
                 &[("path", &review.display().to_string())]
             ));
         }
-    } else {
+    } else if !first_screen {
         match add_revision(
             &review,
             &git,
-            base.as_deref(),
-            target.as_deref(),
-            kind,
-            true,
-            snapshot,
+            Ask {
+                base: base.as_deref(),
+                target: target.as_deref(),
+                kind,
+                repos: None,
+                snapshot,
+                title: title.as_deref(),
+                apply: true,
+                terminal: true,
+            },
         ) {
             Ok(said) => {
                 if let Some(said) = said {
@@ -703,14 +731,16 @@ fn cmd_serve(review: PathBuf, server: Server, compare: Option<Compare>) -> Resul
             ),
         }
     }
-    if !review.exists() {
-        anyhow::bail!(m("main.serve.no_diff_at_all"));
-    }
-    if bundle::load(&review)
-        .ok()
-        .is_some_and(|l| diffnote::html::view_model(&l).is_err())
-    {
-        println!("{}", m("main.serve.no_diff_yet"));
+    if !first_screen {
+        if !review.exists() {
+            anyhow::bail!(m("main.serve.no_diff_at_all"));
+        }
+        if bundle::load(&review)
+            .ok()
+            .is_some_and(|l| diffnote::html::view_model(&l).is_err())
+        {
+            println!("{}", m("main.serve.no_diff_yet"));
+        }
     }
     // The page's button: what was added to the target since (the base is
     // already the review's; a named commit doesn't move, `HEAD` does).
@@ -722,9 +752,36 @@ fn cmd_serve(review: PathBuf, server: Server, compare: Option<Compare>) -> Resul
         Some(std::sync::Arc::new(move |apply| {
             // Later rounds add to a review that exists: the range is the
             // one it was made with.
-            add_revision(&review, &git, None, target.as_deref(), kind, apply, None)
+            add_revision(
+                &review,
+                &git,
+                Ask {
+                    base: None,
+                    target: target.as_deref(),
+                    kind,
+                    repos: None,
+                    snapshot: None,
+                    title: None,
+                    apply,
+                    terminal: false,
+                },
+            )
         }))
     };
+    let setup = first_screen.then(|| {
+        let project = PathBuf::from(".");
+        let (review_path, git_repo, at) = (review.clone(), git.clone(), project.clone());
+        std::sync::Arc::new(diffnote::setup::Setup {
+            review: review.clone(),
+            project,
+            repo: git.clone(),
+            title: title.clone(),
+            snapshot,
+            create: std::sync::Arc::new(move |choice| {
+                first_review(&review_path, &git_repo, &at, choice)
+            }),
+        })
+    });
     let options = diffnote::serve::Options {
         review,
         port,
@@ -732,6 +789,7 @@ fn cmd_serve(review: PathBuf, server: Server, compare: Option<Compare>) -> Resul
         repo,
         refresh: refresher,
         before: Some(before),
+        setup,
     };
     diffnote::serve::run(&options, |url, notices| {
         for notice in notices {
@@ -857,19 +915,12 @@ fn git_range(
                     ));
                 }
             }
-            // What the base was called when it was set, for the tab's name.
-            let label = if first.base == first.head {
-                first.spec.clone()
-            } else {
-                first
-                    .spec
-                    .split("..")
-                    .next()
-                    .filter(|_| first.spec.contains(".."))
-                    .map_or_else(
-                        || first.base[..first.base.len().min(10)].to_string(),
-                        str::to_string,
-                    )
+            // What the base was called when it was set (`--base main`, or
+            // a commit reviewed by itself, whose base is its parent).
+            let label = match first.spec.split_once("..") {
+                Some((base, _)) => base.to_string(),
+                None if first.base == first.head => first.spec.clone(),
+                None => first.base[..first.base.len().min(10)].to_string(),
             };
             let target = target.unwrap_or("HEAD");
             Ok(diffnote::model::GitSource {
@@ -1048,11 +1099,14 @@ fn kind_of(
 ///
 /// - With a bundle, the repositories and their bases are its first
 ///   revision's; each head is its `HEAD` now.
-/// - With none, the repositories are those found under `project`, each from
-///   where its work left the default branch (see `Repo::default_base`).
+/// - With none, the repositories are the ones `chosen` (on the first screen,
+///   each from the commit chosen there), else those found under `project`,
+///   each from where its work left the default branch (see
+///   `Repo::default_base`).
 fn workspace_range(
     loaded: &bundle::Loaded,
     project: &Path,
+    chosen: Option<Vec<diffnote::model::RepoSource>>,
 ) -> Result<(Vec<diffnote::model::RepoSource>, Vec<String>)> {
     let short = |id: &str| id[..id.len().min(10)].to_string();
     let mut away = Vec::new();
@@ -1091,6 +1145,7 @@ fn workspace_range(
             repos
         }
         Some(_) => anyhow::bail!(m("main.workspace.not_one")),
+        None if chosen.is_some() => chosen.unwrap_or_default(),
         None => {
             let mut repos = Vec::new();
             for path in diffnote::files::find_repos(project)? {
@@ -1260,50 +1315,55 @@ fn workspace_input(
     })
 }
 
-fn cmd_init(
-    review_path: PathBuf,
-    target: Option<String>,
-    kind: Option<ReviewType>,
-    repo: Option<PathBuf>,
-    title: Option<String>,
-    snapshot: Option<bundle::SnapshotMode>,
-) -> Result<()> {
-    // A review already there is replaced only when the person says so. It
-    // stays as it is until the new one is saved in its place (a mistake in
-    // what was asked for leaves it untouched).
-    if review_path.exists() && !confirm_overwrite(&review_path) {
-        anyhow::bail!(mf(
-            "main.init.kept",
-            &[("path", &review_path.display().to_string())]
-        ));
-    }
-    let repo = repo_of(repo)?;
-    let project = Path::new(".");
-    let kind = kind_of(&repo, project, kind)?;
-    if kind == ReviewType::Workspace {
-        return init_workspace(
-            &review_path,
-            project,
-            title,
-            snapshot.unwrap_or(bundle::SnapshotMode::Changed),
-        );
-    }
-    if kind == ReviewType::Git {
-        return init_git(
-            &review_path,
-            &repo,
-            target.as_deref().unwrap_or("HEAD"),
-            title,
-            snapshot.unwrap_or(bundle::SnapshotMode::Changed),
-        );
-    }
-    // A directory review has nothing but its own snapshots to compare
-    // against, so it always keeps the whole tree.
-    if snapshot == Some(bundle::SnapshotMode::Changed) {
-        anyhow::bail!(m("main.snapshot.dir_changed_refused"));
-    }
-    let dir = PathBuf::from(target.as_deref().unwrap_or("."));
-    init_files(&review_path, &dir, title, true)
+/// Makes the review the first screen chose (see `crate::setup`): the same
+/// as `review --base ...` would, from the page. What it did, in a line.
+fn first_review(
+    review: &Path,
+    git: &diffnote::git::Repo,
+    project: &Path,
+    choice: &diffnote::setup::Choice,
+) -> Result<String> {
+    let title = choice.title.as_deref();
+    let said = match choice.kind.as_str() {
+        // The directory as it is, kept whole: what changes from here on is
+        // what is reviewed.
+        "raw" => {
+            let count = start_files(review, project, title)?;
+            return Ok(mf(
+                "main.add_revision.started_files",
+                &[("count", &count.to_string())],
+            ));
+        }
+        "workspace" => add_revision(
+            review,
+            git,
+            Ask {
+                base: None,
+                target: None,
+                kind: Some(ReviewType::Workspace),
+                repos: Some(diffnote::setup::repos_chosen(project, choice)?),
+                snapshot: choice.snapshot,
+                title,
+                apply: true,
+                terminal: false,
+            },
+        )?,
+        _ => add_revision(
+            review,
+            git,
+            Ask {
+                base: choice.base.as_deref().map(str::trim),
+                target: Some("HEAD"),
+                kind: Some(ReviewType::Git),
+                repos: None,
+                snapshot: choice.snapshot,
+                title,
+                apply: true,
+                terminal: false,
+            },
+        )?,
+    };
+    Ok(said.unwrap_or_else(|| m("setup.made").to_string()))
 }
 
 /// What a snapshot mode is called on the command line.
@@ -1324,8 +1384,7 @@ fn first_events() -> Vec<Event> {
     }]
 }
 
-/// A new bundle with its title, if one is given. Nothing of what may be at
-/// the path already is kept: `init` has been told it may replace it.
+/// A new bundle with its title, if one is given.
 fn fresh_bundle(title: Option<&str>) -> bundle::Loaded {
     let mut loaded = bundle::empty();
     if let Some(title) = title {
@@ -1334,140 +1393,9 @@ fn fresh_bundle(title: Option<&str>) -> bundle::Loaded {
     loaded
 }
 
-/// Asks whether the review at `path` may be replaced by a new one. Anything
-/// but yes (including no one there to answer) is no.
-fn confirm_overwrite(path: &Path) -> bool {
-    eprint!(
-        "{}",
-        mf(
-            "main.init.confirm_overwrite",
-            &[("path", &path.display().to_string())]
-        )
-    );
-    std::io::Write::flush(&mut std::io::stderr()).ok();
-    let mut answer = String::new();
-    std::io::stdin().read_line(&mut answer).ok();
-    // No one answered (nothing to read): end the question's line anyway.
-    if answer.is_empty() {
-        eprintln!();
-    }
-    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
-}
-
-/// A git review that starts at a commit: the commit is the base, so that the
-/// next `review` reviews what has changed since. Nothing is stored beyond the
-/// commit's id (git has the rest).
-fn init_git(
-    review_path: &Path,
-    repo: &diffnote::git::Repo,
-    rev: &str,
-    title: Option<String>,
-    snapshot: bundle::SnapshotMode,
-) -> Result<()> {
-    let commit = repo.commit_id(rev)?;
-    let mut events = first_events();
-    let empty_diff = String::new();
-    let digest = digest(&empty_diff);
-    events.push(Event::Revision(diffnote::model::Revision {
-        id: Ulid::new(),
-        created_at: OffsetDateTime::now_utc(),
-        digest: digest.clone(),
-        source: diffnote::model::Source::Git(diffnote::model::GitSource {
-            base: commit.clone(),
-            head: commit.clone(),
-            spec: rev.to_string(),
-        }),
-        // What every revision of this bundle will be recorded with: the
-        // mode belongs to the review, not to one revision of it.
-        snapshot_mode: snapshot,
-        files: Vec::new(),
-        tree: Vec::new(),
-        commits: Vec::new(),
-    }));
-    let additions = bundle::Additions {
-        diff: Some((digest, empty_diff)),
-        blobs: Vec::new(),
-        commits: Vec::new(),
-    };
-    bundle::save(
-        review_path,
-        &fresh_bundle(title.as_deref()),
-        &events,
-        &additions,
-    )?;
-    println!(
-        "{}",
-        mf(
-            "main.init.git_done",
-            &[
-                ("rev", rev),
-                ("commit", &commit[..commit.len().min(10)]),
-                ("path", &review_path.display().to_string()),
-            ]
-        )
-    );
-    Ok(())
-}
-
-/// A review of the repositories under `project`, each starting at its
-/// `HEAD`: what is committed from here on is what is reviewed.
-fn init_workspace(
-    review_path: &Path,
-    project: &Path,
-    title: Option<String>,
-    snapshot: bundle::SnapshotMode,
-) -> Result<()> {
-    let mut repos = Vec::new();
-    for path in diffnote::files::find_repos(project)? {
-        let head = diffnote::git::Repo::at(project.join(&path)).commit_id("HEAD")?;
-        repos.push(diffnote::model::RepoSource {
-            path,
-            range: diffnote::model::GitSource {
-                base: head.clone(),
-                head,
-                spec: "HEAD".to_string(),
-            },
-        });
-    }
-    let count = repos.len();
-    let mut events = first_events();
-    let empty_diff = String::new();
-    let digest = digest(&empty_diff);
-    events.push(Event::Revision(diffnote::model::Revision {
-        id: Ulid::new(),
-        created_at: OffsetDateTime::now_utc(),
-        digest: digest.clone(),
-        source: diffnote::model::Source::Workspace(diffnote::model::WorkspaceSource { repos }),
-        snapshot_mode: snapshot,
-        files: Vec::new(),
-        tree: Vec::new(),
-        commits: Vec::new(),
-    }));
-    let additions = bundle::Additions {
-        diff: Some((digest, empty_diff)),
-        blobs: Vec::new(),
-        commits: Vec::new(),
-    };
-    bundle::save(
-        review_path,
-        &fresh_bundle(title.as_deref()),
-        &events,
-        &additions,
-    )?;
-    println!(
-        "{}",
-        mf(
-            "main.init.workspace_done",
-            &[
-                ("count", &count.to_string()),
-                ("path", &review_path.display().to_string()),
-            ]
-        )
-    );
-    Ok(())
-}
-
-fn init_files(review_path: &Path, dir: &Path, title: Option<String>, say: bool) -> Result<()> {
+/// A directory review's first revision: `dir` as it is, kept whole (it is
+/// what the next `review` compares the directory with). How many files.
+fn start_files(review_path: &Path, dir: &Path, title: Option<&str>) -> Result<usize> {
     let tree = diffnote::files::read_tree(dir, &[review_path.to_path_buf()])?;
     let digest = diffnote::files::tree_digest(&tree);
     let size: u64 = tree.values().map(|b| b.len() as u64).sum();
@@ -1492,25 +1420,8 @@ fn init_files(review_path: &Path, dir: &Path, title: Option<String>, say: bool) 
         blobs: tree.into_values().collect(),
         commits: Vec::new(),
     };
-    bundle::save(
-        review_path,
-        &fresh_bundle(title.as_deref()),
-        &events,
-        &additions,
-    )?;
-    if say {
-        println!(
-            "{}",
-            mf(
-                "main.init.files_done",
-                &[
-                    ("count", &count.to_string()),
-                    ("path", &review_path.display().to_string())
-                ]
-            )
-        );
-    }
-    Ok(())
+    bundle::save(review_path, &fresh_bundle(title), &events, &additions)?;
+    Ok(count)
 }
 
 /// The per-file digests of every file `diff` touches: old side read from

@@ -37,7 +37,7 @@ cargo install --path .   # ビルドしたものを入れる(先に mise run bui
 できるだけ、ブラウザを使わないテストで確かめます。
 
 - **Rust の単体テスト**(`cargo test`): レビューの記録、位置の追跡、サーバーの API など、ロジックの大部分。
-- **統合テスト**(`tests/cli.rs`): 実行ファイルを起動して、`init` / `serve` / `export` がすることを確かめます。コメントは、起動した `serve` の HTTP API で書くので、Rust と git のほかには何も要らず、Linux と Windows のどちらでも動きます。別の場所で作った実行ファイルを試すときは、環境変数 `DIFFNOTE_BIN` にそのパスを指定します。
+- **統合テスト**(`tests/cli.rs`): 実行ファイルを起動して、`review` / `open` / `export` がすることを確かめます。レビューを作るのも(`review --base ...` か、最初の設定画面の API `/api/setup`)、コメントを書くのも、起動した `review` の HTTP API で行うので、Rust と git のほかには何も要らず、Linux と Windows のどちらでも動きます。別の場所で作った実行ファイルを試すときは、環境変数 `DIFFNOTE_BIN` にそのパスを指定します。
 - **画面のロジック**(`npm --prefix ui test`): 画面側の計算(行の選択、横並びの対応、展開、行リンクの解釈、タイムラインのまとめ方など)は、コンポーネントの外のモジュールに置き、node のテストで確かめます。
 - **ブラウザのテスト**(`tests/browser`): クリック、ドラッグ、描画など、ページがないと確かめられないことだけ。
 
@@ -47,7 +47,7 @@ cargo install --path .   # ビルドしたものを入れる(先に mise run bui
 
 ## 文言
 
-CLI のヘルプやエラーから画面のボタンまで、ユーザーに見える文言は、すべて `messages/ja.yaml` に集めてあります(ソースコードの中には直接書きません)。キーはネストした YAML のパスで、モジュールごとにまとまっています(`cli.init.about`、`serve.not_found` など)。`{name}` はプレースホルダです。
+CLI のヘルプやエラーから画面のボタンまで、ユーザーに見える文言は、すべて `messages/ja.yaml` に集めてあります(ソースコードの中には直接書きません)。キーはネストした YAML のパスで、モジュールごとにまとまっています(`cli.review.about`、`serve.not_found` など)。`{name}` はプレースホルダです。
 
 Rust 側は `src/messages.rs` の `m(key)` / `mf(key, &[(name, value), ...])`、画面側は `ui/src/lib.ts` の `lib.m(key)` / `lib.mf(key, params)` で引きます(同じファイルを、サーバーがページに JSON として埋め込みます)。文言を直すときは、このファイルだけを見れば足ります。
 

@@ -15,4 +15,5 @@ pub mod model;
 pub mod record;
 pub mod review;
 pub mod serve;
+pub mod setup;
 pub mod user_config;
