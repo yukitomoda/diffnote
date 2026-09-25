@@ -227,7 +227,7 @@ setup:
   no_commits: |-
     リポジトリにコミットがありません
   no_repos: |-
-    このディレクトリの下に git リポジトリが見つかりません({depth} 階層まで探しました)
+    このディレクトリの下に git リポジトリが見つかりません
   repo_not_found: |-
     {path} に git リポジトリがありません
   repo_path_invalid: |-

@@ -181,10 +181,7 @@ impl Setup {
             workspace: if repos.is_empty() {
                 KindInfo {
                     ok: false,
-                    why: Some(mf(
-                        "setup.no_repos",
-                        &[("depth", &files::REPO_DEPTH.to_string())],
-                    )),
+                    why: Some(m("setup.no_repos").to_string()),
                 }
             } else {
                 KindInfo {
@@ -480,7 +477,7 @@ mod tests {
         let d = setup_in(dir.path()).describe().unwrap();
         assert_eq!(d.kind, "git");
         assert!(d.kinds.git.ok && d.kinds.raw.ok && !d.kinds.workspace.ok);
-        assert!(d.kinds.workspace.why.as_deref().unwrap().contains("4"));
+        assert!(d.kinds.workspace.why.as_deref().unwrap().contains("見つかりません"));
         assert!(d.repos.is_empty());
         let git = d.git.unwrap();
         assert_eq!(git.path, "");
