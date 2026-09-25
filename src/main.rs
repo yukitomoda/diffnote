@@ -165,12 +165,32 @@ struct Server {
     repo: Option<PathBuf>,
 }
 
-/// What a review is of: commits of a git repository, or a directory's files
-/// as they are (`raw`).
+/// What a review is of: commits of a git repository, several repositories
+/// under one directory (`workspace`), or a directory's files as they are
+/// (`raw`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum ReviewType {
     Git,
+    Workspace,
     Raw,
+}
+
+impl ReviewType {
+    fn name(self) -> &'static str {
+        match self {
+            ReviewType::Git => "git",
+            ReviewType::Workspace => "workspace",
+            ReviewType::Raw => "raw",
+        }
+    }
+
+    fn of(source: &diffnote::model::Source) -> Self {
+        match source {
+            diffnote::model::Source::Git(_) => ReviewType::Git,
+            diffnote::model::Source::Workspace(_) => ReviewType::Workspace,
+            diffnote::model::Source::Files { .. } => ReviewType::Raw,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -371,24 +391,64 @@ fn add_revision(
     snapshot: Option<bundle::SnapshotMode>,
 ) -> Result<Option<String>> {
     let mut loaded = bundle::load(review_path)?;
-    let explicit = base.is_some() || target.is_some();
+    let explicit = base.is_some() || target.is_some() || kind.is_some();
     let mut fresh = FreshBundle(None);
     let exclude = [review_path.to_path_buf()];
-    let directory_review = match loaded.source() {
+    let project = Path::new(".");
+    let review_kind = match loaded.source() {
         Some(source) => {
-            let raw = matches!(source, diffnote::model::Source::Files { .. });
-            // The type is the review's: asking for the other is a mistake.
-            if kind.is_some_and(|k| (k == ReviewType::Raw) != raw) {
-                anyhow::bail!(mf(
-                    "main.type.mismatch",
-                    &[("type", if raw { "raw" } else { "git" })]
-                ));
+            let is = ReviewType::of(source);
+            // The type is the review's: asking for another is a mistake.
+            if kind.is_some_and(|k| k != is) {
+                anyhow::bail!(mf("main.type.mismatch", &[("type", is.name())]));
             }
-            raw
+            Some(is)
         }
-        None => explicit && raw_review(repo, kind)?,
+        // (A review of several repositories needs no base or target to start.)
+        None if explicit || kind == Some(ReviewType::Workspace) => {
+            Some(kind_of(repo, project, kind)?)
+        }
+        None => None,
     };
-    let input = if directory_review {
+    let input = if review_kind == Some(ReviewType::Workspace) {
+        if base.is_some() || target.is_some() {
+            anyhow::bail!(m("main.workspace.no_target"));
+        }
+        let (repos, away) = workspace_range(&loaded, project)?;
+        if !apply {
+            // Only the heads: has any repository moved since the last revision?
+            let last = loaded.revisions().last().and_then(|r| match &r.source {
+                diffnote::model::Source::Workspace(w) => Some(w),
+                _ => None,
+            });
+            let moved = last.is_none_or(|w| {
+                repos.iter().any(|r| {
+                    w.repos
+                        .iter()
+                        .find(|k| k.path == r.path)
+                        .is_none_or(|k| k.range.head != r.range.head)
+                })
+            });
+            return Ok(moved.then(String::new));
+        }
+        // Said at once, whether or not anything is recorded this time.
+        if !away.is_empty() {
+            println!(
+                "{}",
+                mf(
+                    "main.workspace.missing_repos",
+                    &[("repos", &away.join(", "))],
+                )
+            );
+        }
+        // What a repository that isn't here was last recorded as: its part
+        // of the last diff, and its files' versions, carried on as they are.
+        let last = loaded
+            .revisions()
+            .last()
+            .map(|r| (loaded.revision_diff(r).unwrap_or_default(), r.files.clone()));
+        workspace_input(project, repos, last)?
+    } else if review_kind == Some(ReviewType::Raw) {
         if loaded.source().is_none() {
             let Some(base_dir) = base else {
                 anyhow::bail!(m("main.needs_a_base"));
@@ -454,13 +514,32 @@ fn add_revision(
                 &[("from", &short(&g.base)), ("to", &short(&g.head))],
             )
         }
+        diffnote::model::Source::Workspace(w) => mf(
+            "main.add_revision.recorded_workspace",
+            &[("n", &w.repos.len().to_string())],
+        ),
         diffnote::model::Source::Files { .. } => m("main.add_revision.recorded_files").to_string(),
     };
-    let is_git = matches!(source, diffnote::model::Source::Git(_));
+    let is_git = !matches!(source, diffnote::model::Source::Files { .. });
     // The trail this head was reached by, read while the repository is at
     // hand: the review keeps it, since an exported page has nothing to ask.
     let commits = match &source {
         diffnote::model::Source::Git(g) => repo.log(&g.base, &g.head).unwrap_or_default(),
+        // Each repository's own trail, each commit said to be in it.
+        diffnote::model::Source::Workspace(w) => w
+            .repos
+            .iter()
+            .flat_map(|r| {
+                let git = diffnote::git::Repo::at(project.join(&r.path));
+                git.log(&r.range.base, &r.range.head)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(move |(id, mut about)| {
+                        about.repo = Some(r.path.clone());
+                        (id, about)
+                    })
+            })
+            .collect(),
         diffnote::model::Source::Files { .. } => Vec::new(),
     };
     let mode = diffnote::record::pick_snapshot_mode(snapshot, loaded.snapshot_mode(), &source);
@@ -559,6 +638,23 @@ fn cmd_serve(review: PathBuf, server: Server, compare: Option<Compare>) -> Resul
             anyhow::bail!(m("main.snapshot.dir_changed_refused"));
         }
     }
+    let git = repo_of(repo.clone())?;
+    // A project of repositories needs nothing said to start: what to compare
+    // is each repository's own. (Said as `--type workspace`, from here on.)
+    let kind = match kind {
+        None if !reopen
+            && !review.exists()
+            && target.is_none()
+            && base.is_none()
+            && !git.exists()
+            && !diffnote::files::find_repos(Path::new("."))
+                .unwrap_or_default()
+                .is_empty() =>
+        {
+            Some(ReviewType::Workspace)
+        }
+        k => k,
+    };
     let explicit = target.is_some() || base.is_some() || kind.is_some();
     if !review.exists() {
         if reopen {
@@ -576,7 +672,6 @@ fn cmd_serve(review: PathBuf, server: Server, compare: Option<Compare>) -> Resul
     }
     // What was asked for is added to the review, so it can be reviewed here (a
     // failure to do what was asked stops; one to do what was not, only says so).
-    let git = repo_of(repo.clone())?;
     // As the review was before any of this: what「保存せずに終了」goes back to.
     let before = std::fs::read(&review).ok();
     if reopen {
@@ -786,6 +881,9 @@ fn git_range(
         Some(diffnote::model::Source::Files { .. }) => {
             anyhow::bail!(m("main.git_range.dir_bundle"))
         }
+        Some(diffnote::model::Source::Workspace(_)) => {
+            anyhow::bail!(m("main.workspace.no_target"))
+        }
         None => match (base, target) {
             (Some(base), target) => repo.between(base, target.unwrap_or("HEAD")),
             (None, Some(target)) => repo.commit_range(target),
@@ -854,7 +952,7 @@ fn files_input(loaded: &bundle::Loaded, dir: &Path, exclude: &[PathBuf]) -> Resu
         Some(rev) => {
             let base = match &rev.source {
                 diffnote::model::Source::Files { base } => base.clone(),
-                diffnote::model::Source::Git(_) => None,
+                _ => None,
             };
             (
                 loaded.revision_diff(rev).unwrap_or_default(),
@@ -920,16 +1018,246 @@ impl Drop for FreshBundle {
     }
 }
 
-/// Whether a review that has no bundle yet is of a directory as it is: when
-/// asked for (`--type raw`), or when there is no git repository to make one
-/// from. `--type git` without a repository is a mistake, not a fallback.
-fn raw_review(repo: &diffnote::git::Repo, kind: Option<ReviewType>) -> Result<bool> {
+/// What a review that has no bundle yet is of: what was asked for
+/// (`--type`), else what the directory is -- a git repository, one with
+/// repositories under it (`workspace`), or neither (`raw`). Asking for what
+/// the directory can't be (`git` outside a repository, `workspace` with none
+/// under it) is a mistake, not a fallback.
+fn kind_of(
+    repo: &diffnote::git::Repo,
+    project: &Path,
+    kind: Option<ReviewType>,
+) -> Result<ReviewType> {
     match kind {
-        Some(ReviewType::Raw) => Ok(true),
+        Some(ReviewType::Raw) => Ok(ReviewType::Raw),
         Some(ReviewType::Git) if !repo.exists() => anyhow::bail!(m("main.type.git_no_repo")),
-        Some(ReviewType::Git) => Ok(false),
-        None => Ok(!repo.exists()),
+        Some(ReviewType::Git) => Ok(ReviewType::Git),
+        Some(ReviewType::Workspace) if diffnote::files::find_repos(project)?.is_empty() => {
+            anyhow::bail!(m("main.type.workspace_no_repos"))
+        }
+        Some(ReviewType::Workspace) => Ok(ReviewType::Workspace),
+        None if repo.exists() => Ok(ReviewType::Git),
+        None if !diffnote::files::find_repos(project)?.is_empty() => Ok(ReviewType::Workspace),
+        None => Ok(ReviewType::Raw),
     }
+}
+
+/// The repositories a review of several compares, each from its base to
+/// its head now, and the ones that aren't where the review says they are
+/// (kept as last recorded, so nothing of them is lost or read).
+///
+/// - With a bundle, the repositories and their bases are its first
+///   revision's; each head is its `HEAD` now.
+/// - With none, the repositories are those found under `project`, each from
+///   where its work left the default branch (see `Repo::default_base`).
+fn workspace_range(
+    loaded: &bundle::Loaded,
+    project: &Path,
+) -> Result<(Vec<diffnote::model::RepoSource>, Vec<String>)> {
+    let short = |id: &str| id[..id.len().min(10)].to_string();
+    let mut away = Vec::new();
+    let first = loaded.revisions().next().map(|r| &r.source);
+    let repos = match first {
+        Some(diffnote::model::Source::Workspace(first)) => {
+            let last = loaded
+                .revisions()
+                .last()
+                .and_then(|r| match &r.source {
+                    diffnote::model::Source::Workspace(w) => Some(w),
+                    _ => None,
+                })
+                .unwrap_or(first);
+            let mut repos = Vec::new();
+            for known in &first.repos {
+                let git = diffnote::git::Repo::at(project.join(&known.path));
+                let head = if git.exists() {
+                    git.commit_id("HEAD")?
+                } else {
+                    away.push(known.path.clone());
+                    last.repos
+                        .iter()
+                        .find(|r| r.path == known.path)
+                        .map_or(known.range.head.clone(), |r| r.range.head.clone())
+                };
+                repos.push(diffnote::model::RepoSource {
+                    path: known.path.clone(),
+                    range: diffnote::model::GitSource {
+                        base: known.range.base.clone(),
+                        spec: format!("{}..HEAD", short(&known.range.base)),
+                        head,
+                    },
+                });
+            }
+            repos
+        }
+        Some(_) => anyhow::bail!(m("main.workspace.not_one")),
+        None => {
+            let mut repos = Vec::new();
+            for path in diffnote::files::find_repos(project)? {
+                let git = diffnote::git::Repo::at(project.join(&path));
+                let base = git.default_base()?;
+                let head = git.commit_id("HEAD")?;
+                repos.push(diffnote::model::RepoSource {
+                    path,
+                    range: diffnote::model::GitSource {
+                        spec: format!("{}..HEAD", short(&base)),
+                        base,
+                        head,
+                    },
+                });
+            }
+            repos
+        }
+    };
+    Ok((repos, away))
+}
+
+/// One repository's part of a review of several: its diff, with every path
+/// under its directory, and its trees the same way, so that the parts add
+/// up as one review would.
+struct RepoPart {
+    repo: diffnote::git::Repo,
+    text: String,
+    head_tree: Vec<diffnote::git::TreeEntry>,
+    base_tree: Vec<diffnote::git::TreeEntry>,
+}
+
+fn repo_part(project: &Path, source: &diffnote::model::RepoSource) -> Result<Option<RepoPart>> {
+    let repo = diffnote::git::Repo::at(project.join(&source.path));
+    if !repo.exists() {
+        return Ok(None);
+    }
+    let under = |tree: Vec<diffnote::git::TreeEntry>| -> Vec<diffnote::git::TreeEntry> {
+        tree.into_iter()
+            .map(|e| diffnote::git::TreeEntry {
+                path: format!("{}/{}", source.path, e.path),
+                ..e
+            })
+            .collect()
+    };
+    Ok(Some(RepoPart {
+        text: repo.diff_under(&source.range, &source.path)?,
+        head_tree: under(repo.ls_tree(&source.range.head)?),
+        base_tree: under(repo.ls_tree(&source.range.base)?),
+        repo,
+    }))
+}
+
+/// A repository of a review of several, with its head tree, to read from.
+type RepoTree = (
+    String,
+    std::rc::Rc<diffnote::git::Repo>,
+    std::rc::Rc<Vec<diffnote::git::TreeEntry>>,
+);
+
+/// The part of a review's diff (of several repositories) that is `repo`'s:
+/// the files under its directory, verbatim.
+fn part_of_diff(text: &str, repo: &str) -> String {
+    let mine = format!("diff --git a/{repo}/");
+    let mut out = String::new();
+    let mut keep = false;
+    for line in text.split_inclusive('\n') {
+        if line.starts_with("diff --git ") {
+            keep = line.starts_with(&mine);
+        }
+        if keep {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+fn workspace_input(
+    project: &Path,
+    repos: Vec<diffnote::model::RepoSource>,
+    last: Option<(String, Vec<diffnote::model::FileDigest>)>,
+) -> Result<Input> {
+    let mut diff_text = String::new();
+    let mut files = Vec::new();
+    let mut new_files = diffnote::files::Tree::new();
+    let mut base_files = diffnote::files::Tree::new();
+    let mut tree_size = 0;
+    let mut parts: Vec<RepoTree> = Vec::new();
+    for source in &repos {
+        let Some(part) = repo_part(project, source)? else {
+            // Not here: as it was last recorded (its content is in the bundle).
+            if let Some((text, digests)) = &last {
+                diff_text.push_str(&part_of_diff(text, &source.path));
+                let under = format!("{}/", source.path);
+                files.extend(
+                    digests
+                        .iter()
+                        .filter(|f| {
+                            f.new_path
+                                .as_deref()
+                                .or(f.old_path.as_deref())
+                                .is_some_and(|p| p.starts_with(&under))
+                        })
+                        .cloned(),
+                );
+            }
+            continue;
+        };
+        let parsed = diffnote::diff::parse(&part.text).map_err(|e| anyhow::anyhow!("{e}"))?;
+        files.extend(file_digests(
+            &part.repo,
+            &part.base_tree,
+            &part.head_tree,
+            &parsed,
+        )?);
+        let touched_new: Vec<String> = parsed
+            .files
+            .iter()
+            .filter_map(|f| f.new_path.clone())
+            .collect();
+        let touched_old: Vec<String> = parsed
+            .files
+            .iter()
+            .filter_map(|f| f.old_path.clone())
+            .collect();
+        new_files.extend(part.repo.read_paths(&part.head_tree, &touched_new)?);
+        base_files.extend(part.repo.read_paths(&part.base_tree, &touched_old)?);
+        tree_size += part.head_tree.iter().map(|e| e.size).sum::<u64>();
+        diff_text.push_str(&part.text);
+        parts.push((
+            source.path.clone(),
+            std::rc::Rc::new(part.repo),
+            std::rc::Rc::new(part.head_tree),
+        ));
+    }
+    let parts_some = parts.clone();
+    Ok(Input {
+        digest: digest(&diff_text),
+        tree_size,
+        source: diffnote::model::Source::Workspace(diffnote::model::WorkspaceSource { repos }),
+        files,
+        new_files,
+        base_files,
+        // Each path is read from the repository its directory names.
+        head_some: Box::new(move |paths| {
+            let mut out = Vec::new();
+            for (dir, repo, tree) in &parts_some {
+                let mine: Vec<String> = paths
+                    .iter()
+                    .filter(|p| p.starts_with(&format!("{dir}/")))
+                    .cloned()
+                    .collect();
+                if !mine.is_empty() {
+                    out.extend(repo.read_paths(tree, &mine)?);
+                }
+            }
+            Ok(out)
+        }),
+        head_all: Box::new(move || {
+            let mut out = Vec::new();
+            for (_, repo, tree) in &parts {
+                let all: Vec<String> = tree.iter().map(|e| e.path.clone()).collect();
+                out.extend(repo.read_paths(tree, &all)?);
+            }
+            Ok(out)
+        }),
+        diff_text,
+    })
 }
 
 fn cmd_init(
@@ -950,7 +1278,17 @@ fn cmd_init(
         ));
     }
     let repo = repo_of(repo)?;
-    if !raw_review(&repo, kind)? {
+    let project = Path::new(".");
+    let kind = kind_of(&repo, project, kind)?;
+    if kind == ReviewType::Workspace {
+        return init_workspace(
+            &review_path,
+            project,
+            title,
+            snapshot.unwrap_or(bundle::SnapshotMode::Changed),
+        );
+    }
+    if kind == ReviewType::Git {
         return init_git(
             &review_path,
             &repo,
@@ -1064,6 +1402,64 @@ fn init_git(
             &[
                 ("rev", rev),
                 ("commit", &commit[..commit.len().min(10)]),
+                ("path", &review_path.display().to_string()),
+            ]
+        )
+    );
+    Ok(())
+}
+
+/// A review of the repositories under `project`, each starting at its
+/// `HEAD`: what is committed from here on is what is reviewed.
+fn init_workspace(
+    review_path: &Path,
+    project: &Path,
+    title: Option<String>,
+    snapshot: bundle::SnapshotMode,
+) -> Result<()> {
+    let mut repos = Vec::new();
+    for path in diffnote::files::find_repos(project)? {
+        let head = diffnote::git::Repo::at(project.join(&path)).commit_id("HEAD")?;
+        repos.push(diffnote::model::RepoSource {
+            path,
+            range: diffnote::model::GitSource {
+                base: head.clone(),
+                head,
+                spec: "HEAD".to_string(),
+            },
+        });
+    }
+    let count = repos.len();
+    let mut events = first_events();
+    let empty_diff = String::new();
+    let digest = digest(&empty_diff);
+    events.push(Event::Revision(diffnote::model::Revision {
+        id: Ulid::new(),
+        created_at: OffsetDateTime::now_utc(),
+        digest: digest.clone(),
+        source: diffnote::model::Source::Workspace(diffnote::model::WorkspaceSource { repos }),
+        snapshot_mode: snapshot,
+        files: Vec::new(),
+        tree: Vec::new(),
+        commits: Vec::new(),
+    }));
+    let additions = bundle::Additions {
+        diff: Some((digest, empty_diff)),
+        blobs: Vec::new(),
+        commits: Vec::new(),
+    };
+    bundle::save(
+        review_path,
+        &fresh_bundle(title.as_deref()),
+        &events,
+        &additions,
+    )?;
+    println!(
+        "{}",
+        mf(
+            "main.init.workspace_done",
+            &[
+                ("count", &count.to_string()),
                 ("path", &review_path.display().to_string()),
             ]
         )

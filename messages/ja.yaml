@@ -36,7 +36,7 @@ cli:
     target: |-
       基準にするコミット、またはディレクトリ(省略時は HEAD、git の外では `.`)。
     type: |-
-      レビューの種類。`git`(コミットを比べる)か `raw`(ディレクトリのファイルをそのまま比べる)。省略時は、git リポジトリの中なら `git`。
+      レビューの種類。`git`(コミットを比べる)、`workspace`(下にある複数のリポジトリをまとめて)、`raw`(ディレクトリのファイルをそのまま比べる)。省略時は、ディレクトリの状態から決める。
     repo: |-
       対象の git リポジトリ(省略時はカレント)。
     title: |-
@@ -54,7 +54,7 @@ cli:
     base: |-
       比較の起点。まだレビューがないときだけ指定できる。
     type: |-
-      レビューの種類。`git` か `raw`(ディレクトリのファイルをそのまま比べる)。レビューを作るときに決まり、あとから変えられない。
+      レビューの種類。`git`、`workspace`(下にある複数のリポジトリをまとめて)、`raw`(ディレクトリのファイルをそのまま比べる)。レビューを作るときに決まり、あとから変えられない。
     snapshot: |-
       レビューに保存する範囲。まだレビューがないときだけ指定できる。`changed` か `full`。
 
@@ -150,10 +150,14 @@ main:
       差分を記録しました: {from}..{to}
     recorded_files: |-
       ディレクトリの変更を記録しました
+    recorded_workspace: |-
+      {n} 個のリポジトリの差分を記録しました
 
   type:
     git_no_repo: |-
       `--type git` は、git リポジトリの中でだけ指定できます
+    workspace_no_repos: |-
+      `--type workspace` には、このディレクトリの下に git リポジトリが必要です(4 階層まで探します)
     mismatch: |-
       このレビューは {type} のレビューです。種類は変えられません
   serve:
@@ -186,6 +190,14 @@ main:
     wrote: |-
       {path} を書き出しました
 
+  workspace:
+    no_target: |-
+      複数のリポジトリのレビューでは、比較対象や `--base` は指定できません(各リポジトリの HEAD を取り込みます)
+    not_one: |-
+      このレビューは、複数のリポジトリのレビューではありません
+    missing_repos: |-
+      注意: 手元に見つからないリポジトリがあります({repos})。前回の状態のまま扱います
+
   git_range:
     no_ranges: |-
       範囲(`A..B`)は指定できません。比較対象は 1 つだけ指定してください
@@ -212,6 +224,8 @@ main:
       {rev}({commit}) を基準に {path} を作成しました。`diffnote review` でレビューを始められます
     files_done: |-
       {count} 個のファイルを {path} に保存しました
+    workspace_done: |-
+      {count} 個のリポジトリを、それぞれの HEAD を基準に {path} に記録しました。`diffnote review` でレビューを始められます
 
   snapshot:
     dir_changed_refused: |-
@@ -296,6 +310,8 @@ serve:
   notice:
     no_repo: |-
       git リポジトリの中で起動していないため、保存されていないファイルは開けません(`--repo` で指定できます)
+    missing_repos: |-
+      手元に見つからないリポジトリがあります({repos})。これらの、保存されていないファイルは開けません
     missing_commits: |-
       このリポジトリに、レビューのコミットが {missing} 件ありません。保存されていないファイルは開けません(`--repo` で指定できます)
 
@@ -510,6 +526,8 @@ user_config:
 html:
   dir_label: |-
     ディレクトリ
+  workspace_label: |-
+    {n} リポジトリ
   no_diff_recorded: |-
     記録された差分がありません
   no_repo_notice: |-
@@ -1022,6 +1040,8 @@ ui:
       新しいコミットがあります
 
   base:
+    workspace: |-
+      {n} リポジトリ
     default_title: |-
       すべてのリビジョンは、これと比べた差分です
     changed_title: |-

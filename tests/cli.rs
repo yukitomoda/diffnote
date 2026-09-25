@@ -2259,3 +2259,199 @@ fn files_the_review_leaves_out_are_not_shown_but_are_still_recorded() {
         .collect();
     assert!(shown.contains(&"README.md"), "{shown:?}");
 }
+
+/// A project of two repositories, `backend/repo-a` and `mobile-app` (and a
+/// `docs` directory that is neither), each on a `feature` branch one commit
+/// past `main`: `a.txt` / `m.txt` went from `one` to `one\ntwo`.
+fn project(env: &Env) -> PathBuf {
+    let root = env.path("project");
+    std::fs::create_dir_all(root.join("docs")).unwrap();
+    std::fs::write(root.join("docs/notes.md"), "# notes\n").unwrap();
+    for (dir, file) in [("backend/repo-a", "a.txt"), ("mobile-app", "m.txt")] {
+        let repo = root.join(dir);
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join(file), "one\n").unwrap();
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-q", "-m", "c1"]);
+        git(&repo, &["checkout", "-q", "-b", "feature"]);
+        std::fs::write(repo.join(file), "one\ntwo\n").unwrap();
+        git(&repo, &["commit", "-q", "-am", "c2"]);
+    }
+    root
+}
+
+fn workspace_sources(review: &Path) -> Vec<diffnote::model::WorkspaceSource> {
+    bundle::load(review)
+        .unwrap()
+        .revisions()
+        .filter_map(|r| match &r.source {
+            diffnote::model::Source::Workspace(w) => Some(w.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_project_of_repositories_is_reviewed_as_one_each_from_where_it_left_main() {
+    let env = Env::new();
+    let root = project(&env);
+    let review = root.join("review.diffnote");
+    // Nothing said: the directory has repositories under it, so it is a
+    // review of them, each from where its branch left `main`.
+    let served = env.serve(&root, &review, &[]);
+    assert!(served.said.contains("2 個のリポジトリ"), "{}", served.said);
+    let threads = [served.note(&Note::Line("backend/repo-a/a.txt", "two", "why two?"))];
+    let files: Vec<String> = served.api("/api/model", None)["model"]["revisions"][0]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(files, ["backend/repo-a/a.txt", "mobile-app/m.txt"]);
+    let base = served.api("/api/model", None)["model"]["base"].clone();
+    assert_eq!(base["kind"], "workspace");
+    assert_eq!(base["repos"].as_array().unwrap().len(), 2);
+    served.stop();
+
+    let sources = workspace_sources(&review);
+    assert_eq!(sources.len(), 1);
+    let paths: Vec<&str> = sources[0].repos.iter().map(|r| r.path.as_str()).collect();
+    assert_eq!(paths, ["backend/repo-a", "mobile-app"]);
+    for r in &sources[0].repos {
+        let repo = root.join(&r.path);
+        assert_eq!(r.range.base, commit_id(&repo, "main"), "{}", r.path);
+        assert_eq!(r.range.head, commit_id(&repo, "feature"), "{}", r.path);
+    }
+    // The commits are each repository's own, and say so.
+    let loaded = bundle::load(&review).unwrap();
+    let mut repos: Vec<Option<String>> = loaded.commits.values().map(|c| c.repo.clone()).collect();
+    repos.sort();
+    assert_eq!(
+        repos,
+        [Some("backend/repo-a".into()), Some("mobile-app".into())]
+    );
+    assert_eq!(comment_bodies(&loaded), ["why two?"]);
+
+    // A commit in one repository: a new revision, named after it.
+    let mobile = root.join("mobile-app");
+    std::fs::write(mobile.join("m.txt"), "one\ntwo\nthree\n").unwrap();
+    git(&mobile, &["commit", "-q", "-am", "c3"]);
+    let served = env.serve(&root, &review, &[]);
+    served.reply(&threads[0], "still why");
+    let model = served.api("/api/model", None);
+    let labels: Vec<&str> = model["model"]["revisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["label"].as_str().unwrap())
+        .collect();
+    assert_eq!(labels.len(), 2);
+    assert!(labels[1].ends_with("mobile-app"), "{labels:?}");
+    assert!(!served.refresh(), "nothing moved since");
+    served.stop();
+    let sources = workspace_sources(&review);
+    assert_eq!(
+        sources[1].repos[0].range.head, sources[0].repos[0].range.head,
+        "repo-a stayed"
+    );
+    assert_eq!(sources[1].repos[1].range.head, commit_id(&mobile, "HEAD"));
+
+    // A repository that isn't there any more: said, and kept as it was.
+    std::fs::rename(&mobile, env.path("elsewhere")).unwrap();
+    let served = env.serve(&root, &review, &[]);
+    assert!(
+        served.said.contains("見つからないリポジトリ") && served.said.contains("mobile-app"),
+        "{}",
+        served.said
+    );
+    served.stop();
+    assert_eq!(workspace_sources(&review).len(), 2, "nothing new");
+    let repo_a = root.join("backend/repo-a");
+    std::fs::write(repo_a.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    git(&repo_a, &["commit", "-q", "-am", "c3"]);
+    env.serve(&root, &review, &[]).stop();
+    let sources = workspace_sources(&review);
+    assert_eq!(sources.len(), 3);
+    assert_eq!(
+        sources[2].repos[1].range.head, sources[1].repos[1].range.head,
+        "as last recorded"
+    );
+    assert_eq!(sources[2].repos[0].range.head, commit_id(&repo_a, "HEAD"));
+
+    // The export has the same files, under their repositories.
+    let model = model_of(&exported(&env, &root, &review));
+    let first: Vec<&str> = model["revisions"][0]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(first, ["backend/repo-a/a.txt", "mobile-app/m.txt"]);
+}
+
+#[test]
+fn init_in_a_project_of_repositories_starts_each_at_its_head() {
+    let env = Env::new();
+    let root = project(&env);
+    let review = root.join("review.diffnote");
+    let said = env.ok(&root, &["init", "-f", review.to_str().unwrap()]);
+    assert!(said.contains("2 個のリポジトリ"), "{said}");
+    let sources = workspace_sources(&review);
+    for r in &sources[0].repos {
+        assert_eq!(r.range.base, r.range.head);
+        assert_eq!(r.range.head, commit_id(&root.join(&r.path), "HEAD"));
+    }
+    // Nothing since: said so. A commit in one: reviewed from there.
+    let served = env.serve(&root, &review, &[]);
+    assert!(
+        served.said.contains("差分がまだありません"),
+        "{}",
+        served.said
+    );
+    served.stop();
+    let repo_a = root.join("backend/repo-a");
+    std::fs::write(repo_a.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    git(&repo_a, &["commit", "-q", "-am", "c3"]);
+    env.review(
+        &root,
+        &review,
+        &[],
+        &[Note::Line("backend/repo-a/a.txt", "three", "and three")],
+    );
+    let files: Vec<String> = bundle::load(&review)
+        .unwrap()
+        .revisions()
+        .last()
+        .unwrap()
+        .files
+        .iter()
+        .filter_map(|f| f.new_path.clone())
+        .collect();
+    assert_eq!(files, ["backend/repo-a/a.txt"]);
+}
+
+#[test]
+fn what_a_project_of_repositories_cannot_be_told_is_refused() {
+    let env = Env::new();
+    let root = project(&env);
+    let review = root.join("review.diffnote");
+    // Not a repository itself: `git` is a mistake here.
+    let said = env.serve_refused(&root, &review, &["--type", "git"]);
+    assert!(said.contains("--type git"), "{said}");
+    // Where there are no repositories, `workspace` is.
+    let plain = env.path("plain");
+    std::fs::create_dir(&plain).unwrap();
+    let said = env.serve_refused(&plain, &env.path("p.diffnote"), &["--type", "workspace"]);
+    assert!(said.contains("workspace"), "{said}");
+    // What to compare is each repository's own: no base, no target.
+    let said = env.serve_refused(&root, &review, &["--type", "workspace", "--base", "main"]);
+    assert!(said.contains("--base"), "{said}");
+    assert!(!review.exists());
+    env.serve(&root, &review, &[]).stop();
+    let said = env.serve_refused(&root, &review, &["HEAD"]);
+    assert!(
+        said.contains("--base") || said.contains("比較対象"),
+        "{said}"
+    );
+}

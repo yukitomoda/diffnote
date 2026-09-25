@@ -62,6 +62,35 @@ fn is_object_id(s: &str) -> bool {
     matches!(s.len(), 40 | 64) && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// `text` (a diff from `git diff --src-prefix=a/dir/ --dst-prefix=b/dir/`)
+/// with its `rename`/`copy` lines put under `dir` as well: they name paths
+/// as they are, and only ever come in a file's header, before its first
+/// `@@` (where a line could otherwise be any content).
+fn under_dir(text: &str, dir: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_header = false;
+    for line in text.split_inclusive('\n') {
+        if line.starts_with("diff --git ") {
+            in_header = true;
+        } else if line.starts_with("@@") {
+            in_header = false;
+        }
+        let moved = ["rename from ", "rename to ", "copy from ", "copy to "]
+            .into_iter()
+            .find(|k| in_header && line.starts_with(k));
+        match moved {
+            Some(key) => {
+                out.push_str(key);
+                out.push_str(dir);
+                out.push('/');
+                out.push_str(&line[key.len()..]);
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
+}
+
 impl Repo {
     /// The repository containing the current directory (not verified until
     /// a command runs).
@@ -154,6 +183,63 @@ impl Repo {
         run_text(cmd)
     }
 
+    /// The same diff with every path under `dir` (a repository's directory in
+    /// a project of several): `a/dir/...`, `b/dir/...`, and the `rename`/`copy`
+    /// lines of a file's header, which carry no prefix of their own.
+    pub fn diff_under(&self, range: &GitSource, dir: &str) -> Result<String> {
+        let mut cmd = self.git();
+        cmd.args(["diff", "--no-ext-diff", "--no-textconv"])
+            .arg(format!("--src-prefix=a/{dir}/"))
+            .arg(format!("--dst-prefix=b/{dir}/"))
+            .arg(&range.base)
+            .arg(&range.head);
+        Ok(under_dir(&run_text(cmd)?, dir))
+    }
+
+    /// The branch the repository's work starts from: the remote's own
+    /// (`origin/HEAD`), else `main`, else `master`. `None` if it has none of them.
+    pub fn default_branch(&self) -> Option<String> {
+        let mut cmd = self.git();
+        cmd.args([
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ]);
+        if let Ok(name) = run_text(cmd) {
+            let name = name.trim();
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+        ["main", "master"]
+            .into_iter()
+            .find(|b| self.commit_id(b).is_ok())
+            .map(str::to_string)
+    }
+
+    /// Where `a` and `b` last met: their nearest common ancestor.
+    pub fn merge_base(&self, a: &str, b: &str) -> Result<String> {
+        let mut cmd = self.git();
+        cmd.args(["merge-base", a, b]);
+        let id = run_text(cmd)?.trim().to_string();
+        if !is_object_id(&id) {
+            bail!(mf("git.commit_unresolved", &[("rev", &format!("{a} {b}"))]));
+        }
+        Ok(id)
+    }
+
+    /// The commit a review of this repository starts from, unless it is told
+    /// otherwise: where `HEAD` left the default branch (the work on it so far
+    /// is what is reviewed), or `HEAD` itself when there is no such branch.
+    pub fn default_base(&self) -> Result<String> {
+        let head = self.commit_id("HEAD")?;
+        match self.default_branch() {
+            Some(branch) => self.merge_base(&branch, &head).or(Ok(head)),
+            None => Ok(head),
+        }
+    }
+
     /// The commits from `base` to `head`, oldest first, with what each one
     /// says and what it touched. Read once, when a revision is recorded: the
     /// review keeps the answer (see [`crate::model::CommitInfo`]).
@@ -191,6 +277,7 @@ impl Repo {
                     subject: subject.to_string(),
                     body: field.next().unwrap_or("").trim_end().to_string(),
                     files: Vec::new(),
+                    repo: None,
                 },
             ));
         }
@@ -370,6 +457,91 @@ mod tests {
             .unwrap();
         assert!(out.status.success(), "git {args:?}: {out:?}");
         String::from_utf8(out.stdout).unwrap().trim().to_string()
+    }
+
+    #[test]
+    fn a_diff_under_a_directory_has_every_path_under_it_renames_too() {
+        with_repo(|p, repo, c| {
+            git_in(p, &["mv", "a.txt", "moved.txt"]);
+            std::fs::write(p.join("dir/b.txt"), "B\n").unwrap();
+            git_in(p, &["commit", "-q", "-am", "c4"]);
+            let head = git_in(p, &["rev-parse", "HEAD"]);
+            let range = GitSource {
+                base: c[2].clone(),
+                head,
+                spec: String::new(),
+            };
+            let text = repo.diff_under(&range, "backend/repo-a").unwrap();
+            let parsed = crate::diff::parse(&text).unwrap();
+            let mut paths: Vec<(Option<String>, Option<String>)> = parsed
+                .files
+                .iter()
+                .map(|f| (f.old_path.clone(), f.new_path.clone()))
+                .collect();
+            paths.sort();
+            assert_eq!(
+                paths,
+                [
+                    (
+                        Some("backend/repo-a/a.txt".into()),
+                        Some("backend/repo-a/moved.txt".into())
+                    ),
+                    (
+                        Some("backend/repo-a/dir/b.txt".into()),
+                        Some("backend/repo-a/dir/b.txt".into())
+                    ),
+                ]
+            );
+            assert!(parsed.files.iter().any(|f| f.is_rename));
+        });
+    }
+
+    #[test]
+    fn a_line_of_content_that_looks_like_a_rename_is_left_as_it_is() {
+        let text = "diff --git a/d/x b/d/x\n--- a/d/x\n+++ b/d/x\n@@ -1 +1 @@\n-rename from y\n+rename to z\n";
+        assert_eq!(under_dir(text, "d"), text);
+        let header = "diff --git a/d/x b/d/y\nrename from x\nrename to y\n";
+        assert_eq!(
+            under_dir(header, "d"),
+            "diff --git a/d/x b/d/y\nrename from d/x\nrename to d/y\n"
+        );
+    }
+
+    #[test]
+    fn the_default_base_is_where_head_left_the_default_branch_else_head() {
+        with_repo(|p, repo, c| {
+            // On `main` itself: HEAD.
+            assert_eq!(repo.default_branch().as_deref(), Some("main"));
+            assert_eq!(repo.default_base().unwrap(), c[2]);
+            // On a branch off c2: c2.
+            git_in(p, &["checkout", "-q", "-b", "feature", &c[1]]);
+            std::fs::write(p.join("a.txt"), "feature\n").unwrap();
+            git_in(p, &["commit", "-q", "-am", "f1"]);
+            assert_eq!(repo.default_base().unwrap(), c[1]);
+            assert_eq!(repo.merge_base("main", "HEAD").unwrap(), c[1]);
+            // The remote's own branch, when there is one, comes first.
+            git_in(p, &["branch", "trunk", &c[0]]);
+            git_in(p, &["remote", "add", "origin", "."]);
+            git_in(p, &["fetch", "-q", "origin"]);
+            git_in(
+                p,
+                &[
+                    "symbolic-ref",
+                    "refs/remotes/origin/HEAD",
+                    "refs/remotes/origin/trunk",
+                ],
+            );
+            assert_eq!(repo.default_branch().as_deref(), Some("origin/trunk"));
+            assert_eq!(repo.default_base().unwrap(), c[0]);
+            // No such branch at all: HEAD.
+            git_in(p, &["remote", "remove", "origin"]);
+            git_in(p, &["branch", "-D", "main"]);
+            assert_eq!(repo.default_branch(), None);
+            assert_eq!(
+                repo.default_base().unwrap(),
+                git_in(p, &["rev-parse", "HEAD"])
+            );
+        });
     }
 
     /// Runs `f` against a fresh repo containing three commits (`c1`, `c2`,

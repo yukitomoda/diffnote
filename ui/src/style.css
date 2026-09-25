@@ -590,6 +590,9 @@ details[open] > summary > .diffnote-timeline__chevron { transform: rotate(180deg
 .diffnote-timeline__id { font-family: var(--diffnote-font-mono); font-size: 12px; color: var(--diffnote-color-muted); }
 .diffnote-timeline__subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .diffnote-timeline__who { font-size: 12.5px; color: var(--diffnote-color-muted); white-space: nowrap; }
+/* The commits of a revision, by repository (a review of several). */
+.diffnote-timeline__group { margin-top: 4px; }
+.diffnote-timeline__repo { display: inline-block; margin: 2px 0; padding: 0 6px; font-size: 11px; color: var(--diffnote-color-muted); border: 1px solid var(--diffnote-color-border); border-radius: 4px; }
 .diffnote-timeline__message { padding: 0 10px 10px 10px; background: var(--diffnote-color-gutter); }
 .diffnote-timeline__body { margin: 8px 0; white-space: pre-wrap; font-size: 12.5px; }
 .diffnote-timeline__files { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; }

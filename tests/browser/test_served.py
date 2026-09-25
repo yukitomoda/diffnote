@@ -901,6 +901,68 @@ class IgnoredFiles(ServedCase):
         self.assertIn("/a/b/e/f/g", harness.member(self.review, "settings.json"))
 
 
+def project_of_repos(root, name):
+    """A project directory with two repositories under it, `backend/repo-a`
+    (`a.txt` changed) and `mobile-app` (`m.txt` and `n.txt` changed), each
+    on a `feature` branch one commit past `main`."""
+    project = os.path.join(root, name)
+    for d, files in (("backend/repo-a", ["a.txt"]), ("mobile-app", ["m.txt", "n.txt"])):
+        repo = os.path.join(project, d)
+        os.makedirs(repo)
+        harness.git(repo, "init", "-q", "-b", "main")
+        for f in files:
+            harness.write(repo, f, "one\n")
+        harness.git(repo, "add", "-A")
+        harness.git(repo, "commit", "-q", "-m", "c1 " + d)
+        harness.git(repo, "checkout", "-q", "-b", "feature")
+        for f in files:
+            harness.write(repo, f, "one\ntwo\n")
+        harness.git(repo, "commit", "-q", "-am", "c2 " + d)
+    return project
+
+
+class Workspace(ServedCase):
+    """A review of several repositories under one directory: the page shows
+    their files under their directories, the base of each, and each one's
+    commits apart."""
+
+    def test_the_page_shows_the_repositories_files_bases_and_commits_apart(self):
+        project = project_of_repos(self.root, "ws")
+        self.review = os.path.join(project, "ws.diffnote")
+        self.server = Served(self.review, cwd=project, author="検証者")
+        self.addCleanup(self.server.stop)
+        b = self.b = self.browser
+        b.open(self.server.url, ready="!!document.querySelector('.diffnote-file')")
+        # (Unified: the rows the test names are the unified table's.)
+        b.js("localStorage.setItem('diffnote-layout','unified')")
+        b.reload(ready="!!document.querySelector('.diffnote-file')")
+        files = b.js("[...document.querySelectorAll('%s section.diffnote-file')].map(function (s) { return s.dataset.diffnoteFile; })" % CUR)
+        self.assertEqual(files, ["backend/repo-a/a.txt", "mobile-app/m.txt", "mobile-app/n.txt"])
+        # The file list is a tree under the repositories' directories (one
+        # with a single file is one row, as the tree always is).
+        rows = b.js("[...document.querySelectorAll('%s .diffnote-filelist__dirname, %s .diffnote-filelist__file a')].map(function (e) { return e.textContent; })" % (CUR, CUR))
+        self.assertEqual(rows, ["backend/repo-a/a.txt", "mobile-app/", "m.txt", "n.txt"])
+        # The base names how many, and says each one's commit when asked.
+        self.assertIn("2 リポジトリ", b.text("[data-diffnote-base]"))
+        self.assertIn("backend/repo-a:", b.js("document.querySelector('[data-diffnote-base] code').title"))
+        # A comment on a line of one of them is kept under that path.
+        # (Files with no thread start folded: opened first.)
+        b.click(f"{CUR} [data-diffnote-open-all]")
+        self.assertTrue(b.wait_exists(f"{CUR} table[data-diffnote-file='mobile-app/m.txt'] tr[data-diffnote-new='2']"))
+        b.click_at(f"{CUR} table[data-diffnote-file='mobile-app/m.txt'] tr[data-diffnote-new='2'] .diffnote-line__gutter-new")
+        self.assertTrue(b.wait_exists(".diffnote-compose"))
+        self.write(".diffnote-compose textarea", "モバイル側")
+        b.js("document.querySelector('.diffnote-compose').requestSubmit()")
+        self.assertTrue(b.wait("!document.querySelector('.diffnote-compose-wrap')"))
+        self.assertIn("mobile-app/m.txt:2", recorded(self.review))
+        # The timeline lists the revision's commits by repository.
+        b.click("[data-diffnote-screen-open]")
+        b.click("[data-diffnote-screen-nav='timeline']")
+        self.assertTrue(b.wait_exists("[data-diffnote-timeline-pane]"))
+        groups = b.js("[...document.querySelectorAll('[data-diffnote-commit-repo]')].map(function (g) { return [g.dataset.diffnoteCommitRepo, g.querySelectorAll('[data-diffnote-commit]').length]; })")
+        self.assertEqual(groups, [["backend/repo-a", 1], ["mobile-app", 1]])
+
+
 class FoldAll(ServedCase):
     """Every file of the revision opened, or folded, at once."""
 

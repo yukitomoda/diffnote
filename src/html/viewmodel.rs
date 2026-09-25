@@ -207,6 +207,9 @@ pub struct TimelineCommit {
     pub body: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<crate::model::CommitFile>,
+    /// The repository it is in, for a review of several.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
 }
 
 /// The base of a review: a commit (its short id), or, for a directory, when
@@ -214,8 +217,22 @@ pub struct TimelineCommit {
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum BaseData {
-    Git { id: String },
-    Files { at: String },
+    Git {
+        id: String,
+    },
+    Files {
+        at: String,
+    },
+    /// A review of several repositories: each one's base commit.
+    Workspace {
+        repos: Vec<RepoBase>,
+    },
+}
+
+#[derive(Serialize)]
+pub struct RepoBase {
+    pub path: String,
+    pub id: String,
 }
 
 #[derive(Serialize)]
@@ -423,6 +440,16 @@ pub fn view_model_with(
             crate::model::Source::Files { .. } => BaseData::Files {
                 at: rfc3339(r.created_at),
             },
+            crate::model::Source::Workspace(w) => BaseData::Workspace {
+                repos: w
+                    .repos
+                    .iter()
+                    .map(|repo| RepoBase {
+                        path: repo.path.clone(),
+                        id: repo.range.base.chars().take(7).collect(),
+                    })
+                    .collect(),
+            },
         }),
         ignore_whitespace: loaded.settings.ignore_whitespace,
         images: if interactive {
@@ -593,6 +620,7 @@ pub(super) fn timeline(loaded: &crate::bundle::Loaded, shown: &[Shown]) -> Vec<T
                         Some(TimelineCommit {
                             id: id.clone(),
                             short: id.chars().take(7).collect(),
+                            repo: about.repo.clone(),
                             author: about.author.clone(),
                             at: rfc3339_local(about.at),
                             subject: about.subject.clone(),

@@ -287,22 +287,36 @@ impl Stats {
     }
 }
 
-/// The commits' files, read from the repository (a tree is read once).
+/// The commits' files, read from the repository (a tree is read once): the
+/// one the server was started in (or `--repo`), or, for a review of several,
+/// the one at each repository's directory under it.
 struct GitFiles {
-    repo: Repo,
-    trees: std::sync::Mutex<
-        std::collections::HashMap<String, Option<std::sync::Arc<Vec<crate::git::TreeEntry>>>>,
-    >,
+    dir: PathBuf,
+    /// By repository (its directory in the project) and commit.
+    trees: std::sync::Mutex<std::collections::HashMap<(String, String), Option<SharedTree>>>,
+}
+
+type SharedTree = std::sync::Arc<Vec<crate::git::TreeEntry>>;
+
+impl GitFiles {
+    fn repo(&self, repo: &str) -> Repo {
+        if repo.is_empty() {
+            Repo::at(&self.dir)
+        } else {
+            Repo::at(self.dir.join(repo))
+        }
+    }
 }
 
 impl html::CommitFiles for GitFiles {
-    fn tree(&self, commit: &str) -> Option<std::sync::Arc<Vec<crate::git::TreeEntry>>> {
+    fn tree(&self, repo: &str, commit: &str) -> Option<SharedTree> {
         let mut trees = self.trees.lock().ok()?;
         trees
-            .entry(commit.to_string())
+            .entry((repo.to_string(), commit.to_string()))
             .or_insert_with(|| {
-                if self.repo.has_commit(commit) {
-                    self.repo.ls_tree(commit).ok().map(std::sync::Arc::new)
+                let git = self.repo(repo);
+                if git.exists() && git.has_commit(commit) {
+                    git.ls_tree(commit).ok().map(std::sync::Arc::new)
                 } else {
                     None
                 }
@@ -310,8 +324,8 @@ impl html::CommitFiles for GitFiles {
             .clone()
     }
 
-    fn read(&self, entry: &crate::git::TreeEntry) -> Result<Vec<u8>, String> {
-        self.repo
+    fn read(&self, repo: &str, entry: &crate::git::TreeEntry) -> Result<Vec<u8>, String> {
+        self.repo(repo)
             .read_blobs(&[entry.oid.as_str()])
             .map_err(|e| mf("serve.git_read_failed", &[("error", &e.to_string())]))?
             .pop()
@@ -337,7 +351,7 @@ impl Server {
             token,
             port,
             git: GitFiles {
-                repo: options.repo.clone().map_or_else(Repo::current, Repo::at),
+                dir: options.repo.clone().unwrap_or_else(|| PathBuf::from(".")),
                 trees: Default::default(),
             },
             session: Default::default(),
@@ -498,23 +512,45 @@ impl Server {
         let Ok(loaded) = bundle::load(&self.review) else {
             return Vec::new();
         };
+        // A review of several: the repositories that aren't where the review
+        // says (their files are only what the bundle stores).
+        if let Some(crate::model::Source::Workspace(_)) = loaded.source() {
+            let mut away: Vec<String> = loaded
+                .revisions()
+                .filter_map(|r| match &r.source {
+                    crate::model::Source::Workspace(w) => Some(w.repos.iter()),
+                    _ => None,
+                })
+                .flatten()
+                .filter(|r| !self.git.repo(&r.path).exists())
+                .map(|r| r.path.clone())
+                .collect();
+            away.sort();
+            away.dedup();
+            return if away.is_empty() {
+                Vec::new()
+            } else {
+                vec![mf(
+                    "serve.notice.missing_repos",
+                    &[("repos", &away.join(", "))],
+                )]
+            };
+        }
         let heads: Vec<String> = loaded
             .revisions()
             .filter_map(|r| match &r.source {
                 crate::model::Source::Git(g) => Some(g.head.clone()),
-                crate::model::Source::Files { .. } => None,
+                _ => None,
             })
             .collect();
         if heads.is_empty() {
             return Vec::new();
         }
-        if !self.git.repo.exists() {
+        let repo = self.git.repo("");
+        if !repo.exists() {
             return vec![m("serve.notice.no_repo").to_string()];
         }
-        let missing = heads
-            .iter()
-            .filter(|h| !self.git.repo.has_commit(h))
-            .count();
+        let missing = heads.iter().filter(|h| !repo.has_commit(h)).count();
         if missing > 0 {
             return vec![mf(
                 "serve.notice.missing_commits",

@@ -1100,6 +1100,7 @@ mod tests {
             subject: subject.into(),
             body: String::new(),
             files: Vec::new(),
+            repo: None,
         };
         let trail = |key: &str, ids: &[&str]| {
             let mut r = revision_with(key, SnapshotMode::Changed, Vec::new(), Vec::new());

@@ -74,7 +74,19 @@ struct Shown<'a> {
 
 fn shown_revisions(loaded: &crate::bundle::Loaded) -> anyhow::Result<Vec<Shown<'_>>> {
     let mut shown = Vec::new();
+    // The heads of the revision before (a review of several repositories):
+    // a label names the repositories that moved since.
+    let mut last_heads: Option<HashMap<String, String>> = None;
     for revision in loaded.revisions() {
+        let shown_heads = last_heads.take();
+        if let crate::model::Source::Workspace(w) = &revision.source {
+            last_heads = Some(
+                w.repos
+                    .iter()
+                    .map(|r| (r.path.clone(), r.range.head.clone()))
+                    .collect(),
+            );
+        }
         let Some(text) = loaded
             .revision_diff(revision)
             .filter(|t| !t.trim().is_empty())
@@ -87,6 +99,22 @@ fn shown_revisions(loaded: &crate::bundle::Loaded) -> anyhow::Result<Vec<Shown<'
             // The base is the same for every revision, and is said apart.
             crate::model::Source::Git(g) => g.head.chars().take(7).collect(),
             crate::model::Source::Files { .. } => m("html.dir_label").to_string(),
+            // Several heads: the repositories this one moved, by name.
+            crate::model::Source::Workspace(w) => {
+                let before = shown_heads.as_ref();
+                // (The first: every repository that has changes in it.)
+                let moved: Vec<&str> = w
+                    .repos
+                    .iter()
+                    .filter(|r| before.is_none_or(|b| b.get(&r.path) != Some(&r.range.head)))
+                    .map(|r| r.path.rsplit('/').next().unwrap_or(&r.path))
+                    .collect();
+                if moved.is_empty() || moved.len() > 2 {
+                    mf("html.workspace_label", &[("n", &w.repos.len().to_string())])
+                } else {
+                    moved.join(", ")
+                }
+            }
         };
         let label = format!("#{} {source}", shown.len() + 1);
         shown.push(Shown {
@@ -282,22 +310,56 @@ pub struct AnchorView {
 /// Files of a git commit, for a page served next to the repository the review
 /// was made from: the ones the bundle doesn't store can still be looked at
 /// (and are stored when a comment is made on them).
+///
+/// `repo` is the repository's directory in the project for a review of
+/// several (`backend/repo-a`), and empty for a review of one.
 pub trait CommitFiles {
-    /// Every file of the commit's tree, or `None` if the repository doesn't
-    /// have the commit.
-    fn tree(&self, commit: &str) -> Option<std::sync::Arc<Vec<crate::git::TreeEntry>>>;
+    /// Every file of the commit's tree (paths as in its repository), or
+    /// `None` if the repository isn't there or doesn't have the commit.
+    fn tree(&self, repo: &str, commit: &str) -> Option<std::sync::Arc<Vec<crate::git::TreeEntry>>>;
     /// The content of one of those files.
-    fn read(&self, entry: &crate::git::TreeEntry) -> Result<Vec<u8>, String>;
+    fn read(&self, repo: &str, entry: &crate::git::TreeEntry) -> Result<Vec<u8>, String>;
 }
 
 /// Files bigger than this are not opened (or stored by a comment).
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
-/// The commit a revision's head is, for a review made from git.
-fn head_commit(revision: &crate::model::Revision) -> Option<&str> {
+/// The commits a revision's head is, for a review made from git: each with
+/// its repository's directory in the project ("" for a review of one).
+fn head_commits(revision: &crate::model::Revision) -> Vec<(&str, &str)> {
     match &revision.source {
-        crate::model::Source::Git(g) => Some(g.head.as_str()),
+        crate::model::Source::Git(g) => vec![("", g.head.as_str())],
+        crate::model::Source::Workspace(w) => w
+            .repos
+            .iter()
+            .map(|r| (r.path.as_str(), r.range.head.as_str()))
+            .collect(),
+        crate::model::Source::Files { .. } => Vec::new(),
+    }
+}
+
+/// Where a path of the revision is in git: its repository's directory ("" for
+/// a review of one), the commit, and the path within the repository.
+fn in_git<'a>(
+    revision: &'a crate::model::Revision,
+    path: &'a str,
+) -> Option<(&'a str, &'a str, &'a str)> {
+    match &revision.source {
+        crate::model::Source::Git(g) => Some(("", g.head.as_str(), path)),
+        crate::model::Source::Workspace(w) => w
+            .locate(path)
+            .map(|(r, rest)| (r.path.as_str(), r.range.head.as_str(), rest)),
         crate::model::Source::Files { .. } => None,
+    }
+}
+
+/// A path of a repository as the review has it (under the repository's
+/// directory, for a review of several).
+fn in_project(repo: &str, path: &str) -> String {
+    if repo.is_empty() {
+        path.to_string()
+    } else {
+        format!("{repo}/{path}")
     }
 }
 
@@ -328,14 +390,14 @@ fn other_files(
         .filter(|f| !placed.file_order.contains(&f.path) && loaded.blob(&f.digest).is_some())
         .map(|f| f.path.clone())
         .collect();
-    if let Some(tree) = head_commit(rev).and_then(|c| git?.tree(c)) {
+    for (repo, commit) in head_commits(rev) {
+        let Some(tree) = git.and_then(|g| g.tree(repo, commit)) else {
+            continue;
+        };
         files.extend(
-            tree.iter()
-                .map(|e| &e.path)
-                .filter(|p| {
-                    !placed.file_order.contains(p) && !manifest.iter().any(|f| &f.path == *p)
-                })
-                .cloned(),
+            tree.iter().map(|e| in_project(repo, &e.path)).filter(|p| {
+                !placed.file_order.contains(p) && !manifest.iter().any(|f| &f.path == p)
+            }),
         );
     }
     files.sort();
@@ -383,10 +445,11 @@ pub fn tree_data(
     let note = {
         let shown = shown_revisions(loaded).ok()?;
         let rev = shown.get(revision)?.revision;
-        match head_commit(rev) {
-            Some(c) if git.and_then(|g| g.tree(c)).is_none() => Some(m("html.no_repo_notice")),
-            _ => None,
-        }
+        // (Of a review of several, any one of them.)
+        let out_of_reach = head_commits(rev)
+            .into_iter()
+            .any(|(repo, c)| git.and_then(|g| g.tree(repo, c)).is_none());
+        out_of_reach.then(|| m("html.no_repo_notice"))
     };
     let message = |text| TreeData {
         items: Vec::new(),
@@ -491,13 +554,14 @@ fn file_content(
     }
     // Not stored: from the commit, if the repository is there and has it.
     let git = git.ok_or_else(|| m("html.file_not_stored").to_string())?;
-    let commit = head_commit(rev).ok_or_else(|| m("html.file_not_stored").to_string())?;
+    let (repo, commit, inner) =
+        in_git(rev, path).ok_or_else(|| m("html.file_not_stored").to_string())?;
     let tree = git
-        .tree(commit)
+        .tree(repo, commit)
         .ok_or_else(|| m("html.no_repo_for_file").to_string())?;
     let entry = tree
         .iter()
-        .find(|e| e.path == path)
+        .find(|e| e.path == inner)
         .ok_or_else(|| m("html.not_in_commit").to_string())?;
     if entry.size > MAX_FILE_BYTES {
         return Err(mf(
@@ -512,7 +576,7 @@ fn file_content(
         ));
     }
     Ok(FileContent {
-        bytes: git.read(entry)?,
+        bytes: git.read(repo, entry)?,
         stored: false,
     })
 }

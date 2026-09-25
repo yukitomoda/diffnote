@@ -60,7 +60,9 @@ pub fn pick_snapshot_mode(
 ) -> SnapshotMode {
     match source {
         Source::Files { .. } => SnapshotMode::Full,
-        Source::Git(_) => explicit.or(stored).unwrap_or(SnapshotMode::Changed),
+        Source::Git(_) | Source::Workspace(_) => {
+            explicit.or(stored).unwrap_or(SnapshotMode::Changed)
+        }
     }
 }
 

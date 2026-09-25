@@ -62,9 +62,13 @@ pub struct CommitInfo {
     /// folds them away rather than the review dropping them).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub body: String,
-    /// What it did to each file it touched.
+    /// What it did to each file it touched (paths as in its repository).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<CommitFile>,
+    /// The repository it is in, for a review of several (`Source::Workspace`):
+    /// its path in the project. `None` for a review of one repository.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
 }
 
 /// One file a commit touched.
@@ -151,6 +155,39 @@ pub struct GitSource {
     pub spec: String,
 }
 
+/// One repository of a review of several: where it is in the project, and
+/// what of it the revision compares.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoSource {
+    /// Its directory, relative to the project's (`backend/repo-a`), with `/`.
+    /// Every path of the review under it starts with this and a `/`.
+    pub path: String,
+    #[serde(flatten)]
+    pub range: GitSource,
+}
+
+/// A review of several git repositories at once (a project made of them):
+/// each compared from its own base to its own head.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceSource {
+    pub repos: Vec<RepoSource>,
+}
+
+impl WorkspaceSource {
+    /// The repository a path of the review is in, and the path within it.
+    pub fn locate<'a>(&'a self, path: &'a str) -> Option<(&'a RepoSource, &'a str)> {
+        self.repos
+            .iter()
+            .filter_map(|r| {
+                path.strip_prefix(r.path.as_str())
+                    .and_then(|rest| rest.strip_prefix('/'))
+                    .map(|rest| (r, rest))
+            })
+            // (A repository inside another's directory is the nearer one.)
+            .max_by_key(|(r, _)| r.path.len())
+    }
+}
+
 /// What a revision's content was taken from. Fixed by a bundle's first
 /// revision: a git-backed review stays git-backed, a plain-directory review
 /// stays a directory review.
@@ -158,6 +195,8 @@ pub struct GitSource {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Source {
     Git(GitSource),
+    /// Several git repositories, their paths under their own directories.
+    Workspace(WorkspaceSource),
     /// A plain directory, compared against the bundle's previous snapshot.
     /// `base` is that snapshot's tree digest (`None` for the first one); the
     /// head tree's digest is the revision's own `digest`.
@@ -172,6 +211,7 @@ impl Source {
     pub fn revisions(&self, digest: &str) -> (Option<String>, Option<String>) {
         match self {
             Source::Git(g) => (Some(g.base.clone()), Some(g.head.clone())),
+            Source::Workspace(_) => (None, Some(digest.to_string())),
             Source::Files { base } => (base.clone(), Some(digest.to_string())),
         }
     }

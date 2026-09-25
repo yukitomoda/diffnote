@@ -19,6 +19,59 @@ pub type Tree = BTreeMap<String, Vec<u8>>;
 /// `.gitignore` (same syntax).
 pub const IGNORE_FILE: &str = ".diffnoteignore";
 
+/// How deep [`find_repos`] looks for repositories, from `root`: `root/a` is
+/// 1 deep, `root/a/b/c/d` is 4. Deeper ones can still be named by hand.
+pub const REPO_DEPTH: usize = 4;
+
+/// The git repositories under `root` (a project made of several), as their
+/// directories relative to it with `/` (`backend/repo-a`), sorted. A
+/// repository is a directory with a `.git` in it; what is under one isn't
+/// looked into. What `.gitignore` (or `.diffnoteignore`) files leave out is
+/// skipped, as [`read_tree`] skips it; nothing else is, by name.
+pub fn find_repos(root: &Path) -> Result<Vec<String>> {
+    let mut builder = ignore::WalkBuilder::new(root);
+    builder
+        .hidden(false)
+        .require_git(false)
+        .ignore(false)
+        .parents(false)
+        .git_global(false)
+        .git_exclude(false)
+        .max_depth(Some(REPO_DEPTH))
+        // Not into a repository: what is under one is its own. (An entry is
+        // in one if its directory has a `.git`; not descending into an
+        // excluded directory is how the walk stops there.)
+        .filter_entry(|e| {
+            e.file_name() != ".git"
+                && !e
+                    .path()
+                    .parent()
+                    .is_some_and(|dir| dir.join(".git").exists())
+        });
+    if root.join(IGNORE_FILE).is_file() {
+        builder
+            .git_ignore(false)
+            .add_custom_ignore_filename(IGNORE_FILE);
+    } else {
+        builder.git_ignore(true);
+    }
+    let mut found = Vec::new();
+    for entry in builder.build() {
+        let entry = entry.context(m("files.walk_failed"))?;
+        let path = entry.path();
+        if path == root || !entry.file_type().is_some_and(|t| t.is_dir()) {
+            continue;
+        }
+        if path.join(".git").exists()
+            && let Ok(rel) = path.strip_prefix(root)
+        {
+            found.push(rel.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    found.sort();
+    Ok(found)
+}
+
 /// Reads every file under `root` that the ignore rules leave in.
 ///
 /// If `root/.diffnoteignore` exists, only `.diffnoteignore` files (at any

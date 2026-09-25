@@ -9,7 +9,7 @@ import { Icon } from '../icon.tsx';
 import type { IconName } from '../icon.tsx';
 import { lib } from '../lib.ts';
 import { openRevision } from '../state/route.ts';
-import { daysOf } from './days.ts';
+import { byRepo, daysOf } from './days.ts';
 import type { CommentData, Placement, TimelineCommit, TimelineEntry, ViewModel } from '../model.ts';
 
 export interface TimelineProps {
@@ -96,9 +96,14 @@ export function TimelinePane(props: TimelineProps) {
       <Icon name={MARK[entry.kind]} class="diffnote-timeline__mark" />
       <div class="diffnote-timeline__what">
         {line(entry)}
-        {entry.kind === 'revision' && (entry.commits || []).length > 0 && <ul class="diffnote-timeline__commits">
-          {entry.commits!.map(function (c) { return <Commit key={c.id} commit={c} />; })}
-        </ul>}
+        {entry.kind === 'revision' && (entry.commits || []).length > 0 && byRepo(entry.commits!).map(function (group) {
+          return <div key={group.repo || ''} class="diffnote-timeline__group" data-diffnote-commit-repo={group.repo || undefined}>
+            {group.repo && <code class="diffnote-timeline__repo">{group.repo}</code>}
+            <ul class="diffnote-timeline__commits">
+              {group.commits.map(function (c) { return <Commit key={c.id} commit={c} />; })}
+            </ul>
+          </div>;
+        })}
       </div>
       <span class="diffnote-timeline__at">{lib.formatClock(entry.at)}</span>
     </li>;

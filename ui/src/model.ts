@@ -223,6 +223,8 @@ export interface TimelineCommit {
   subject: string;
   body?: string;
   files?: { path: string; old_path?: string; status: string }[];
+  /** The repository it is in, for a review of several. */
+  repo?: string;
 }
 
 /**
@@ -238,7 +240,11 @@ export type TimelineEntry =
   | { kind: 'reopened'; at: string; author: string; thread: string };
 
 /** What every revision is compared with. */
-export type BaseData = { kind: 'git'; id: string } | { kind: 'files'; at: string };
+export type BaseData =
+  | { kind: 'git'; id: string }
+  | { kind: 'files'; at: string }
+  /** A review of several repositories: each one's base commit. */
+  | { kind: 'workspace'; repos: { path: string; id: string }[] };
 
 export interface ViewModel {
   version: number;

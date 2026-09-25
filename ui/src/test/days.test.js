@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { daysOf } from '../screen/days.ts';
+import { byRepo, daysOf } from '../screen/days.ts';
 
 const at = (day, hour) => new Date(2026, 8, day, hour).toISOString();
 const comment = (day, hour, author, thread) => ({ kind: 'comment', at: at(day, hour), author, thread, comment: thread + '-c' });
@@ -38,4 +38,13 @@ test('a run does not go on into the day before', () => {
 
 test('no entries, no days', () => {
   assert.deepEqual(daysOf([]), []);
+});
+
+test('the commits a revision brought are grouped by repository, as they come', () => {
+  const c = (id, repo) => Object.assign({ id, short: id, author: 'a', at: '', subject: id }, repo ? { repo } : {});
+  assert.deepEqual(
+    byRepo([c('1', 'mobile-app'), c('2', 'backend/repo-a'), c('3', 'mobile-app')]).map((g) => [g.repo, g.commits.map((x) => x.id)]),
+    [['mobile-app', ['1', '3']], ['backend/repo-a', ['2']]]);
+  assert.deepEqual(byRepo([c('1'), c('2')]).map((g) => [g.repo, g.commits.length]), [[null, 2]], 'a review of one: one unnamed group');
+  assert.deepEqual(byRepo([]), []);
 });

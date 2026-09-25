@@ -1,7 +1,7 @@
 // The timeline's days and runs, apart from how they are drawn (Timeline.tsx),
 // so that the order and the folding can be tested without a page.
 import { lib } from '../lib.ts';
-import type { TimelineEntry } from '../model.ts';
+import type { TimelineCommit, TimelineEntry } from '../model.ts';
 
 /** A run of entries on one day, with the entries of a run by one author on
  * one kind of thing folded into a single line. */
@@ -37,4 +37,21 @@ export function daysOf(entries: TimelineEntry[]): Day[] {
     else last.runs.push([entry]);
   });
   return days;
+}
+
+/** The commits a revision brought, by repository (a review of several),
+ * in the order the repositories first come: one group, unnamed, for a
+ * review of one. */
+export function byRepo(commits: TimelineCommit[]): { repo: string | null; commits: TimelineCommit[] }[] {
+  var groups: { repo: string | null; commits: TimelineCommit[] }[] = [];
+  commits.forEach(function (c) {
+    var repo = c.repo || null;
+    var group = groups.filter(function (g) { return g.repo === repo; })[0];
+    if (!group) {
+      group = { repo: repo, commits: [] };
+      groups.push(group);
+    }
+    group.commits.push(c);
+  });
+  return groups;
 }

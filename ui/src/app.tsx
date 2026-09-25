@@ -39,7 +39,7 @@ import {
   watchWidth,
 } from './state/view.ts';
 import type { At } from './lib.ts';
-import type { RevisionData, ViewModel } from './model.ts';
+import type { RevisionData, ViewModel, BaseData } from './model.ts';
 import type { Links } from './state/contexts.ts';
 import type { PullNote } from './screen/General.tsx';
 import { Icon } from './icon.tsx';
@@ -228,10 +228,11 @@ function App(props: { model: ViewModel }) {
         {model.base && <p data-diffnote-base class={against != null ? 'is-changed' : ''} title={against != null ? lib.m('ui.base.changed_title') : lib.m('ui.base.default_title')}>{lib.m('ui.base.label')}: {review.actions && current > 0
           ? <select class="diffnote-base__select" data-diffnote-base-select aria-label={lib.m('ui.base.select_label')} value={against == null ? '' : String(against)}
               onChange={function (e) { compareWith(e.currentTarget.value === '' ? null : +e.currentTarget.value); }}>
-              <option value="">{model.base.kind === 'git' ? model.base.id : lib.formatTime(model.base.at)}</option>
+              <option value="">{baseText(model.base)}</option>
               {model.revisions.slice(0, current).map(function (r, i) { return <option key={i} value={String(i)}>{r.label} ({lib.formatRecorded(r.at)})</option>; })}
             </select>
-          : model.base.kind === 'git' ? <code>{model.base.id}</code> : lib.formatTime(model.base.at)}</p>}
+          : model.base.kind === 'files' ? lib.formatTime(model.base.at)
+            : <code title={model.base.kind === 'workspace' ? baseTip(model.base) : undefined}>{baseText(model.base)}</code>}</p>}
       </header>
       {model.revisions.length > 0 && <nav class="diffnote-revisions" ref={tabs} onWheel={function (e) {
         // The tabs scroll sideways (no bar is shown): the wheel does it too.
@@ -289,6 +290,19 @@ function TopbarNotices(props: { items: Notice[] }) {
       return <button key={n.id} type="button" class="diffnote-notice" data-diffnote-notice={n.id} onClick={n.onClick}>{n.text}</button>;
     })}
   </div>;
+}
+
+/** What a review's base is called: a commit, a time, or, for a review of
+ * several repositories, how many (each one's commit is the tooltip). */
+function baseText(base: BaseData): string {
+  if (base.kind === 'git') return base.id;
+  if (base.kind === 'files') return lib.formatTime(base.at);
+  return lib.mf('ui.base.workspace', { n: String(base.repos.length) });
+}
+
+function baseTip(base: BaseData): string {
+  if (base.kind !== 'workspace') return '';
+  return base.repos.map(function (r) { return r.path + ': ' + r.id; }).join('\n');
 }
 
 export function start() {
