@@ -2549,15 +2549,19 @@ class FirstScreen(ServedCase):
         self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-kind=git]').disabled"))
         repos = b.js("[...document.querySelectorAll('[data-diffnote-setup-repo]')].map(function (d) { return d.dataset.diffnoteSetupRepo; })")
         self.assertEqual(repos, ["backend/repo-a", "mobile-app"])
+        # None is in until it is ticked, and only the ticked ask for a base.
+        self.assertFalse(b.exists("[data-diffnote-setup-base]"))
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
+        b.click("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-include]")
+        self.assertTrue(b.wait_exists("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-base]"))
         self.assertIn("1 コミット、1 ファイル", b.text("[data-diffnote-setup-repo='backend/repo-a'] input:checked + span small"))
-        self.assertIn("1 コミット、2 ファイル", b.text("[data-diffnote-setup-repo='mobile-app'] input:checked + span small"))
+        self.assertFalse(b.exists("[data-diffnote-setup-repo='mobile-app'] [data-diffnote-setup-base]"), "left out: its base is not asked")
+        self.assertFalse(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
         # A path that is no repository is refused where it is typed.
         b.set_value("[data-diffnote-setup-add-path]", "docs")
         b.click("[data-diffnote-setup-add]")
         self.assertTrue(b.wait_exists("[data-diffnote-setup-add-error]"))
-        # mobile-app left out: the review is of repo-a alone.
-        b.click("[data-diffnote-setup-repo='mobile-app'] [data-diffnote-setup-include]")
-        self.assertFalse(b.exists("[data-diffnote-setup-repo='mobile-app'] [data-diffnote-setup-base]"), "its base is no longer asked")
+        # The review is of repo-a alone.
         self.create()
         files = b.js("[...document.querySelectorAll('%s section.diffnote-file')].map(function (s) { return s.dataset.diffnoteFile; })" % CUR)
         self.assertEqual(files, ["backend/repo-a/a.txt"])

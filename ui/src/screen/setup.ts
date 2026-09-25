@@ -44,14 +44,15 @@ export function rowOf(info: SetupRepo): RepoRow {
 }
 
 /** Where the screen starts: what the directory looks like, with the best
- * base of each repository chosen. */
+ * base of each repository chosen. Of several, none is in until it is
+ * ticked (a directory can hold many more than a review is about). */
 export function stateOf(setup: SetupData): SetupState {
   return {
     kind: setup.kind,
     title: setup.title || '',
     snapshot: setup.snapshot || 'changed',
     git: setup.git ? rowOf(setup.git) : null,
-    repos: setup.repos.map(rowOf),
+    repos: setup.repos.map(function (info) { return Object.assign(rowOf(info), { on: false }); }),
   };
 }
 

@@ -37,7 +37,7 @@ test('the screen starts from what the directory looks like, with the best base c
   assert.equal(one.title, '');
   const several = stateOf(Object.assign(setup('workspace', null, [repo('a', [tip]), repo('b', [fork, tip])]), { title: 'T', snapshot: 'full' }));
   assert.equal(several.git, null);
-  assert.deepEqual(several.repos.map((r) => [r.info.path, r.on, r.base]), [['a', true, 'main'], ['b', true, 'abc1234']]);
+  assert.deepEqual(several.repos.map((r) => [r.info.path, r.on, r.base]), [['a', false, 'main'], ['b', false, 'abc1234']], 'none is in until ticked');
   assert.equal(several.snapshot, 'full');
   assert.equal(several.title, 'T');
   assert.equal(rowOf(repo('c', [])).base, MANUAL, 'nothing offered: typed in');
@@ -51,7 +51,7 @@ test('what is sent is the kind, the base of each repository kept, and the rest o
   assert.deepEqual(choiceOf(git), { kind: 'git', title: 'ログイン', snapshot: 'changed', base: 'v1.2' });
   assert.equal(baseOf(git.git), 'v1.2');
   const ws = stateOf(setup('workspace', null, [repo('a', [tip]), repo('b', [fork, tip])]));
-  ws.repos[0] = Object.assign({}, ws.repos[0], { on: false });
+  ws.repos[1] = Object.assign({}, ws.repos[1], { on: true });
   assert.deepEqual(choiceOf(ws), { kind: 'workspace', snapshot: 'changed', repos: [{ path: 'b', base: 'abc1234' }] });
   const raw = stateOf(setup('raw', null, []));
   raw.snapshot = 'full';
@@ -70,8 +70,9 @@ test('the choice is held back until it is whole', () => {
   git.git = Object.assign({}, git.git, { preview: commit('x'.repeat(40), 'v1'), error: '' });
   assert.equal(problemOf(git), null);
   const ws = stateOf(setup('workspace', null, [repo('a', [tip])]));
-  ws.repos[0] = Object.assign({}, ws.repos[0], { on: false });
-  assert.equal(problemOf(ws), 'ui.setup.no_repos_chosen');
+  assert.equal(problemOf(ws), 'ui.setup.no_repos_chosen', 'none ticked yet');
+  ws.repos[0] = Object.assign({}, ws.repos[0], { on: true });
+  assert.equal(problemOf(ws), null);
   assert.equal(problemOf(stateOf(setup('git', null, []))), 'ui.setup.not_a_repo');
   assert.equal(problemOf(stateOf(setup('raw', null, []))), null);
 });
@@ -80,6 +81,7 @@ test('a repository named by hand is added once', () => {
   const rows = [rowOf(repo('a', [tip]))];
   const more = withRepo(rows, repo('deep/one', [fork]));
   assert.deepEqual(more.map((r) => r.info.path), ['a', 'deep/one']);
+  assert.equal(more[1].on, true, 'named by hand: wanted');
   assert.equal(withRepo(more, repo('a', [tip])), null);
   assert.equal(rows.length, 1, 'the list given is left as it was');
 });

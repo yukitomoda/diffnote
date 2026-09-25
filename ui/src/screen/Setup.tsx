@@ -170,20 +170,20 @@ export function SetupScreen(props: { setup: SetupData }) {
         <legend>{lib.m('ui.setup.repos_label')}</legend>
         <p class="diffnote-screen__note">{lib.m('ui.setup.repos_note')}</p>
         {state.repos.map(function (row, i) {
-          return <details key={row.info.path} class={'diffnote-setup__repo' + (row.on ? '' : ' is-off')} data-diffnote-setup-repo={row.info.path} open={row.on}>
-            <summary>
-              <input type="checkbox" data-diffnote-setup-include checked={row.on} onClick={function (e) { e.stopPropagation(); }}
+          // Nothing is in until it is ticked; the ones ticked open, to have
+          // their base chosen. (The whole heading is the tick.)
+          return <div key={row.info.path} class={'diffnote-setup__repo' + (row.on ? ' is-on' : ' is-off')} data-diffnote-setup-repo={row.info.path}>
+            <label class="diffnote-setup__repo-title">
+              <input type="checkbox" data-diffnote-setup-include checked={row.on}
                 onChange={function (e) { setRepo(i, Object.assign({}, row, { on: e.currentTarget.checked })); }} />
               <code>{row.info.path}</code>
-              {row.on && <span class="diffnote-setup__summary">{row.base === MANUAL
-                ? (row.preview ? row.preview.short : lib.m('ui.setup.manual'))
-                : (row.info.candidates.filter(function (c) { return c.rev === row.base; })[0] || { short: '' }).short}</span>}
-            </summary>
+              <span class="diffnote-setup__summary">{row.info.branch || ''}</span>
+            </label>
             {row.on && <>
               <RepoHead info={row.info} />
               <BasePicker row={row} id={'repo-' + i} preview={preview} onChange={function (changed) { setRepo(i, changed); }} />
             </>}
-          </details>;
+          </div>;
         })}
         <div class="diffnote-setup__add">
           <label class="diffnote-field">
