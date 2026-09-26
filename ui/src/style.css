@@ -63,6 +63,9 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 /* At the foot of the column whether or not the lists are there to fill it. */
 .diffnote-sidebar__foot { flex: none; display: flex; align-items: center; gap: 8px; margin-top: auto; padding: 8px 0 4px; border-top: 1px solid var(--diffnote-color-border); }
 /* (Said of the foot, to beat `.diffnote-mini`'s own left margin.) */
+.diffnote-sidebar__github { margin-left: auto; font-size: 11px; color: var(--diffnote-color-muted); text-decoration: none; white-space: nowrap; }
+.diffnote-sidebar__github:hover { text-decoration: underline; }
+.diffnote-sidebar__github + .diffnote-sidebar__toggle { margin-left: 8px; }
 .diffnote-sidebar__foot .diffnote-sidebar__toggle { display: inline-flex; align-items: center; justify-content: center; margin-left: auto; padding: 4px 6px; }
 .diffnote-sidebar__toggle .diffnote-icon { width: 20px; height: 20px; }
 .diffnote-side > summary { cursor: pointer; font-weight: 600; font-size: 12px; color: var(--diffnote-color-muted); padding: 4px 8px; user-select: none; }

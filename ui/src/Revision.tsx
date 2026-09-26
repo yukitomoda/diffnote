@@ -111,6 +111,7 @@ export function Revision(props: RevisionProps) {
       </div>
       <div class="diffnote-sidebar__foot">
         {props.author != null && props.onToggleUserSettings && <UserChip name={props.author} open={!!props.userSettingsOpen} onToggle={props.onToggleUserSettings} />}
+        {!hidden && <a class="diffnote-sidebar__github" href="https://github.com/yukitomoda/diffnote" target="_blank" rel="noopener noreferrer">{lib.m('ui.footer.github')}</a>}
         {/* The lists take a column of the page; this puts them away. All that
             is left of the column then is this button, in the same corner, to
             bring them back. */}

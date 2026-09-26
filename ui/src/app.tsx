@@ -279,7 +279,11 @@ function App(props: { model: ViewModel }) {
     </ActionsContext.Provider>
     </LinksContext.Provider>
     </div>
-    <footer class="diffnote-footer"><a href="https://github.com/yukitomoda/diffnote" target="_blank" rel="noopener noreferrer">{lib.m('ui.footer.github')}</a></footer>
+    {/* The review's own column has the link at its foot; the pages without
+        that column (the first screen, a review with nothing to show yet, the
+        settings screens) have it at the foot of the page. */}
+    {(making || model.revisions.length === 0 || (screen != null && !!review.actions)) &&
+      <footer class="diffnote-footer"><a href="https://github.com/yukitomoda/diffnote" target="_blank" rel="noopener noreferrer">{lib.m('ui.footer.github')}</a></footer>}
   </article>;
 }
 

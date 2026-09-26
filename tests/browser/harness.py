@@ -413,6 +413,8 @@ class Browser:
         x, y = point(first, from_start)
         self.cdp.mouse("mouseMoved", x, y)
         self.cdp.mouse("mousePressed", x, y, 1)
+        # (Measured once pressed: pressing can move what is below the press.)
+        time.sleep(0.05)
         x2, y2 = point(last, False)
         # A few pixels first: a browser starts selecting once the pointer has
         # moved past its own threshold, and a first step of an eighth of the
