@@ -52,8 +52,14 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-revisions__at { font-weight: 400; color: var(--diffnote-color-muted); }
 
 /* A revision: file list on the left, the changes on the right. */
-.diffnote-revision { display: grid; grid-template-columns: var(--diffnote-sidebar-w, 280px) minmax(0, 1fr); column-gap: 16px; align-items: start; padding: 0 16px 48px; }
+/* The column of lists is as tall as the window less the bar and 12px above
+   and below it, so the section's own padding below is those 12px: any more
+   would be a scroll for nothing. The room under the diff is given to the
+   diff's column alone (the pseudo-element), where it only counts when the
+   diff is the taller. */
+.diffnote-revision { display: grid; grid-template-columns: var(--diffnote-sidebar-w, 280px) minmax(0, 1fr); column-gap: 16px; align-items: start; padding: 0 16px 12px; }
 .diffnote-revision > * { grid-column: 2; min-width: 0; }
+.diffnote-revision::after { content: ""; grid-column: 2; height: 36px; }
 .diffnote-revision__title { display: none; }
 .diffnote-js .diffnote-revision:not(.is-current) { display: none; }
 .diffnote-sidebar { grid-column: 1; grid-row: 1 / span 200; position: sticky; top: calc(var(--diffnote-topbar-h) + 12px); height: calc(100vh - var(--diffnote-topbar-h) - 24px); display: flex; flex-direction: column; margin-top: 12px; border-right: 1px solid var(--diffnote-color-border); padding-right: 8px; font-size: 12.5px; }
