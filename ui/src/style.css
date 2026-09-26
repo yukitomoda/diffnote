@@ -24,8 +24,10 @@
 }
 * { box-sizing: border-box; }
 body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); margin: 0; }
-.diffnote-review { max-width: none; margin: 0; }
-.diffnote-footer { margin: 32px 16px 12px; text-align: right; font-size: 11px; }
+/* The page fills the window, so that the foot sits at the bottom of a short
+   page without giving it anything to scroll. */
+.diffnote-review { max-width: none; margin: 0; min-height: 100vh; display: flex; flex-direction: column; }
+.diffnote-footer { margin: auto 16px 0; padding: 24px 0 8px; text-align: right; font-size: 11px; }
 .diffnote-footer a { color: var(--diffnote-color-muted); text-decoration: none; }
 .diffnote-footer a:hover { text-decoration: underline; }
 
