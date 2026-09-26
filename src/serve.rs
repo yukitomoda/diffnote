@@ -519,6 +519,7 @@ impl Server {
                 .map(|r| html::WorkspaceRepo {
                     path: r.path.clone(),
                     base: r.range.base.chars().take(7).collect(),
+                    target: r.target().to_string(),
                     present: self.git.repo(&r.path).exists(),
                 })
                 .collect(),
@@ -1360,6 +1361,7 @@ impl Server {
             ["api", "setup"] => self.setup_create(request.body),
             ["api", "repos"] => self.add_repo(request.body),
             ["api", "repos", "remove"] => self.remove_repo(request.body),
+            ["api", "repos", "target"] => self.set_repo_target(request.body),
             ["api", "comments", id, "edit"] => self.edit_comment(id, request.body),
             ["api", "comments", id, "delete"] => self.delete_comment(id),
             ["api", "comments", id, "react"] => self.react(id, request.body),
@@ -1606,7 +1608,7 @@ impl Server {
             .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
         let path = value["path"].as_str().unwrap_or_default();
         let base = value["base"].as_str().unwrap_or_default();
-        let repo = crate::setup::repo_from(&self.git.dir, path, base)
+        let repo = crate::setup::repo_from(&self.git.dir, path, base, value["target"].as_str())
             .map_err(|e| Failure(400, e.to_string()))?;
         if repos.iter().any(|r| r.path == repo.path) {
             return Err(Failure(
@@ -1620,6 +1622,34 @@ impl Server {
         let events = loaded.events.clone();
         self.save(&loaded, &events)?;
         self.count(|s| s.settings += 1);
+        self.model_answer(&before, serde_json::json!({}))
+    }
+
+    /// What one repository of several is compared up to from the next
+    /// revision on: a branch or commit named, or `HEAD` again.
+    fn set_repo_target(&self, body: &[u8]) -> Result<Reply, Failure> {
+        let (mut loaded, mut repos) = self.repos_now()?;
+        let value: serde_json::Value = serde_json::from_slice(body)
+            .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
+        let path = value["path"].as_str().unwrap_or_default();
+        let Some(repo) = repos.iter_mut().find(|r| r.path == path) else {
+            return Err(Failure(400, mf("serve.repos.not_in", &[("path", path)])));
+        };
+        let target = crate::setup::target_of(value["target"].as_str());
+        if let Some(target) = &target {
+            self.git
+                .repo(path)
+                .commit_id(target)
+                .map_err(|e| Failure(400, e.to_string()))?;
+        }
+        let before = html::stamp(&loaded);
+        if repo.target != target {
+            repo.target = target;
+            review::set_repos(&mut loaded.settings, repos);
+            let events = loaded.events.clone();
+            self.save(&loaded, &events)?;
+            self.count(|s| s.settings += 1);
+        }
         self.model_answer(&before, serde_json::json!({}))
     }
 

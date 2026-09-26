@@ -509,11 +509,14 @@ fn add_revision(
     };
     // A review that has revisions already gets one only for something new.
     // (One made by this call, with nothing to add: kept, with its base.)
+    // Of several repositories, where they stand is part of what is new: a
+    // revision with nothing to show is still recorded when a repository was
+    // added, taken out, or moved (see `workspace_input`), so that what
+    // stands recorded is where they are.
     let first = loaded.revisions().next().is_none();
-    if !first
-        && (input.diff_text.trim().is_empty()
-            || loaded.revisions().any(|r| r.digest == input.digest))
-    {
+    let of_several = matches!(input.source, diffnote::model::Source::Workspace(_));
+    let nothing_to_show = input.diff_text.trim().is_empty() && !of_several;
+    if !first && (nothing_to_show || loaded.revisions().any(|r| r.digest == input.digest)) {
         fresh.keep();
         return Ok(None);
     }
@@ -546,10 +549,13 @@ fn add_revision(
                 &[("from", &short(&g.base)), ("to", &short(&g.head))],
             )
         }
-        diffnote::model::Source::Workspace(w) if nothing_yet => mf(
+        diffnote::model::Source::Workspace(w) if nothing_yet && first => mf(
             "main.add_revision.started_workspace",
             &[("n", &w.repos.len().to_string())],
         ),
+        diffnote::model::Source::Workspace(_) if nothing_yet => {
+            m("main.add_revision.moved_workspace").to_string()
+        }
         diffnote::model::Source::Workspace(w) => mf(
             "main.add_revision.recorded_workspace",
             &[("n", &w.repos.len().to_string())],
@@ -1131,7 +1137,7 @@ fn workspace_range(
             for known in &known {
                 let git = diffnote::git::Repo::at(project.join(&known.path));
                 let head = if git.exists() {
-                    git.commit_id("HEAD")?
+                    git.commit_id(known.target())?
                 } else {
                     away.push(known.path.clone());
                     last.repos
@@ -1143,9 +1149,10 @@ fn workspace_range(
                     path: known.path.clone(),
                     range: diffnote::model::GitSource {
                         base: known.range.base.clone(),
-                        spec: format!("{}..HEAD", short(&known.range.base)),
+                        spec: format!("{}..{}", short(&known.range.base), known.target()),
                         head,
                     },
+                    target: known.target.clone(),
                 });
             }
             repos
@@ -1165,6 +1172,7 @@ fn workspace_range(
                         base,
                         head,
                     },
+                    target: None,
                 });
             }
             repos

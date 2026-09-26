@@ -101,6 +101,8 @@ pub struct WorkspaceRepo {
     pub path: String,
     /// The base's id, short.
     pub base: String,
+    /// What each `review` compares up to (`HEAD`, or what was named).
+    pub target: String,
     /// Whether it is where the review says, from where the page is served.
     pub present: bool,
 }

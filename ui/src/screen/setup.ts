@@ -20,6 +20,18 @@ export interface RepoRow {
   preview: SetupPreview | null;
   error: string;
   checking: boolean;
+  /** What is compared up to, each time: `HEAD`, or a branch or commit
+   * typed in, and what the server said of that. */
+  target: string;
+  targetPreview: SetupPreview | null;
+  targetError: string;
+  targetChecking: boolean;
+}
+
+/** Whether a target typed in is settled (`HEAD` needs no asking). */
+export function targetSettled(row: RepoRow): boolean {
+  var t = row.target.trim();
+  return t === 'HEAD' || (!!t && !row.targetChecking && !!row.targetPreview);
 }
 
 /** What the screen holds, from what it was given to what is chosen. */
@@ -40,6 +52,10 @@ export function rowOf(info: SetupRepo): RepoRow {
     preview: null,
     error: '',
     checking: false,
+    target: 'HEAD',
+    targetPreview: null,
+    targetError: '',
+    targetChecking: false,
   };
 }
 
@@ -92,6 +108,7 @@ export function problemOf(state: SetupState): string | null {
     var row = rows[i];
     if (!baseOf(row)) return 'ui.setup.base_needed';
     if (row.base === MANUAL && (row.checking || !row.preview)) return 'ui.setup.base_unchecked';
+    if (!targetSettled(row)) return 'ui.setup.target_unchecked';
   }
   return null;
 }
@@ -106,7 +123,11 @@ export function choiceOf(state: SetupState): SetupChoice {
     choice.base = state.git ? baseOf(state.git) : '';
   } else if (state.kind === 'workspace') {
     choice.snapshot = state.snapshot;
-    choice.repos = rowsOf(state).map(function (r) { return { path: r.info.path, base: baseOf(r) }; });
+    choice.repos = rowsOf(state).map(function (r) {
+      var one: { path: string; base: string; target?: string } = { path: r.info.path, base: baseOf(r) };
+      if (r.target.trim() !== 'HEAD') one.target = r.target.trim();
+      return one;
+    });
   }
   return choice;
 }

@@ -73,8 +73,9 @@ export interface Actions {
   removeAttached(attached: AttachedData): Promise<ChangeAnswer>;
   saveUserSettings(author: string): Promise<ChangeAnswer>;
   /** A review of several repositories: one more, from a commit, or one less. */
-  addRepo(path: string, base: string): Promise<ChangeAnswer>;
+  addRepo(path: string, base: string, target?: string): Promise<ChangeAnswer>;
   removeRepo(path: string): Promise<ChangeAnswer>;
+  setRepoTarget(path: string, target: string): Promise<ChangeAnswer>;
   refresh(): Promise<ChangeAnswer>;
   setResolved(id: string, resolved: boolean): Promise<ChangeAnswer>;
   /** The comments this page may rewrite or take out, and which it has. */

@@ -2555,6 +2555,13 @@ class FirstScreen(ServedCase):
         b.click("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-include]")
         self.assertTrue(b.wait_exists("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-base]"))
         self.assertIn("1 コミット、1 ファイル", b.text("[data-diffnote-setup-repo='backend/repo-a'] input:checked + span"))
+        # What it is compared up to: HEAD unless named; named, it is looked up.
+        self.assertEqual(b.value("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-target-rev]"), "HEAD")
+        b.set_value("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-target-rev]", "nowhere")
+        self.assertTrue(b.wait("document.querySelector(\"[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-target-preview]\").textContent.includes('nowhere')"))
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
+        b.set_value("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-target-rev]", "feature")
+        self.assertTrue(b.wait("document.querySelector(\"[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-target-preview]\").textContent.includes('c2 backend/repo-a')"))
         self.assertFalse(b.exists("[data-diffnote-setup-repo='mobile-app'] [data-diffnote-setup-base]"), "left out: its base is not asked")
         self.assertFalse(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
         # A path that is no repository is refused where it is typed.
@@ -2566,6 +2573,7 @@ class FirstScreen(ServedCase):
         files = b.js("[...document.querySelectorAll('%s section.diffnote-file')].map(function (s) { return s.dataset.diffnoteFile; })" % CUR)
         self.assertEqual(files, ["backend/repo-a/a.txt"])
         self.assertIn("1 リポジトリ", b.text("[data-diffnote-base]"))
+        self.assertIn('"target":"feature"', harness.member(self.review, "review.jsonl"))
 
 
 class Repositories(ServedCase):
@@ -2587,6 +2595,14 @@ class Repositories(ServedCase):
         rows = lambda: b.js("[...document.querySelectorAll('[data-diffnote-repo]')].map(function (li) { return li.dataset.diffnoteRepo; })")
         self.assertEqual(rows(), ["backend/repo-a", "mobile-app"])
         self.assertFalse(b.exists("[data-diffnote-repo-away]"), "both are here")
+        # What one is compared up to is changed in its row.
+        self.assertEqual(b.js("document.querySelector(\"[data-diffnote-repo='backend/repo-a'] [data-diffnote-repo-target]\").dataset.diffnoteRepoTarget"), "HEAD")
+        b.click("[data-diffnote-repo='backend/repo-a'] [data-diffnote-repo-target-change]")
+        self.assertTrue(b.wait_exists("[data-diffnote-repo='backend/repo-a'] [data-diffnote-repo-target-rev]"))
+        b.set_value("[data-diffnote-repo='backend/repo-a'] [data-diffnote-repo-target-rev]", "main")
+        b.click("[data-diffnote-repo='backend/repo-a'] [data-diffnote-repo-target-save]")
+        self.assertTrue(b.wait("document.querySelector(\"[data-diffnote-repo='backend/repo-a'] [data-diffnote-repo-target]\") && document.querySelector(\"[data-diffnote-repo='backend/repo-a'] [data-diffnote-repo-target]\").dataset.diffnoteRepoTarget === 'main'"))
+        self.assertEqual(json.loads(harness.member(self.review, "settings.json"))["repos"][0]["target"], "main")
         # Taken out, after being asked once more.
         b.click("[data-diffnote-repo='mobile-app'] [data-diffnote-repo-remove]")
         self.assertTrue(b.wait_exists("[data-diffnote-repo='mobile-app'] [data-diffnote-repo-remove-confirm]"))

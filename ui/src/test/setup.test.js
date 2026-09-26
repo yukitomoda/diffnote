@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { lib } from '../lib.ts';
-import { MANUAL, baseOf, candidateLabel, choiceOf, previewText, problemOf, rowOf, stateOf, withRepo } from '../screen/setup.ts';
+import { MANUAL, baseOf, candidateLabel, choiceOf, previewText, problemOf, rowOf, stateOf, targetSettled, withRepo } from '../screen/setup.ts';
 
 lib.setMessages({
   'ui.setup.name_fork': '{branch} からの分岐点',
@@ -52,7 +52,9 @@ test('what is sent is the kind, the base of each repository kept, and the rest o
   assert.equal(baseOf(git.git), 'v1.2');
   const ws = stateOf(setup('workspace', null, [repo('a', [tip]), repo('b', [fork, tip])]));
   ws.repos[1] = Object.assign({}, ws.repos[1], { on: true });
-  assert.deepEqual(choiceOf(ws), { kind: 'workspace', snapshot: 'changed', repos: [{ path: 'b', base: 'abc1234' }] });
+  assert.deepEqual(choiceOf(ws), { kind: 'workspace', snapshot: 'changed', repos: [{ path: 'b', base: 'abc1234' }] }, 'HEAD is not said');
+  ws.repos[1] = Object.assign({}, ws.repos[1], { target: ' release ', targetPreview: commit('y'.repeat(40), 'r1') });
+  assert.deepEqual(choiceOf(ws).repos, [{ path: 'b', base: 'abc1234', target: 'release' }]);
   const raw = stateOf(setup('raw', null, []));
   raw.snapshot = 'full';
   assert.deepEqual(choiceOf(raw), { kind: 'raw' }, 'a directory review keeps everything, and is not asked');
@@ -74,6 +76,20 @@ test('the choice is held back until it is whole', () => {
   ws.repos[0] = Object.assign({}, ws.repos[0], { on: true });
   assert.equal(problemOf(ws), null);
   assert.equal(problemOf(stateOf(setup('git', null, []))), 'ui.setup.not_a_repo');
+  // What is compared up to, when named, must be settled too.
+  ws.repos[0] = Object.assign({}, ws.repos[0], { on: true });
+  assert.equal(problemOf(ws), null);
+  ws.repos[0] = Object.assign({}, ws.repos[0], { target: 'release', targetChecking: true });
+  assert.equal(problemOf(ws), 'ui.setup.target_unchecked');
+  assert.equal(targetSettled(ws.repos[0]), false);
+  ws.repos[0] = Object.assign({}, ws.repos[0], { targetChecking: false, targetError: 'no', targetPreview: null });
+  assert.equal(targetSettled(ws.repos[0]), false, 'nor when the server said no');
+  ws.repos[0] = Object.assign({}, ws.repos[0], { targetError: '', targetPreview: commit('z'.repeat(40), 'r') });
+  assert.equal(targetSettled(ws.repos[0]), true);
+  ws.repos[0] = Object.assign({}, ws.repos[0], { target: '' });
+  assert.equal(targetSettled(ws.repos[0]), false, 'nothing named');
+  ws.repos[0] = Object.assign({}, ws.repos[0], { target: 'HEAD ' });
+  assert.equal(targetSettled(ws.repos[0]), true, 'HEAD needs no asking');
   assert.equal(problemOf(stateOf(setup('raw', null, []))), null);
 });
 

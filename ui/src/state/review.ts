@@ -125,11 +125,14 @@ export function useReview(initial: ViewModel): Review {
       // A review of several repositories: one added (from the next revision
       // on, from the commit chosen) or taken out (the revisions so far keep
       // it). The answer is the whole model.
-      addRepo: function (path, base) {
-        return server().post<{ model: ViewModel }>('/api/repos', { path: path, base: base }).then(whole);
+      addRepo: function (path, base, target) {
+        return server().post<{ model: ViewModel }>('/api/repos', { path: path, base: base, target: target }).then(whole);
       },
       removeRepo: function (path) {
         return server().post<{ model: ViewModel }>('/api/repos/remove', { path: path }).then(whole);
+      },
+      setRepoTarget: function (path, target) {
+        return server().post<{ model: ViewModel }>('/api/repos/target', { path: path, target: target }).then(whole);
       },
       // What was added to the target since the server started becomes a new
       // revision (the answer says what was done; the page keeps its place).

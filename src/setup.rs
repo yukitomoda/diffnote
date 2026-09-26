@@ -137,6 +137,17 @@ pub struct Choice {
 pub struct RepoChoice {
     pub path: String,
     pub base: String,
+    /// What to compare up to, each time (`HEAD` if not said).
+    #[serde(default)]
+    pub target: Option<String>,
+}
+
+/// A target as it is kept: `None` for `HEAD` (said or not), else trimmed.
+pub fn target_of(target: Option<&str>) -> Option<String> {
+    target
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && *t != "HEAD")
+        .map(str::to_string)
 }
 
 /// What makes the review once it is chosen: what it said, as `review` says
@@ -261,9 +272,13 @@ impl Setup {
                     if repo.base.trim().is_empty() {
                         bail!(mf("setup.repo_base_missing", &[("path", &path)]));
                     }
-                    Repo::at(self.project.join(&path))
-                        .commit_id(repo.base.trim())
+                    let git = Repo::at(self.project.join(&path));
+                    git.commit_id(repo.base.trim())
                         .map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
+                    if let Some(target) = target_of(repo.target.as_deref()) {
+                        git.commit_id(&target)
+                            .map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
+                    }
                 }
             }
             "raw" => {}
@@ -314,9 +329,15 @@ pub fn preview_of(repo: &Repo, rev: &str) -> Result<Preview> {
     })
 }
 
-/// One repository to add to a review of several, from `rev`: as it is
-/// recorded (its `HEAD` now is what the next revision compares).
-pub fn repo_from(project: &Path, path: &str, rev: &str) -> Result<RepoSource> {
+/// One repository to add to a review of several, from `rev` up to
+/// `target` (`HEAD` if none): as it is recorded (its target now is what
+/// the next revision compares).
+pub fn repo_from(
+    project: &Path,
+    path: &str,
+    rev: &str,
+    target: Option<&str>,
+) -> Result<RepoSource> {
     let path = clean_path(path)?;
     if !project.join(&path).join(".git").exists() {
         bail!(mf("setup.repo_not_found", &[("path", &path)]));
@@ -326,15 +347,17 @@ pub fn repo_from(project: &Path, path: &str, rev: &str) -> Result<RepoSource> {
     if rev.is_empty() {
         bail!(mf("setup.repo_base_missing", &[("path", &path)]));
     }
+    let target = target_of(target);
     let base = git.commit_id(rev)?;
-    let head = git.commit_id("HEAD")?;
+    let head = git.commit_id(target.as_deref().unwrap_or("HEAD"))?;
     Ok(RepoSource {
         path,
         range: GitSource {
-            spec: format!("{rev}..HEAD"),
+            spec: format!("{rev}..{}", target.as_deref().unwrap_or("HEAD")),
             base,
             head,
         },
+        target,
     })
 }
 
@@ -343,19 +366,12 @@ pub fn repo_from(project: &Path, path: &str, rev: &str) -> Result<RepoSource> {
 pub fn repos_chosen(project: &Path, choice: &Choice) -> Result<Vec<RepoSource>> {
     let mut repos = Vec::new();
     for repo in &choice.repos {
-        let path = clean_path(&repo.path)?;
-        let git = Repo::at(project.join(&path));
-        let rev = repo.base.trim();
-        let base = git.commit_id(rev)?;
-        let head = git.commit_id("HEAD")?;
-        repos.push(RepoSource {
-            path,
-            range: GitSource {
-                spec: format!("{rev}..HEAD"),
-                base,
-                head,
-            },
-        });
+        repos.push(repo_from(
+            project,
+            &repo.path,
+            &repo.base,
+            repo.target.as_deref(),
+        )?);
     }
     repos.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(repos)
@@ -654,6 +670,18 @@ mod tests {
         assert_eq!(repos[1].range.head, c2);
         assert_eq!(repos[1].range.spec, "main..HEAD");
         assert_eq!(repos[0].range.base, repos[0].range.head);
+        assert_eq!(repos[0].target, None, "HEAD, said or not, is none");
+        // A target of its own: what each round compares up to.
+        let with = repos_chosen(dir.path(), &choice(r#"{"kind":"workspace","repos":[{"path":"mobile-app","base":"main","target":"main"}]}"#)).unwrap();
+        assert_eq!(with[0].target.as_deref(), Some("main"));
+        assert_eq!(with[0].target(), "main");
+        assert_eq!(with[0].range.head, c1, "up to main, not HEAD");
+        assert_eq!(with[0].range.spec, "main..main");
+        assert!(setup.check(&choice(r#"{"kind":"workspace","repos":[{"path":"mobile-app","base":"main","target":"nowhere"}]}"#)).is_err(), "a target that is no commit");
+        assert_eq!(target_of(Some(" HEAD ")), None);
+        assert_eq!(target_of(Some("")), None);
+        assert_eq!(target_of(Some(" v1 ")), Some("v1".to_string()));
+        assert!(repo_from(dir.path(), "mobile-app", "main", Some("nowhere")).is_err());
     }
 
     #[test]

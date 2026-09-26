@@ -254,7 +254,7 @@ function App(props: { model: ViewModel }) {
     </div>
     {screen != null && review.actions && !making && <ReviewScreen section={screen} model={model} pending={review.pending} note={note} onPull={pull}
       saveSettings={review.actions.saveSettings} saveUserSettings={review.actions.saveUserSettings}
-      addRepo={review.actions.addRepo} removeRepo={review.actions.removeRepo}
+      addRepo={review.actions.addRepo} removeRepo={review.actions.removeRepo} setRepoTarget={review.actions.setRepoTarget}
       removeAttached={review.actions.removeAttached}
       onShowThread={function (id) { links.go({ kind: 'thread', id: id }); }}
       placementOf={function (id) { return ((model.revisions[current] || {}).placements || {})[id]; }}

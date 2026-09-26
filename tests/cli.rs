@@ -2522,14 +2522,25 @@ fn the_first_screen_in_a_project_of_repositories_takes_each_ones_base_and_more_b
         assert_eq!(status, 400, "{bad}: {body}");
     }
     // Chosen: repo-a from main (its one commit reviewed), the deep one from
-    // HEAD, and mobile-app left out.
+    // HEAD, and mobile-app left out. What is compared up to can be named
+    // too, and must be a commit.
+    let (status, _, body) = http(
+        served.port,
+        "POST",
+        "/api/setup",
+        &served.cookie,
+        Some(
+            r#"{"kind":"workspace","repos":[{"path":"backend/repo-a","base":"main","target":"nowhere"}]}"#,
+        ),
+    );
+    assert_eq!(status, 400, "{body}");
     let made = served.api(
         "/api/setup",
         Some(serde_json::json!({
             "kind": "workspace",
             "repos": [
-                { "path": "a/b/c/d/e/deep", "base": "HEAD" },
-                { "path": "backend/repo-a", "base": "main" },
+                { "path": "a/b/c/d/e/deep", "base": "HEAD", "target": "HEAD" },
+                { "path": "backend/repo-a", "base": "main", "target": "feature" },
             ],
         })),
     );
@@ -2548,14 +2559,17 @@ fn the_first_screen_in_a_project_of_repositories_takes_each_ones_base_and_more_b
         ["a/b/c/d/e/deep", "backend/repo-a"]
     );
     assert_eq!(repos[0].range.base, repos[0].range.head);
+    assert_eq!(repos[0].target, None, "HEAD is none");
     assert_eq!(
         repos[1].range.base,
         commit_id(&root.join("backend/repo-a"), "main")
     );
     assert_eq!(
         repos[1].range.head,
-        commit_id(&root.join("backend/repo-a"), "HEAD")
+        commit_id(&root.join("backend/repo-a"), "feature")
     );
+    assert_eq!(repos[1].target.as_deref(), Some("feature"));
+    assert_eq!(repos[1].range.spec, "main..feature");
     let files: Vec<String> = served.api("/api/model", None)["model"]["revisions"][0]["files"]
         .as_array()
         .unwrap()
@@ -2732,6 +2746,38 @@ fn repositories_are_added_and_taken_out_on_the_page_from_the_next_revision_on() 
         .collect();
     assert_eq!(files, ["backend/repo-a/a.txt"]);
     assert!(!served.refresh(), "and nothing more");
+    // What a repository is compared up to can be named: a branch, followed
+    // from then on, instead of HEAD. (repo-a is on feature, one past main.)
+    let repo_a = root.join("backend/repo-a");
+    let (status, _, body) = http(
+        served.port,
+        "POST",
+        "/api/repos/target",
+        &served.cookie,
+        Some(r#"{"path":"backend/repo-a","target":"nowhere"}"#),
+    );
+    assert_eq!(status, 400, "{body}");
+    let answer = served.api(
+        "/api/repos/target",
+        Some(serde_json::json!({ "path": "backend/repo-a", "target": "main" })),
+    );
+    assert_eq!(answer["model"]["workspace"]["repos"][0]["target"], "main");
+    assert!(served.refresh(), "up to main now: a revision of that");
+    let sources = workspace_sources(&review);
+    let last = sources.last().unwrap();
+    assert_eq!(last.repos[0].range.head, commit_id(&repo_a, "main"));
+    assert_eq!(last.repos[0].target.as_deref(), Some("main"));
+    assert_eq!(last.repos[0].range.spec.rsplit("..").next(), Some("main"));
+    // Back to HEAD: kept as none.
+    let answer = served.api(
+        "/api/repos/target",
+        Some(serde_json::json!({ "path": "backend/repo-a", "target": "HEAD" })),
+    );
+    assert_eq!(answer["model"]["workspace"]["repos"][0]["target"], "HEAD");
+    assert!(
+        !served.refresh(),
+        "as it stood before the branch was named: that revision stands"
+    );
     // Added, from HEAD: in the next revision on, from there.
     let answer = served.api(
         "/api/repos",
@@ -2772,7 +2818,7 @@ fn repositories_are_added_and_taken_out_on_the_page_from_the_next_revision_on() 
     served.reply(&threads[0], "still there");
     served.stop();
     let sources = workspace_sources(&review);
-    assert_eq!(sources.len(), 4);
+    assert_eq!(sources.len(), 5);
     assert_eq!(
         sources[0]
             .repos
@@ -2791,14 +2837,20 @@ fn repositories_are_added_and_taken_out_on_the_page_from_the_next_revision_on() 
         ["backend/repo-a"]
     );
     assert_eq!(
-        sources[3]
+        sources[2].repos[0].range.head,
+        commit_id(&repo_a, "main"),
+        "up to main, with nothing to show, is recorded all the same"
+    );
+    assert_eq!(
+        sources[4]
             .repos
             .iter()
             .map(|r| r.path.as_str())
             .collect::<Vec<_>>(),
         ["a/b/c/d/e/deep", "backend/repo-a"]
     );
-    assert_eq!(sources[3].repos[0].range.base, commit_id(&deep, "HEAD~1"));
+    assert_eq!(sources[4].repos[0].range.base, commit_id(&deep, "HEAD~1"));
+    assert_eq!(sources[4].repos[1].target, None);
     let last = bundle::load(&review).unwrap();
     let files: Vec<String> = last
         .revisions()

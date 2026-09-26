@@ -504,6 +504,12 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
 .diffnote-setup__option code { font-size: 13px; }
 .diffnote-setup__rev { display: block; width: 100%; max-width: 32em; margin-top: 4px; font: inherit; font-family: var(--diffnote-font-mono); font-size: 12.5px; padding: 3px 8px; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; box-sizing: border-box; }
 .diffnote-setup__repo-head { margin: 0 0 8px; font-size: 12.5px; color: var(--diffnote-color-muted); }
+.diffnote-setup__target { margin: 10px 0 4px; padding-top: 8px; border-top: 1px solid var(--diffnote-color-border); }
+.diffnote-setup__target-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.diffnote-setup__target-row .diffnote-setup__rev { width: 16em; margin: 0; }
+.diffnote-repos__target { font-size: 12.5px; color: var(--diffnote-color-muted); }
+.diffnote-repos__target-edit { display: inline-flex; align-items: center; gap: 6px; }
+.diffnote-repos__target-edit input { width: 14em; font: inherit; font-family: var(--diffnote-font-mono); font-size: 12.5px; padding: 2px 6px; border: 1px solid var(--diffnote-color-border); border-radius: 6px; }
 .diffnote-setup__repo { margin: 0 0 6px; padding: 6px 10px; background: var(--diffnote-color-gutter); border-radius: 8px; }
 .diffnote-setup__repo.is-off { padding: 3px 10px; background: none; }
 .diffnote-setup__repo-title { display: flex; align-items: center; gap: 8px; cursor: pointer; }

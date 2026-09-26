@@ -6,14 +6,15 @@ import { lib } from '../lib.ts';
 import { server } from '../transport.ts';
 import type { SetupRepo, ViewModel } from '../model.ts';
 import type { ChangeAnswer } from '../state/contexts.ts';
-import { BasePicker, RepoHead } from './Setup.tsx';
-import { baseOf, rowOf } from './setup.ts';
+import { BasePicker, RepoHead, TargetField } from './Setup.tsx';
+import { baseOf, rowOf, targetSettled } from './setup.ts';
 import type { RepoRow } from './setup.ts';
 
 export interface ReposProps {
   model: ViewModel;
-  add(path: string, base: string): Promise<ChangeAnswer>;
+  add(path: string, base: string, target?: string): Promise<ChangeAnswer>;
   remove(path: string): Promise<ChangeAnswer>;
+  setTarget(path: string, target: string): Promise<ChangeAnswer>;
 }
 
 export function ReposPane(props: ReposProps) {
@@ -25,6 +26,20 @@ export function ReposPane(props: ReposProps) {
   var _e = useState('');
   var error = _e[0];
   var setError = _e[1];
+  // The one whose target is being changed, and what is typed.
+  var _t = useState<{ path: string; target: string } | null>(null);
+  var editing = _t[0];
+  var setEditing = _t[1];
+  var saveTarget = function () {
+    if (!editing) return;
+    setBusy(true);
+    setError('');
+    props.setTarget(editing.path, editing.target).then(function (res) {
+      setBusy(false);
+      if (res.ok) setEditing(null);
+      else setError(res.error || lib.m('ui.save_failed'));
+    });
+  };
   var _b = useState(false);
   var busy = _b[0];
   var setBusy = _b[1];
@@ -70,16 +85,17 @@ export function ReposPane(props: ReposProps) {
   var add = function () {
     if (!adding) return;
     var base = baseOf(adding);
-    if (!base || (adding.base === 'manual' && !adding.preview)) return;
+    if (!base || (adding.base === 'manual' && !adding.preview) || !targetSettled(adding)) return;
     setBusy(true);
     setAddError('');
-    props.add(adding.info.path, base).then(function (res) {
+    var target = adding.target.trim();
+    props.add(adding.info.path, base, target === 'HEAD' ? undefined : target).then(function (res) {
       setBusy(false);
       if (res.ok) { setAdding(null); setPath(''); }
       else setAddError(res.error || lib.m('ui.save_failed'));
     });
   };
-  var canAdd = !!adding && !!baseOf(adding) && !(adding.base === 'manual' && (adding.checking || !adding.preview));
+  var canAdd = !!adding && !!baseOf(adding) && !(adding.base === 'manual' && (adding.checking || !adding.preview)) && targetSettled(adding);
   return <div data-diffnote-repos-pane>
     <h2>{lib.m('ui.repos.heading')}</h2>
     <p class="diffnote-screen__note">{lib.m('ui.repos.note')}</p>
@@ -88,6 +104,16 @@ export function ReposPane(props: ReposProps) {
         return <li key={r.path} class="diffnote-repos__item" data-diffnote-repo={r.path}>
           <code class="diffnote-repos__path">{r.path}</code>
           <span class="diffnote-repos__base">{lib.mf('ui.repos.base', { id: r.base })}</span>
+          {editing && editing.path === r.path
+            ? <span class="diffnote-repos__target-edit" data-diffnote-repo-target-edit>
+                <span class="diffnote-repos__target">{lib.m('ui.setup.target_label')}:</span>
+                <input type="text" data-diffnote-repo-target-rev value={editing.target} onInput={function (e) { setEditing({ path: r.path, target: e.currentTarget.value }); }}
+                  onKeyDown={function (e) { if (e.key === 'Enter') { e.preventDefault(); saveTarget(); } }} />
+                <button type="button" class="diffnote-button diffnote-button--primary" data-diffnote-repo-target-save disabled={busy || !editing.target.trim()} onClick={saveTarget}>{lib.m('ui.repos.target_save')}</button>
+                <button type="button" class="diffnote-button" onClick={function () { setEditing(null); setError(''); }}>{lib.m('ui.confirm_cancel')}</button>
+              </span>
+            : <span class="diffnote-repos__target" data-diffnote-repo-target={r.target}>{lib.mf('ui.repos.target', { target: r.target })}{' '}
+                <button type="button" class="diffnote-mini" data-diffnote-repo-target-change onClick={function () { setEditing({ path: r.path, target: r.target }); setError(''); }}>{lib.m('ui.repos.target_change')}</button></span>}
           {!r.present && <span class="diffnote-repos__away" data-diffnote-repo-away>{lib.m('ui.repos.away')}</span>}
           {removing === r.path
             ? <span class="diffnote-repos__confirm">
@@ -126,6 +152,7 @@ export function ReposPane(props: ReposProps) {
       <RepoHead info={adding.info} />
       <p class="diffnote-screen__note">{lib.m('ui.setup.base_label')}</p>
       <BasePicker row={adding} id="add" preview={preview} onChange={setAdding} />
+      <TargetField row={adding} id="add" preview={preview} onChange={setAdding} />
       <div class="diffnote-reply__buttons">
         <button type="button" class="diffnote-button diffnote-button--primary" data-diffnote-repo-add disabled={busy || !canAdd} onClick={add}>{lib.m('ui.repos.add_button')}</button>
         <button type="button" class="diffnote-button" onClick={function () { setAdding(null); }}>{lib.m('ui.confirm_cancel')}</button>

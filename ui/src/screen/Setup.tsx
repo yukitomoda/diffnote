@@ -73,6 +73,44 @@ export function BasePicker(props: BaseProps) {
   </div>;
 }
 
+/** What a repository is compared up to each time: `HEAD`, or a branch or
+ * commit typed in (asked about as it is typed). */
+export function TargetField(props: BaseProps) {
+  var row = props.row;
+  var latest = useRef(0);
+  var current = useRef(row);
+  current.current = row;
+  var ask = function (target: string) {
+    var n = ++latest.current;
+    var t = target.trim();
+    if (!t || t === 'HEAD') { props.onChange(Object.assign({}, row, { target: target, targetPreview: null, targetError: '', targetChecking: false })); return; }
+    props.onChange(Object.assign({}, row, { target: target, targetPreview: null, targetError: '', targetChecking: true }));
+    props.preview(row.info.path, t).then(function (res) {
+      if (latest.current !== n) return;
+      props.onChange(Object.assign({}, current.current, {
+        targetChecking: false,
+        targetPreview: res.ok ? res.preview : null,
+        targetError: res.ok ? '' : res.error,
+      }));
+    });
+  };
+  var t = row.target.trim();
+  return <label class="diffnote-field diffnote-setup__target" data-diffnote-setup-target={props.id}>
+    <span>{lib.m('ui.setup.target_label')}<small>{lib.m('ui.setup.target_hint')}</small></span>
+    <span class="diffnote-setup__target-row">
+      <input type="text" class="diffnote-setup__rev" data-diffnote-setup-target-rev value={row.target}
+        onInput={function (e) { ask(e.currentTarget.value); }} />
+      <small class={row.targetError ? 'diffnote-error' : ''} data-diffnote-setup-target-preview>
+        {row.targetChecking ? lib.m('ui.setup.checking')
+          : row.targetError ? row.targetError
+          : t === 'HEAD' ? (row.info.branch ? <><code>{row.info.head.short}</code> <span class="diffnote-setup__why">{row.info.branch}</span></> : <code>{row.info.head.short}</code>)
+          : row.targetPreview ? <><code title={row.targetPreview.subject}>{row.targetPreview.short}</code> <span class="diffnote-setup__why">{row.targetPreview.subject}</span></>
+          : ''}
+      </small>
+    </span>
+  </label>;
+}
+
 export function RepoHead(props: { info: SetupRepo }) {
   var info = props.info;
   return <p class="diffnote-setup__repo-head">
@@ -185,6 +223,7 @@ export function SetupScreen(props: { setup: SetupData }) {
             {row.on && <>
               <RepoHead info={row.info} />
               <BasePicker row={row} id={'repo-' + i} preview={preview} onChange={function (changed) { setRepo(i, changed); }} />
+              <TargetField row={row} id={'repo-' + i} preview={preview} onChange={function (changed) { setRepo(i, changed); }} />
             </>}
           </div>;
         })}

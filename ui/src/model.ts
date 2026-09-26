@@ -312,7 +312,7 @@ export interface SetupChoice {
   title?: string;
   snapshot?: 'changed' | 'full';
   base?: string;
-  repos?: { path: string; base: string }[];
+  repos?: { path: string; base: string; target?: string }[];
 }
 
 export interface ViewModel {
@@ -370,6 +370,8 @@ export interface WorkspaceRepo {
   path: string;
   /** The base's id, short. */
   base: string;
+  /** What each `review` compares up to (`HEAD`, or what was named). */
+  target: string;
   /** Whether it is where the review says, from where the page is served. */
   present: boolean;
 }

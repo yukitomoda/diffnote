@@ -170,6 +170,18 @@ pub struct RepoSource {
     pub path: String,
     #[serde(flatten)]
     pub range: GitSource,
+    /// What each `review` compares up to, resolved then: a branch or a
+    /// commit; `None` is `HEAD`. Kept with the review's repositories (see
+    /// `Settings::repos`), and recorded with each revision as it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+}
+
+impl RepoSource {
+    /// What is compared up to, as it is asked for.
+    pub fn target(&self) -> &str {
+        self.target.as_deref().unwrap_or("HEAD")
+    }
 }
 
 /// A review of several git repositories at once (a project made of them):

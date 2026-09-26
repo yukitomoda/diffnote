@@ -269,6 +269,7 @@ mod tests {
                 head: "h".into(),
                 spec: "b..h".into(),
             },
+            target: None,
         };
         let mut loaded = crate::bundle::empty();
         assert_eq!(repos_of(&loaded), None, "nothing yet");
