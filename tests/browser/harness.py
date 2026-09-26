@@ -327,8 +327,31 @@ class Browser:
     def click(self, selector):
         self.js("document.querySelector(%s).click()" % json.dumps(selector))
 
+    def _rect(self, selector):
+        return self.js("(function(){var r=document.querySelector(%s).getBoundingClientRect(); return [r.x, r.y, r.width, r.height]})()" % json.dumps(selector))
+
+    def bring(self, selector):
+        """Scrolls an element into the middle of the view, and waits for it
+        to stop moving.
+
+        Scrolling it into view scrolls every scrollable box it is in, and
+        the page settles over a moment (the two sides of a side-by-side
+        diff follow each other's scroll): a point measured straight away
+        is where the element was, not where it is.
+        """
+        self.js("document.querySelector(%s).scrollIntoView({block:'center'})" % json.dumps(selector))
+        last = self._rect(selector)
+        for _ in range(20):
+            time.sleep(0.03)
+            now = self._rect(selector)
+            if now == last:
+                return now
+            last = now
+        return last
+
     def center(self, selector):
-        return self.js("(function(){var e=document.querySelector(%s); e.scrollIntoView({block:'center'}); var r=e.getBoundingClientRect(); return [r.x+r.width/2, r.y+r.height/2]})()" % json.dumps(selector))
+        x, y, w, h = self.bring(selector)
+        return [x + w / 2, y + h / 2]
 
     def start_of(self, selector):
         """Just inside the left edge of an element, level with its middle.
@@ -338,8 +361,8 @@ class Browser:
         column width or font. This is the beginning of the line wherever it
         is drawn.
         """
-        return self.js("(function(){var e=document.querySelector(%s); e.scrollIntoView({block:'center'});"
-                       " var r=e.getBoundingClientRect(); return [r.x+2, r.y+r.height/2]})()" % json.dumps(selector))
+        x, y, w, h = self.bring(selector)
+        return [x + 2, y + h / 2]
 
     def press(self, selector, modifiers=0):
         x, y = self.center(selector)
@@ -377,13 +400,20 @@ class Browser:
         `from_start` presses at the beginning of `first` rather than in the
         middle of it, for a drag that is meant to take whole lines.
         """
-        if from_start:
-            x, y = self.start_of(first)
-            self.cdp.mouse("mouseMoved", x, y)
-            self.cdp.mouse("mousePressed", x, y, 1)
-        else:
-            x, y = self.press(first)
-        x2, y2 = self.center(last)
+        # Both ends are brought into view before anything is pressed: a
+        # scroll once the button is down moves the page under a press
+        # already made, and the drag then covers other lines than it was
+        # told to (a page that has room to scroll -- the footer gave it
+        # some -- did just that).
+        self.bring(first)
+        lx, ly, lw, lh = self._rect(last)
+        if ly < 0 or ly + lh > self.js("innerHeight"):
+            self.bring(last)
+        point = lambda selector, start: (lambda r: [r[0] + 2, r[1] + r[3] / 2] if start else [r[0] + r[2] / 2, r[1] + r[3] / 2])(self._rect(selector))
+        x, y = point(first, from_start)
+        self.cdp.mouse("mouseMoved", x, y)
+        self.cdp.mouse("mousePressed", x, y, 1)
+        x2, y2 = point(last, False)
         # A few pixels first: a browser starts selecting once the pointer has
         # moved past its own threshold, and a first step of an eighth of the
         # way is a jump, not a movement.
@@ -392,7 +422,7 @@ class Browser:
         for i in range(1, steps + 1):
             self.cdp.mouse("mouseMoved", round(x + (x2 - x) * i / steps),
                            round(y + (y2 - y) * i / steps), 1)
-        self.release(last)
+        self.cdp.mouse("mouseReleased", x2, y2, 0)
 
     def hover(self, selector):
         x, y = self.center(selector)

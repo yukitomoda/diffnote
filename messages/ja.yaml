@@ -1056,6 +1056,10 @@ ui:
     search_label: |-
       ファイルを検索
 
+  footer:
+    github: |-
+      diffnote on GitHub
+
   topbar:
     pull_note_loading: |-
       取り込んでいます…

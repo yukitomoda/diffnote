@@ -279,6 +279,7 @@ function App(props: { model: ViewModel }) {
     </ActionsContext.Provider>
     </LinksContext.Provider>
     </div>
+    <footer class="diffnote-footer"><a href="https://github.com/yukitomoda/diffnote" target="_blank" rel="noopener noreferrer">{lib.m('ui.footer.github')}</a></footer>
   </article>;
 }
 

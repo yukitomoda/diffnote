@@ -27,6 +27,11 @@ export function useCompose(actions: Actions | null, current: string): Compose | 
   var error = _e[0];
   var setError = _e[1];
   var dragging = useRef(false);
+  // Whether the pointer has moved since it was pressed. Pressing takes the
+  // box away (it comes back once the choice is made), and the lines under
+  // the pointer move up with it: a row the pointer then happens to be over
+  // is not one it was dragged to.
+  var moved = useRef(false);
 
   var close = function () {
     setSel(null);
@@ -44,10 +49,13 @@ export function useCompose(actions: Actions | null, current: string): Compose | 
     var key = function (e: KeyboardEvent) {
       if (e.key === 'Escape') close();
     };
+    var move = function () { moved.current = true; };
     document.addEventListener('mouseup', up);
+    document.addEventListener('mousemove', move);
     document.addEventListener('keydown', key);
     return function () {
       document.removeEventListener('mouseup', up);
+      document.removeEventListener('mousemove', move);
       document.removeEventListener('keydown', key);
     };
   }, []);
@@ -72,13 +80,14 @@ export function useCompose(actions: Actions | null, current: string): Compose | 
             : { rev: rev, path: path, side: side, anchor: idx, to: idx };
         });
         dragging.current = true;
+        moved.current = false;
         document.body.classList.add('is-selecting');
         setSelecting(true);
       },
       // `at` is the row's index, or a function of the side that gives the
       // index of the row that side has there (or nothing).
       extend: function (at) {
-        if (!dragging.current) return;
+        if (!dragging.current || !moved.current) return;
         setSel(function (cur) {
           if (!cur) return cur;
           var idx = typeof at === 'function' ? at(cur.side) : at;
