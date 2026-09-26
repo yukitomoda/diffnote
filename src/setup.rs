@@ -36,8 +36,8 @@ pub struct Name {
     pub branch: Option<String>,
 }
 
-/// One commit a repository can be reviewed from, with what choosing it
-/// would review (up to `HEAD`).
+/// One commit a repository can be reviewed from, and how many files its
+/// tree holds (what is compared from it is said apart: see [`Span`]).
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct Candidate {
     /// What to ask for it by (`HEAD`, a branch, or the id itself).
@@ -46,7 +46,6 @@ pub struct Candidate {
     pub commit: CommitRef,
     /// The names it goes by (one commit may be all three).
     pub names: Vec<Name>,
-    pub commits: usize,
     pub files: usize,
 }
 
@@ -101,13 +100,21 @@ pub struct Description {
     pub snapshot: Option<SnapshotMode>,
 }
 
-/// What choosing a commit as a base would review.
+/// A commit typed in as a base: which, and how many files its tree holds.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct Preview {
     #[serde(flatten)]
     pub commit: CommitRef,
-    pub commits: usize,
     pub files: usize,
+}
+
+/// What comparing from a base up to a target takes in: the target, and
+/// how many commits.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct Span {
+    #[serde(flatten)]
+    pub commit: CommitRef,
+    pub commits: usize,
 }
 
 /// A directory's files as they are.
@@ -230,6 +237,12 @@ impl Setup {
         preview_of(&self.repo_of(path)?, rev)
     }
 
+    /// What reviewing `path` (empty: the one repository) from `base` up to
+    /// `target` would take in.
+    pub fn span(&self, path: &str, base: &str, target: &str) -> Result<Span> {
+        span_of(&self.repo_of(path)?, base, target)
+    }
+
     /// A repository named by hand (one deeper than they are looked for).
     pub fn repo_at(&self, path: &str) -> Result<RepoInfo> {
         repo_info(&self.project, path)
@@ -321,11 +334,19 @@ pub fn repo_info(project: &Path, path: &str) -> Result<RepoInfo> {
 /// What reviewing `repo` from `rev` (up to its `HEAD`) would take in.
 pub fn preview_of(repo: &Repo, rev: &str) -> Result<Preview> {
     let id = repo.commit_id(rev)?;
-    let head = repo.commit_id("HEAD")?;
     Ok(Preview {
         commit: commit_ref(repo, &id)?,
-        commits: repo.count_commits(&id, &head)?,
-        files: repo.count_changed_files(&id, &head)?,
+        files: repo.ls_tree(&id)?.len(),
+    })
+}
+
+/// What comparing `repo` from `base` up to `target` takes in.
+pub fn span_of(repo: &Repo, base: &str, target: &str) -> Result<Span> {
+    let from = repo.commit_id(base)?;
+    let to = repo.commit_id(target)?;
+    Ok(Span {
+        commit: commit_ref(repo, &to)?,
+        commits: repo.count_commits(&from, &to)?,
     })
 }
 
@@ -420,10 +441,7 @@ fn describe_repo(repo: &Repo, path: String) -> std::result::Result<RepoInfo, Str
         }
         candidates.push(Candidate {
             commit: describe(&id)?,
-            commits: repo.count_commits(&id, &head).map_err(|e| e.to_string())?,
-            files: repo
-                .count_changed_files(&id, &head)
-                .map_err(|e| e.to_string())?,
+            files: repo.ls_tree(&id).map_err(|e| e.to_string())?.len(),
             names: vec![name],
             rev,
         });
@@ -551,10 +569,10 @@ mod tests {
         assert_eq!(git.candidates[0].rev, c1);
         assert_eq!(names(&git.candidates[0]), ["fork", "branch"]);
         assert_eq!(git.candidates[0].names[0].branch.as_deref(), Some("main"));
-        assert_eq!((git.candidates[0].commits, git.candidates[0].files), (1, 2));
+        assert_eq!(git.candidates[0].files, 1, "c1's tree: a.txt");
         assert_eq!(git.candidates[1].rev, "HEAD");
         assert_eq!(names(&git.candidates[1]), ["head"]);
-        assert_eq!((git.candidates[1].commits, git.candidates[1].files), (0, 0));
+        assert_eq!(git.candidates[1].files, 2, "c2's tree: a.txt, b.txt");
     }
 
     #[test]
@@ -603,10 +621,11 @@ mod tests {
         let (c1, _) = repo_on_a_branch(&dir.path().join("mobile-app"));
         let setup = setup_in(dir.path());
         let p = setup.preview("mobile-app", "main").unwrap();
-        assert_eq!(
-            (p.commit.id.as_str(), p.commits, p.files),
-            (c1.as_str(), 1, 2)
-        );
+        assert_eq!((p.commit.id.as_str(), p.files), (c1.as_str(), 1));
+        let s = setup.span("mobile-app", "main", "HEAD").unwrap();
+        assert_eq!((s.commit.subject.as_str(), s.commits), ("c2", 1));
+        assert_eq!(setup.span("mobile-app", "main", "main").unwrap().commits, 0);
+        assert!(setup.span("mobile-app", "main", "no-such").is_err());
         assert!(setup.preview("mobile-app", "no-such").is_err());
         assert!(
             setup.preview("", "main").is_err(),

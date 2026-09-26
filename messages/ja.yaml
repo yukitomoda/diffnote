@@ -1100,9 +1100,13 @@ ui:
     checking: |-
       確認しています…
     preview: |-
-      {commits} コミット、{files} ファイル
-    preview_none: |-
+      {files} ファイル
+    span: |-
+      {commits} コミット
+    span_none: |-
       差分なし
+    to_head: |-
+      HEAD まで {span}
     on_branch: |-
       ブランチ: {branch}
     detached: |-

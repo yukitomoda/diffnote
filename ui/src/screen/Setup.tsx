@@ -5,8 +5,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { server } from '../transport.ts';
-import type { Answer, ReviewKind, SetupData, SetupPreview, SetupRaw, SetupRepo } from '../model.ts';
-import { MANUAL, candidateLabel, choiceOf, previewText, problemOf, stateOf, withRepo } from './setup.ts';
+import type { Answer, ReviewKind, SetupData, SetupPreview, SetupRaw, SetupRepo, SetupSpan } from '../model.ts';
+import { MANUAL, baseOf, candidateLabel, choiceOf, previewText, problemOf, spanText, stateOf, withRepo } from './setup.ts';
 import type { RepoRow, SetupState } from './setup.ts';
 
 const KINDS: ReviewKind[] = ['git', 'workspace', 'raw'];
@@ -15,9 +15,14 @@ interface BaseProps {
   row: RepoRow;
   /** The row's name in the page (a review of several has many). */
   id: string;
-  /** Asks the server what reviewing the repository from a commit typed in would take in. */
+  /** Asks the server about a commit typed in as a base. */
   preview(path: string, rev: string): Promise<Answer<{ preview: SetupPreview }>>;
-  onChange(row: RepoRow): void;
+  /** Asks the server what comparing from a base up to a target takes in. */
+  span(path: string, base: string, target: string): Promise<Answer<{ span: SetupSpan }>>;
+  /** Changes some of the row. A change is merged into the row as it is
+   * then, not written over it: an answer from the server and a keystroke
+   * can land in either order without one losing the other. */
+  patch(part: Partial<RepoRow>): void;
 }
 
 // Which commit a repository is reviewed from: one of the ones offered, or
@@ -28,44 +33,41 @@ export function BasePicker(props: BaseProps) {
   var ask = function (rev: string) {
     var n = ++latest.current;
     // (Typing there is choosing it.)
-    if (!rev.trim()) { props.onChange(Object.assign({}, row, { base: MANUAL, manual: rev, preview: null, error: '', checking: false })); return; }
-    props.onChange(Object.assign({}, row, { base: MANUAL, manual: rev, preview: null, error: '', checking: true }));
+    if (!rev.trim()) { props.patch({ base: MANUAL, manual: rev, preview: null, error: '', checking: false }); return; }
+    props.patch({ base: MANUAL, manual: rev, preview: null, error: '', checking: true });
     props.preview(row.info.path, rev.trim())
       .then(function (res) {
         if (latest.current !== n) return;
-        // (What the row is by now, not what it was when the question was asked.)
-        props.onChange(Object.assign({}, current.current, {
+        props.patch({
           checking: false,
           preview: res.ok ? res.preview : null,
           error: res.ok ? '' : res.error,
-        }));
+        });
       });
   };
-  var current = useRef(row);
-  current.current = row;
   return <div class="diffnote-setup__base" data-diffnote-setup-base={props.id}>
     {row.info.candidates.map(function (c) {
       // The commit, then why it is offered and what it would review, faint;
       // what the commit says is the tooltip.
       return <label key={c.rev} class="diffnote-setup__option">
         <input type="radio" name={'base-' + props.id} value={c.rev} checked={row.base === c.rev}
-          onChange={function () { props.onChange(Object.assign({}, row, { base: c.rev })); }} />
+          onChange={function () { props.patch({ base: c.rev }); }} />
         <span><code title={c.subject}>{c.short}</code>
-          <span class="diffnote-setup__why">{candidateLabel(c)}{lib.m('ui.setup.why_join')}{previewText(c.commits, c.files)}</span></span>
+          <span class="diffnote-setup__why">{candidateLabel(c)}{lib.m('ui.setup.why_join')}{previewText(c.files)}</span></span>
       </label>;
     })}
     <label class="diffnote-setup__option">
       <input type="radio" name={'base-' + props.id} value={MANUAL} checked={row.base === MANUAL}
-        onChange={function () { props.onChange(Object.assign({}, row, { base: MANUAL })); }} />
+        onChange={function () { props.patch({ base: MANUAL }); }} />
       <span>{lib.m('ui.setup.manual')}
         <input type="text" class="diffnote-setup__rev" data-diffnote-setup-rev placeholder={lib.m('ui.setup.manual_placeholder')} value={row.manual}
-          onFocus={function () { if (row.base !== MANUAL) props.onChange(Object.assign({}, row, { base: MANUAL })); }}
+          onFocus={function () { if (row.base !== MANUAL) props.patch({ base: MANUAL }); }}
           onInput={function (e) { ask(e.currentTarget.value); }} />
         {row.base === MANUAL && <small data-diffnote-setup-preview class={row.error ? 'diffnote-error' : ''}>
           {row.checking ? lib.m('ui.setup.checking')
             : row.error ? row.error
             : row.preview ? <><code title={row.preview.subject}>{row.preview.short}</code>
-                <span class="diffnote-setup__why">{row.preview.subject}{lib.m('ui.setup.why_join')}{previewText(row.preview.commits, row.preview.files)}</span></>
+                <span class="diffnote-setup__why">{row.preview.subject}{lib.m('ui.setup.why_join')}{previewText(row.preview.files)}</span></>
             : ''}
         </small>}
       </span>
@@ -73,42 +75,66 @@ export function BasePicker(props: BaseProps) {
   </div>;
 }
 
+/** Keeps a row told what comparing from its base up to its target takes
+ * in, asking the server again whenever either changes. */
+function useSpan(row: RepoRow, span: BaseProps['span'], patch: BaseProps['patch']) {
+  var latest = useRef(0);
+  var base = baseOf(row);
+  var t = row.target.trim();
+  // (A base typed in is asked about only once the server has said it is one.)
+  var ready = !!base && (row.base !== MANUAL || !!row.preview);
+  useEffect(function () {
+    var n = ++latest.current;
+    if (!ready || !t) {
+      patch({ targetPreview: null, targetError: '', targetChecking: false });
+      return;
+    }
+    patch({ targetPreview: null, targetError: '', targetChecking: true });
+    span(row.info.path, base, t).then(function (res) {
+      if (latest.current !== n) return;
+      patch({
+        targetChecking: false,
+        targetPreview: res.ok ? res.span : null,
+        targetError: res.ok ? '' : res.error,
+      });
+    });
+  }, [ready, base, t]);
+}
+
+/** What comparing takes in, said beside the target. */
+function SpanSaid(props: { row: RepoRow }) {
+  var row = props.row;
+  if (row.targetChecking) return <>{lib.m('ui.setup.checking')}</>;
+  if (row.targetError) return <>{row.targetError}</>;
+  if (!row.targetPreview) return null;
+  return <><code title={row.targetPreview.subject}>{row.targetPreview.short}</code>
+    <span class="diffnote-setup__why">{row.targetPreview.subject}{lib.m('ui.setup.why_join')}{spanText(row.targetPreview.commits)}</span></>;
+}
+
 /** What a repository is compared up to each time: `HEAD`, or a branch or
- * commit typed in (asked about as it is typed). */
+ * commit typed in, with what comparing from the base up to it takes in. */
 export function TargetField(props: BaseProps) {
   var row = props.row;
-  var latest = useRef(0);
-  var current = useRef(row);
-  current.current = row;
-  var ask = function (target: string) {
-    var n = ++latest.current;
-    var t = target.trim();
-    if (!t || t === 'HEAD') { props.onChange(Object.assign({}, row, { target: target, targetPreview: null, targetError: '', targetChecking: false })); return; }
-    props.onChange(Object.assign({}, row, { target: target, targetPreview: null, targetError: '', targetChecking: true }));
-    props.preview(row.info.path, t).then(function (res) {
-      if (latest.current !== n) return;
-      props.onChange(Object.assign({}, current.current, {
-        targetChecking: false,
-        targetPreview: res.ok ? res.preview : null,
-        targetError: res.ok ? '' : res.error,
-      }));
-    });
-  };
-  var t = row.target.trim();
+  useSpan(row, props.span, props.patch);
   return <label class="diffnote-field diffnote-setup__target" data-diffnote-setup-target={props.id}>
     <span>{lib.m('ui.setup.target_label')}<small>{lib.m('ui.setup.target_hint')}</small></span>
     <span class="diffnote-setup__target-row">
       <input type="text" class="diffnote-setup__rev" data-diffnote-setup-target-rev value={row.target}
-        onInput={function (e) { ask(e.currentTarget.value); }} />
-      <small class={row.targetError ? 'diffnote-error' : ''} data-diffnote-setup-target-preview>
-        {row.targetChecking ? lib.m('ui.setup.checking')
-          : row.targetError ? row.targetError
-          : t === 'HEAD' ? (row.info.branch ? <><code>{row.info.head.short}</code> <span class="diffnote-setup__why">{row.info.branch}</span></> : <code>{row.info.head.short}</code>)
-          : row.targetPreview ? <><code title={row.targetPreview.subject}>{row.targetPreview.short}</code> <span class="diffnote-setup__why">{row.targetPreview.subject}</span></>
-          : ''}
-      </small>
+        onInput={function (e) { props.patch({ target: e.currentTarget.value }); }} />
+      <small class={row.targetError ? 'diffnote-error' : ''} data-diffnote-setup-target-preview><SpanSaid row={row} /></small>
     </span>
   </label>;
+}
+
+/** For a review of one repository, which is compared up to `HEAD`: what
+ * comparing from the base chosen takes in. */
+export function ToHead(props: BaseProps) {
+  var row = props.row;
+  useSpan(row, props.span, props.patch);
+  if (!row.targetPreview && !row.targetChecking && !row.targetError) return null;
+  return <p class="diffnote-setup__to-head" data-diffnote-setup-to-head>
+    {row.targetPreview ? lib.mf('ui.setup.to_head', { span: spanText(row.targetPreview.commits) }) : <SpanSaid row={row} />}
+  </p>;
 }
 
 export function RepoHead(props: { info: SetupRepo }) {
@@ -156,6 +182,17 @@ export function SetupScreen(props: { setup: SetupData }) {
       return Object.assign({}, cur, { repos: repos });
     });
   };
+  // A part of a row, merged into the row as it is then (see `patch`).
+  var patchRepo = function (i: number, part: Partial<RepoRow>) {
+    setState(function (cur) {
+      var repos = cur.repos.slice();
+      repos[i] = Object.assign({}, repos[i], part);
+      return Object.assign({}, cur, { repos: repos });
+    });
+  };
+  var patchGit = function (part: Partial<RepoRow>) {
+    setState(function (cur) { return cur.git ? Object.assign({}, cur, { git: Object.assign({}, cur.git, part) }) : cur; });
+  };
   var add = function () {
     var path = addPath.trim();
     if (!path) return;
@@ -184,6 +221,9 @@ export function SetupScreen(props: { setup: SetupData }) {
   var preview = function (path: string, rev: string) {
     return server().get<{ preview: SetupPreview }>('/api/setup/preview?repo=' + encodeURIComponent(path) + '&rev=' + encodeURIComponent(rev));
   };
+  var span = function (path: string, base: string, target: string) {
+    return server().get<{ span: SetupSpan }>('/api/setup/preview?repo=' + encodeURIComponent(path) + '&rev=' + encodeURIComponent(target) + '&from=' + encodeURIComponent(base));
+  };
   return <main class="diffnote-screen diffnote-setup" data-diffnote-setup>
     <form class="diffnote-screen__form diffnote-setup__form" noValidate onSubmit={submit}>
       <h2>{lib.m('ui.setup.heading')}</h2>
@@ -204,7 +244,8 @@ export function SetupScreen(props: { setup: SetupData }) {
       {state.kind === 'git' && state.git && <fieldset class="diffnote-setup__group" data-diffnote-setup-git>
         <legend>{lib.m('ui.setup.base_label')}</legend>
         <RepoHead info={state.git.info} />
-        <BasePicker row={state.git} id="git" preview={preview} onChange={function (row) { change({ git: row }); }} />
+        <BasePicker row={state.git} id="git" preview={preview} span={span} patch={patchGit} />
+        <ToHead row={state.git} id="git" preview={preview} span={span} patch={patchGit} />
       </fieldset>}
 
       {state.kind === 'workspace' && <fieldset class="diffnote-setup__group" data-diffnote-setup-repos>
@@ -222,8 +263,8 @@ export function SetupScreen(props: { setup: SetupData }) {
             </label>
             {row.on && <>
               <RepoHead info={row.info} />
-              <BasePicker row={row} id={'repo-' + i} preview={preview} onChange={function (changed) { setRepo(i, changed); }} />
-              <TargetField row={row} id={'repo-' + i} preview={preview} onChange={function (changed) { setRepo(i, changed); }} />
+              <BasePicker row={row} id={'repo-' + i} preview={preview} span={span} patch={function (part) { patchRepo(i, part); }} />
+              <TargetField row={row} id={'repo-' + i} preview={preview} span={span} patch={function (part) { patchRepo(i, part); }} />
             </>}
           </div>;
         })}

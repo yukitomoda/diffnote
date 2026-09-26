@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { server } from '../transport.ts';
-import type { SetupRepo, ViewModel } from '../model.ts';
+import type { SetupPreview, SetupRepo, SetupSpan, ViewModel } from '../model.ts';
 import type { ChangeAnswer } from '../state/contexts.ts';
 import { BasePicker, RepoHead, TargetField } from './Setup.tsx';
 import { baseOf, rowOf, targetSettled } from './setup.ts';
@@ -60,6 +60,10 @@ export function ReposPane(props: ReposProps) {
   var _ae = useState('');
   var addError = _ae[0];
   var setAddError = _ae[1];
+  // A part of the row being added, merged into it as it is then.
+  var patchAdding = function (part: Partial<RepoRow>) {
+    setAdding(function (cur) { return cur ? Object.assign({}, cur, part) : cur; });
+  };
   var lookUp = function (at: string) {
     at = at.trim();
     if (!at) return;
@@ -71,7 +75,10 @@ export function ReposPane(props: ReposProps) {
     });
   };
   var preview = function (repoPath: string, rev: string) {
-    return server().get<{ preview: import('../model.ts').SetupPreview }>('/api/repos/preview?path=' + encodeURIComponent(repoPath) + '&rev=' + encodeURIComponent(rev));
+    return server().get<{ preview: SetupPreview }>('/api/repos/preview?path=' + encodeURIComponent(repoPath) + '&rev=' + encodeURIComponent(rev));
+  };
+  var span = function (repoPath: string, base: string, target: string) {
+    return server().get<{ span: SetupSpan }>('/api/repos/preview?path=' + encodeURIComponent(repoPath) + '&rev=' + encodeURIComponent(target) + '&from=' + encodeURIComponent(base));
   };
   var remove = function (at: string) {
     setBusy(true);
@@ -151,8 +158,8 @@ export function ReposPane(props: ReposProps) {
       <p><code>{adding.info.path}</code></p>
       <RepoHead info={adding.info} />
       <p class="diffnote-screen__note">{lib.m('ui.setup.base_label')}</p>
-      <BasePicker row={adding} id="add" preview={preview} onChange={setAdding} />
-      <TargetField row={adding} id="add" preview={preview} onChange={setAdding} />
+      <BasePicker row={adding} id="add" preview={preview} span={span} patch={patchAdding} />
+      <TargetField row={adding} id="add" preview={preview} span={span} patch={patchAdding} />
       <div class="diffnote-reply__buttons">
         <button type="button" class="diffnote-button diffnote-button--primary" data-diffnote-repo-add disabled={busy || !canAdd} onClick={add}>{lib.m('ui.repos.add_button')}</button>
         <button type="button" class="diffnote-button" onClick={function () { setAdding(null); }}>{lib.m('ui.confirm_cancel')}</button>

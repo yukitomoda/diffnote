@@ -1483,6 +1483,13 @@ impl Server {
         };
         let repo = query_param(query, "repo").unwrap_or_default();
         let rev = query_param(query, "rev").unwrap_or_default();
+        // With `from`, the commits from there up to `rev` (a target).
+        if let Some(from) = query_param(query, "from") {
+            return match setup.span(&repo, from.trim(), rev.trim()) {
+                Ok(span) => Self::answer("span", span),
+                Err(e) => Reply::error(400, &e.to_string()),
+            };
+        }
         match setup.preview(&repo, rev.trim()) {
             Ok(preview) => Self::answer("preview", preview),
             Err(e) => Reply::error(400, &e.to_string()),
@@ -1594,6 +1601,12 @@ impl Server {
             Ok(info) => self.git.repo(&info.path),
             Err(e) => return Reply::error(400, &e.to_string()),
         };
+        if let Some(from) = query_param(query, "from") {
+            return match crate::setup::span_of(&repo, from.trim(), rev.trim()) {
+                Ok(span) => Self::answer("span", span),
+                Err(e) => Reply::error(400, &e.to_string()),
+            };
+        }
         match crate::setup::preview_of(&repo, rev.trim()) {
             Ok(preview) => Self::answer("preview", preview),
             Err(e) => Reply::error(400, &e.to_string()),

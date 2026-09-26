@@ -2387,28 +2387,37 @@ fn the_first_screen_in_a_repository_offers_the_bases_and_makes_the_review_chosen
     assert_eq!(candidates[0]["names"][0]["kind"], "fork");
     assert_eq!(candidates[0]["names"][0]["branch"], "main");
     assert_eq!(
-        (
-            candidates[0]["commits"].as_u64(),
-            candidates[0]["files"].as_u64()
-        ),
-        (Some(1), Some(1))
+        candidates[0]["files"].as_u64(),
+        Some(2),
+        "its tree: calc.txt, README.md"
+    );
+    assert!(
+        candidates[0].get("commits").is_none(),
+        "what is compared is said apart"
     );
     assert_eq!(candidates[1]["rev"], "main");
     assert_eq!(candidates[2]["rev"], "HEAD");
-    assert_eq!(
-        (
-            candidates[2]["commits"].as_u64(),
-            candidates[2]["files"].as_u64()
-        ),
-        (Some(0), Some(0))
-    );
+    assert_eq!(candidates[2]["files"].as_u64(), Some(2));
     // A commit typed in is looked at before it is chosen.
     let preview = served.api("/api/setup/preview?repo=&rev=c1", None)["preview"].clone();
     assert_eq!(preview["subject"], "c1");
+    assert_eq!(preview["files"].as_u64(), Some(2));
+    // What comparing from a base up to a target takes in: c1..HEAD is c2 and f1.
+    let span = served.api("/api/setup/preview?repo=&rev=HEAD&from=c1", None)["span"].clone();
+    assert_eq!(span["subject"], "f1");
+    assert_eq!(span["commits"].as_u64(), Some(2));
     assert_eq!(
-        (preview["commits"].as_u64(), preview["files"].as_u64()),
-        (Some(2), Some(2))
+        served.api("/api/setup/preview?repo=&rev=c1&from=c1", None)["span"]["commits"].as_u64(),
+        Some(0)
     );
+    let (status, _, body) = http(
+        served.port,
+        "GET",
+        "/api/setup/preview?rev=HEAD&from=nope",
+        &served.cookie,
+        None,
+    );
+    assert_eq!(status, 400, "{body}");
     let (status, _, body) = http(
         served.port,
         "GET",
@@ -2701,6 +2710,13 @@ fn repositories_are_added_and_taken_out_on_the_page_from_the_next_revision_on() 
     let preview =
         served.api("/api/repos/preview?path=a/b/c/d/e/deep&rev=HEAD", None)["preview"].clone();
     assert_eq!(preview["subject"], "d1");
+    assert_eq!(preview["files"].as_u64(), Some(1));
+    let span = served.api(
+        "/api/repos/preview?path=backend/repo-a&rev=HEAD&from=main",
+        None,
+    )["span"]
+        .clone();
+    assert_eq!(span["commits"].as_u64(), Some(1));
     // Taken out: gone from the next revision, kept in the one so far.
     let answer = served.api(
         "/api/repos/remove",

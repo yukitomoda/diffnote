@@ -1,22 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { lib } from '../lib.ts';
-import { MANUAL, baseOf, candidateLabel, choiceOf, previewText, problemOf, rowOf, stateOf, targetSettled, withRepo } from '../screen/setup.ts';
+import { MANUAL, baseOf, candidateLabel, choiceOf, previewText, problemOf, rowOf, spanText, stateOf, targetSettled, withRepo } from '../screen/setup.ts';
 
 lib.setMessages({
   'ui.setup.name_fork': '{branch} からの分岐点',
   'ui.setup.name_branch': '{branch} の先端',
   'ui.setup.name_head': 'HEAD',
   'ui.setup.name_join': ' / ',
-  'ui.setup.preview': '{commits} コミット、{files} ファイル',
-  'ui.setup.preview_none': '差分なし',
+  'ui.setup.preview': '{files} ファイル',
+  'ui.setup.span': '{commits} コミット',
+  'ui.setup.span_none': '差分なし',
 });
 
 const commit = (id, subject) => ({ id, short: id.slice(0, 7), subject });
-const candidate = (rev, names, commits, files) => Object.assign(commit(rev.padEnd(40, '0'), 's-' + rev), { rev, names, commits, files });
+const candidate = (rev, names, files) => Object.assign(commit(rev.padEnd(40, '0'), 's-' + rev), { rev, names, files });
 const repo = (path, candidates) => ({ path, branch: 'feature', head: commit('head'.padEnd(40, 'f'), 'c9'), default_branch: 'main', candidates });
-const fork = candidate('abc1234', [{ kind: 'fork', branch: 'main' }], 3, 5);
-const tip = candidate('main', [{ kind: 'branch', branch: 'main' }, { kind: 'head' }], 0, 0);
+const fork = candidate('abc1234', [{ kind: 'fork', branch: 'main' }], 5);
+const tip = candidate('main', [{ kind: 'branch', branch: 'main' }, { kind: 'head' }], 7);
 const setup = (kind, git, repos) => ({
   review: 'r.diffnote', kind, kinds: { git: { ok: !!git }, workspace: { ok: repos.length > 0 }, raw: { ok: true } },
   git, repos, depth: 4,
@@ -25,8 +26,9 @@ const setup = (kind, git, repos) => ({
 test('a candidate is named by every name it goes by, and what it would review is said', () => {
   assert.equal(candidateLabel(fork), 'main からの分岐点');
   assert.equal(candidateLabel(tip), 'main の先端 / HEAD');
-  assert.equal(previewText(3, 5), '3 コミット、5 ファイル');
-  assert.equal(previewText(0, 0), '差分なし');
+  assert.equal(previewText(5), '5 ファイル');
+  assert.equal(spanText(3), '3 コミット');
+  assert.equal(spanText(0), '差分なし');
 });
 
 test('the screen starts from what the directory looks like, with the best base chosen', () => {

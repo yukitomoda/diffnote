@@ -2,7 +2,7 @@
 // that what a repository is offered and what is sent can be tested without
 // a page.
 import { lib } from '../lib.ts';
-import type { ReviewKind, SetupCandidate, SetupChoice, SetupData, SetupPreview, SetupRepo } from '../model.ts';
+import type { ReviewKind, SetupCandidate, SetupChoice, SetupData, SetupPreview, SetupRepo, SetupSpan } from '../model.ts';
 
 /** The value of the base choice that stands for a commit typed in by hand. */
 export const MANUAL = 'manual';
@@ -23,7 +23,7 @@ export interface RepoRow {
   /** What is compared up to, each time: `HEAD`, or a branch or commit
    * typed in, and what the server said of that. */
   target: string;
-  targetPreview: SetupPreview | null;
+  targetPreview: SetupSpan | null;
   targetError: string;
   targetChecking: boolean;
 }
@@ -81,10 +81,15 @@ export function candidateLabel(c: SetupCandidate): string {
   }).join(lib.m('ui.setup.name_join'));
 }
 
-/** What choosing a base would review, said in a line. */
-export function previewText(commits: number, files: number): string {
-  if (commits === 0 && files === 0) return lib.m('ui.setup.preview_none');
-  return lib.mf('ui.setup.preview', { commits: String(commits), files: String(files) });
+/** How many files a commit's tree holds, said in a line. */
+export function previewText(files: number): string {
+  return lib.mf('ui.setup.preview', { files: String(files) });
+}
+
+/** How many commits a comparison takes in, said in a line. */
+export function spanText(commits: number): string {
+  if (commits === 0) return lib.m('ui.setup.span_none');
+  return lib.mf('ui.setup.span', { commits: String(commits) });
 }
 
 /** The commit a row's base names: the candidate's, or what was typed. */

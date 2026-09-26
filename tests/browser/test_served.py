@@ -2523,14 +2523,16 @@ class FirstScreen(ServedCase):
         # On main at its tip: one commit offered, by all its names, with nothing to review yet.
         self.assertEqual(b.count("[data-diffnote-setup-base=git] input[type=radio]"), 2, "the one offered, and 指定する")
         self.assertIn("main からの分岐点 / main の先端 / HEAD", b.text("[data-diffnote-setup-base=git]"))
-        self.assertIn("差分なし", b.text("[data-diffnote-setup-base=git] input:checked + span"))
+        self.assertIn("1 ファイル", b.text("[data-diffnote-setup-base=git] input:checked + span"), "the tree at that commit")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-setup-to-head]') && document.querySelector('[data-diffnote-setup-to-head]').textContent.includes('差分なし')"))
         # Typed in: what it would review is said as it is typed, and a
         # mistake is said too.
         b.set_value("[data-diffnote-setup-rev]", "nope")
         self.assertTrue(b.wait("document.querySelector('[data-diffnote-setup-preview]').textContent.includes('nope')"))
         self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
         b.set_value("[data-diffnote-setup-rev]", "c1")
-        self.assertTrue(b.wait("document.querySelector('[data-diffnote-setup-preview]').textContent.includes('1 コミット、1 ファイル')"))
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-setup-preview]').textContent.includes('1 ファイル')"))
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-setup-to-head]').textContent.includes('HEAD まで 1 コミット')"))
         self.assertFalse(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
         b.set_value("[data-diffnote-setup-title]", "最初の画面から")
         b.click("[data-diffnote-setup-snapshot=full]")
@@ -2554,7 +2556,8 @@ class FirstScreen(ServedCase):
         self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
         b.click("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-include]")
         self.assertTrue(b.wait_exists("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-base]"))
-        self.assertIn("1 コミット、1 ファイル", b.text("[data-diffnote-setup-repo='backend/repo-a'] input:checked + span"))
+        self.assertIn("1 ファイル", b.text("[data-diffnote-setup-repo='backend/repo-a'] input:checked + span"))
+        self.assertTrue(b.wait("document.querySelector(\"[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-target-preview]\").textContent.includes('1 コミット')"), "up to HEAD, from the base chosen")
         # What it is compared up to: HEAD unless named; named, it is looked up.
         self.assertEqual(b.value("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-target-rev]"), "HEAD")
         b.set_value("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-target-rev]", "nowhere")
@@ -2617,7 +2620,8 @@ class Repositories(ServedCase):
         self.assertTrue(b.wait_exists("[data-diffnote-repo-pick='mobile-app']"))
         b.click("[data-diffnote-repo-pick='mobile-app']")
         self.assertTrue(b.wait_exists("[data-diffnote-repo-adding='mobile-app']"))
-        self.assertIn("1 コミット、2 ファイル", b.text("[data-diffnote-repo-adding='mobile-app'] input:checked + span"))
+        self.assertIn("2 ファイル", b.text("[data-diffnote-repo-adding='mobile-app'] input:checked + span"))
+        self.assertTrue(b.wait("document.querySelector(\"[data-diffnote-repo-adding='mobile-app'] [data-diffnote-setup-target-preview]\").textContent.includes('1 コミット')"))
         b.click("[data-diffnote-repo-add]")
         self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-repo]').length === 2"))
         self.assertEqual(rows(), ["backend/repo-a", "mobile-app"])

@@ -262,7 +262,7 @@ export interface SetupCandidate extends SetupCommit {
   /** The names it goes by: where the work left the default branch, that
    * branch's tip, or `HEAD` itself. */
   names: { kind: 'fork' | 'branch' | 'head'; branch?: string }[];
-  commits: number;
+  /** How many files its tree holds. */
   files: number;
 }
 
@@ -295,10 +295,15 @@ export interface SetupData {
   snapshot?: 'changed' | 'full';
 }
 
-/** What choosing a commit would review. */
+/** A commit typed in as a base, and how many files its tree holds. */
 export interface SetupPreview extends SetupCommit {
-  commits: number;
   files: number;
+}
+
+/** What comparing from a base up to a target takes in: the target, and
+ * how many commits. */
+export interface SetupSpan extends SetupCommit {
+  commits: number;
 }
 
 export interface SetupRaw {
