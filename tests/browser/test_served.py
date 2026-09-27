@@ -2742,6 +2742,16 @@ class Pictures(ServedCase):
         b.click(f"{logo} img")
         self.assertTrue(b.wait_exists(".diffnote-zoom"))
         b.escape()
+        # Asked for, the two are compared pixel by pixel: the blocks that
+        # differ are marked on both (here everything, in one block of 8).
+        self.assertFalse(b.exists(f"{logo} [data-diffnote-pixel-marks]"), "not until asked: it is work")
+        self.assertFalse(b.exists(f"{fresh} [data-diffnote-pixel-diff]"), "nothing to compare a picture that came with")
+        b.click(f"{logo} [data-diffnote-pixel-diff]")
+        self.assertTrue(b.wait(f"document.querySelector(\"{logo} [data-diffnote-pixel-note]\").textContent === '1 ブロックが異なります(面積の 100%)'"))
+        self.assertEqual(b.count(f"{logo} [data-diffnote-pixel-marks]"), 2)
+        self.assertEqual(b.js(f"[...document.querySelectorAll(\"{logo} [data-diffnote-pixel-marks]\")].map(function (c) {{ return c.width + 'x' + c.height; }})"), ["4x3", "6x2"], "each over its own picture")
+        b.click(f"{logo} [data-diffnote-pixel-diff]")
+        self.assertTrue(b.wait(f"!document.querySelector(\"{logo} [data-diffnote-pixel-marks]\")"))
         # An exported page carries the pictures in itself.
         html = os.path.join(self.fresh("export"), "pictures.html")
         assert harness.diffnote("export", "-f", master, html).returncode == 0

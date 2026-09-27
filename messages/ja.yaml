@@ -1009,6 +1009,20 @@ ui:
       この画像は書き出した HTML に含まれていません
     image_size: |-
       {w} × {h}
+    pixel_diff_on: |-
+      ピクセルの違いを表示
+    pixel_diff_off: |-
+      違いの表示を消す
+    pixel_block_label: |-
+      ブロック
+    pixel_threshold_label: |-
+      しきい値
+    pixel_working: |-
+      比較しています…
+    pixel_same: |-
+      違いはありません
+    pixel_differs: |-
+      {n} ブロックが異なります(面積の {percent}%)
     viewed_title: |-
       確認済みにして、たたみます
     menu_label: |-
