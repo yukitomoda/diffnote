@@ -198,7 +198,7 @@ export function ImageDiff(props: { file: FileData }) {
           <span>{threshold}</span>
         </label>
         <label class="diffnote-imagediff__option">{lib.m('ui.file.pixel_opacity_label')}
-          <input type="range" min="10" max="100" step="5" value={String(opacity)} data-diffnote-pixel-opacity
+          <input type="range" min="0" max="100" step="5" value={String(opacity)} data-diffnote-pixel-opacity
             onInput={function (e) { setOpacity(Number(e.currentTarget.value)); }} />
           <span>{opacity}%</span>
         </label>
