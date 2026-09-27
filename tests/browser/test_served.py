@@ -917,7 +917,9 @@ def project_of_repos(root, name):
         harness.git(repo, "checkout", "-q", "-b", "feature")
         for f in files:
             harness.write(repo, f, "one\ntwo\n")
-        harness.git(repo, "commit", "-q", "-am", "c2 " + d)
+        # (mobile-app's work is the later, so the timeline's order is known.)
+        when = "2026-09-21T10:00:00+09:00" if d == "mobile-app" else "2026-09-20T10:00:00+09:00"
+        harness.git(repo, "commit", "-q", "-am", "c2 " + d, "--date", when)
     return project
 
 
@@ -960,7 +962,8 @@ class Workspace(ServedCase):
         b.click("[data-diffnote-screen-nav='timeline']")
         self.assertTrue(b.wait_exists("[data-diffnote-timeline-pane]"))
         groups = b.js("[...document.querySelectorAll('[data-diffnote-commit-repo]')].map(function (g) { return [g.dataset.diffnoteCommitRepo, g.querySelectorAll('[data-diffnote-commit]').length]; })")
-        self.assertEqual(groups, [["backend/repo-a", 1], ["mobile-app", 1]])
+        # (Newest first, so the repository whose commit came last leads.)
+        self.assertEqual(groups, [["mobile-app", 1], ["backend/repo-a", 1]])
 
 
 class FoldAll(ServedCase):

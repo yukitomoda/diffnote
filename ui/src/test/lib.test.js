@@ -145,7 +145,7 @@ test('a time is shown as date and minutes in the local zone', () => {
 test('a revision is stamped with the day and the time, in the local zone', () => {
   // No year: a tab is narrow, and a review is read over days, not years.
   const d = new Date(2026, 8, 20, 9, 5);
-  assert.equal(lib.formatRecorded(d.toISOString()), '9/20 09:05');
+  assert.equal(lib.formatRecorded(d.toISOString()), '09/20 09:05');
   assert.equal(lib.formatRecorded(new Date(2026, 10, 3, 18, 42).toISOString()), '11/03 18:42');
   assert.equal(lib.formatRecorded('not a time'), 'not a time');
 });

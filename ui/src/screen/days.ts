@@ -13,8 +13,6 @@ export interface Day {
 /**
  * The days, and within each the runs to draw -- newest first, which is not
  * the order the model carries them in (that is the log's own, oldest first).
- * The commits a revision brought stay in the order they were made: the
- * stream is read from the top, a series of commits from its beginning.
  */
 export function daysOf(entries: TimelineEntry[]): Day[] {
   var days: Day[] = [];
@@ -40,11 +38,15 @@ export function daysOf(entries: TimelineEntry[]): Day[] {
 }
 
 /** The commits a revision brought, by repository (a review of several),
- * in the order the repositories first come: one group, unnamed, for a
+ * newest first as the rest of the timeline is (the model carries them as
+ * they were made; two made at the same moment keep that order), the
+ * repositories in the order their newest come: one group, unnamed, for a
  * review of one. */
 export function byRepo(commits: TimelineCommit[]): { repo: string | null; commits: TimelineCommit[] }[] {
   var groups: { repo: string | null; commits: TimelineCommit[] }[] = [];
-  commits.forEach(function (c) {
+  var newestFirst = commits.map(function (c, i) { return { c: c, i: i, t: Date.parse(c.at) || 0 }; });
+  newestFirst.sort(function (x, y) { return y.t - x.t || y.i - x.i; });
+  newestFirst.map(function (e) { return e.c; }).forEach(function (c) {
     var repo = c.repo || null;
     var group = groups.filter(function (g) { return g.repo === repo; })[0];
     if (!group) {

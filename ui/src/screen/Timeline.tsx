@@ -47,7 +47,8 @@ function Commit(props: { commit: TimelineCommit }) {
         <code class="diffnote-timeline__id">{c.short}</code>
         <span class="diffnote-timeline__subject">{c.subject}</span>
         <span class="diffnote-timeline__who">{c.author}</span>
-        <span class="diffnote-timeline__at">{lib.formatClock(c.at)}</span>
+        {/* The day too: a revision's commits are from other days than it was recorded on. */}
+        <span class="diffnote-timeline__at">{lib.formatRecorded(c.at)}</span>
         <Icon name="down" class="diffnote-timeline__chevron" />
       </summary>
       {more && <div class="diffnote-timeline__message">

@@ -40,11 +40,21 @@ test('no entries, no days', () => {
   assert.deepEqual(daysOf([]), []);
 });
 
-test('the commits a revision brought are grouped by repository, as they come', () => {
+test('the commits a revision brought are grouped by repository, newest first', () => {
   const c = (id, repo) => Object.assign({ id, short: id, author: 'a', at: '', subject: id }, repo ? { repo } : {});
+  // By when they were made, where that is known: the model's order is per
+  // repository, not across them.
+  const dated = (id, repo, day) => Object.assign(c(id, repo), { at: at(day, 12) });
+  assert.deepEqual(
+    byRepo([dated('a1', 'a', 5), dated('a2', 'a', 7), dated('m1', 'm', 6)]).map((g) => [g.repo, g.commits.map((x) => x.id)]),
+    [['a', ['a2', 'a1']], ['m', ['m1']]]);
+  assert.deepEqual(
+    byRepo([dated('a1', 'a', 5), dated('m1', 'm', 6), dated('a2', 'a', 4)]).map((g) => [g.repo, g.commits.map((x) => x.id)]),
+    [['m', ['m1']], ['a', ['a1', 'a2']]]);
   assert.deepEqual(
     byRepo([c('1', 'mobile-app'), c('2', 'backend/repo-a'), c('3', 'mobile-app')]).map((g) => [g.repo, g.commits.map((x) => x.id)]),
-    [['mobile-app', ['1', '3']], ['backend/repo-a', ['2']]]);
-  assert.deepEqual(byRepo([c('1'), c('2')]).map((g) => [g.repo, g.commits.length]), [[null, 2]], 'a review of one: one unnamed group');
+    [['mobile-app', ['3', '1']], ['backend/repo-a', ['2']]],
+    'the model has them as they were made; the timeline reads newest first');
+  assert.deepEqual(byRepo([c('1'), c('2')]).map((g) => [g.repo, g.commits.map((x) => x.id)]), [[null, ['2', '1']]], 'a review of one: one unnamed group');
   assert.deepEqual(byRepo([]), []);
 });

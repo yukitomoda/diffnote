@@ -474,14 +474,14 @@ lib.splitTrailers = function (body) {
   };
 };
 
-// When a revision was recorded, as a tab says it: the month and day, and
-// the time of day. The year is left out -- a review is read over days, not
-// years, and the tabs are narrow.
+// When a revision was recorded, as a tab says it, and when a commit was
+// made: `MM/DD HH:MM`. The year is left out -- a review is read over days,
+// not years, and the tabs are narrow.
 lib.formatRecorded = function (iso) {
   var d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
   var two = function (n: number) { return (n < 10 ? '0' : '') + n; };
-  return (d.getMonth() + 1) + '/' + two(d.getDate()) + ' ' + two(d.getHours()) + ':' + two(d.getMinutes());
+  return two(d.getMonth() + 1) + '/' + two(d.getDate()) + ' ' + two(d.getHours()) + ':' + two(d.getMinutes());
 };
 
 lib.formatTime = function (iso) {
