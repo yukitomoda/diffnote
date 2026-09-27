@@ -137,6 +137,20 @@ export function ReposPane(props: ReposProps) {
     {error && <p class="diffnote-error" role="alert">{error}</p>}
 
     <h3>{lib.m('ui.repos.add_heading')}</h3>
+    {/* The one being added comes first, above the list it was picked from
+        (which can be long): the form is then where the eye is. */}
+    {adding && <div class="diffnote-repos__adding" data-diffnote-repo-adding={adding.info.path} ref={function (el) { if (el && !el.dataset.shown) { el.dataset.shown = '1'; el.scrollIntoView({ block: 'nearest' }); } }}>
+      <p><code>{adding.info.path}</code></p>
+      <RepoHead info={adding.info} />
+      <p class="diffnote-screen__note">{lib.m('ui.setup.base_label')}</p>
+      <BasePicker row={adding} id="add" preview={preview} span={span} patch={patchAdding} />
+      <TargetField row={adding} id="add" preview={preview} span={span} patch={patchAdding} />
+      <div class="diffnote-reply__buttons">
+        <button type="button" class="diffnote-button diffnote-button--primary" data-diffnote-repo-add disabled={busy || !canAdd} onClick={add}>{lib.m('ui.repos.add_button')}</button>
+        <button type="button" class="diffnote-button" onClick={function () { setAdding(null); }}>{lib.m('ui.confirm_cancel')}</button>
+      </div>
+    </div>}
+    {addError && <p class="diffnote-error" data-diffnote-repo-add-error role="alert">{addError}</p>}
     {found && found.length > 0 && <ul class="diffnote-repos diffnote-repos--found" data-diffnote-repos-found>
       {found.map(function (p) {
         return <li key={p} class="diffnote-repos__item">
@@ -154,17 +168,5 @@ export function ReposPane(props: ReposProps) {
         <button type="button" class="diffnote-button" data-diffnote-repo-look disabled={!path.trim()} onClick={function () { lookUp(path); }}>{lib.m('ui.repos.look_button')}</button>
       </span>
     </label>
-    {adding && <div class="diffnote-repos__adding" data-diffnote-repo-adding={adding.info.path}>
-      <p><code>{adding.info.path}</code></p>
-      <RepoHead info={adding.info} />
-      <p class="diffnote-screen__note">{lib.m('ui.setup.base_label')}</p>
-      <BasePicker row={adding} id="add" preview={preview} span={span} patch={patchAdding} />
-      <TargetField row={adding} id="add" preview={preview} span={span} patch={patchAdding} />
-      <div class="diffnote-reply__buttons">
-        <button type="button" class="diffnote-button diffnote-button--primary" data-diffnote-repo-add disabled={busy || !canAdd} onClick={add}>{lib.m('ui.repos.add_button')}</button>
-        <button type="button" class="diffnote-button" onClick={function () { setAdding(null); }}>{lib.m('ui.confirm_cancel')}</button>
-      </div>
-    </div>}
-    {addError && <p class="diffnote-error" data-diffnote-repo-add-error role="alert">{addError}</p>}
   </div>;
 }
