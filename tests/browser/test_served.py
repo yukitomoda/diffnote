@@ -2716,6 +2716,8 @@ class Pictures(ServedCase):
             f.write(harness.png(6, 2, (30, 30, 200)))
         with open(os.path.join(repo, "new.png"), "wb") as f:
             f.write(harness.png(2, 2, (30, 200, 30)))
+        with open(os.path.join(repo, "app.ico"), "wb") as f:
+            f.write(harness.ico(harness.png(16, 16, (200, 200, 30)), 16))
         harness.git(repo, "add", "-A")
         harness.git(repo, "commit", "-q", "-m", "c2")
         harness.git(repo, "tag", "c2")
@@ -2738,9 +2740,11 @@ class Pictures(ServedCase):
         self.assertEqual(sizes, ["old:4x3", "new:6x2"])
         self.assertTrue(b.wait(f"document.querySelector(\"{logo} figcaption small\").textContent === '4 × 3'"))
         self.assertTrue(b.js(f"document.querySelector(\"{logo} img\").src.includes('/api/blobs/sha256:')"))
-        # A picture that came has only its new side.
+        # A picture that came has only its new side. An icon is a picture too.
         fresh = f"{CUR} section.diffnote-file[data-diffnote-file='new.png']"
         self.assertEqual(b.js(f"[...document.querySelectorAll(\"{fresh} [data-diffnote-image-side]\")].map(function (s) {{ return s.dataset.diffnoteImageSide; }})"), ["new"])
+        icon = f"{CUR} section.diffnote-file[data-diffnote-file='app.ico']"
+        self.assertTrue(b.wait(f"!!document.querySelector(\"{icon} img\") && document.querySelector(\"{icon} img\").complete && document.querySelector(\"{icon} img\").naturalWidth === 16"))
         # Pressing one shows it by itself, as a picture in a comment is.
         b.click(f"{logo} img")
         self.assertTrue(b.wait_exists(".diffnote-zoom"))

@@ -432,7 +432,7 @@ image:
   empty: |-
     画像が空です
   unsupported_format: |-
-    この形式の画像は添付できません(PNG、JPEG、GIF、WebP、SVG)
+    この形式の画像は添付できません(PNG、JPEG、GIF、WebP、AVIF、ICO、SVG)
   svg_runs: |-
     スクリプトなどを含む SVG は添付できません
   svg_external_ref: |-

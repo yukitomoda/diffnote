@@ -92,6 +92,14 @@ pub fn kind(bytes: &[u8]) -> Result<&'static str, String> {
     if bytes.len() > 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
         return Ok("image/webp");
     }
+    // AVIF: an ISO media file whose brand is AVIF (a still, or a sequence).
+    if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" && matches!(&bytes[8..12], b"avif" | b"avis") {
+        return Ok("image/avif");
+    }
+    // ICO: a reserved zero word, then type 1 (a cursor is 2), then a count.
+    if bytes.len() >= 6 && bytes[..4] == [0, 0, 1, 0] && (bytes[4] != 0 || bytes[5] != 0) {
+        return Ok("image/x-icon");
+    }
     if let Ok(text) = std::str::from_utf8(bytes) {
         let lower = text.trim_start_matches('\u{feff}').to_ascii_lowercase();
         if lower.contains("<svg") {
@@ -181,6 +189,21 @@ mod tests {
         assert_eq!(kind(&[0xff, 0xd8, 0xff, 0xe0, 0]), Ok("image/jpeg"));
         assert_eq!(kind(b"GIF89a....."), Ok("image/gif"));
         assert_eq!(kind(b"RIFF\x10\0\0\0WEBPVP8 "), Ok("image/webp"));
+        assert_eq!(
+            kind(b"\0\0\0\x1cftypavif\0\0\0\0avifmif1"),
+            Ok("image/avif")
+        );
+        assert_eq!(kind(b"\0\0\0\x1cftypavis\0\0\0\0"), Ok("image/avif"));
+        assert!(kind(b"\0\0\0\x1cftypisom\0\0\0\0").is_err(), "a video, say");
+        assert_eq!(kind(b"\0\0\x01\0\x01\0\x10\x10"), Ok("image/x-icon"));
+        assert!(
+            kind(b"\0\0\x02\0\x01\0").is_err(),
+            "a cursor is not a picture"
+        );
+        assert!(
+            kind(b"\0\0\x01\0\0\0").is_err(),
+            "an icon with nothing in it"
+        );
         assert!(kind(b"").is_err());
         assert!(kind(b"just text").is_err());
         assert!(kind(b"<html><body>x</body></html>").is_err());

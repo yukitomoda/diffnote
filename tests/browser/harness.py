@@ -745,6 +745,15 @@ def png(width, height, rgb):
             + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
+def ico(png_bytes, size):
+    """An ICO holding one PNG, as Windows icons may (the browser tests keep
+    no binary files)."""
+    import struct
+    head = struct.pack("<HHH", 0, 1, 1)
+    entry = struct.pack("<BBBBHHII", size, size, 0, 0, 1, 32, len(png_bytes), 6 + 16)
+    return head + entry + png_bytes
+
+
 def git(repo, *args):
     out = subprocess.run(["git", "-C", repo, "-c", "user.email=t@example.com", "-c", "user.name=T", *args],
                          capture_output=True, text=True, encoding="utf-8")
