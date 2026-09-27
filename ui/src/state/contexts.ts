@@ -167,7 +167,7 @@ export interface RevisionCtx {
   byId: Record<string, ThreadData>;
   hideResolved: boolean;
   ignoreSpace: boolean;
-  layout: 'unified' | 'split';
+  layout: 'unified' | 'split' | 'new';
   /** What this revision is being compared against, where that is not the base. */
   compare?: number | null;
 }

@@ -23,7 +23,7 @@ interface RevisionProps {
   index: number;
   hideResolved: boolean;
   ignoreSpace: boolean;
-  layout: 'unified' | 'split';
+  layout: 'unified' | 'split' | 'new';
   compose: Compose | null;
   /** Shown against an earlier revision instead of the base, and what to say of it. */
   override?: RevisionData | null;

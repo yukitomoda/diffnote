@@ -333,7 +333,7 @@ class SideBySide(BrowserCase):
 
     def test_the_switch_offers_two_layouts(self):
         b = self.b
-        self.assertEqual(b.count(".diffnote-layout__button"), 2)
+        self.assertEqual(b.count(".diffnote-layout__button"), 3)
         self.assertEqual(b.text(".diffnote-layout__button.is-current"), "統合")
         self.assertEqual(b.count("table.diffnote-diff--split"), 0)
         self.assertGreater(b.count("table.diffnote-diff tr[class*='diffnote-line--']"), 0)

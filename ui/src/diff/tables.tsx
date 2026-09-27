@@ -51,6 +51,9 @@ export interface TableProps {
   file: PageFile & { opened?: boolean };
   ctx: RevisionCtx;
   expand: Expand;
+  /** The new side alone: removed lines fold to a line saying how many,
+   * which carries the cards of the threads on them. */
+  newOnly?: boolean;
 }
 
 export function DiffTable(props: TableProps) {
@@ -75,7 +78,23 @@ export function DiffTable(props: TableProps) {
   var hi_ = sel ? Math.max(sel.anchor, sel.to) : -1;
   var flatIndex = 0;
   var out: preact.ComponentChildren[] = [];
+  // Of the new side alone, a run of removed lines is one faint line saying
+  // how many, with the cards of the threads on them under it.
+  var removed: { n: number; ids: string[]; cards: string[] } | null = null;
+  var foldRemoved = function (key: string) {
+    if (!removed) return;
+    var run = removed;
+    removed = null;
+    out.push(<tr class="diffnote-removed-run" key={'r' + key} data-diffnote-removed={run.n} data-diffnote-threads={run.ids.length ? run.ids.join(' ') : undefined}>
+      <td class="diffnote-line__gutter-old"></td><td class="diffnote-line__gutter-new"></td>
+      <td class="diffnote-line__content">{lib.mf('ui.removed_run', { n: String(run.n) })}</td>
+    </tr>);
+    run.cards.forEach(function (id) {
+      out.push(<tr class="diffnote-thread-row" key={'c' + id}><td colspan={3}><Card rev={ctx.rev} thread={ctx.byId[id]} placement={ctx.placements[id]} /></td></tr>);
+    });
+  };
   file.hunks.forEach(function (hunk, hi) {
+    foldRemoved('h' + hi);
     if (hunk.marker) {
       out.push(<tr class="diffnote-expand-row" key={'g' + hi}><td colspan={3}><Expander marker={hunk.marker} expand={props.expand} /></td></tr>);
       return;
@@ -83,6 +102,15 @@ export function DiffTable(props: TableProps) {
     if (!file.opened && !hunk.quiet) out.push(<tr class="diffnote-hunk-header" key={'h' + hi}><td colspan={3}>{hunk.header}</td></tr>);
     hunk.rows.forEach(function (row, ri) {
       var idx = flatIndex++;
+      if (props.newOnly && row.k === 'd') {
+        var rowIds = lib.covering(cover, row);
+        if (!removed) removed = { n: 0, ids: [], cards: [] };
+        removed.n += 1;
+        rowIds.forEach(function (id) { if (removed!.ids.indexOf(id) < 0) removed!.ids.push(id); });
+        lib.cardsOfRow(after, row).forEach(function (id) { removed!.cards.push(id); });
+        return;
+      }
+      foldRemoved(hi + ':' + ri);
       var picked = idx >= lo && idx <= hi_;
       var ids = lib.covering(cover, row);
       var resolvedOnly = ctx.hideResolved && ids.length > 0 && ids.every(function (id) { return ctx.byId[id].resolved; });
@@ -125,7 +153,8 @@ export function DiffTable(props: TableProps) {
       });
     });
   });
-  return <div class="diffnote-diff-scroll"><table class="diffnote-diff" data-diffnote-file={file.path}><tbody>{out}</tbody></table></div>;
+  foldRemoved('end');
+  return <div class="diffnote-diff-scroll"><table class={'diffnote-diff' + (props.newOnly ? ' diffnote-diff--new' : '')} data-diffnote-file={file.path}><tbody>{out}</tbody></table></div>;
 }
 
 // The same rows side by side: what a file was on the left, what it is on the

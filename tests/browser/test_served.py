@@ -2640,3 +2640,56 @@ class Repositories(ServedCase):
         b.click("[data-diffnote-screen-open]")
         self.assertTrue(b.wait_exists("[data-diffnote-screen-nav=settings]"))
         self.assertFalse(b.exists("[data-diffnote-screen-nav=repos]"))
+
+
+class NewSideOnly(ServedCase):
+    """「新しい側のみ」: the file as it is now, with what was added marked and
+    what was taken out folded to a line that keeps the threads on it."""
+
+    def test_removed_lines_fold_to_a_line_and_their_threads_stay(self):
+        repo = os.path.join(self.root, "newside")
+        os.makedirs(repo)
+        harness.git(repo, "init", "-q", "-b", "main")
+        harness.write(repo, "a.txt", "one\ntwo\nthree\nfour\n")
+        harness.git(repo, "add", "-A")
+        harness.git(repo, "commit", "-q", "-m", "c1")
+        harness.git(repo, "tag", "c1")
+        harness.write(repo, "a.txt", "one\nthree\nfour\nfive\n")
+        harness.git(repo, "commit", "-q", "-am", "c2")
+        harness.git(repo, "tag", "c2")
+        master = os.path.join(self.root, "newside.diffnote")
+        harness.review_of(repo, master, "c2", base="c1", comments=[
+            {"file": "a.txt", "line": "five", "body": "five を足した"},
+        ])
+        self.serve(master)
+        b = self.b
+        table = f"{CUR} table[data-diffnote-file='a.txt']"
+        # A thread on the removed line (taken out, nothing in its place),
+        # written where the old side can be pressed.
+        b.click_at(f"{table} tr[data-diffnote-old='2'] .diffnote-line__gutter-old")
+        self.write(".diffnote-compose textarea", "消した two について")
+        b.js("document.querySelector('.diffnote-compose').requestSubmit()")
+        self.assertTrue(b.wait_count(f"{table} .diffnote-thread", 2))
+        b.click("[data-diffnote-view-menu]")
+        self.assertEqual(b.text(".diffnote-layout__button[data-diffnote-layout=new]"), "新しい側のみ")
+        b.click("[data-diffnote-layout=new]")
+        self.assertTrue(b.wait_exists(f"{table}.diffnote-diff--new"))
+        # No removed rows, no old numbers; the run of two folds to one line.
+        self.assertEqual(b.count(f"{table} tr.diffnote-line--removed"), 0)
+        self.assertEqual(b.js(f"getComputedStyle(document.querySelector(\"{table} .diffnote-line__gutter-new\").previousElementSibling).display"), "none")
+        runs = b.js(f"[...document.querySelectorAll(\"{table} tr.diffnote-removed-run\")].map(function (r) {{ return r.dataset.diffnoteRemoved + ':' + r.textContent.trim(); }})")
+        self.assertEqual(runs, ["1:1 行を削除"])
+        self.assertEqual(b.js(f"[...document.querySelectorAll(\"{table} tr[data-diffnote-new]\")].map(function (r) {{ return r.dataset.diffnoteNew + (r.classList.contains('diffnote-line--added') ? '+' : ''); }})"),
+                         ["1", "2", "3", "4+"])
+        # Both threads are still there: the one on the removed line under the fold.
+        self.assertEqual(b.count(f"{table} .diffnote-thread"), 2)
+        self.assertEqual(b.js(f"document.querySelector(\"{table} tr.diffnote-removed-run\").nextElementSibling.className"), "diffnote-thread-row")
+        # A comment on a new line is written as ever.
+        b.click_at(f"{table} tr[data-diffnote-new='4'] .diffnote-line__gutter-new")
+        self.assertEqual(b.text(".diffnote-compose__where"), "a.txt:4")
+        self.write(".diffnote-compose textarea", "five も")
+        b.js("document.querySelector('.diffnote-compose').requestSubmit()")
+        self.assertTrue(b.wait_count(f"{table} .diffnote-thread", 3))
+        self.assertIn("a.txt:4", recorded(self.review))
+        # Kept, as the other layouts are.
+        self.assertEqual(self.server.api("/api/model")["model"]["user_settings"]["view"]["layout"], "new")

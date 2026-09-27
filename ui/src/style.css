@@ -229,6 +229,9 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 .diffnote-line--removed { background: var(--diffnote-color-removed-bg); }
 .diffnote-line--removed .diffnote-line__gutter-old, .diffnote-line--removed .diffnote-line__gutter-new { background: var(--diffnote-color-removed-gutter); }
 .diffnote-line--removed .diffnote-line__content::before { content: "-"; }
+/* The new side alone: no old numbers, and a run of removed lines is a faint line. */
+.diffnote-diff--new .diffnote-line__gutter-old { display: none; }
+.diffnote-removed-run td { padding: 1px 12px; font-family: var(--diffnote-font); font-size: 11.5px; color: var(--diffnote-color-muted); background: var(--diffnote-color-gutter); border-top: 1px dashed var(--diffnote-color-border); border-bottom: 1px dashed var(--diffnote-color-border); }
 .diffnote-hunk-header td { background: var(--diffnote-color-hunk-bg); color: var(--diffnote-color-hunk-fg); padding: 2px 12px; }
 
 /* Lines a comment is about: colored bars at the left edge... */

@@ -53,8 +53,8 @@ export function ViewMenu(props: ViewMenuProps) {
     <div class="diffnote-viewmenu__panel" hidden={!open} data-diffnote-view-panel>
       {wide && <div class="diffnote-layout" role="group" aria-label={lib.m('ui.viewmenu.layout_label')}>
         <p class="diffnote-viewmenu__head">{lib.m('ui.viewmenu.layout_label')}</p>
-        {(['unified', 'split'] as const).map(function (kind) {
-          var label = kind === 'unified' ? lib.m('ui.viewmenu.layout_unified') : lib.m('ui.viewmenu.layout_split');
+        {(['unified', 'split', 'new'] as const).map(function (kind) {
+          var label = lib.m('ui.viewmenu.layout_' + kind);
           return <button type="button" key={kind} class={'diffnote-viewmenu__item diffnote-layout__button' + (kind === layout ? ' is-current' : '')} data-diffnote-layout={kind}
             onClick={function () { setLayout(kind); }}><span class="diffnote-viewmenu__mark">{kind === layout && <Icon name="check" />}</span>{label}</button>;
         })}

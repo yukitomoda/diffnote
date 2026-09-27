@@ -2945,6 +2945,15 @@ mod tests {
             );
             assert_eq!(json(&f.post("/api/view", r#"{"wrap":false}"#))["ok"], true);
             assert_eq!(
+                json(&f.post("/api/view", r#"{"layout":"new"}"#))["ok"],
+                true
+            );
+            assert_eq!(view()["layout"], "new", "the new side alone is a layout");
+            assert_eq!(
+                json(&f.post("/api/view", r#"{"layout":"split"}"#))["ok"],
+                true
+            );
+            assert_eq!(
                 view(),
                 serde_json::json!({ "layout": "split", "wrap": false }),
                 "each choice is added to the others"

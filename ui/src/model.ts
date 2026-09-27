@@ -177,7 +177,7 @@ export interface UserSettings {
 
 /** How the page is shown, as the reader last chose it. */
 export interface ViewPrefs {
-  layout?: 'unified' | 'split';
+  layout?: 'unified' | 'split' | 'new';
   hide_resolved?: boolean;
   wrap?: boolean;
   sync_scroll?: boolean;

@@ -142,7 +142,7 @@ export function File(props: FileProps) {
       {/* `view` is the diff with the left-out places folded in, so a file with
           nothing in the diff (one that was only renamed) is a table of one
           place to open. */}
-      {opened && view.hunks.length > 0 && (ctx.layout === 'split' ? <SplitTable file={view} ctx={ctx} expand={expand} /> : <DiffTable file={view} ctx={ctx} expand={expand} />)}
+      {opened && view.hunks.length > 0 && (ctx.layout === 'split' ? <SplitTable file={view} ctx={ctx} expand={expand} /> : <DiffTable file={view} ctx={ctx} expand={expand} newOnly={ctx.layout === 'new'} />)}
       {opened && file.opened && file.next && <div class="diffnote-more-row"><button type="button" class="diffnote-button" data-diffnote-more
         onClick={function (e) { var button = e.currentTarget; button.disabled = true; files!.more(ctx.rev, file.path).then(function () { button.disabled = false; }); }}>{lib.mf('ui.file.more_button', { from: String(file.next), total: String(file.total) })}</button></div>}
       {unplaced.length > 0 && <section class="diffnote-outdated">

@@ -61,6 +61,9 @@ impl ViewPrefs {
 pub enum Layout {
     Unified,
     Split,
+    /// The new side alone: what the file is now, with what was added
+    /// marked and what was taken out folded to a line.
+    New,
 }
 
 /// 設定ファイルの場所。決めようがなければ(`HOME` が読めないなど)`None`。
@@ -153,6 +156,17 @@ mod tests {
             save(&config).unwrap();
             assert_eq!(load(), config);
             assert!(dir.join("config.json").exists());
+            let text = std::fs::read_to_string(dir.join("config.json")).unwrap();
+            assert!(text.contains("\"split\""), "{text}");
+            let new_side = UserConfig {
+                view: ViewPrefs {
+                    layout: Some(Layout::New),
+                    ..Default::default()
+                },
+                ..config
+            };
+            save(&new_side).unwrap();
+            assert_eq!(load().view.layout, Some(Layout::New));
         });
     }
 

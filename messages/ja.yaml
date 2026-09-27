@@ -801,6 +801,8 @@ ui:
       統合
     layout_split: |-
       横並び
+    layout_new: |-
+      新しい側のみ
     ignore_space_title: |-
       空白だけの違いを、変更なしとして表示します
     ignore_space_label: |-
@@ -1056,6 +1058,8 @@ ui:
     search_label: |-
       ファイルを検索
 
+  removed_run: |-
+    {n} 行を削除
   footer:
     github: |-
       diffnote on GitHub

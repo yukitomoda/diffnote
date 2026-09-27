@@ -21,7 +21,8 @@ function remember(key: string, value: string, pref: ViewPrefs): void {
   if (transport) transport.post('/api/view', pref).catch(function () { /* kept for this page only */ });
 }
 
-export type Layout = 'unified' | 'split';
+/** One column of both sides, two columns, or the new side alone. */
+export type Layout = 'unified' | 'split' | 'new';
 
 /**
  * The layout that was chosen, which is not always the one shown: two columns
@@ -33,7 +34,7 @@ export const chosenLayout = atom<Layout>('unified');
 export const wide = atom(false);
 
 export const layout = computed([chosenLayout, wide], (chosen, room): Layout =>
-  chosen === 'split' && room ? 'split' : 'unified',
+  chosen === 'split' && !room ? 'unified' : chosen,
 );
 
 export const hideResolved = atom(true);
@@ -128,7 +129,7 @@ export function startView(reviewIgnoresWhitespace: boolean, saved?: ViewPrefs): 
   const stored = pref.layout || kept('diffnote-layout', '');
   wide.set(window.matchMedia('(min-width: 900px)').matches);
   chosenLayout.set(
-    stored === 'split' || stored === 'unified'
+    stored === 'split' || stored === 'unified' || stored === 'new'
       ? stored
       : window.matchMedia('(min-width: 1200px)').matches
         ? 'split'
