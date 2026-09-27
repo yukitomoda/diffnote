@@ -1010,9 +1010,11 @@ ui:
     image_size: |-
       {w} × {h}
     pixel_diff_on: |-
-      ピクセルの違いを表示
+      差分の詳細を表示
     pixel_diff_off: |-
-      違いの表示を消す
+      差分の詳細を消す
+    pixel_opacity_label: |-
+      濃さ
     pixel_block_label: |-
       ブロック
     pixel_threshold_label: |-

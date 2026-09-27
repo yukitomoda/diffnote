@@ -2,6 +2,7 @@
 // asked, where the two differ, pixel by pixel, marked on both.
 import { h } from 'preact';
 import { useContext, useEffect, useRef, useState } from 'preact/hooks';
+import { interact } from '../interact.ts';
 import { lib } from '../lib.ts';
 import { LinksContext } from '../state/contexts.ts';
 import type { FileData } from '../model.ts';
@@ -31,6 +32,17 @@ interface Marks {
   /** The extent the blocks are over (the larger of the two). */
   width: number;
   height: number;
+  /** How strongly the blocks are painted (0..1). */
+  opacity: number;
+}
+
+/** Paints the blocks that differ over a picture's own extent. */
+function paintMarks(ctx: CanvasRenderingContext2D, width: number, height: number, marks: Marks) {
+  ctx.fillStyle = 'rgba(255, 210, 0, ' + marks.opacity + ')';
+  marks.blocks.forEach(function (k) {
+    if (k.x >= width || k.y >= height) return;
+    ctx.fillRect(k.x, k.y, Math.min(k.w, width - k.x), Math.min(k.h, height - k.y));
+  });
 }
 
 interface SideProps {
@@ -60,16 +72,30 @@ function Side(props: SideProps) {
     var ctx = el.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, el.width, el.height);
-    if (!props.marks) return;
-    var paint = ctx;
-    var w = el.width;
-    var hh = el.height;
-    paint.fillStyle = 'rgba(255, 210, 0, 0.55)';
-    props.marks.blocks.forEach(function (k) {
-      if (k.x >= w || k.y >= hh) return;
-      paint.fillRect(k.x, k.y, Math.min(k.w, w - k.x), Math.min(k.h, hh - k.y));
-    });
+    if (props.marks) paintMarks(ctx, el.width, el.height, props.marks);
   }, [props.marks, dims]);
+  // Shown by itself with the marks on it, while they are there: the
+  // picture and the marks drawn together, in the picture's own pixels.
+  var zoomWithMarks = function (e: MouseEvent) {
+    var img = e.currentTarget as HTMLImageElement;
+    if (!props.marks || !img.complete || !img.naturalWidth) return;
+    var sheet = document.createElement('canvas');
+    sheet.width = img.naturalWidth;
+    sheet.height = img.naturalHeight;
+    var ctx = sheet.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(img, 0, 0);
+    paintMarks(ctx, sheet.width, sheet.height, props.marks);
+    var composed: string;
+    try {
+      composed = sheet.toDataURL('image/png');
+    } catch {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    interact.zoom(composed, props.alt);
+  };
   return <figure class={'diffnote-imagediff__side diffnote-imagediff__side--' + props.which} data-diffnote-image-side={props.which}>
     <figcaption>{props.label}{dims && <small>{lib.mf('ui.file.image_size', { w: String(dims[0]), h: String(dims[1]) })}</small>}</figcaption>
     {!props.digest
@@ -83,6 +109,7 @@ function Side(props: SideProps) {
             class: 'diffnote-image diffnote-imagediff__img',
             src: src,
             alt: props.alt,
+            onClick: zoomWithMarks,
             onLoad: function (e: Event) {
               var img = e.currentTarget as HTMLImageElement;
               setDims([img.naturalWidth, img.naturalHeight]);
@@ -107,12 +134,15 @@ export function ImageDiff(props: { file: FileData }) {
   var _c = useState(false);
   var comparing = _c[0];
   var setComparing = _c[1];
-  var _b = useState(8);
+  var _b = useState(32);
   var block = _b[0];
   var setBlock = _b[1];
   var _t = useState(0);
   var threshold = _t[0];
   var setThreshold = _t[1];
+  var _o = useState(55);
+  var opacity = _o[0];
+  var setOpacity = _o[1];
   var _m = useState<Marks | null>(null);
   var marks = _m[0];
   var setMarks = _m[1];
@@ -144,10 +174,14 @@ export function ImageDiff(props: { file: FileData }) {
       setWorking(false);
       if (!pa || !pb) { setMarks(null); return; }
       var blocks = differingBlocks(pa, pb, block, threshold);
-      setMarks({ blocks: blocks, percent: coveredPercent(blocks, pa, pb), width: Math.max(pa.width, pb.width), height: Math.max(pa.height, pb.height) });
+      setMarks({ blocks: blocks, percent: coveredPercent(blocks, pa, pb), width: Math.max(pa.width, pb.width), height: Math.max(pa.height, pb.height), opacity: opacity / 100 });
     }, 0);
     return function () { stale = true; clearTimeout(timer); };
   }, [comparing, block, threshold, loads]);
+  // The strength of the paint changes nothing of the comparison.
+  useEffect(function () {
+    setMarks(function (cur) { return cur ? Object.assign({}, cur, { opacity: opacity / 100 }) : cur; });
+  }, [opacity]);
   return <div class="diffnote-imagediff" data-diffnote-image-diff>
     {both && <div class="diffnote-imagediff__tools">
       <button type="button" class={'diffnote-button' + (comparing ? ' is-current' : '')} data-diffnote-pixel-diff aria-pressed={comparing}
@@ -162,6 +196,11 @@ export function ImageDiff(props: { file: FileData }) {
           <input type="range" min="0" max="64" step="1" value={String(threshold)} data-diffnote-pixel-threshold
             onChange={function (e) { setThreshold(Number(e.currentTarget.value)); }} />
           <span>{threshold}</span>
+        </label>
+        <label class="diffnote-imagediff__option">{lib.m('ui.file.pixel_opacity_label')}
+          <input type="range" min="10" max="100" step="5" value={String(opacity)} data-diffnote-pixel-opacity
+            onInput={function (e) { setOpacity(Number(e.currentTarget.value)); }} />
+          <span>{opacity}%</span>
         </label>
         <span class="diffnote-imagediff__note" data-diffnote-pixel-note role="status">
           {working ? lib.m('ui.file.pixel_working')

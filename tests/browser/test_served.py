@@ -2750,6 +2750,10 @@ class Pictures(ServedCase):
         self.assertTrue(b.wait(f"document.querySelector(\"{logo} [data-diffnote-pixel-note]\").textContent === '1 ブロックが異なります(面積の 100%)'"))
         self.assertEqual(b.count(f"{logo} [data-diffnote-pixel-marks]"), 2)
         self.assertEqual(b.js(f"[...document.querySelectorAll(\"{logo} [data-diffnote-pixel-marks]\")].map(function (c) {{ return c.width + 'x' + c.height; }})"), ["4x3", "6x2"], "each over its own picture")
+        # Shown by itself while compared, a picture carries its marks.
+        b.click(f"{logo} img")
+        self.assertTrue(b.wait("!!document.querySelector('.diffnote-zoom img') && document.querySelector('.diffnote-zoom img').src.startsWith('data:image/png')"))
+        b.escape()
         b.click(f"{logo} [data-diffnote-pixel-diff]")
         self.assertTrue(b.wait(f"!document.querySelector(\"{logo} [data-diffnote-pixel-marks]\")"))
         # An exported page carries the pictures in itself.
