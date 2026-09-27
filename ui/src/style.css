@@ -232,6 +232,15 @@ tr.diffnote-linked > td { animation: diffnote-linked 2.6s ease-out; }
 /* The new side alone: no old numbers, and a run of removed lines is a faint line. */
 .diffnote-diff--new .diffnote-line__gutter-old { display: none; }
 .diffnote-removed-run td { padding: 1px 12px; font-family: var(--diffnote-font); font-size: 11.5px; color: var(--diffnote-color-muted); background: var(--diffnote-color-gutter); border-top: 1px dashed var(--diffnote-color-border); border-bottom: 1px dashed var(--diffnote-color-border); }
+/* A changed picture: its two versions side by side. */
+.diffnote-imagediff { display: flex; flex-wrap: wrap; gap: 12px; padding: 10px 12px; }
+.diffnote-imagediff__side { flex: 1 1 240px; min-width: 0; margin: 0; }
+.diffnote-imagediff__side > figcaption { margin: 0 0 4px; font-size: 12px; color: var(--diffnote-color-muted); }
+.diffnote-imagediff__side > figcaption small { margin-left: 8px; }
+.diffnote-imagediff__side--old > figcaption { color: #cf222e; }
+.diffnote-imagediff__side--new > figcaption { color: #1a7f37; }
+.diffnote-imagediff__img { display: block; max-width: 100%; max-height: 60vh; border: 1px solid var(--diffnote-color-border); border-radius: 4px; background: repeating-conic-gradient(var(--diffnote-color-gutter) 0 25%, var(--diffnote-color-bg) 0 50%) 0 0 / 16px 16px; cursor: zoom-in; }
+.diffnote-imagediff__none { margin: 0; padding: 12px; font-size: 12.5px; color: var(--diffnote-color-muted); border: 1px dashed var(--diffnote-color-border); border-radius: 4px; }
 .diffnote-hunk-header td { background: var(--diffnote-color-hunk-bg); color: var(--diffnote-color-hunk-fg); padding: 2px 12px; }
 
 /* Lines a comment is about: colored bars at the left edge... */

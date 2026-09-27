@@ -3,6 +3,7 @@ import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { server } from '../transport.ts';
 import { DiffTable, SplitTable } from './tables.jsx';
+import { ImageDiff } from './Image.jsx';
 import { htmlId } from '../dom.ts';
 import { useStore } from '@nanostores/preact';
 import { ActionsContext, ComposeContext, OpenedContext } from '../state/contexts.ts';
@@ -118,7 +119,8 @@ export function File(props: FileProps) {
         </span>}
         <h2>{file.path}{file.status === 'binary' ? (function () {
           var change = lib.messages['ui.binary_change.' + file.change];
-          return change ? lib.mf('ui.file.binary_suffix_named', { change: change }) : lib.m('ui.file.binary_suffix_plain');
+          var what = file.image ? 'image' : 'binary';
+          return change ? lib.mf('ui.file.' + what + '_suffix_named', { change: change }) : lib.m('ui.file.' + what + '_suffix_plain');
         })() : ''}{file.status === 'renamed' && (file.old_path
           // Where it was before, said here: the heading is the only place the
           // path it moved from is written, and a folded file shows it too.
@@ -138,7 +140,7 @@ export function File(props: FileProps) {
       {composing && <div class="diffnote-compose-wrap"><Composer scope="file" where={lib.mf('ui.compose.file_where', { path: file.path })} request={{ scope: 'file', revision: ctx.rev, file: file.path }} /></div>}
       {fileThreads.map(function (id) { return <Card key={id} rev={ctx.rev} thread={ctx.byId[id]} placement={ctx.placements[id]} />; })}
       {missing && <p class="diffnote-file__missing">{lib.m('ui.file.missing_note')}</p>}
-      {file.status === 'binary' && <p class="diffnote-file__binary" data-diffnote-binary>{lib.m('ui.file.binary_note')}</p>}
+      {file.status === 'binary' && (file.image ? <ImageDiff file={file} /> : <p class="diffnote-file__binary" data-diffnote-binary>{lib.m('ui.file.binary_note')}</p>)}
       {/* `view` is the diff with the left-out places folded in, so a file with
           nothing in the diff (one that was only renamed) is a table of one
           place to open. */}

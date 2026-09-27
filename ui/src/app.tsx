@@ -133,6 +133,10 @@ function App(props: { model: ViewModel }) {
         if (model.images && model.images[id]) return model.images[id];
         return model.interactive ? '/api/images/' + id : '';
       },
+      blob: function (digest) {
+        if (model.blobs && model.blobs[digest]) return model.blobs[digest];
+        return model.interactive ? '/api/blobs/' + digest : '';
+      },
       // A place chosen by clicking: a line reference (`{path,side,start,end,rev}`,
       // as `lib.lineRefs` gives them), or `{kind:'file'|'thread', ...}`. Also
       // remembered, so the browser's back/forward can retrace the jump.

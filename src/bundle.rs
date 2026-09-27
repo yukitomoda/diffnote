@@ -427,6 +427,11 @@ pub fn read_attachment(path: &Path, id: &str) -> Option<Vec<u8>> {
     read_entry(path, &format!("attachments/{id}"))
 }
 
+/// One file version of a bundle, by its digest, read without the rest.
+pub fn read_blob(path: &Path, digest: &str) -> Option<Vec<u8>> {
+    read_entry(path, &format!("blobs/{}", digest_path_component(digest)))
+}
+
 fn read_entry(path: &Path, name: &str) -> Option<Vec<u8>> {
     let file = std::fs::File::open(path).ok()?;
     let mut archive = ZipArchive::new(file).ok()?;

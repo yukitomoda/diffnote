@@ -853,6 +853,92 @@ mod tests {
         [("f.txt".to_string(), text.as_bytes().to_vec())].into()
     }
 
+    /// Bytes that are a PNG as far as the page needs to know (its signature).
+    fn png(tail: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        bytes.extend_from_slice(tail);
+        bytes
+    }
+
+    /// A review of one revision in which `logo.png` changed, `new.png` came
+    /// and `data.bin` (no picture) changed, every version held.
+    fn picture_bundle() -> (tempfile::TempDir, bundle::Loaded, Vec<Vec<u8>>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.diffnote");
+        let (a, b, c, d1, d2) = (
+            png(b"a"),
+            png(b"b"),
+            png(b"c"),
+            b"\x00\x01x".to_vec(),
+            b"\x00\x02y".to_vec(),
+        );
+        let old: Tree = [
+            ("logo.png".to_string(), a.clone()),
+            ("data.bin".to_string(), d1.clone()),
+        ]
+        .into();
+        let new: Tree = [
+            ("logo.png".to_string(), b.clone()),
+            ("new.png".to_string(), c.clone()),
+            ("data.bin".to_string(), d2.clone()),
+        ]
+        .into();
+        let (diff_text, files) = diff_trees(&old, &new);
+        let key = digest("pictures");
+        let events = vec![
+            Event::Meta {
+                version: 1,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                description: None,
+                context_lines: 3,
+            },
+            Event::Revision(Revision {
+                id: Ulid::new(),
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                digest: key.clone(),
+                source: files_source(None),
+                snapshot_mode: SnapshotMode::Full,
+                files,
+                tree: Vec::new(),
+                commits: Vec::new(),
+            }),
+        ];
+        let blobs = vec![a, b, c, d1, d2];
+        let additions = Additions {
+            diff: Some((key, diff_text)),
+            blobs: blobs.clone(),
+            commits: Vec::new(),
+        };
+        bundle::save(&path, &bundle::load(&path).unwrap(), &events, &additions).unwrap();
+        (dir, bundle::load(&path).unwrap(), blobs)
+    }
+
+    #[test]
+    fn a_changed_picture_names_its_versions_and_an_exported_page_carries_them() {
+        let (_dir, loaded, blobs) = picture_bundle();
+        let model = view_model(&loaded).unwrap();
+        let files = &model.revisions[0].files;
+        let of = |path: &str| files.iter().find(|f| f.path == path).unwrap();
+        assert_eq!(of("logo.png").status, "binary");
+        let logo = of("logo.png").image.as_ref().unwrap();
+        assert_eq!(logo.old.as_deref(), Some(digest(&blobs[0]).as_str()));
+        assert_eq!(logo.new.as_deref(), Some(digest(&blobs[1]).as_str()));
+        let fresh = of("new.png").image.as_ref().unwrap();
+        assert_eq!(
+            (fresh.old.as_deref(), fresh.new.as_deref()),
+            (None, Some(digest(&blobs[2]).as_str()))
+        );
+        assert!(of("data.bin").image.is_none(), "not a picture");
+        // The exported page carries the pictures, and nothing else, as data: addresses.
+        assert_eq!(model.blobs.len(), 3);
+        assert!(model.blobs[&digest(&blobs[1])].starts_with("data:image/png;base64,"));
+        assert!(!model.blobs.contains_key(&digest(&blobs[4])));
+        // The served page asks for them instead.
+        let served = view_model_for(&loaded, true).unwrap();
+        assert!(served.blobs.is_empty());
+        assert!(served.revisions[0].files.iter().any(|f| f.image.is_some()));
+    }
+
     fn range(start: u32, len: u32, text: &str) -> LineRange {
         LineRange {
             file: "f.txt".to_string(),

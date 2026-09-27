@@ -2693,3 +2693,58 @@ class NewSideOnly(ServedCase):
         self.assertIn("a.txt:4", recorded(self.review))
         # Kept, as the other layouts are.
         self.assertEqual(self.server.api("/api/model")["model"]["user_settings"]["view"]["layout"], "new")
+
+
+class Pictures(ServedCase):
+    """A changed picture is shown as what it was and what it is, side by
+    side; one that came is shown alone."""
+
+    def test_a_changed_picture_is_shown_as_both_its_versions(self):
+        repo = os.path.join(self.root, "pictures")
+        os.makedirs(repo)
+        harness.git(repo, "init", "-q", "-b", "main")
+        with open(os.path.join(repo, "logo.png"), "wb") as f:
+            f.write(harness.png(4, 3, (200, 30, 30)))
+        harness.write(repo, "a.txt", "one\n")
+        harness.git(repo, "add", "-A")
+        harness.git(repo, "commit", "-q", "-m", "c1")
+        harness.git(repo, "tag", "c1")
+        with open(os.path.join(repo, "logo.png"), "wb") as f:
+            f.write(harness.png(6, 2, (30, 30, 200)))
+        with open(os.path.join(repo, "new.png"), "wb") as f:
+            f.write(harness.png(2, 2, (30, 200, 30)))
+        harness.git(repo, "add", "-A")
+        harness.git(repo, "commit", "-q", "-m", "c2")
+        harness.git(repo, "tag", "c2")
+        master = os.path.join(self.root, "pictures.diffnote")
+        harness.review_of(repo, master, "c2", base="c1")
+        # (No text in the diff: nothing for `serve` to wait for but the files.)
+        self.review = os.path.join(self.fresh("review"), "r.diffnote")
+        shutil.copy(master, self.review)
+        self.server = Served(self.review, author="検証者")
+        self.addCleanup(self.server.stop)
+        b = self.b = self.browser
+        b.open(self.server.url, ready="!!document.querySelector('.diffnote-file')")
+        b.click(f"{CUR} [data-diffnote-open-all]")
+        logo = f"{CUR} section.diffnote-file[data-diffnote-file='logo.png']"
+        self.assertTrue(b.wait_exists(f"{logo} [data-diffnote-image-diff]"))
+        self.assertFalse(b.exists(f"{logo} [data-diffnote-binary]"), "not just 'binary'")
+        # Both versions, from the server, drawn at their own sizes.
+        self.assertTrue(b.wait(f"[...document.querySelectorAll(\"{logo} img\")].length === 2 && [...document.querySelectorAll(\"{logo} img\")].every(function (i) {{ return i.complete && i.naturalWidth > 0; }})"))
+        sizes = b.js(f"[...document.querySelectorAll(\"{logo} [data-diffnote-image-side]\")].map(function (s) {{ var i = s.querySelector('img'); return s.dataset.diffnoteImageSide + ':' + i.naturalWidth + 'x' + i.naturalHeight; }})")
+        self.assertEqual(sizes, ["old:4x3", "new:6x2"])
+        self.assertTrue(b.wait(f"document.querySelector(\"{logo} figcaption small\").textContent === '4 × 3'"))
+        self.assertTrue(b.js(f"document.querySelector(\"{logo} img\").src.includes('/api/blobs/sha256:')"))
+        # A picture that came has only its new side.
+        fresh = f"{CUR} section.diffnote-file[data-diffnote-file='new.png']"
+        self.assertEqual(b.js(f"[...document.querySelectorAll(\"{fresh} [data-diffnote-image-side]\")].map(function (s) {{ return s.dataset.diffnoteImageSide; }})"), ["new"])
+        # Pressing one shows it by itself, as a picture in a comment is.
+        b.click(f"{logo} img")
+        self.assertTrue(b.wait_exists(".diffnote-zoom"))
+        b.escape()
+        # An exported page carries the pictures in itself.
+        html = os.path.join(self.fresh("export"), "pictures.html")
+        assert harness.diffnote("export", "-f", master, html).returncode == 0
+        b.open("file://" + html, ready="!!document.querySelector('.diffnote-file')")
+        b.click(f"{CUR} [data-diffnote-open-all]")
+        self.assertTrue(b.wait(f"[...document.querySelectorAll(\"{logo} img\")].length === 2 && [...document.querySelectorAll(\"{logo} img\")].every(function (i) {{ return i.complete && i.naturalWidth > 0 && i.src.startsWith('data:image/png'); }})"))

@@ -50,6 +50,9 @@ export interface FileData {
   status: FileStatus;
   /** What was done to a binary file, which has no lines to tell it by. */
   change?: 'added' | 'deleted' | 'renamed' | 'modified';
+  /** A binary file that is a picture: its versions' digests, each where
+   * the review holds it. */
+  image?: { old?: string; new?: string };
   /**
    * The two versions' digests: a file marked as looked at is taken for a new
    * one when this changes.
@@ -346,6 +349,9 @@ export interface ViewModel {
    */
   images?: Record<string, string>;
   attachments?: Record<string, string>;
+  /** The pictures the diff's files are, by digest (an exported page carries
+   * them; the served one asks the server). */
+  blobs?: Record<string, string>;
 
   // Only the served page has these.
 

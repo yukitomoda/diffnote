@@ -68,6 +68,10 @@ pub struct ViewModel {
     /// The same for the other files attached to comments.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub attachments: BTreeMap<String, String>,
+    /// The pictures the diff's files are, by digest, as `data:` addresses
+    /// (an exported page; the served one asks the server for them).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub blobs: BTreeMap<String, String>,
     /// The most a file attached to a comment may weigh, in bytes (the review's
     /// own rule: the page says so before sending what is too big).
     pub attachment_limit: u64,
@@ -292,6 +296,11 @@ pub struct FileData {
     /// `added`, `deleted`, `renamed` or `modified`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub change: Option<&'static str>,
+    /// A `binary` file that is a picture: the digests of its two versions
+    /// (each where the review holds it and it is a picture), for the page to
+    /// show side by side.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<ImageVersions>,
     /// What the file is in this revision (its two versions' digests): the page
     /// takes a file marked as looked at for a new one if this changes.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -302,6 +311,20 @@ pub struct FileData {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub gaps: Vec<Option<GapData>>,
 }
+
+/// The two versions of a picture, by digest, where the review holds them.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct ImageVersions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new: Option<String>,
+}
+
+/// The most of a picture's bytes an exported page carries, and the most of
+/// all of them together: past these, the page says it doesn't have them.
+const EMBEDDED_IMAGE_BYTES: usize = 4 * 1024 * 1024;
+const EMBEDDED_IMAGES_TOTAL: usize = 32 * 1024 * 1024;
 
 /// A run of lines the diff doesn't show (they are the same on both sides).
 #[derive(Serialize)]
@@ -451,6 +474,11 @@ pub fn view_model_with(
         })
         .collect();
     revisions.reverse();
+    let pictures = if interactive {
+        BTreeMap::new()
+    } else {
+        embedded_blobs(&revisions, &blobs)
+    };
     let what_happened = timeline(loaded, &shown);
     Ok(ViewModel {
         version: VERSION,
@@ -493,6 +521,7 @@ pub fn view_model_with(
         } else {
             embedded_files(loaded)
         },
+        blobs: pictures,
         attachment_limit: loaded.settings.attachment_limit,
         interactive,
         title: crate::review::title(&loaded.settings).map(str::to_string),
@@ -763,6 +792,9 @@ fn revision_data(
                 change: file_diff
                     .filter(|f| f.is_binary && in_diff.contains(key))
                     .map(binary_change),
+                image: file_diff
+                    .filter(|f| f.is_binary)
+                    .and_then(|_| image_versions(view.files, key, blobs)),
                 sig: file_sig(view.files, key),
                 hunks,
                 gaps,
@@ -864,6 +896,60 @@ fn embedded_files(loaded: &crate::bundle::Loaded) -> BTreeMap<String, String> {
 
 /// The digests of a file's two versions, as one string (`None` for a file that
 /// is not in the diff).
+/// The versions of a binary file that are pictures the review holds.
+fn image_versions(
+    files: &[crate::model::FileDigest],
+    path: &str,
+    blobs: &crate::digest::Blobs,
+) -> Option<ImageVersions> {
+    let picture = |side: Side| {
+        let digest = anchor::digest_for(files, path, side)?;
+        let bytes = blobs.bytes(digest)?;
+        crate::image::kind(bytes).ok().map(|_| digest.to_string())
+    };
+    let versions = ImageVersions {
+        old: picture(Side::Old),
+        new: picture(Side::New),
+    };
+    (versions.old.is_some() || versions.new.is_some()).then_some(versions)
+}
+
+/// The pictures the revisions' files are, as `data:` addresses, for a page
+/// that has nowhere to ask for them. The biggest are left out first, past
+/// the room a page is given for them.
+fn embedded_blobs(
+    revisions: &[RevisionData],
+    blobs: &crate::digest::Blobs,
+) -> BTreeMap<String, String> {
+    let mut wanted: Vec<&str> = revisions
+        .iter()
+        .flat_map(|r| r.files.iter())
+        .filter_map(|f| f.image.as_ref())
+        .flat_map(|i| [i.old.as_deref(), i.new.as_deref()])
+        .flatten()
+        .collect();
+    wanted.sort_unstable();
+    wanted.dedup();
+    let mut sized: Vec<(&str, &[u8])> = wanted
+        .into_iter()
+        .filter_map(|d| Some((d, blobs.bytes(d)?)))
+        .filter(|(_, b)| b.len() <= EMBEDDED_IMAGE_BYTES)
+        .collect();
+    sized.sort_by_key(|(_, b)| b.len());
+    let mut out = BTreeMap::new();
+    let mut total = 0;
+    for (digest, bytes) in sized {
+        if total + bytes.len() > EMBEDDED_IMAGES_TOTAL {
+            break;
+        }
+        if let Ok(mime) = crate::image::kind(bytes) {
+            total += bytes.len();
+            out.insert(digest.to_string(), crate::image::data_uri(mime, bytes));
+        }
+    }
+    out
+}
+
 fn file_sig(files: &[crate::model::FileDigest], path: &str) -> Option<String> {
     let old = anchor::digest_for(files, path, Side::Old);
     let new = anchor::digest_for(files, path, Side::New);

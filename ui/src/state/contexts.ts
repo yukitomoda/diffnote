@@ -137,6 +137,9 @@ export interface Links {
   limit: number;
   file(id: string, name: string): string;
   image(id: string): string;
+  /** Where a version of a file that is a picture is: in the page, or at
+   * the server; empty if nowhere. */
+  blob(digest: string): string;
   go(ref: LineRef | At): void;
   jump(rev: number, place: At): void;
 }

@@ -734,6 +734,17 @@ def review_of(repo, review, target, comments=(), base=None, author="reviewer", e
 
 
 
+def png(width, height, rgb):
+    """A PNG of one color, made here (the browser tests keep no binary files)."""
+    import struct, zlib
+    def chunk(kind, data):
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xffffffff)
+    raw = b"".join(b"\x00" + bytes(rgb) * width for _ in range(height))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
 def git(repo, *args):
     out = subprocess.run(["git", "-C", repo, "-c", "user.email=t@example.com", "-c", "user.name=T", *args],
                          capture_output=True, text=True, encoding="utf-8")

@@ -999,6 +999,16 @@ ui:
       {n} 行をすべて表示
 
   file:
+    image_old: |-
+      変更前
+    image_new: |-
+      変更後
+    image_none: |-
+      (なし)
+    image_not_embedded: |-
+      この画像は書き出した HTML に含まれていません
+    image_size: |-
+      {w} × {h}
     viewed_title: |-
       確認済みにして、たたみます
     menu_label: |-
@@ -1017,6 +1027,8 @@ ui:
       追加 {added} 行、削除 {removed} 行
     binary_suffix_named: " (バイナリ・{change})"
     binary_suffix_plain: " (バイナリ)"
+    image_suffix_named: " (画像・{change})"
+    image_suffix_plain: " (画像)"
     renamed_suffix: " (名前変更)"
     renamed_suffix_from: " ({old} から名前変更)"
     close_title: |-

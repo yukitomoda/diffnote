@@ -648,6 +648,7 @@ impl Server {
             ("GET", "/api/repos/at") => self.repo_at(query),
             ("GET", "/api/repos/preview") => self.repo_preview(query),
             ("GET", p) if p.starts_with("/api/images/") => self.image(&p["/api/images/".len()..]),
+            ("GET", p) if p.starts_with("/api/blobs/") => self.blob(&p["/api/blobs/".len()..]),
             ("GET", p) if p.starts_with("/api/attachments/") => {
                 self.attachment(&p["/api/attachments/".len()..], query)
             }
@@ -820,6 +821,37 @@ impl Server {
         }
         let Some(bytes) = bundle::read_image(&self.review, id) else {
             return Reply::error(404, m("serve.image_missing"));
+        };
+        let Ok(mime) = crate::image::kind(&bytes) else {
+            return Reply::error(404, m("serve.image_unsupported"));
+        };
+        let mut reply = Reply::new(200, mime, bytes);
+        reply.headers = vec![
+            (
+                "Content-Security-Policy".into(),
+                "sandbox; default-src 'none'; style-src 'unsafe-inline'".into(),
+            ),
+            ("X-Content-Type-Options".into(), "nosniff".into()),
+            ("Cross-Origin-Resource-Policy".into(), "same-origin".into()),
+            (
+                "Cache-Control".into(),
+                "private, max-age=31536000, immutable".into(),
+            ),
+        ];
+        reply
+    }
+
+    /// A version of one of the diff's files that is a picture, to show in an
+    /// `<img>` (the page shows the two versions of a changed picture side
+    /// by side). Anything the review holds that is not a picture is not
+    /// given out this way.
+    fn blob(&self, digest: &str) -> Reply {
+        let hex = digest.strip_prefix("sha256:").unwrap_or(digest);
+        if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Reply::error(404, m("serve.not_found"));
+        }
+        let Some(bytes) = bundle::read_blob(&self.review, &format!("sha256:{hex}")) else {
+            return Reply::error(404, m("serve.not_found"));
         };
         let Ok(mime) = crate::image::kind(&bytes) else {
             return Reply::error(404, m("serve.image_unsupported"));
@@ -4285,6 +4317,100 @@ mod tests {
     }
 
     /// The fixture plus a stored project tree the diff doesn't touch.
+    #[test]
+    fn a_picture_the_diff_changed_is_served_by_its_digest_and_nothing_else_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.diffnote");
+        let png: Vec<u8> = [&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a][..], b"x"].concat();
+        let old: crate::files::Tree = [("f.txt".to_string(), BASE.as_bytes().to_vec())].into();
+        let new: crate::files::Tree = [
+            ("f.txt".to_string(), HEAD.as_bytes().to_vec()),
+            ("logo.png".to_string(), png.clone()),
+        ]
+        .into();
+        let (diff_text, files) = diff_trees(&old, &new);
+        let key = digest("pictures");
+        let events = vec![
+            Event::Meta {
+                version: 1,
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                description: None,
+                context_lines: 3,
+            },
+            Event::Revision(Revision {
+                id: Ulid::new(),
+                created_at: OffsetDateTime::UNIX_EPOCH,
+                digest: key.clone(),
+                source: Source::Files { base: None },
+                snapshot_mode: SnapshotMode::Full,
+                files,
+                tree: Vec::new(),
+                commits: Vec::new(),
+            }),
+        ];
+        let additions = Additions {
+            diff: Some((key, diff_text)),
+            blobs: vec![
+                HEAD.as_bytes().to_vec(),
+                BASE.as_bytes().to_vec(),
+                png.clone(),
+            ],
+            commits: Vec::new(),
+        };
+        bundle::save(&path, &bundle::load(&path).unwrap(), &events, &additions).unwrap();
+        let f = Fixture {
+            server: Server::new(
+                &Options {
+                    review: path.clone(),
+                    port: 4242,
+                    author: None,
+                    repo: None,
+                    refresh: None,
+                    before: None,
+                    setup: None,
+                },
+                4242,
+            ),
+            path,
+            _dir: dir,
+            thread: Ulid::new(),
+        };
+        let model = json(&f.request("GET", "/api/model", &[], ""));
+        let logo = model["model"]["revisions"][0]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["path"] == "logo.png")
+            .unwrap()
+            .clone();
+        assert_eq!(logo["image"]["new"], digest(&png));
+        assert!(logo["image"].get("old").is_none());
+        let got = f.request("GET", &format!("/api/blobs/{}", digest(&png)), &[], "");
+        assert_eq!(got.status, 200);
+        assert_eq!(got.content_type, "image/png");
+        assert_eq!(got.body, png);
+        assert!(
+            got.headers
+                .iter()
+                .any(|(n, _)| n == "Content-Security-Policy")
+        );
+        // A version that is no picture is not given out, nor what isn't there.
+        assert_eq!(
+            f.request("GET", &format!("/api/blobs/{}", digest(HEAD)), &[], "")
+                .status,
+            404
+        );
+        assert_eq!(
+            f.request("GET", "/api/blobs/sha256:nope", &[], "").status,
+            404
+        );
+        assert_eq!(
+            f.request("GET", &format!("/api/blobs/{}", digest("absent")), &[], "")
+                .status,
+            404
+        );
+    }
+
     fn fixture_with_a_tree() -> Fixture {
         use crate::model::TreeFile;
         let f = fixture();

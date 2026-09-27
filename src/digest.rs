@@ -84,6 +84,11 @@ impl<'a> Blobs<'a> {
     }
 
     /// The text with this digest, if held and valid UTF-8.
+    /// The bytes of a version, whatever they are.
+    pub fn bytes(&self, digest: &str) -> Option<&'a [u8]> {
+        self.data.get(digest).copied()
+    }
+
     pub fn text(&self, digest: &str) -> Option<&'a str> {
         if let Some(known) = self.texts.borrow().get(digest) {
             return *known;
