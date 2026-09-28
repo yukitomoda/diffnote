@@ -7,6 +7,7 @@ import { createContext } from 'preact';
 import type { At, LineRef } from '../lib.ts';
 import type {
   Answer,
+  IgnorePreset,
   AttachedData,
   FileData,
   Hunk,
@@ -72,6 +73,8 @@ export interface Actions {
   saveSettings(settings: Partial<Settings>): Promise<ChangeAnswer>;
   removeAttached(attached: AttachedData): Promise<ChangeAnswer>;
   saveUserSettings(author: string): Promise<ChangeAnswer>;
+  /** This machine's presets of files to leave out, all of them. */
+  saveIgnorePresets(presets: IgnorePreset[]): Promise<ChangeAnswer>;
   /** A review of several repositories: one more, from a commit, or one less. */
   addRepo(path: string, base: string, target?: string): Promise<ChangeAnswer>;
   removeRepo(path: string): Promise<ChangeAnswer>;

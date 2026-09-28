@@ -55,6 +55,7 @@ interface ScreenProps extends Omit<GeneralProps, 'model'> {
   onClose(): void;
   saveSettings: FormProps['save'];
   saveUserSettings: UserProps['save'];
+  saveIgnorePresets: UserProps['savePresets'];
   addRepo: ReposProps['add'];
   removeRepo: ReposProps['remove'];
   setRepoTarget: ReposProps['setTarget'];
@@ -82,7 +83,7 @@ export function ReviewScreen(props: ScreenProps) {
         {props.section === 'repos' && props.model.workspace && <ReposPane model={props.model} add={props.addRepo} remove={props.removeRepo} setTarget={props.setRepoTarget} />}
         {props.section === 'attachments' && <AttachmentsPane model={props.model} remove={props.removeAttached}
           onShow={props.onShowThread} placementOf={props.placementOf} />}
-        {props.section === 'user' && <UserSettingsPane model={props.model} save={props.saveUserSettings} />}
+        {props.section === 'user' && <UserSettingsPane model={props.model} save={props.saveUserSettings} savePresets={props.saveIgnorePresets} />}
       </div>
     </div>
   </main>;

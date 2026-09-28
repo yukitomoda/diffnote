@@ -176,6 +176,14 @@ export interface UserSettings {
   author?: string;
   /** How the page is shown, kept for every review (served page only). */
   view?: ViewPrefs;
+  /** Lists of files to leave out, by name, for any review to take. */
+  ignore_presets?: IgnorePreset[];
+}
+
+/** A named list of files to leave out, written as a `.gitignore` is. */
+export interface IgnorePreset {
+  name: string;
+  patterns: string;
 }
 
 /** How the page is shown, as the reader last chose it. */

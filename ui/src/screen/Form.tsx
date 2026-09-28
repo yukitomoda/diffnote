@@ -35,6 +35,21 @@ export function SettingsFormPane(props: FormProps) {
   var _s = useState(false);
   var saved = _s[0];
   var setSaved = _s[1];
+  var presets = (model.user_settings && model.user_settings.ignore_presets) || [];
+  var _a = useState('');
+  var applied = _a[0];
+  var setApplied = _a[1];
+  var apply = function (preset: { name: string; patterns: string }) {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    setApplied('');
+    props.save({ ignore: preset.patterns }).then(function (res) {
+      setBusy(false);
+      if (res.ok) { setLeaveOut(preset.patterns); setApplied(preset.name); }
+      else setError(res.error || lib.m('ui.save_failed'));
+    });
+  };
   var first = useRef<HTMLInputElement | null>(null);
   useEffect(function () { if (first.current) first.current.focus(); }, []);
   // What is here is not what is kept.
@@ -74,6 +89,17 @@ export function SettingsFormPane(props: FormProps) {
         placeholder={lib.m('ui.settings.ignore_files_placeholder')}
         onInput={function (e) { touched(setLeaveOut)(e.currentTarget.value); }} />
     </label>
+    {/* One press: the preset becomes this review's list, and is saved. */}
+    <div class="diffnote-presets__apply" data-diffnote-ignore-presets>
+      <span class="diffnote-presets__label">{lib.m('ui.settings.ignore_preset_label')}</span>
+      {presets.length === 0
+        ? <small class="diffnote-screen__note">{lib.m('ui.settings.ignore_preset_none')}</small>
+        : presets.map(function (p) {
+          return <button key={p.name} type="button" class="diffnote-button" data-diffnote-ignore-preset={p.name}
+            title={lib.m('ui.settings.ignore_preset_apply_title')} disabled={busy} onClick={function () { apply(p); }}>{p.name}</button>;
+        })}
+      {applied && <span class="diffnote-screen__saved" data-diffnote-ignore-preset-applied role="status">{lib.mf('ui.settings.ignore_preset_applied', { name: applied })}</span>}
+    </div>
     <label class="diffnote-field">
       <span>{lib.m('ui.settings.attach_limit_label')}</span>
       <span class="diffnote-field__unit"><input type="number" step="any" data-diffnote-setting-limit value={limit}

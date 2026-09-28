@@ -2769,3 +2769,36 @@ class Pictures(ServedCase):
         b.open("file://" + html, ready="!!document.querySelector('.diffnote-file')")
         b.click(f"{CUR} [data-diffnote-open-all]")
         self.assertTrue(b.wait(f"[...document.querySelectorAll(\"{logo} img\")].length === 2 && [...document.querySelectorAll(\"{logo} img\")].every(function (i) {{ return i.complete && i.naturalWidth > 0 && i.src.startsWith('data:image/png'); }})"))
+
+
+class IgnorePresets(ServedCase):
+    """Presets of files to leave out, made in ユーザー設定 and taken by a
+    review's 設定 with one press."""
+
+    def test_a_preset_is_made_once_and_taken_with_one_press(self):
+        self.serve(self.login)
+        b = self.b
+        b.click("[data-diffnote-screen-open]")
+        self.assertTrue(b.wait_exists("[data-diffnote-screen-nav=settings]"))
+        b.click("[data-diffnote-screen-nav=settings]")
+        self.assertTrue(b.wait_exists("[data-diffnote-ignore-presets]"))
+        self.assertFalse(b.exists("[data-diffnote-ignore-preset]"), "none made yet: a note instead")
+        # Made in ユーザー設定.
+        b.click("[data-diffnote-screen-nav=user]")
+        self.assertTrue(b.wait_exists("[data-diffnote-presets]"))
+        b.click("[data-diffnote-preset-add]")
+        self.assertTrue(b.wait_exists("[data-diffnote-preset='0']"))
+        b.set_value("[data-diffnote-preset='0'] [data-diffnote-preset-name]", "ソース以外")
+        b.set_value("[data-diffnote-preset='0'] [data-diffnote-preset-patterns]", "*.ts\n!src/auth/login.ts\n")
+        b.click("[data-diffnote-presets-save]")
+        self.assertTrue(b.wait_exists("[data-diffnote-presets-saved]"))
+        config = json.loads(open(os.path.join(harness.USER_CONFIG_DIR, "config.json"), encoding="utf-8").read())
+        self.assertEqual(config["ignore_presets"], [{"name": "ソース以外", "patterns": "*.ts\n!src/auth/login.ts"}])
+        # Taken in 設定, with one press: saved to the review at once.
+        b.click("[data-diffnote-screen-nav=settings]")
+        self.assertTrue(b.wait_exists("[data-diffnote-ignore-preset='ソース以外']"))
+        b.click("[data-diffnote-ignore-preset='ソース以外']")
+        self.assertTrue(b.wait_exists("[data-diffnote-ignore-preset-applied]"))
+        self.assertEqual(b.value("[data-diffnote-setting-ignore-files]"), "*.ts\n!src/auth/login.ts")
+        self.assertEqual(json.loads(harness.member(self.review, "settings.json"))["ignore"], "*.ts\n!src/auth/login.ts")
+        self.assertFalse(b.exists("[data-diffnote-settings-dirty]"), "nothing left to save")

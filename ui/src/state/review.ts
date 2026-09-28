@@ -122,6 +122,9 @@ export function useReview(initial: ViewModel): Review {
       saveUserSettings: function (author) {
         return server().post<{ model: ViewModel }>('/api/user-settings', { author: author }).then(whole);
       },
+      saveIgnorePresets: function (presets) {
+        return server().post<{ model: ViewModel }>('/api/user-settings/ignore-presets', { presets: presets }).then(whole);
+      },
       // A review of several repositories: one added (from the next revision
       // on, from the commit chosen) or taken out (the revisions so far keep
       // it). The answer is the whole model.

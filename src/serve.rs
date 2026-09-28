@@ -1384,6 +1384,7 @@ impl Server {
             }
             ["api", "settings"] => self.set_settings(request.body),
             ["api", "user-settings"] => self.set_user_settings(request.body),
+            ["api", "user-settings", "ignore-presets"] => self.set_ignore_presets(request.body),
             ["api", "view"] => self.set_view(request.body),
             ["api", "images"] => self.add_image(request.target, request.body),
             ["api", "attachments"] => self.add_attachment(request.target, request.body),
@@ -1465,6 +1466,66 @@ impl Server {
             name
         };
         *self.author.lock().unwrap_or_else(|e| e.into_inner()) = effective;
+        let loaded = bundle::load(&self.review).map_err(internal)?;
+        let before = html::stamp(&loaded);
+        self.model_answer(&before, serde_json::json!({}))
+    }
+
+    /// Replaces this machine's presets of files to leave out (a name and a
+    /// list each, as a `.gitignore` is written): any review's settings can
+    /// then take one of them with one press.
+    fn set_ignore_presets(&self, body: &[u8]) -> Result<Reply, Failure> {
+        #[derive(serde::Deserialize)]
+        struct Asked {
+            presets: Vec<crate::user_config::IgnorePreset>,
+        }
+        let asked: Asked = serde_json::from_slice(body)
+            .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
+        if asked.presets.len() > 100 {
+            return Err(Failure(400, m("serve.presets.too_many").into()));
+        }
+        let mut presets = Vec::new();
+        for preset in asked.presets {
+            let name = preset.name.split_whitespace().collect::<Vec<_>>().join(" ");
+            if name.is_empty() {
+                return Err(Failure(400, m("serve.presets.name_missing").into()));
+            }
+            if name.chars().count() > 100 {
+                return Err(Failure(400, m("serve.presets.name_too_long").into()));
+            }
+            if presets
+                .iter()
+                .any(|p: &crate::user_config::IgnorePreset| p.name == name)
+            {
+                return Err(Failure(
+                    400,
+                    mf("serve.presets.name_twice", &[("name", &name)]),
+                ));
+            }
+            if preset.patterns.chars().count() > 20_000 {
+                return Err(Failure(400, m("serve.ignore_too_long").into()));
+            }
+            if let Some((line, why)) = review::ignore_error(&preset.patterns) {
+                return Err(Failure(
+                    400,
+                    mf(
+                        "serve.presets.invalid",
+                        &[
+                            ("name", &name),
+                            ("line", &line.to_string()),
+                            ("error", &why),
+                        ],
+                    ),
+                ));
+            }
+            presets.push(crate::user_config::IgnorePreset {
+                name,
+                patterns: preset.patterns.trim_end().to_string(),
+            });
+        }
+        let mut config = crate::user_config::load();
+        config.ignore_presets = presets;
+        crate::user_config::save(&config).map_err(internal)?;
         let loaded = bundle::load(&self.review).map_err(internal)?;
         let before = html::stamp(&loaded);
         self.model_answer(&before, serde_json::json!({}))
@@ -2960,6 +3021,52 @@ mod tests {
         // Emptied: nothing left out, and nothing kept in settings.json for it.
         json(&f.post("/api/settings", r#"{"ignore":""}"#));
         assert_eq!(bundle::load(&f.path).unwrap().settings.ignore, "");
+    }
+
+    #[test]
+    fn presets_of_files_to_leave_out_are_kept_for_every_review_and_checked_first() {
+        crate::user_config::with_test_config_dir(|_| {
+            let f = fixture();
+            let presets = |answer: &serde_json::Value| {
+                answer["model"]["user_settings"]["ignore_presets"].clone()
+            };
+            let asked = serde_json::json!({ "presets": [
+                { "name": "  生成物 ", "patterns": "dist/\n*.min.js\n\n" },
+                { "name": "ロック", "patterns": "*.lock" },
+            ] });
+            let answer = json(&f.post("/api/user-settings/ignore-presets", &asked.to_string()));
+            assert_eq!(
+                presets(&answer),
+                serde_json::json!([
+                    { "name": "生成物", "patterns": "dist/\n*.min.js" },
+                    { "name": "ロック", "patterns": "*.lock" },
+                ])
+            );
+            assert_eq!(
+                crate::user_config::load().ignore_presets.len(),
+                2,
+                "kept on this machine"
+            );
+            // Refused, and nothing changed: no name, the same name twice, a
+            // line that is no pattern.
+            for bad in [
+                r#"{"presets":[{"name":" ","patterns":"x"}]}"#,
+                r#"{"presets":[{"name":"a","patterns":"x"},{"name":"a","patterns":"y"}]}"#,
+                r#"{"presets":[{"name":"a","patterns":"ok\n[z-a]"}]}"#,
+                r#"{"presets":"no"}"#,
+            ] {
+                assert_eq!(
+                    f.post("/api/user-settings/ignore-presets", bad).status,
+                    400,
+                    "{bad}"
+                );
+            }
+            assert_eq!(crate::user_config::load().ignore_presets.len(), 2);
+            // The review's own settings are left alone.
+            assert_eq!(bundle::load(&f.path).unwrap().settings.ignore, "");
+            let none = json(&f.post("/api/user-settings/ignore-presets", r#"{"presets":[]}"#));
+            assert!(presets(&none).is_null(), "none left: none said");
+        });
     }
 
     #[test]

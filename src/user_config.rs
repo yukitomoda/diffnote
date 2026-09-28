@@ -23,6 +23,18 @@ pub struct UserConfig {
     /// はポートが毎回変わり、ブラウザの保存場所もそのたびに変わるため)。
     #[serde(default, skip_serializing_if = "ViewPrefs::is_empty")]
     pub view: ViewPrefs,
+    /// 「表示しないファイル」のプリセット。レビューの設定画面から、ひとつ
+    /// 選ぶだけでそのレビューの無視リストにできる。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignore_presets: Vec<IgnorePreset>,
+}
+
+/// 名前の付いた無視リスト(`.gitignore` と同じ書き方)。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IgnorePreset {
+    pub name: String,
+    #[serde(default)]
+    pub patterns: String,
 }
 
 /// 表示の好み。決めていないもの(`None`)は、画面の既定値になる。
@@ -152,6 +164,10 @@ mod tests {
                     wrap: Some(false),
                     ..Default::default()
                 },
+                ignore_presets: vec![IgnorePreset {
+                    name: "生成物".into(),
+                    patterns: "dist/".into(),
+                }],
             };
             save(&config).unwrap();
             assert_eq!(load(), config);

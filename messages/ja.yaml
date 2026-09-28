@@ -276,6 +276,18 @@ serve:
     last: |-
       最後のリポジトリは外せません(レビューには 1 つ以上のリポジトリが必要です)
 
+  presets:
+    too_many: |-
+      プリセットは 100 個までです
+    name_missing: |-
+      プリセットの名前を入れてください
+    name_too_long: |-
+      プリセットの名前は 100 文字までです
+    name_twice: |-
+      プリセット「{name}」が重複しています
+    invalid: |-
+      プリセット「{name}」の {line} 行目が読めません: {error}
+
   stats:
     threads: |-
       スレッド {n} 件
@@ -887,6 +899,14 @@ ui:
       表示しないファイル
     ignore_files_hint: |-
       (.gitignore と同じ書き方で、1 行に 1 つ。差分に出さなくなります。スレッドのあるファイルは出します)
+    ignore_preset_label: |-
+      プリセット
+    ignore_preset_apply_title: |-
+      このプリセットを表示しないファイルにして、保存します
+    ignore_preset_none: |-
+      ユーザー設定で、よく使う表示しないファイルをプリセットとして登録できます
+    ignore_preset_applied: |-
+      「{name}」を適用しました
     ignore_files_placeholder: |-
       例: *.lock
     attach_limit_label: |-
@@ -929,6 +949,24 @@ ui:
       削除する
     delete_failed: |-
       削除できませんでした
+
+  presets:
+    heading: |-
+      表示しないファイルのプリセット
+    note: |-
+      レビューの「設定」から、ひとつ選ぶだけでそのレビューの「表示しないファイル」にできます。このマシンのすべてのレビューで使えます。
+    name_label: |-
+      名前
+    name_placeholder: |-
+      例: 生成物
+    patterns_label: |-
+      表示しないファイル(.gitignore と同じ書き方)
+    add_button: |-
+      プリセットを追加
+    remove_button: |-
+      削除
+    empty: |-
+      プリセットはまだありません
 
   user_settings:
     heading: |-
