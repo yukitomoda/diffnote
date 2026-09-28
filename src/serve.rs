@@ -2344,6 +2344,11 @@ pub fn run(options: &Options, on_ready: impl FnOnce(&str, &[String])) -> Result<
         let _ = request.respond(response);
         if shutdown {
             println!("{}", server.farewell());
+            // Give the page a moment to read the answer: a process that ends
+            // at once takes its sockets with it, and on Windows the page's
+            // side of the connection is then reset, and what it had been
+            // sent but had not read yet is thrown away.
+            std::thread::sleep(std::time::Duration::from_millis(300));
             break;
         }
     }

@@ -117,9 +117,20 @@ fn http(
     cookie: &str,
     body: Option<&str>,
 ) -> (u16, Option<String>, String) {
+    let raw = send(port, method, path, cookie, body).expect("the server answers");
+    answer_of(&raw)
+}
+
+/// One request, and the answer as it came, or why none did.
+fn send(
+    port: u16,
+    method: &str,
+    path: &str,
+    cookie: &str,
+    body: Option<&str>,
+) -> std::io::Result<Vec<u8>> {
     use std::io::{Read, Write};
-    let mut stream =
-        std::net::TcpStream::connect(("127.0.0.1", port)).expect("the server is there");
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port))?;
     let body = body.unwrap_or("");
     let mut request = format!(
         "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nX-Diffnote: 1\r\n"
@@ -135,9 +146,14 @@ fn http(
     }
     request.push_str("\r\n");
     request.push_str(body);
-    stream.write_all(request.as_bytes()).unwrap();
+    stream.write_all(request.as_bytes())?;
     let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).unwrap();
+    stream.read_to_end(&mut raw)?;
+    Ok(raw)
+}
+
+/// The status, any cookie set, and the body of an answer as it came.
+fn answer_of(raw: &[u8]) -> (u16, Option<String>, String) {
     let split = raw
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
@@ -288,7 +304,9 @@ impl Served {
     }
 
     fn shut_down(mut self, body: &str) {
-        let _ = http(self.port, "POST", "/api/shutdown", &self.cookie, Some(body));
+        // The answer is not what is waited for (the process ending is), and
+        // a server that is gone may reset the connection before it is read.
+        let _ = send(self.port, "POST", "/api/shutdown", &self.cookie, Some(body));
         for _ in 0..50 {
             if matches!(self.child.try_wait(), Ok(Some(_))) {
                 return;
