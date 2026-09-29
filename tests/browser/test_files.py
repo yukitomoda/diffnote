@@ -59,7 +59,7 @@ class FilesCase(BrowserCase):
 
     def comment_on_line(self, path, n, text):
         b = self.b
-        b.click_at(self.gutter(path, n))
+        b.choose(self.gutter(path, n))
         self.assertEqual(b.text(".diffnote-compose__where"), f"{path}:{n}")
         b.set_value(".diffnote-compose textarea", text)
         b.click(".diffnote-compose button[type=submit]")

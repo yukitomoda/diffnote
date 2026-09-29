@@ -394,6 +394,35 @@ class Browser:
         x, y = self.center(selector) if selector else (0, 0)
         self.cdp.mouse("mouseReleased", x, y, 0, modifiers)
 
+    def choose(self, selector, shift=False):
+        """Presses a line number as the page hears it, without a pointer:
+        the events go to the element itself, not to a point on the screen.
+
+        For a test whose subject is what follows (the box, the thread), not
+        the pointer: a point measured on the screen is wherever the element
+        was then, and a page that moves (a box closing, a scroll settling)
+        puts another element there. The pointer itself is tested by the few
+        tests about it (`click_at`, `drag`)."""
+        self.js("""(function (el, shift) {
+          var o = { bubbles: true, cancelable: true, button: 0, buttons: 1, shiftKey: shift, view: window };
+          el.dispatchEvent(new MouseEvent('mousedown', o));
+          el.dispatchEvent(new MouseEvent('mouseup', Object.assign({}, o, { buttons: 0 })));
+        })(document.querySelector(%s), %s)""" % (json.dumps(selector), "true" if shift else "false"))
+        self.settle()
+
+    def choose_lines(self, first, last):
+        """Chooses the lines from `first` to `last` as a drag does, without
+        a pointer (see `choose`): pressed on the one, moved over the other,
+        let go."""
+        self.js("""(function (a, b) {
+          var o = { bubbles: true, cancelable: true, button: 0, buttons: 1, view: window };
+          a.dispatchEvent(new MouseEvent('mousedown', o));
+          b.dispatchEvent(new MouseEvent('mousemove', o));
+          b.dispatchEvent(new MouseEvent('mouseover', o));
+          b.dispatchEvent(new MouseEvent('mouseup', Object.assign({}, o, { buttons: 0 })));
+        })(document.querySelector(%s), document.querySelector(%s))""" % (json.dumps(first), json.dumps(last)))
+        self.settle()
+
     def click_at(self, selector, modifiers=0):
         """Presses and lets go at one point.
 

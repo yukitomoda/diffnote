@@ -934,7 +934,7 @@ class Workspace(ServedCase):
         # (Files with no thread start folded: opened first.)
         b.click(f"{CUR} [data-diffnote-open-all]")
         self.assertTrue(b.wait_exists(f"{CUR} table[data-diffnote-file='mobile-app/m.txt'] tr[data-diffnote-new='2']"))
-        b.click_at(f"{CUR} table[data-diffnote-file='mobile-app/m.txt'] tr[data-diffnote-new='2'] .diffnote-line__gutter-new")
+        b.choose(f"{CUR} table[data-diffnote-file='mobile-app/m.txt'] tr[data-diffnote-new='2'] .diffnote-line__gutter-new")
         self.assertTrue(b.wait_exists(".diffnote-compose"))
         self.write(".diffnote-compose textarea", "モバイル側")
         b.js("document.querySelector('.diffnote-compose').requestSubmit()")
@@ -1012,7 +1012,7 @@ class NewThreadsOnLines(ServedCase):
         self.serve(self.login)
         b = self.b
         before = b.count(f"{CUR} .diffnote-thread")
-        b.click_at(self.gutter("new", 6))
+        b.choose(self.gutter("new", 6))
         self.assertEqual(b.text(".diffnote-compose__where"), "src/auth/login.ts:6")
         self.assertTrue(b.wait("document.activeElement.tagName==='TEXTAREA'"))
         self.send_box("1 行へのコメント")
@@ -1026,12 +1026,12 @@ class NewThreadsOnLines(ServedCase):
     def test_the_box_for_chosen_lines_has_a_button_that_copies_a_link_to_them(self):
         self.serve(self.login)
         b = self.b
-        b.drag(self.gutter("old", 8), self.gutter("new", 12))
+        b.choose_lines(self.gutter("old", 8), self.gutter("new", 12))
         self.assertEqual(b.js("document.querySelector('.diffnote-compose__head .diffnote-copy').getAttribute('data-diffnote-copy')"),
                          "src/auth/login.ts:9-12@1")
         b.escape()
         # Removed lines only: the old side, with L.
-        b.click_at(self.gutter("old", 8))
+        b.choose(self.gutter("old", 8))
         self.assertEqual(b.text(".diffnote-compose__where"), "src/auth/login.ts:L8")
         self.assertEqual(b.js("document.querySelector('.diffnote-compose__head .diffnote-copy').getAttribute('data-diffnote-copy')"),
                          "src/auth/login.ts:L8@1")
@@ -1084,7 +1084,7 @@ class NewThreadsOnLines(ServedCase):
     def test_a_failed_send_keeps_the_box_and_the_words(self):
         self.serve(self.login)
         b = self.b
-        b.click_at(self.gutter("new", 6))
+        b.choose(self.gutter("new", 6))
         self.write(".diffnote-composer-row textarea", "止まった後")
         self.server.shut_down(b)
         b.js("document.querySelector('.diffnote-compose').requestSubmit()")
@@ -1095,7 +1095,7 @@ class NewThreadsOnLines(ServedCase):
     def test_the_thread_is_followed_into_the_other_revision(self):
         self.serve(self.calc)
         b = self.b
-        b.click_at(f"{CUR} table[data-diffnote-file='calc.py'] tr[data-diffnote-new='14'] .diffnote-line__gutter-new")
+        b.choose(f"{CUR} table[data-diffnote-file='calc.py'] tr[data-diffnote-new='14'] .diffnote-line__gutter-new")
         self.send_box("mul の戻り値を確認")
         self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row')"))
         b.click("[data-diffnote-revision-link='0']")
@@ -1188,12 +1188,12 @@ class CompareWithAnEarlierRevision(ServedCase):
         self.choose("0")
         self.assertTrue(b.wait_exists("[data-diffnote-compare-note]"))
         # A removed line is not in this revision: pressing it does nothing.
-        b.click_at(f"{CUR} tr.diffnote-line--removed .diffnote-line__gutter-old")
+        b.choose(f"{CUR} tr.diffnote-line--removed .diffnote-line__gutter-old")
         b.settle()
         self.assertFalse(b.exists(".diffnote-composer-row"))
         # The `raise` line (line 9 of this revision) can be commented on.
         row = f"{CUR} tr.diffnote-line--added[data-diffnote-new='9'] .diffnote-line__gutter-new"
-        b.click_at(row)
+        b.choose(row)
         self.assertTrue(b.wait_exists(".diffnote-composer-row"))
         self.assertEqual(b.text(".diffnote-compose__where"), "calc.py:9")
         self.write(".diffnote-composer-row textarea", "比べた画面で書きました")
@@ -2074,7 +2074,7 @@ class ThreadsOnFilesAndTheReview(ServedCase):
         self.serve(master)
         b = self.b
         row = lambda n: f"{CUR} table[data-diffnote-file='new.txt'] tr[data-diffnote-new='{n}'] .diffnote-line__gutter-new"
-        b.drag(row(4), row(7))
+        b.choose_lines(row(4), row(7))
         self.assertTrue(b.wait_exists(".diffnote-compose"))
         self.write(".diffnote-compose textarea", "新しいファイルへ")
         b.js("document.querySelector('.diffnote-compose').requestSubmit()")
@@ -2120,7 +2120,7 @@ class SideBySideLines(ServedCase):
     def test_an_added_line_is_chosen_on_the_new_side_only(self):
         self.serve_split()
         b = self.b
-        b.click_at(self.gutter("new", 10))
+        b.choose(self.gutter("new", 10))
         self.assertTrue(b.wait_exists(".diffnote-composer-row"))
         self.assertEqual(b.text(".diffnote-compose__where"), "src/auth/login.ts:10")
         self.assertEqual(self.picked(), 2, "its number and its text")
@@ -2139,7 +2139,7 @@ class SideBySideLines(ServedCase):
     def test_a_removed_line_is_chosen_on_the_old_side_only(self):
         self.serve_split()
         b = self.b
-        b.click_at(self.gutter("old", 8))
+        b.choose(self.gutter("old", 8))
         self.assertTrue(b.wait_exists(".diffnote-composer-row"))
         self.assertEqual(b.text(".diffnote-compose__where"), "src/auth/login.ts:L8")
         self.assertEqual(self.picked("old"), 2)
@@ -2191,7 +2191,7 @@ class SideBySideLines(ServedCase):
     def test_changing_the_layout_lets_go_of_the_choice(self):
         self.serve_split()
         b = self.b
-        b.click_at(self.gutter("new", 10))
+        b.choose(self.gutter("new", 10))
         self.assertTrue(b.wait_exists(".diffnote-composer-row"))
         b.click("[data-diffnote-layout=unified]")
         self.assertTrue(b.wait("!document.querySelector('.diffnote-composer-row') && !document.querySelector('.is-picked, .diffnote-select')"))
@@ -2261,7 +2261,7 @@ class ExpandLeftOutLines(ServedCase):
         b = self.b
         b.js("Array.from(document.querySelectorAll('.diffnote-expand-row')).filter(function(r){return r.textContent.includes('53')})[0].querySelector('[data-diffnote-expand=all]').click()")
         self.assertTrue(b.wait("document.querySelectorAll('.diffnote-diff tr[data-diffnote-new=\"50\"]').length === 1"))
-        b.click_at(f"{CUR} table[data-diffnote-file='long.txt'] tr[data-diffnote-new='50'] .diffnote-line__gutter-new")
+        b.choose(f"{CUR} table[data-diffnote-file='long.txt'] tr[data-diffnote-new='50'] .diffnote-line__gutter-new")
         self.assertTrue(b.wait_exists(".diffnote-composer-row"))
         self.assertEqual(b.text(".diffnote-compose__where"), "long.txt:50")
         self.write(".diffnote-composer-row textarea", "ここも気になります")
@@ -2650,7 +2650,7 @@ class NewSideOnly(ServedCase):
         table = f"{CUR} table[data-diffnote-file='a.txt']"
         # A thread on the removed line (taken out, nothing in its place),
         # written where the old side can be pressed.
-        b.click_at(f"{table} tr[data-diffnote-old='2'] .diffnote-line__gutter-old")
+        b.choose(f"{table} tr[data-diffnote-old='2'] .diffnote-line__gutter-old")
         self.write(".diffnote-compose textarea", "消した two について")
         b.js("document.querySelector('.diffnote-compose').requestSubmit()")
         self.assertTrue(b.wait_count(f"{table} .diffnote-thread", 2))
@@ -2669,7 +2669,7 @@ class NewSideOnly(ServedCase):
         self.assertEqual(b.count(f"{table} .diffnote-thread"), 2)
         self.assertEqual(b.js(f"document.querySelector(\"{table} tr.diffnote-removed-run\").nextElementSibling.className"), "diffnote-thread-row")
         # A comment on a new line is written as ever.
-        b.click_at(f"{table} tr[data-diffnote-new='4'] .diffnote-line__gutter-new")
+        b.choose(f"{table} tr[data-diffnote-new='4'] .diffnote-line__gutter-new")
         self.assertEqual(b.text(".diffnote-compose__where"), "a.txt:4")
         self.write(".diffnote-compose textarea", "five も")
         b.js("document.querySelector('.diffnote-compose').requestSubmit()")
