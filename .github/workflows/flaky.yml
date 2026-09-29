@@ -1,0 +1,135 @@
+name: Flaky tests
+
+# Looks for tests that pass only sometimes: the ones CI would pass today and
+# fail tomorrow. Every test is run over and over, the pages four times
+# slower than they are (a CI runner is slower than the machine a test was
+# written on), and any round that fails fails this. Nothing is run again to
+# pass: a test that passes on its second try is the thing looked for.
+#
+# By hand (Actions > Flaky tests > Run workflow), and once a week.
+
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: How many times to run every test
+        default: "5"
+      slowdown:
+        description: How much slower the pages run (DIFFNOTE_CPU_SLOWDOWN)
+        default: "4"
+  schedule:
+    - cron: "0 18 * * 0" # Mondays, 03:00 in Japan
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  ROUNDS: ${{ inputs.rounds || '5' }}
+  SLOWDOWN: ${{ inputs.slowdown || '4' }}
+
+jobs:
+  client:
+    name: the page
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm --prefix ui ci
+      - run: npm --prefix ui run build
+      - name: Test, round after round
+        shell: bash
+        run: |
+          failed=0
+          for i in $(seq 1 "$ROUNDS"); do
+            echo "::group::round $i"
+            npm --prefix ui test || failed=$((failed + 1))
+            echo "::endgroup::"
+          done
+          echo "$failed of $ROUNDS rounds failed"
+          test "$failed" -eq 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-dist
+          path: ui/dist
+          include-hidden-files: true
+          if-no-files-found: error
+
+  cli:
+    # The binary started and stopped as a person does (tests/cli.rs), where
+    # a process and its sockets come and go: on both platforms.
+    name: ${{ matrix.os }} / cli
+    needs: client
+    if: always() && needs.client.result != 'cancelled'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Keep LF line endings
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked --no-run
+      - name: Test, round after round
+        shell: bash
+        run: |
+          failed=0
+          for i in $(seq 1 "$ROUNDS"); do
+            echo "::group::round $i"
+            cargo test --locked || failed=$((failed + 1))
+            echo "::endgroup::"
+          done
+          echo "$failed of $ROUNDS rounds failed"
+          test "$failed" -eq 0
+
+  browser:
+    name: browser tests, slowed down
+    needs: client
+    if: always() && needs.client.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: cargo build --locked
+      - name: Test, round after round
+        shell: bash
+        env:
+          DIFFNOTE_CPU_SLOWDOWN: ${{ env.SLOWDOWN }}
+        run: |
+          failed=0
+          for i in $(seq 1 "$ROUNDS"); do
+            echo "::group::round $i"
+            DIFFNOTE_TEST_ARTIFACTS="$RUNNER_TEMP/browser-failures/round-$i" \
+              python -m unittest discover -s tests/browser || failed=$((failed + 1))
+            echo "::endgroup::"
+          done
+          echo "$failed of $ROUNDS rounds failed"
+          test "$failed" -eq 0
+      - name: Keep the pages of the tests that failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failures
+          path: ${{ runner.temp }}/browser-failures
+          if-no-files-found: ignore

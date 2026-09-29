@@ -43,7 +43,13 @@ cargo install --path .   # ビルドしたものを入れる(先に mise run bui
 
 ### CI
 
-`.github/workflows/ci.yml` が、プッシュとプルリクエストごとに、画面を 1 度だけビルドして、Linux と Windows(最新の Rust)、最低版の Rust 1.88(Linux)、ブラウザのテストに渡します。最新の Rust では、clippy の警告と rustfmt の書式もエラーとして扱います。
+`.github/workflows/ci.yml` が、プッシュとプルリクエストごとに、画面を 1 度だけビルドして、Linux と Windows(最新の Rust)、最低版の Rust 1.88(Linux)、ブラウザのテストに渡します。最新の Rust では、clippy の警告と rustfmt の書式もエラーとして扱います。ブラウザのテストが失敗したときは、そのときのページ(スクリーンショット、HTML、アドレス)が `browser-failures` という成果物に残ります。
+
+`.github/workflows/flaky.yml` は、たまにだけ失敗するテストを探すためのものです。週に 1 度と、手で実行したとき(Actions の「Flaky tests」から、回数と遅くする倍率を指定できます)に、すべてのテストを何度も流します。ブラウザのテストはページを 4 倍遅くして流し、CLI のテストは Linux と Windows の両方で流します。1 回でも失敗すれば失敗です。失敗したテストを流し直して通すことはしません(2 回目に通るテストこそが、探しているものなので)。手元で同じことをするには:
+
+```sh
+DIFFNOTE_CPU_SLOWDOWN=4 python3 -m unittest discover -s tests/browser
+```
 
 ## 文言
 

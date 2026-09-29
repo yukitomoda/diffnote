@@ -975,6 +975,36 @@ class BrowserCase(unittest.TestCase):
         cls.browser.close()
         shutil.rmtree(cls.root, ignore_errors=True)
 
+    def run(self, result=None):
+        """Runs the test; one that fails leaves what the page looked like
+        then, when `DIFFNOTE_TEST_ARTIFACTS` names a directory (CI keeps it):
+        a screenshot, the page's markup and its address. A failure on a
+        machine no one is at is then something to look at, not a guess."""
+        result = result if result is not None else self.defaultTestResult()
+        before = len(result.failures) + len(result.errors)
+        out = super().run(result)
+        where = os.environ.get("DIFFNOTE_TEST_ARTIFACTS")
+        if where and len(result.failures) + len(result.errors) > before:
+            self._keep_the_page(where)
+        return out
+
+    def _keep_the_page(self, where):
+        browser = getattr(type(self), "browser", None)
+        if browser is None:
+            return
+        os.makedirs(where, exist_ok=True)
+        stem = os.path.join(where, self.id())
+        try:
+            browser.screenshot(stem + ".png")
+            with open(stem + ".html", "w", encoding="utf-8") as f:
+                f.write(browser.js("document.documentElement.outerHTML") or "")
+            with open(stem + ".txt", "w", encoding="utf-8") as f:
+                f.write("address: %s\nscroll: %s\nwindow: %s\n" % (
+                    browser.js("location.href"), browser.js("[scrollX, scrollY].join(',')"),
+                    browser.js("[innerWidth, innerHeight].join('x')")))
+        except Exception as e:  # (The page may be gone with the test: say so, go on.)
+            print("\n[could not keep the page of %s: %s]" % (self.id(), e), file=sys.stderr)
+
     def fresh(self, name):
         """A new directory for one test's reviews."""
         path = tempfile.mkdtemp(prefix=name + "-", dir=self.root)
