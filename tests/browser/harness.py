@@ -210,6 +210,14 @@ class Browser:
             raise RuntimeError(f"Chrome did not start ({attempts} tries)")
         self.cdp = Cdp(port)
         self.cdp.call("Page.enable")
+        # Every page is told, before its own scripts run, how to say that it
+        # has settled (see `settle`).
+        self.cdp.call("Page.addScriptToEvaluateOnNewDocument", source=SETTLE_SCRIPT)
+        # `DIFFNOTE_CPU_SLOWDOWN=4`: the page runs as on a machine four times
+        # slower, to find a test that only passes on a fast one.
+        slowdown = float(os.environ.get("DIFFNOTE_CPU_SLOWDOWN") or 1)
+        if slowdown > 1:
+            self.cdp.call("Emulation.setCPUThrottlingRate", rate=slowdown)
 
     def _port(self, port_file, timeout=30):
         """The port Chrome says it listens on, once it has written all of it
@@ -292,6 +300,18 @@ class Browser:
     def wait(self, expression, timeout=8):
         return self.cdp.wait(expression, timeout)
 
+    def settle(self):
+        """Waits for the page to have nothing more to do: no request to the
+        server under way, and a few frames drawn since the last one ended.
+
+        What a page does after an event -- draws, runs its effects (which is
+        where a listener for Escape is added), asks the server -- happens
+        over the next frames, not at once. A test that went on after a fixed
+        moment found it done on one machine and not on a slower one; this
+        waits for exactly that, however long it takes.
+        """
+        assert self.js("window.__dnSettle ? window.__dnSettle() : true"), "the page never settled"
+
     def visible(self, selector):
         """How many elements matching `selector` are displayed."""
         return self.js("Array.from(document.querySelectorAll(%s)).filter(function(e){return e.getClientRects().length>0}).length" % json.dumps(selector))
@@ -319,10 +339,10 @@ class Browser:
         return self.wait("document.querySelectorAll(%s).length === %d" % (json.dumps(selector), n), timeout)
 
     def set_value(self, selector, text):
-        # As typing does: the page hears an `input` (and gets a moment to draw).
+        # As typing does: the page hears an `input` (and has done with it).
         self.js("var t=document.querySelector(%s); Object.getOwnPropertyDescriptor(Object.getPrototypeOf(t),'value').set.call(t,%s); t.dispatchEvent(new Event('input',{bubbles:true}))"
                 % (json.dumps(selector), json.dumps(text)))
-        time.sleep(0.1)
+        self.settle()
 
     def click(self, selector):
         self.js("document.querySelector(%s).click()" % json.dumps(selector))
@@ -342,7 +362,7 @@ class Browser:
         self.js("document.querySelector(%s).scrollIntoView({block:'center'})" % json.dumps(selector))
         last = self._rect(selector)
         for _ in range(20):
-            time.sleep(0.03)
+            self.settle()
             now = self._rect(selector)
             if now == last:
                 return now
@@ -414,7 +434,7 @@ class Browser:
         self.cdp.mouse("mouseMoved", x, y)
         self.cdp.mouse("mousePressed", x, y, 1)
         # (Measured once pressed: pressing can move what is below the press.)
-        time.sleep(0.05)
+        self.settle()
         x2, y2 = point(last, False)
         # A few pixels first: a browser starts selecting once the pointer has
         # moved past its own threshold, and a first step of an eighth of the
@@ -732,6 +752,52 @@ def review_of(repo, review, target, comments=(), base=None, author="reviewer", e
     finally:
         server.stop()
 
+
+
+# What `Browser.settle` asks of a page: counts the requests it has under way,
+# and answers once none has been for three frames in a row (a request's
+# answer is taken in over the frames after it comes, and an effect runs in
+# the frame after the one it was drawn in). Gives up, saying so, after about
+# five seconds of frames.
+SETTLE_SCRIPT = """
+(function () {
+  var busy = 0;
+  var fetch = window.fetch;
+  window.fetch = function () {
+    busy++;
+    var done = function () { setTimeout(function () { busy--; }, 0); };
+    return fetch.apply(this, arguments).then(
+      function (r) { done(); return r; },
+      function (e) { done(); throw e; });
+  };
+  window.__dnSettle = function () {
+    return new Promise(function (resolve) {
+      var calm = 0, left = 300;
+      (function step() {
+        requestAnimationFrame(function () {
+          setTimeout(function () {
+            calm = busy === 0 ? calm + 1 : 0;
+            if (calm >= 3) resolve(true);
+            else if (--left <= 0) resolve(false);
+            else step();
+          }, 0);
+        });
+      })();
+    });
+  };
+})();
+"""
+
+
+def until(check, timeout=8):
+    """Waits for `check()` (something outside the page: a file, what the
+    server said) to be true; whether it came to be."""
+    end = time.time() + timeout
+    while time.time() < end:
+        if check():
+            return True
+        time.sleep(0.05)
+    return bool(check())
 
 
 def png(width, height, rgb):

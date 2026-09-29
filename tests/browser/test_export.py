@@ -3,7 +3,6 @@ import json
 import os
 import shutil
 import pathlib
-import time
 import sys
 import unittest
 
@@ -100,7 +99,7 @@ class StaticExport(BrowserCase):
         b.click("[data-diffnote-view-menu]")
         self.assertFalse(b.js(f"document.querySelector({json.dumps(panel)}).hidden"))
         self.assertEqual(b.js("document.querySelector('[data-diffnote-layout=unified]').classList.contains('is-current')"), True)
-        time.sleep(0.2)  # (the menu listens for Escape once it has been drawn)
+        b.settle()  # (the menu listens for Escape once it has been drawn)
         b.escape()
         self.assertTrue(b.wait(f"document.querySelector({json.dumps(panel)}).hidden"), "Escape shuts it")
         # It stays in view under the top bar as the page scrolls, with the
@@ -351,11 +350,11 @@ class SideBySide(BrowserCase):
             self.assertEqual(b.text(".diffnote-layout__button.is-current"), "統合")
             # Only when it opens: making the window wide doesn't change it.
             b.cdp.call("Emulation.setDeviceMetricsOverride", width=1600, height=800, deviceScaleFactor=1, mobile=False)
-            time.sleep(0.3)
+            b.settle()
             self.assertEqual(b.text(".diffnote-layout__button.is-current"), "統合")
             self.assertEqual(b.count("table.diffnote-diff--split"), 0)
             b.cdp.call("Emulation.setDeviceMetricsOverride", width=1000, height=800, deviceScaleFactor=1, mobile=False)
-            time.sleep(0.3)
+            b.settle()
             self.assertEqual(b.text(".diffnote-layout__button.is-current"), "統合")
         finally:
             b.cdp.call("Emulation.clearDeviceMetricsOverride")
@@ -877,11 +876,11 @@ class LineLinks(BrowserCase):
         self.assertEqual(b.js("document.querySelector('.diffnote-revision.is-current').id"), "rev-1")
         b.click("[data-diffnote-lineref='long.txt:L5-5']")
         self.assertTrue(b.wait("document.querySelector('.diffnote-revision.is-current').id === 'rev-0'"))
-        # A moment for the popstate listener (a useEffect) to attach.
-        time.sleep(0.1)
+        # The popstate listener is attached by an effect, once drawn.
+        b.settle()
         b.js("history.back()")
         self.assertTrue(b.wait("document.querySelector('.diffnote-revision.is-current').id === 'rev-1'"))
-        time.sleep(0.1)
+        b.settle()
         b.js("history.forward()")
         self.assertTrue(b.wait("document.querySelector('.diffnote-revision.is-current').id === 'rev-0'"))
 

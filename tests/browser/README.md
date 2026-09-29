@@ -20,6 +20,22 @@ Chrome or Chromium (`CHROME=/path/to/chrome` to name it) and
 ui/README.md).
 A test module is skipped, not failed, when the browser or the binary is missing.
 
+Waiting, which is what makes a test pass on one machine and fail on another:
+
+- Never for a fixed time (`test_rules.py` refuses `sleep(` in a test).
+  Wait for what has to be so: `b.wait(expr)` for something on the page,
+  `b.settle()` for "the page has done with what it was doing" (no request
+  to the server under way, and a few frames drawn since -- an effect, such
+  as the one that adds a listener for Escape, runs a frame after it is
+  drawn), `harness.until(check)` for something outside the page (a file,
+  what the server printed).
+- Load a page again with `b.reload()` / `b.open()`, never the page's own
+  `location.reload()`: they wait for the new page, not for the old one that
+  is still there for a moment (`test_rules.py` refuses that too).
+- `DIFFNOTE_CPU_SLOWDOWN=4` runs every page as on a machine four times
+  slower. A new test should pass so as well: a CI runner is slower than the
+  machine it was written on.
+
 Tips for writing more:
 
 - `Browser.wait(expr)` needs a value that comes back by value: wrap a DOM node

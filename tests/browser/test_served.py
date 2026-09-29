@@ -3,7 +3,6 @@ resolving, the version check, shutting down."""
 import unittest
 
 import json
-import time
 
 import harness
 from harness import BrowserCase, Served, add_settings, entries, make_calc_review, make_gaps_review, make_indent_review, make_login_review, recorded
@@ -35,7 +34,7 @@ class ServedCase(BrowserCase):
     def write(self, selector, text):
         """Types into a box the way the page hears it (and lets it settle)."""
         self.b.js("var t=document.querySelector(%r); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,%r); t.dispatchEvent(new Event('input',{bubbles:true}))" % (selector, text))
-        time.sleep(0.1)
+        self.b.settle()
 
     def paste(self, selector, name, mime, content, base64=False):
         """Pastes a file into a box, as a screenshot from the clipboard arrives."""
@@ -49,7 +48,7 @@ class ServedCase(BrowserCase):
     def reply_to(self, card, text, shows=None):
         b = self.b
         b.js(f"var t=document.getElementById({card!r}).querySelector('textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,{text!r}); t.dispatchEvent(new Event('input',{{bubbles:true}}))")
-        time.sleep(0.1)
+        b.settle()
         b.js(f"document.getElementById({card!r}).querySelector('form.diffnote-reply').requestSubmit()")
         self.assertTrue(b.wait(f"document.getElementById({card!r}).textContent.includes({(shows or text)!r}) && !document.querySelector('.is-pending')"))
 
@@ -112,9 +111,7 @@ class Replies(ServedCase):
         self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('[data-diffnote-action=reopen]')"))
         self.assertEqual(self.counts(), "スレッド 4 件(解決済み 2 件)")
         self.assertTrue(self.same_page())
-        deadline = time.time() + 8
-        while entries(self.review) == written and time.time() < deadline:
-            time.sleep(0.05)
+        self.assertTrue(harness.until(lambda: entries(self.review) != written))
         b.js(f"document.getElementById({card!r}).querySelector('[data-diffnote-action]').click()")
         self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('[data-diffnote-action=resolve]')"))
         self.assertEqual(self.counts(), "スレッド 4 件(解決済み 1 件)")
@@ -129,10 +126,8 @@ class Replies(ServedCase):
         b.js(f"document.getElementById({card!r}).querySelector('[data-diffnote-action]').click()")
         self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('[data-diffnote-action=reopen]')"))
         b.js(f"document.getElementById({card!r}).querySelector('[data-diffnote-action]').click()")
-        deadline = time.time() + 8
-        while entries(self.review) < written + 2 and time.time() < deadline:
-            time.sleep(0.05)
-        time.sleep(0.3)
+        self.assertTrue(harness.until(lambda: entries(self.review) >= written + 2))
+        b.settle()
         self.assertEqual(self.counts(), "スレッド 4 件(解決済み 1 件)", "resolved then reopened: as it was")
         self.assertTrue(b.js(f"!!document.getElementById({card!r}).querySelector('[data-diffnote-action=resolve]')"))
 
@@ -224,7 +219,7 @@ class Replies(ServedCase):
         self.assertEqual(b.count(f"{mine} a"), 1, "only the safe link is a link")
         self.assertEqual(b.js(f"document.querySelector('{mine} a').getAttribute('href')"), "https://example.com/a")
         self.assertIn("悪い", b.text(mine))
-        time.sleep(0.3)
+        b.settle()
         self.assertFalse(b.js("'__ran' in window"))
 
     def test_every_comment_has_a_menu_and_only_those_of_the_signed_in_name_are_marked_as_mine(self):
@@ -306,8 +301,7 @@ class Replies(ServedCase):
         self.reply_to(card, "追加した")
         self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-changed]').length === 1"))
         # It stays after the page is loaded again.
-        b.js("location.reload()")
-        self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-changed]').length === 1"))
+        b.reload(ready="document.querySelectorAll('[data-diffnote-changed]').length === 1")
         self.assertNotEqual(b.js("getComputedStyle(document.querySelector('[data-diffnote-changed]')).backgroundColor"), "rgba(0, 0, 0, 0)")
 
     def test_a_comment_of_this_session_can_be_edited(self):
@@ -483,7 +477,7 @@ class Replies(ServedCase):
         # Esc leaves the screen too, and the limit is what was saved.
         self.open_settings()
         self.assertEqual(b.value("[data-diffnote-setting-limit]"), "2")
-        time.sleep(0.2)  # (the screen listens for Escape once it has been drawn)
+        b.settle()  # (the screen listens for Escape once it has been drawn)
         b.escape()
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"), "Escape leaves it")
         # Emptied: the default heading comes back.
@@ -631,9 +625,7 @@ class Replies(ServedCase):
         self.assertTrue(any("保存せずに終了" in l for l in self.wait_said()), "the terminal says so too")
 
     def wait_said(self):
-        deadline = time.time() + 5
-        while time.time() < deadline and not any("保存せずに終了" in l for l in self.server.said_more()):
-            time.sleep(0.05)
+        harness.until(lambda: any("保存せずに終了" in l for l in self.server.said_more()), timeout=5)
         return self.server.said_more()
 
     def test_many_revisions_do_not_change_the_top_bar(self):
@@ -643,7 +635,7 @@ class Replies(ServedCase):
         # Many tabs, as a long review has.
         b.js("""(function(){var ul=document.querySelector('.diffnote-revisions ul'); var li=ul.querySelector('li');
           for (var i=0;i<12;i++) { var c=li.cloneNode(true); c.querySelector('a').textContent='#'+(i+3)+' abcdef'+i+' (2026-09-21)'; ul.appendChild(c); } })()""")
-        time.sleep(0.2)
+        b.settle()
         self.assertEqual(b.js("document.querySelector('.diffnote-topbar').offsetHeight"), before, "the bar keeps its height")
         nav = b.js("(() => { const n = document.querySelector('.diffnote-revisions'); return {over: n.scrollWidth > n.clientWidth, bar: n.offsetHeight - n.clientHeight}; })()")
         self.assertTrue(nav["over"], "the tabs scroll sideways")
@@ -670,7 +662,7 @@ class Replies(ServedCase):
         # opens it at 全般).
         b.click("[data-diffnote-user-settings]")
         self.assertTrue(b.wait_exists("[data-diffnote-user-setting-author]"))
-        time.sleep(0.1)  # let the screen's own Escape listener (a useEffect) attach
+        b.settle()  # the screen's own Escape listener is attached by an effect
         b.escape()
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"))
 
@@ -708,9 +700,7 @@ class Replies(ServedCase):
         card = self.card("mul の型")
         self.reply_to(card, "終了前の返信")
         b.js(f"document.getElementById({card!r}).querySelector('[data-diffnote-action]').click()")
-        deadline = time.time() + 8
-        while "解決" not in recorded(self.review) and time.time() < deadline:
-            time.sleep(0.05)
+        self.assertTrue(harness.until(lambda: "解決" in recorded(self.review)))
         b.js("document.querySelector('[data-diffnote-shutdown]').click()")
         # (The page's own scripts are in its body, so look for the page going.)
         self.assertTrue(b.wait("!document.getElementById('app')"))
@@ -738,10 +728,7 @@ class ViewKeptAcrossRuns(ServedCase):
         b.click("[data-diffnote-layout=unified]")
         b.click("[data-diffnote-wrap]")
         self.assertTrue(b.wait("document.body.classList.contains('diffnote-nowrap')"))
-        for _ in range(50):
-            if harness.user_view() == {"layout": "unified", "wrap": False}:
-                break
-            time.sleep(0.1)
+        harness.until(lambda: harness.user_view() == {"layout": "unified", "wrap": False})
         self.assertEqual(harness.user_view(), {"layout": "unified", "wrap": False})
         port = self.server.url.split(":")[2].split("/")[0]
         self.server.stop()
@@ -778,11 +765,7 @@ class SidebarWidth(ServedCase):
         b.cdp.mouse("mouseReleased", x + dx, y)
 
     def kept(self, width):
-        for _ in range(50):
-            if harness.user_view().get("sidebar_width") == width:
-                return True
-            time.sleep(0.1)
-        return False
+        return harness.until(lambda: harness.user_view().get("sidebar_width") == width, timeout=5)
 
     def test_dragging_the_edge_changes_the_width_and_it_is_kept(self):
         self.serve()
@@ -1137,7 +1120,7 @@ class IgnoreWhitespaceDefault(ServedCase):
         self.assertFalse(b.js("document.querySelector('[data-diffnote-ignore-space]').checked"), "the default is to show them")
         b.click("[data-diffnote-ignore-space]")
         self.assertTrue(b.wait("document.querySelectorAll('tr.diffnote-line--removed').length === 1"))
-        time.sleep(0.3)
+        b.settle()
         self.assertEqual(read(), before, "nothing was written")
         self.assertEqual(b.js("fetch('/api/whitespace', {method: 'POST', headers: {'X-Diffnote': '1'}, body: '{}'}).then(r => r.status)"), 404, "and nothing to ask the server to keep")
         # A page opened again starts as the review says: not ignoring.
@@ -1206,7 +1189,7 @@ class CompareWithAnEarlierRevision(ServedCase):
         self.assertTrue(b.wait_exists("[data-diffnote-compare-note]"))
         # A removed line is not in this revision: pressing it does nothing.
         b.click_at(f"{CUR} tr.diffnote-line--removed .diffnote-line__gutter-old")
-        time.sleep(0.3)
+        b.settle()
         self.assertFalse(b.exists(".diffnote-composer-row"))
         # The `raise` line (line 9 of this revision) can be commented on.
         row = f"{CUR} tr.diffnote-line--added[data-diffnote-new='9'] .diffnote-line__gutter-new"
@@ -1865,7 +1848,7 @@ class EmojiTable(ServedCase):
         form = f"#{card} .diffnote-reply"
         scroller = f"#{card}"
         b.js(f"document.querySelector({json.dumps(form)}).scrollIntoView({{block: 'end'}})")
-        time.sleep(0.2)
+        b.settle()
         room = lambda: b.js("(() => { const s = document.querySelector('%s').closest('.diffnote-diff-scroll');"
                             " return s ? [s.scrollHeight - s.clientHeight, s.scrollTop] : null; })()" % scroller)
         where = lambda: b.js("[window.scrollY, window.scrollX]")
@@ -1923,7 +1906,7 @@ class EmojiTable(ServedCase):
         self.assertTrue(b.wait(f"document.querySelector({json.dumps(box)}).value === '🎉'"))
         b.click(f"{form} [data-diffnote-emoji-button]")
         self.assertTrue(b.wait_exists("[data-diffnote-emoji-panel]"))
-        time.sleep(0.2)  # (the table listens for Escape once it has been drawn)
+        b.settle()  # (the table listens for Escape once it has been drawn)
         b.escape()
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-emoji-panel]')"))
         self.assertEqual(b.value(box), "🎉", "nothing was added")
@@ -1960,7 +1943,7 @@ class EmojiTable(ServedCase):
 
     def write_search(self, text):
         self.b.js("var t=document.querySelector('[data-diffnote-emoji-search]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(t,%s); t.dispatchEvent(new Event('input',{bubbles:true}))" % json.dumps(text))
-        time.sleep(0.1)
+        self.b.settle()
 
 
 class ReactionsToComments(ServedCase):
@@ -2377,23 +2360,21 @@ class Reopen(ServedCase):
         b.click("[data-diffnote-screen-back]")
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"))
         b.js("window.dispatchEvent(new Event('focus'))")
-        time.sleep(0.3)
+        b.settle()
         self.assertFalse(b.exists("[data-diffnote-notice='pending']"), "not even told about it")
 
 class BrowserHistory(ServedCase):
     """The browser's own back/forward buttons retrace revision switches,
     settings screens, and jumps (deep links).
 
-    A short sleep sits before every `history.back()`/`forward()` and
+    The page settles before every `history.back()`/`forward()` and
     `b.escape()` here: the listener that hears them is attached by a
-    `useEffect`, which runs a moment after the element it belongs to first
+    `useEffect`, which runs a frame after the element it belongs to first
     appears (`wait_exists` only says the element is there). Firing the key
     or navigating sooner sometimes beats the listener to it."""
 
-    SETTLE = 0.1
-
     def settle(self):
-        time.sleep(self.SETTLE)
+        self.b.settle()
 
     def current_tab(self):
         return self.b.js("document.querySelector('[data-diffnote-revision-link].is-current').dataset.diffnoteRevisionLink")
