@@ -166,45 +166,6 @@ class Replies(ServedCase):
         b.js("var c=document.getElementById(window.__other); c.querySelector('[data-diffnote-action]').click()")
         self.assertTrue(b.wait(f"document.getElementById({card!r}).textContent.includes('別のタブから')"))
 
-    def test_the_export_button_gives_the_page_the_export_command_writes(self):
-        self.serve()
-        b = self.b
-        b.click("[data-diffnote-screen-open]")
-        self.assertTrue(b.wait_exists("[data-diffnote-export]"))
-        self.assertEqual(b.js("document.querySelector('[data-diffnote-export]').getAttribute('href')"), "/export")
-        # No `download` attribute: with a bare one the page (Preact) made it
-        # `download="true"` and the browser saved the file as "true". The
-        # name comes from the server's Content-Disposition.
-        self.assertFalse(b.js("document.querySelector('[data-diffnote-export]').hasAttribute('download')"))
-        # What the link fetches: an attachment named after the bundle, with the
-        # comments in it and nothing that talks to the server.
-        b.js("fetch('/export',{credentials:'same-origin'}).then(function(r){return r.text().then(function(t){window.__export={disposition:r.headers.get('content-disposition'),text:t}})})")
-        self.assertTrue(b.wait("!!window.__export"))
-        self.assertIn('filename="r.html"', b.js("window.__export.disposition"))
-        self.assertTrue(b.js("window.__export.text.includes('mul の型') && !window.__export.text.includes('D.api = ')"))
-
-    def test_the_download_button_gives_the_bundle_exactly_as_it_is(self):
-        self.serve()
-        b = self.b
-        b.click("[data-diffnote-screen-open]")
-        self.assertTrue(b.wait_exists("[data-diffnote-download]"))
-        self.assertEqual(b.js("document.querySelector('[data-diffnote-download]').getAttribute('href')"), "/download")
-        self.assertFalse(b.js("document.querySelector('[data-diffnote-download]').hasAttribute('download')"))
-        b.js("fetch('/download',{credentials:'same-origin'}).then(function(r){return r.arrayBuffer().then(function(buf){"
-             "window.__download={disposition:r.headers.get('content-disposition'), type:r.headers.get('content-type'), size:buf.byteLength}})})")
-        self.assertTrue(b.wait("!!window.__download"))
-        self.assertIn('filename="r.diffnote"', b.js("window.__download.disposition"))
-        self.assertEqual(b.js("window.__download.type"), "application/zip")
-        self.assertEqual(b.js("window.__download.size"), os.path.getsize(self.review))
-        # A reply made through the session is in it (the file on disk, byte for byte).
-        b.click("[data-diffnote-screen-back]")
-        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"))
-        card = self.card("mul の型")
-        self.reply_to(card, "ダウンロードの確認")
-        b.js("fetch('/download',{credentials:'same-origin'}).then(function(r){return r.arrayBuffer().then(function(buf){window.__size2=buf.byteLength})})")
-        self.assertTrue(b.wait("window.__size2 !== undefined && window.__size2 !== window.__download.size"))
-        self.assertEqual(b.js("window.__size2"), os.path.getsize(self.review))
-
     def test_what_a_comment_says_is_text_and_markdown_never_html_or_script(self):
         self.serve()
         b = self.b
@@ -680,20 +641,6 @@ class Replies(ServedCase):
         heights = b.js(f"(() => {{ const e = [...document.querySelectorAll({json.dumps(body)})].find(e => e.textContent.includes('下')); const p = e.querySelectorAll('p'); return [p[1].getBoundingClientRect().top - p[0].getBoundingClientRect().bottom, p[0].getBoundingClientRect().height]; }})()")
         self.assertGreater(heights[0], 2 * heights[1] * 0.9, "the gap is about two lines of text more than a single break")
 
-    def test_a_line_break_in_a_comment_stays_one_without_a_blank_line(self):
-        self.serve()
-        b = self.b
-        card = self.card("mul の型")
-        box = f"#{card} .diffnote-reply textarea"
-        self.write(box, "一行目\n二行目\n\n別の段落")
-        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
-        body = f"#{card} .diffnote-comment__body"
-        # (Until it is saved, what is shown is the draft as it was typed.)
-        self.assertTrue(b.wait(f"!document.querySelector('.is-pending') && [...document.querySelectorAll({json.dumps(body)})].some(e => e.textContent.includes('別の段落'))"))
-        html = b.js(f"[...document.querySelectorAll({json.dumps(body)})].find(e => e.textContent.includes('別の段落')).innerHTML")
-        self.assertIn("一行目<br>二行目", html)
-        self.assertEqual(html.count("<p>"), 2, "a blank line is still a new paragraph")
-
     def test_the_shutdown_button_stops_the_server_and_says_roughly_what_was_saved(self):
         self.serve()
         b = self.b
@@ -1165,19 +1112,17 @@ class CompareWithAnEarlierRevision(ServedCase):
     def test_the_revision_is_shown_against_the_chosen_one_and_nothing_is_recorded(self):
         self.serve()
         b = self.b
-        before = entries(self.review)
         self.choose("0")
         self.assertTrue(b.wait_exists("[data-diffnote-compare-note]"))
         self.assertRegex(b.text("[data-diffnote-compare-note]"), r"^#1 [0-9a-f]{7} \.\. #2 [0-9a-f]{7}$")
         self.assertTrue(b.exists("[data-diffnote-compare-note] svg.diffnote-icon"), "marked as something to notice")
         self.assertIn("表示だけの切り替え", b.js("document.querySelector('[data-diffnote-compare-note]').title"), "the explanation is the tooltip")
         self.assertTrue(b.js("document.querySelector('[data-diffnote-base]').classList.contains('is-changed')"))
-        # What changed from c2 to c3: a docstring (two lines) and one line replaced.
+        # (What the view holds, and that nothing is written, is in tests/cli.rs:
+        # here, that the page draws it.)
         self.assertTrue(b.wait(f"document.querySelectorAll('{CUR} tr.diffnote-line--added').length === 3"))
-        self.assertEqual(b.count(f"{CUR} tr.diffnote-line--removed"), 1)
         # The threads are where they are in this view.
         self.card("mul の型")
-        self.assertEqual(entries(self.review), before, "looking writes nothing")
         self.choose("")
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-compare-note]')"))
         self.assertGreater(b.count(f"{CUR} tr.diffnote-line--added"), 3, "the base's diff again")
@@ -1259,17 +1204,9 @@ class CompareWithAnEarlierRevision(ServedCase):
         b.click("[data-diffnote-revision-link='0']")
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-compare-note]')"))
 
-    def test_the_server_refuses_what_is_not_an_earlier_revision(self):
-        self.serve()
-        b = self.b
-        for query in ("rev=1&from=1", "rev=0&from=1", "rev=9&from=0", "rev=1"):
-            status = b.js("fetch('/api/compare?%s').then(r => r.status)" % query)
-            self.assertIn(status, (400,), query)
-
 
 PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 SVG_OK = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="blue"/></svg>'
-SVG_BAD = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)" width="8" height="8"></svg>'
 
 
 class Images(ServedCase):
@@ -1379,29 +1316,6 @@ class Images(ServedCase):
         self.assertIn("big.bin", said)
         self.assertIn("超えています", said)
         self.assertEqual([n for n in harness.zip_names(self.review) if n.startswith("attachments/")], [], "nothing was sent")
-
-    def test_an_svg_that_runs_something_is_refused_on_the_page(self):
-        # Which SVGs are taken, and how they are sent, is the server's
-        # (`src/image.rs`, `src/serve.rs`); a picture arriving in a comment
-        # is `test_a_pasted_picture_is_put_in_the_review_and_shown_in_the_comment`.
-        self.serve()
-        b = self.b
-        card = self.card("mul の型")
-        box = f"#{card} .diffnote-reply textarea"
-        self.paste(box, "bad.svg", "image/svg+xml", SVG_BAD)
-        self.assertTrue(b.wait("!!document.querySelector('.is-failed[data-diffnote-attach-status]')"))
-        self.assertIn("SVG", b.text("[data-diffnote-attach-status]"))
-        self.assertNotIn("diffnote-image:", b.js(f"document.querySelector({json.dumps(box)}).value"))
-
-    def test_a_link_to_an_image_elsewhere_is_only_its_text(self):
-        self.serve()
-        b = self.b
-        card = self.card("mul の型")
-        box = f"#{card} .diffnote-reply textarea"
-        self.write(box, "![外の画像](https://example.invalid/a.png) と ![](javascript:alert(1))")
-        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
-        self.assertTrue(b.wait(f"document.getElementById({card!r}).textContent.includes('外の画像')"))
-        self.assertEqual(b.count(f"#{card} img"), 0, "nothing is loaded from an address")
 
 
 class ImageZoom(ServedCase):
@@ -1644,22 +1558,6 @@ class AttachmentsScreen(ServedCase):
         self.assertEqual(
             b.js(f"document.querySelector('[data-diffnote-attached-download=\"{saved}\"]').getAttribute('download')"),
             "ログ.zip", "a file keeps the name the comment gives it")
-
-    def test_an_image_goes_by_the_name_of_the_file_it_was_attached_from(self):
-        self.serve()
-        b = self.b
-        card = self.card("mul の型")
-        box = f"#{card} .diffnote-reply textarea"
-        # The page sends the file's name along; which names the review keeps
-        # (not a clipboard's `image.png`) is the server's (`src/serve.rs`).
-        self.paste(box, "図 1.png", "image/png", PNG_1X1, base64=True)
-        self.assertTrue(b.wait(f"document.querySelector({json.dumps(box)}).value.includes('diffnote-image:')"))
-        b.js(f"document.querySelector({json.dumps(box)}).form.requestSubmit()")
-        self.assertTrue(b.wait(f"!!document.getElementById({card!r}).querySelector('img.diffnote-image')"))
-        self.open_attachments(1)
-        self.assertIn("図 1.png", self.rows()[0]["text"])
-        self.assertEqual(b.js("document.querySelector('[data-diffnote-attached-download]').getAttribute('download')"),
-                         "図 1.png")
 
     def test_an_image_can_be_looked_at_by_itself(self):
         # The thumbnail is 48px: the only way to tell what it is is to open it.
@@ -1995,20 +1893,6 @@ class ReactionsToComments(ServedCase):
         self.assertTrue(b.js(f"document.querySelector({json.dumps(chip)}).classList.contains('is-mine')"))
         tip = b.js(f"document.querySelector({json.dumps(chip)}).title")
         self.assertIn("検証者、別の人", tip)
-
-    def test_a_reaction_goes_with_its_comment_when_that_is_deleted(self):
-        self.serve()
-        b = self.b
-        card = self.card("mul の型")
-        self.reply_to(card, "消す返信")
-        mine = f"#{card} [data-diffnote-mine]"
-        self.add_through_the_table(mine, "heart")
-        self.assertTrue(b.wait_exists(f"{mine} [data-diffnote-reaction='❤️']"))
-        self.assertTrue(self.has_file())
-        b.click(f"{mine} [data-diffnote-delete]")
-        b.click(f"{mine} [data-diffnote-warn-ok]")
-        self.assertTrue(b.wait("!document.body.textContent.includes('消す返信')"))
-        self.assertFalse(self.has_file(), "the reaction went with it")
 
     def test_a_page_that_only_shows_the_review_shows_the_reactions_and_cannot_add(self):
         self.serve()

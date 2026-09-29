@@ -60,9 +60,9 @@ export function SettingsFormPane(props: FormProps) {
   var submit = function (e: Event) {
     e.preventDefault();
     if (busy) return;
-    var bytes = lib.mbToBytes(limit);
-    if (bytes == null) { setError(lib.m('ui.settings.attachment_limit_not_number')); return; }
-    if (bytes < 1024 || bytes > 100 * 1024 * 1024) { setError(lib.m('ui.settings.attachment_limit_out_of_range')); return; }
+    var problem = lib.limitProblem(limit);
+    if (problem) { setError(lib.m(problem)); return; }
+    var bytes = lib.mbToBytes(limit) as number;
     setBusy(true);
     setError('');
     props.save({ title: title, ignore_whitespace: ignore, attachment_limit: bytes, ignore: leaveOut }).then(function (res) {

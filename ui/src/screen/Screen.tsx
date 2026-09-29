@@ -1,7 +1,7 @@
 // The screen behind the title: one of the panes below, with the list of them.
 import { useEffect } from 'preact/hooks';
 import { lib } from '../lib.ts';
-import { SECTION_GROUPS } from '../state/route.ts';
+import { SECTION_GROUPS, hiddenSections } from '../state/route.ts';
 import type { Section } from '../state/route.ts';
 import { AttachmentsPane } from './Attachments.jsx';
 import { TimelinePane } from './Timeline.jsx';
@@ -70,7 +70,7 @@ export function ReviewScreen(props: ScreenProps) {
     document.addEventListener('keydown', key);
     return function () { document.removeEventListener('keydown', key); };
   }, []);
-  var hidden: Section[] = props.model.workspace ? [] : ['repos'];
+  var hidden = hiddenSections(!!props.model.workspace);
   return <main class="diffnote-screen" data-diffnote-screen data-diffnote-screen-section={props.section}>
     <p class="diffnote-screen__top"><button type="button" class="diffnote-button" data-diffnote-screen-back onClick={props.onClose}><Icon name="back" />{' '}{lib.m('ui.screen.back_button')}</button></p>
     <div class="diffnote-screen__layout">

@@ -402,7 +402,12 @@ class Browser:
         the pointer: a point measured on the screen is wherever the element
         was then, and a page that moves (a box closing, a scroll settling)
         puts another element there. The pointer itself is tested by the few
-        tests about it (`click_at`, `drag`)."""
+        tests about it (`click_at`, `drag`).
+
+        The page settles first, as it has before a person can press anything:
+        what it does after the last change (an effect that lets go of what
+        was chosen, when the layout changes) would otherwise undo this."""
+        self.settle()
         self.js("""(function (el, shift) {
           var o = { bubbles: true, cancelable: true, button: 0, buttons: 1, shiftKey: shift, view: window };
           el.dispatchEvent(new MouseEvent('mousedown', o));
@@ -413,7 +418,8 @@ class Browser:
     def choose_lines(self, first, last):
         """Chooses the lines from `first` to `last` as a drag does, without
         a pointer (see `choose`): pressed on the one, moved over the other,
-        let go."""
+        let go. (After the page settles: see `choose`.)"""
+        self.settle()
         self.js("""(function (a, b) {
           var o = { bubbles: true, cancelable: true, button: 0, buttons: 1, view: window };
           a.dispatchEvent(new MouseEvent('mousedown', o));

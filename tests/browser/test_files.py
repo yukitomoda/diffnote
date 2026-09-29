@@ -94,17 +94,6 @@ class StoredFiles(FilesCase):
         self.assertTrue(b.wait_exists(opener("docs/README.md")))
         self.assertEqual(self.listed(), ["docs/README.md", "docs/設計 メモ.md", "big.txt", "data.bin", "huge.txt"])
 
-    def test_a_search_lists_matching_paths_flat(self):
-        self.start(self.master)
-        b = self.b
-        self.open_tree()
-        self.search("設計")
-        self.assertTrue(b.wait_exists(opener("docs/設計 メモ.md")))
-        self.assertEqual(self.listed(), ["docs/設計 メモ.md"])
-        self.assertFalse(b.exists(f"{LIST} [data-diffnote-dir]"))
-        self.search("no-such-file")
-        self.assertTrue(b.wait(f"document.querySelector('{LIST}').textContent.includes('見つかりません')"))
-
     def test_opening_a_file_adds_it_to_the_page_and_records_nothing(self):
         self.start(self.master)
         b = self.b
@@ -168,16 +157,6 @@ class StoredFiles(FilesCase):
                               % json.dumps(f"{CUR} .diffnote-filelist a")))
         self.assertEqual(entries(self.review), events)
 
-    def test_a_file_that_cannot_be_shown_is_refused_with_a_reason(self):
-        self.start(self.master)
-        b = self.b
-        self.open_tree()
-        self.search("data")
-        self.assertTrue(b.wait_exists(opener("data.bin")))
-        b.click(opener("data.bin"))
-        self.assertTrue(b.wait_exists(ERROR))
-        self.assertEqual(b.text(ERROR), "テキストファイルではないため、表示できません")
-
 
 class FilesFromGit(FilesCase):
     """A review made from git that stores only what it needs (the default)."""
@@ -186,14 +165,6 @@ class FilesFromGit(FilesCase):
     def setUpClass(cls):
         super().setUpClass()
         cls.master, cls.repo = make_login_review(cls.root, name="fromgit")
-
-    def test_the_rest_of_the_commit_is_listed_and_opened_from_the_repository(self):
-        self.start(self.master, cwd=self.repo)
-        self.assertEqual(self.server.notices, [])
-        events, names = entries(self.review), zip_names(self.review)
-        self.open_tree()
-        self.open_file("docs/README.md")
-        self.assertEqual((entries(self.review), zip_names(self.review)), (events, names), "looking records nothing")
 
     def test_a_comment_stores_the_file_with_the_thread(self):
         self.start(self.master, cwd=self.repo)
@@ -218,20 +189,6 @@ class FilesFromGit(FilesCase):
             b.click(opener(path))
             self.assertTrue(b.wait_exists(ERROR), path)
             self.assertEqual(b.text(ERROR), reason)
-
-    def test_a_long_file_comes_from_git_in_chunks(self):
-        self.start(self.master, cwd=self.repo)
-        b = self.b
-        self.open_tree()
-        self.open_file("big.txt")
-        b.click(f"{section('big.txt')} [data-diffnote-more]")
-        self.assertTrue(b.wait_count(f"{section('big.txt')} tr[data-diffnote-new]", 1000))
-
-    def test_the_repository_can_be_named_when_started_elsewhere(self):
-        self.start(self.master, cwd=self.root, extra=("--repo", self.repo))
-        self.assertEqual(self.server.notices, [])
-        self.open_tree()
-        self.open_file("docs/README.md")
 
     def test_without_the_repository_only_stored_files_open_and_the_page_says_so(self):
         self.start(self.master, cwd=self.root)

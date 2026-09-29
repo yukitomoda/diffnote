@@ -181,6 +181,10 @@ interface Lib {
   formatSize(bytes: number): string;
   bytesToMB(bytes: number): number;
   mbToBytes(text: string): number | null;
+  limitProblem(text: string): string | null;
+  firstTooBig<T extends { size: number }>(files: T[], limit: number | null | undefined): T | null;
+  copyLocation(location: string, rev: number): string;
+  fileSuffix(file: { status: string; change?: string; image?: unknown }): string;
 
   quoteMarkdown(text: string): string;
   appendQuote(existing: string, text: string): string;
@@ -861,6 +865,37 @@ lib.mbToBytes = function (text) {
   var mb = Number(String(text).trim().replace(',', '.'));
   if (!isFinite(mb) || String(text).trim() === '' || mb <= 0) return null;
   return Math.round(mb * 1024 * 1024);
+};
+
+// What is wrong with a limit typed in megabytes (the key of the message
+// that says so), or `null`: a number, from 1 KB to 100 MB.
+lib.limitProblem = function (text) {
+  var bytes = lib.mbToBytes(text);
+  if (bytes == null) return 'ui.settings.attachment_limit_not_number';
+  if (bytes < 1024 || bytes > 100 * 1024 * 1024) return 'ui.settings.attachment_limit_out_of_range';
+  return null;
+};
+
+// The first of the files to attach that is over the review's limit, which
+// is said before anything is sent; `null` if none is (or there is no limit).
+lib.firstTooBig = function (files, limit) {
+  if (!limit) return null;
+  return files.filter(function (f) { return f.size > limit; })[0] || null;
+};
+
+// A place in the review as it is copied: the place, and the revision it is
+// in as the tabs number them (`calc.py:12@2`).
+lib.copyLocation = function (location, rev) {
+  return location + '@' + (rev + 1);
+};
+
+// What a file's heading adds to its path for a binary file: that it is one
+// (a picture, or any other), and what was done to it.
+lib.fileSuffix = function (file) {
+  if (file.status !== 'binary') return '';
+  var what = file.image ? 'image' : 'binary';
+  var change = file.change ? lib.messages['ui.binary_change.' + file.change] : '';
+  return change ? lib.mf('ui.file.' + what + '_suffix_named', { change: change }) : lib.m('ui.file.' + what + '_suffix_plain');
 };
 
 // A text as a quotation in a comment (Markdown): each line after `> `, a blank

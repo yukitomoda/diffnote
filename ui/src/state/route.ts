@@ -27,6 +27,12 @@ export const SECTION_GROUPS: Section[][] = [
   ['settings', 'repos', 'user'],
 ];
 
+/** The screens a review has no use for: a review of one repository (or of
+ * a directory) has no repositories to manage. */
+export function hiddenSections(ofSeveral: boolean): Section[] {
+  return ofSeveral ? [] : ['repos'];
+}
+
 /** Where the page is. One value, not four, so that a move is one change: the
  * address is written from it, and writing it twice for one move would leave
  * the back button with somewhere to go that the reader was never at. */

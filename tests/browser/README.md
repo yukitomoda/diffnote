@@ -32,6 +32,13 @@ Waiting, which is what makes a test pass on one machine and fail on another:
 - Load a page again with `b.reload()` / `b.open()`, never the page's own
   `location.reload()`: they wait for the new page, not for the old one that
   is still there for a moment (`test_rules.py` refuses that too).
+- Choose lines with `b.choose(sel)` / `b.choose_lines(a, b)`: the events go
+  to the elements, not to a point on the screen, which a page that moves in
+  between puts another line under. `click_at`, `drag` and `hover` (a real
+  pointer at a measured point) are for the few tests about the pointer
+  itself: dragging, Shift+click, hovering a range.
+- What can be checked without a page (a function of `ui/src/*.ts`, what the
+  server answers) is checked in node or Rust, not here.
 - `DIFFNOTE_CPU_SLOWDOWN=4` runs every page as on a machine four times
   slower. A new test should pass so as well: a CI runner is slower than the
   machine it was written on.

@@ -2947,3 +2947,64 @@ fn what_a_project_of_repositories_cannot_be_told_is_refused() {
         "{said}"
     );
 }
+
+#[test]
+fn a_revision_is_shown_against_an_earlier_one_and_nothing_is_recorded_or_else_refused() {
+    let env = Env::new();
+    let repo = git_repo(&env);
+    let review = env.path("review.diffnote");
+    // Two revisions from c1: up to c2, then up to c3.
+    env.make(&repo, &review, &["--base", "c1", "c2"]);
+    env.make(&repo, &review, &["c3"]);
+    let before = std::fs::read(&review).unwrap();
+    let served = env.open(&repo, &review);
+    // c3 against c2: only what c3 did (one line added), not the base's diff.
+    let shown = served.api("/api/compare?rev=1&from=0", None)["revision"].clone();
+    let calc = shown["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["path"] == "calc.txt")
+        .unwrap()
+        .clone();
+    let kinds: Vec<String> = calc["hunks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|h| h["rows"].as_array().unwrap().clone())
+        .map(|r| r["k"].as_str().unwrap().to_string())
+        .filter(|k| k != "c")
+        .collect();
+    assert_eq!(kinds, ["a"], "{calc}");
+    assert!(
+        !shown["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["path"] == "README.md"),
+        "README.md changed from c1 to c2, not after"
+    );
+    // Only an earlier revision, both named, and both there.
+    for query in [
+        "rev=1&from=1",
+        "rev=0&from=1",
+        "rev=9&from=0",
+        "rev=1",
+        "from=0",
+    ] {
+        let (status, _, body) = http(
+            served.port,
+            "GET",
+            &format!("/api/compare?{query}"),
+            &served.cookie,
+            None,
+        );
+        assert_eq!(status, 400, "{query}: {body}");
+    }
+    served.stop();
+    assert_eq!(
+        std::fs::read(&review).unwrap(),
+        before,
+        "looking writes nothing"
+    );
+}

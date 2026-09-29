@@ -38,8 +38,8 @@ export function useAttach(text: string, setText: (text: string) => void): Attach
     if (!transport || list.length === 0) return false;
     var limit = links && links.limit;
     // Too big: said here, before anything is sent.
-    var big = limit && list.filter(function (f) { return f.size > limit; })[0];
-    if (big) {
+    var big = lib.firstTooBig(list as File[], limit);
+    if (big && limit) {
       setStatus({
         failed: true,
         text: lib.mf('ui.attach.too_big', {

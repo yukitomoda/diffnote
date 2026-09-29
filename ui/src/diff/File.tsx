@@ -117,11 +117,7 @@ export function File(props: FileProps) {
           <span class="diffnote-stat__add">+{stat.added}</span> <span class="diffnote-stat__del">−{stat.removed}</span>
           <span class="diffnote-stat__blocks" aria-hidden="true">{lib.diffBlocks(stat.added, stat.removed).map(function (k, i) { return <i key={i} class={'is-' + k}></i>; })}</span>
         </span>}
-        <h2>{file.path}{file.status === 'binary' ? (function () {
-          var change = lib.messages['ui.binary_change.' + file.change];
-          var what = file.image ? 'image' : 'binary';
-          return change ? lib.mf('ui.file.' + what + '_suffix_named', { change: change }) : lib.m('ui.file.' + what + '_suffix_plain');
-        })() : ''}{file.status === 'renamed' && (file.old_path
+        <h2>{file.path}{lib.fileSuffix(file)}{file.status === 'renamed' && (file.old_path
           // Where it was before, said here: the heading is the only place the
           // path it moved from is written, and a folded file shows it too.
           ? <span class="diffnote-file__from" data-diffnote-renamed-from={file.old_path}>{lib.mf('ui.file.renamed_suffix_from', { old: file.old_path })}</span>

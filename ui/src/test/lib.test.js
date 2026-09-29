@@ -580,3 +580,45 @@ test('a file is added to the end of the list once', () => {
   assert.equal(lib.withIgnored('# 生成物\n*.lock\n', 'b/c.txt'), '# 生成物\n*.lock\n/b/c.txt');
   assert.equal(lib.withIgnored('/b/c.txt', 'b/c.txt'), '/b/c.txt', 'already there');
 });
+
+test('a limit typed in megabytes is a number from 1 KB to 100 MB', () => {
+  assert.equal(lib.limitProblem('5'), null);
+  assert.equal(lib.limitProblem('0.001'), null, 'about 1 KB');
+  assert.equal(lib.limitProblem('100'), null);
+  assert.equal(lib.limitProblem(''), 'ui.settings.attachment_limit_not_number');
+  assert.equal(lib.limitProblem('abc'), 'ui.settings.attachment_limit_not_number');
+  assert.equal(lib.limitProblem('0.0001'), 'ui.settings.attachment_limit_out_of_range');
+  assert.equal(lib.limitProblem('500'), 'ui.settings.attachment_limit_out_of_range');
+});
+
+test('a file over the limit is found before anything is sent', () => {
+  const a = { name: 'a', size: 10 };
+  const b = { name: 'b', size: 30 };
+  const c = { name: 'c', size: 40 };
+  assert.equal(lib.firstTooBig([a, b, c], 20), b, 'the first one over');
+  assert.equal(lib.firstTooBig([a], 20), null);
+  assert.equal(lib.firstTooBig([a, b], 30), null, 'as big as the limit is fine');
+  assert.equal(lib.firstTooBig([c], 0), null, 'no limit, nothing is too big');
+  assert.equal(lib.firstTooBig([c], undefined), null);
+});
+
+test('a place is copied with its revision as the tabs number them', () => {
+  assert.equal(lib.copyLocation('calc.py:12', 1), 'calc.py:12@2');
+  assert.equal(lib.copyLocation('src/auth/login.ts:L8', 0), 'src/auth/login.ts:L8@1');
+  assert.equal(lib.copyLocation('README.md', 4), 'README.md@5');
+});
+
+test('a binary file says it is one, a picture that it is a picture, and what was done', () => {
+  lib.setMessages({
+    'ui.binary_change.added': '追加',
+    'ui.file.binary_suffix_named': ' (バイナリ・{change})',
+    'ui.file.binary_suffix_plain': ' (バイナリ)',
+    'ui.file.image_suffix_named': ' (画像・{change})',
+    'ui.file.image_suffix_plain': ' (画像)',
+  });
+  assert.equal(lib.fileSuffix({ status: 'modified' }), '');
+  assert.equal(lib.fileSuffix({ status: 'binary', change: 'added' }), ' (バイナリ・追加)');
+  assert.equal(lib.fileSuffix({ status: 'binary' }), ' (バイナリ)');
+  assert.equal(lib.fileSuffix({ status: 'binary', change: 'added', image: { new: 'sha256:x' } }), ' (画像・追加)');
+  assert.equal(lib.fileSuffix({ status: 'binary', change: 'unheard-of', image: {} }), ' (画像)', 'a change with no name');
+});

@@ -9,6 +9,7 @@ import {
   SECTIONS,
   SECTION_GROUPS,
   compareWith,
+  hiddenSections,
   goTo,
   hashOfRoute,
   isSection,
@@ -104,4 +105,10 @@ test('a jump to a file and to a thread survives the same round trip', () => {
     const route = routeOfHash(hashOfRoute(), 1);
     assert.deepEqual(route.at, place);
   }
+});
+
+test('the repositories screen is only for a review of several', () => {
+  assert.deepEqual(hiddenSections(true), []);
+  assert.deepEqual(hiddenSections(false), ['repos']);
+  assert.ok(SECTIONS.includes('repos'), 'an address may still name it');
 });

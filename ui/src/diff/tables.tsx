@@ -144,7 +144,7 @@ export function DiffTable(props: TableProps) {
       if (sel && !compose!.selecting && idx === hi_) {
         var c = lib.counters(flat, sel.anchor, sel.to);
         out.push(<tr class="diffnote-composer-row" key="compose"><td colspan={3}>
-          <Composer scope="lines" where={lib.chosenLocation(file.path, c)} copy={lib.chosenLocation(file.path, c) + '@' + (ctx.rev + 1)}
+          <Composer scope="lines" where={lib.chosenLocation(file.path, c)} copy={lib.copyLocation(lib.chosenLocation(file.path, c), ctx.rev)}
             request={ctx.compare ? { scope: 'lines', revision: ctx.rev, file: file.path, head: c.head } : { scope: 'lines', revision: ctx.rev, file: file.path, base: c.base, head: c.head }} />
         </td></tr>);
       }
@@ -251,7 +251,7 @@ export function SplitTable(props: TableProps) {
       if (last && (l === last || r === last)) {
         var c = lib.counters(flat, sel!.anchor, sel!.to, sel!.side);
         out.push(<tr class="diffnote-composer-row" key="compose"><td colspan={4}>
-          <Composer scope="lines" where={lib.chosenLocation(file.path, c)} copy={lib.chosenLocation(file.path, c) + '@' + (ctx.rev + 1)}
+          <Composer scope="lines" where={lib.chosenLocation(file.path, c)} copy={lib.copyLocation(lib.chosenLocation(file.path, c), ctx.rev)}
             request={ctx.compare ? { scope: 'lines', revision: ctx.rev, file: file.path, head: c.head } : { scope: 'lines', revision: ctx.rev, file: file.path, base: c.base, head: c.head }} />
         </td></tr>);
       }

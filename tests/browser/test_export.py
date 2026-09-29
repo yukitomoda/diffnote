@@ -359,29 +359,6 @@ class SideBySide(BrowserCase):
         finally:
             b.cdp.call("Emulation.clearDeviceMetricsOverride")
 
-    def test_a_removed_line_sits_beside_the_added_ones_and_unchanged_lines_are_on_both_sides(self):
-        b = self.b
-        unified = b.count("table.diffnote-diff tr[class*='diffnote-line--']")
-        self.split()
-        self.assertEqual(b.text(".diffnote-layout__button.is-current"), "横並び")
-        self.assertEqual(b.count("table.diffnote-diff:not(.diffnote-diff--split)"), 0)
-        rows = b.js("""Array.from(document.querySelectorAll('table.diffnote-diff--split tr.diffnote-split-row')).map(function(tr){
-          var kind = function(td){ return td.className.split(' ').filter(function(c){return c.indexOf('diffnote-cell--')===0})[0].slice(15); };
-          var c = tr.children;
-          return [c[0].textContent, kind(c[0]), c[2].textContent, kind(c[2])];
-        })""")
-        by_new = {r[2]: r for r in rows}
-        # Line 8 of the old file was replaced by 9-13: it sits beside line 9.
-        self.assertEqual(by_new["9"][:2], ["8", "removed"])
-        self.assertEqual(by_new["9"][3], "added")
-        # ...and the lines added after it have nothing on the left.
-        for n in ("10", "11", "12", "13"):
-            self.assertEqual(by_new[n][:2], ["", "empty"], n)
-            self.assertEqual(by_new[n][3], "added")
-        # An unchanged line is on both sides, with its number on each.
-        self.assertEqual(by_new["1"], ["1", "context", "1", "context"])
-        self.assertLess(len(rows), unified, "a removed line shares a row with an added one")
-
     def test_the_words_that_changed_are_emphasized_in_both_layouts(self):
         b = self.b
         # (A word that spans pieces of code of different kinds is several spans.)
@@ -965,13 +942,6 @@ class IgnoreWhitespace(BrowserCase):
         self.assertEqual(self.rows(), (1, 1))
         b.click("[data-diffnote-ignore-space]")
         self.assertTrue(b.wait("document.querySelectorAll('tr.diffnote-line--removed').length === 3"))
-
-    def test_it_works_side_by_side_too(self):
-        b = self.b
-        b.click("[data-diffnote-layout='split']")
-        self.assertTrue(b.wait_exists("table.diffnote-diff--split"))
-        b.click("[data-diffnote-ignore-space]")
-        self.assertTrue(b.wait("document.querySelectorAll('td.diffnote-cell--removed.diffnote-line__content').length === 1"))
 
 
 class ViewedFilesAndTheList(BrowserCase):
