@@ -2657,7 +2657,8 @@ class IgnorePresets(ServedCase):
         b.set_value("[data-diffnote-preset='0'] [data-diffnote-preset-patterns]", "*.ts\n!src/auth/login.ts\n")
         b.click("[data-diffnote-presets-save]")
         self.assertTrue(b.wait_exists("[data-diffnote-presets-saved]"))
-        config = json.loads(open(os.path.join(harness.USER_CONFIG_DIR, "config.json"), encoding="utf-8").read())
+        with open(os.path.join(harness.USER_CONFIG_DIR, "config.json"), encoding="utf-8") as f:
+            config = json.load(f)
         self.assertEqual(config["ignore_presets"], [{"name": "ソース以外", "patterns": "*.ts\n!src/auth/login.ts"}])
         # Taken in 設定, with one press: saved to the review at once.
         b.click("[data-diffnote-screen-nav=settings]")
