@@ -49,3 +49,7 @@ diffnote open -f some-review.diffnote
 ```
 
 コメントを読んで、返信等ができます。修正のコミットを足してから `diffnote review` で開くと、その変更も一緒にレビューできます。
+
+## ライセンス
+
+[MIT](LICENSE)

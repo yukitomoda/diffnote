@@ -85,7 +85,7 @@ jobs:
         run: |
           name="diffnote-$GITHUB_REF_NAME-${{ matrix.target }}"
           mkdir "$name"
-          cp README.md "$name/"
+          cp README.md LICENSE "$name/"
           if [ "$RUNNER_OS" = "Windows" ]; then
             cp "target/${{ matrix.target }}/release/diffnote.exe" "$name/"
             7z a -tzip "$name.zip" "$name" > /dev/null

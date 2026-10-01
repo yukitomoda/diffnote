@@ -70,4 +70,4 @@ Rust 側は `src/messages.rs` の `m(key)` / `mf(key, &[(name, value), ...])`、
 
 1. `Cargo.toml` の `version` を上げてコミットする。
 2. `git tag v0.2.0 && git push origin main v0.2.0`(タグは `v` + `Cargo.toml` のバージョン)。
-3. `.github/workflows/release.yml` が、各プラットフォーム向けにビルドして、Release を作る(`v0.2.0-rc1` のように `-` が付くタグは、プレリリース)。タグとバージョンが食い違うと、ビルドの最初で失敗する。配布物には README が同梱される。
+3. `.github/workflows/release.yml` が、各プラットフォーム向けにビルドして、Release を作る(`v0.2.0-rc1` のように `-` が付くタグは、プレリリース)。タグとバージョンが食い違うと、ビルドの最初で失敗する。配布物には README と LICENSE が同梱される。
