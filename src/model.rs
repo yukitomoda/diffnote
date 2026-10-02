@@ -45,6 +45,18 @@ pub struct Reaction {
 /// taken back is gone), kept in the bundle's `reactions.json`.
 pub type Reactions = std::collections::BTreeMap<String, Vec<Reaction>>;
 
+/// The files each person marked as looked at (確認済み), by revision id, then
+/// by name, then by path: what the file was when it was marked (its two
+/// versions' digests, as the page has them), or `None` where the mark was
+/// taken back. A file's state in a revision is its nearest mark, in that
+/// revision or an earlier one: a file that is the same as when it was marked
+/// stays marked in the revisions after, and one that is another one now
+/// doesn't. State, kept in the bundle's `viewed.json`.
+pub type Viewed = std::collections::BTreeMap<
+    String,
+    std::collections::BTreeMap<String, std::collections::BTreeMap<String, Option<String>>>,
+>;
+
 /// What one commit of a git-backed review did, as it was when the revision
 /// that contains it was recorded. A review keeps this rather than reading the
 /// repository later: an exported page has no repository to ask, and history

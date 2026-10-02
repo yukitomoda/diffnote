@@ -10,7 +10,7 @@
 //! which both the HTML exporter and round-trip annotation rendering need.
 
 use crate::messages::mf;
-use crate::model::{Anchor, Event, Reaction, Reactions, Settings};
+use crate::model::{Anchor, Event, Reaction, Reactions, Settings, Viewed};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
@@ -154,6 +154,47 @@ pub fn toggle_reaction(
         reactions.remove(comment);
     }
     now
+}
+
+/// `author` marking a file of a revision as looked at (`sig`: what the file
+/// was then), or taking the mark back (`None`). `order` is the revisions'
+/// ids, oldest first. Taken back, the file is said not to be looked at (so
+/// that a mark in an earlier revision doesn't reach it), unless no earlier
+/// revision has a mark of it: then there is nothing to say. Nothing empty is
+/// kept.
+pub fn set_viewed(
+    viewed: &mut Viewed,
+    order: &[String],
+    revision: &str,
+    author: &str,
+    path: &str,
+    sig: Option<&str>,
+) {
+    let earlier = order.iter().take_while(|id| *id != revision).any(|id| {
+        viewed
+            .get(id)
+            .and_then(|by| by.get(author))
+            .is_some_and(|marks| marks.contains_key(path))
+    });
+    let by = viewed.entry(revision.to_string()).or_default();
+    let marks = by.entry(author.to_string()).or_default();
+    match sig {
+        Some(sig) => {
+            marks.insert(path.to_string(), Some(sig.to_string()));
+        }
+        None if earlier => {
+            marks.insert(path.to_string(), None);
+        }
+        None => {
+            marks.remove(path);
+        }
+    }
+    if marks.is_empty() {
+        by.remove(author);
+    }
+    if by.is_empty() {
+        viewed.remove(revision);
+    }
 }
 
 /// Groups a flat event stream into threads, in the order their root
@@ -410,6 +451,41 @@ mod tests {
         assert!(settings.ignore_whitespace);
         assert!(!set_ignore_whitespace(&mut settings, true));
         assert!(set_ignore_whitespace(&mut settings, false));
+    }
+
+    #[test]
+    fn a_file_is_marked_looked_at_per_revision_and_per_person_and_nothing_empty_is_kept() {
+        let order: Vec<String> = ["r1", "r2", "r3"].map(String::from).to_vec();
+        let mut viewed = Viewed::new();
+        let set = |viewed: &mut Viewed, rev: &str, who: &str, path: &str, sig: Option<&str>| {
+            set_viewed(viewed, &order, rev, who, path, sig);
+        };
+        set(&mut viewed, "r1", "a", "x.rs", Some("o|n"));
+        set(&mut viewed, "r1", "b", "x.rs", Some("o|n"));
+        set(&mut viewed, "r2", "a", "y.rs", Some("|n"));
+        // Marked again (the file as another one): what it is now.
+        set(&mut viewed, "r1", "a", "x.rs", Some("o|m"));
+        // Taken back where an earlier revision has a mark: said so, so that
+        // the earlier one doesn't reach it.
+        set(&mut viewed, "r2", "a", "x.rs", None);
+        // Taken back with no earlier mark: nothing to say.
+        set(&mut viewed, "r1", "b", "x.rs", None);
+        set(&mut viewed, "r2", "a", "y.rs", None);
+        assert_eq!(viewed["r1"]["a"]["x.rs"].as_deref(), Some("o|m"));
+        assert!(
+            !viewed["r1"].contains_key("b"),
+            "a person with no mark is gone"
+        );
+        assert_eq!(viewed["r2"]["a"]["x.rs"], None);
+        assert!(!viewed["r2"]["a"].contains_key("y.rs"));
+        set(&mut viewed, "r3", "a", "z.rs", None);
+        assert!(
+            !viewed.contains_key("r3"),
+            "taking back what isn't there leaves nothing"
+        );
+        set(&mut viewed, "r1", "a", "x.rs", None);
+        set(&mut viewed, "r2", "a", "x.rs", None);
+        assert!(viewed.is_empty(), "nor is anything empty kept");
     }
 
     #[test]

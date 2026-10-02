@@ -81,6 +81,8 @@ export interface Actions {
   setRepoTarget(path: string, target: string): Promise<ChangeAnswer>;
   refresh(): Promise<ChangeAnswer>;
   setResolved(id: string, resolved: boolean): Promise<ChangeAnswer>;
+  /** A file of a revision marked as looked at (with what it is), or not. */
+  setViewed(revision: string, path: string, sig: string, viewed: boolean): Promise<Answer<unknown>>;
   /** The comments this page may rewrite or take out, and which it has. */
   editable: Set<string>;
   changed: Set<string>;

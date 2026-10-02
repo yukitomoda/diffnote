@@ -265,6 +265,8 @@ pub struct RepoBase {
 
 #[derive(Serialize)]
 pub struct RevisionData {
+    /// The revision's id: what a mark of a file looked at is kept by.
+    pub id: String,
     pub label: String,
     /// When the revision was recorded (RFC 3339, UTC). The page writes the
     /// time itself, in the time of whoever is reading it.
@@ -281,6 +283,13 @@ pub struct RevisionData {
     /// `files` doesn't have: those with no thread on them.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored: Vec<String>,
+    /// The marks of files looked at that the one the page is served to made
+    /// here, by path: what each was when marked (its `sig`), or `null` where
+    /// the mark was taken back (see [`crate::model::Viewed`]: the page works
+    /// out from these and the earlier revisions' what is looked at). Served
+    /// page only.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub viewed: BTreeMap<String, Option<String>>,
 }
 
 #[derive(Serialize)]
@@ -474,6 +483,9 @@ pub fn view_model_with(
         })
         .collect();
     revisions.reverse();
+    for (data, s) in revisions.iter_mut().zip(&shown) {
+        data.id = s.revision.id.to_string();
+    }
     let pictures = if interactive {
         BTreeMap::new()
     } else {
@@ -554,6 +566,7 @@ pub fn served_model_json(
     let mut model = view_model_for(loaded, true)?;
     model.editable = served.editable;
     model.changed = served.changed;
+    mark_viewed(&mut model, loaded, &served.author);
     model.author = Some(served.author);
     model.refreshable = served.refreshable;
     model.settings = Some(loaded.settings.clone());
@@ -566,6 +579,18 @@ pub fn served_model_json(
     model.setup = served.setup;
     model.workspace = served.workspace;
     model_json(&model)
+}
+
+/// What `author` marked as looked at, put on each revision of the model.
+pub fn mark_viewed(model: &mut ViewModel, loaded: &crate::bundle::Loaded, author: &str) {
+    for revision in &mut model.revisions {
+        revision.viewed = loaded
+            .viewed
+            .get(&revision.id)
+            .and_then(|by| by.get(author))
+            .cloned()
+            .unwrap_or_default();
+    }
 }
 
 /// A stamp of the review's log: it differs whenever the log does (a comment
@@ -832,12 +857,14 @@ fn revision_data(
         .map(|t| t.root_id.to_string())
         .collect();
     RevisionData {
+        id: String::new(),
         label: label.to_string(),
         at: at.to_string(),
         files,
         placements,
         order,
         ignored,
+        viewed: BTreeMap::new(),
     }
 }
 
@@ -1071,7 +1098,7 @@ pub fn compare_data(
     };
     let threads = build_threads(&loaded.events);
     let mut budget = 0;
-    Ok(revision_data(
+    let mut data = revision_data(
         &threads,
         &view,
         &label,
@@ -1079,7 +1106,9 @@ pub fn compare_data(
         &blobs,
         &mut budget,
         crate::review::ignore_matcher(&loaded.settings).as_ref(),
-    ))
+    );
+    data.id = after.revision.id.to_string();
+    Ok(data)
 }
 
 /// What a change to a file did to it, whatever it is that is in it.

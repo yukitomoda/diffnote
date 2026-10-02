@@ -19,6 +19,7 @@ interface ListProps {
 export function FileList(props: ListProps) {
   var ctx = props.ctx;
   var marks = useStore(seen);
+  var revId = ctx.model.revisions[ctx.rev].id;
   var links = useContext(LinksContext);
   // The files of the diff (not those opened to look at) are what is counted.
   var files = ctx.diffFiles;
@@ -29,7 +30,7 @@ export function FileList(props: ListProps) {
   var ignored = ctx.revision.ignored || [];
   var file = function (node: FileTreeNode) {
     var f = byPath[node.path!];
-    var done = isViewed(f, marks);
+    var done = isViewed(f, marks, revId);
     var ids = lib.threadsOfFile(ctx.order, ctx.placements, f.path);
     // The threads that are shown: resolved ones don't count while hidden.
     var n = ids.filter(function (id) {
@@ -48,7 +49,7 @@ export function FileList(props: ListProps) {
         ? open > 0 && <span class="diffnote-badge" data-diffnote-open-count title={lib.mf('ui.thread.open_count_title', { n: String(open) })}>{open}</span>
         : n > 0 && <span class="diffnote-badge">{n}</span>}
       <button type="button" class="diffnote-check" data-diffnote-check={f.path} aria-pressed={done}
-        title={done ? lib.m('ui.file.unmark_viewed_title') : lib.m('ui.file.mark_viewed_title')} onClick={function () { toggleViewed(f); }}><span class={'diffnote-tick' + (done ? ' is-on' : '')}><Icon name="check" /></span></button>
+        title={done ? lib.m('ui.file.unmark_viewed_title') : lib.m('ui.file.mark_viewed_title')} onClick={function () { toggleViewed(f, revId); }}><span class={'diffnote-tick' + (done ? ' is-on' : '')}><Icon name="check" /></span></button>
     </li>;
   };
   // The files left out, as a tree like the files above: named, nothing to press.
@@ -71,7 +72,7 @@ export function FileList(props: ListProps) {
     });
   };
   return <details class="diffnote-side" open>
-    <summary>{lib.m('ui.tree.files_summary')}{files.length > 0 && <>{' '}<span class="diffnote-badge diffnote-badge--viewed" data-diffnote-viewed-count title={lib.m('ui.tree.viewed_count_title')}><Icon name="check" />{' '}{files.filter(function (f) { return isViewed(f, marks); }).length}/{files.length}</span></>}</summary>
+    <summary>{lib.m('ui.tree.files_summary')}{files.length > 0 && <>{' '}<span class="diffnote-badge diffnote-badge--viewed" data-diffnote-viewed-count title={lib.m('ui.tree.viewed_count_title')}><Icon name="check" />{' '}{files.filter(function (f) { return isViewed(f, marks, revId); }).length}/{files.length}</span></>}</summary>
     <nav class="diffnote-filelist"><ul>{rows(tree)}</ul>
       {ignored.length > 0 && <details class="diffnote-filelist__ignored" data-diffnote-ignored>
         <summary title={lib.m('ui.tree.ignored_title')}>{lib.mf('ui.tree.ignored_summary', { n: String(ignored.length) })}</summary>

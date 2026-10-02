@@ -1205,6 +1205,86 @@ class CompareWithAnEarlierRevision(ServedCase):
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-compare-note]')"))
 
 
+class ViewedKeptInTheReview(ServedCase):
+    """A file marked as looked at is kept in the review, for the revision and
+    the name it was marked in: the next run starts with it marked."""
+
+    def test_a_file_looked_at_is_so_in_the_next_run_for_that_name_and_revision(self):
+        self.serve()
+        b = self.b
+        section = f"{CUR} section.diffnote-file[data-diffnote-file='calc.py']"
+        b.click(f"{section} [data-diffnote-viewed]")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(section)})"))
+        harness.until(lambda: "calc.py" in harness.member(self.review, "viewed.json"))
+        viewed = json.loads(harness.member(self.review, "viewed.json"))
+        self.assertEqual([list(by) for by in viewed.values()], [["検証者"]], "one revision's, of the one who marked it")
+
+        self.server.stop()
+        again = Served(self.review, author="検証者")
+        self.addCleanup(again.stop)
+        b.open(again.url, ready="!!document.querySelector('.diffnote-filelist')")
+        self.assertTrue(b.wait_exists(f"{CUR} .diffnote-filelist li.is-viewed"), "still looked at")
+        self.assertFalse(b.exists(section))
+        # Another revision is another.
+        b.click("[data-diffnote-revision-link='0']")
+        self.assertTrue(b.wait_exists(section))
+        b.click("[data-diffnote-revision-link='1']")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(section)})"))
+        # Another name has looked at nothing.
+        self.set_author_via_user_settings("別の人")
+        self.assertTrue(b.wait_exists(section))
+        self.assertFalse(b.exists(f"{CUR} .diffnote-filelist li.is-viewed"))
+
+    def test_a_file_looked_at_stays_so_in_the_revisions_after_while_it_is_the_same(self):
+        repo = os.path.join(self.root, "carried")
+        os.makedirs(repo)
+        harness.git(repo, "init", "-q", "-b", "main")
+        harness.write(repo, "a.txt", "a1\n")
+        harness.write(repo, "b.txt", "b1\n")
+        harness.git(repo, "add", "-A")
+        harness.git(repo, "commit", "-q", "-m", "c1")
+        harness.git(repo, "tag", "c1")
+        harness.write(repo, "a.txt", "a2\n")
+        harness.write(repo, "b.txt", "b2\n")
+        harness.git(repo, "commit", "-q", "-am", "c2")
+        harness.git(repo, "tag", "c2")
+        master = os.path.join(self.root, "carried.diffnote")
+        # (A thread on each: a file with none starts folded.)
+        harness.review_of(repo, master, "c2", base="c1", comments=[
+            {"file": "a.txt", "line": "a2", "body": "a への指摘"},
+            {"file": "b.txt", "line": "b2", "body": "b への指摘"},
+        ])
+        # Only b.txt changes again: a.txt is the same file in the second revision.
+        harness.write(repo, "b.txt", "b3\n")
+        harness.git(repo, "commit", "-q", "-am", "c3")
+        harness.git(repo, "tag", "c3")
+        harness.review_of(repo, master, "c3")
+        self.serve(master)
+        b = self.b
+        a = f"{CUR} section.diffnote-file[data-diffnote-file='a.txt']"
+        bb = f"{CUR} section.diffnote-file[data-diffnote-file='b.txt']"
+        b.click("[data-diffnote-revision-link='0']")
+        self.assertTrue(b.wait_exists(a))
+        b.click(f"{a} [data-diffnote-viewed]")
+        b.click(f"{bb} [data-diffnote-viewed]")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(a)}) && !document.querySelector({json.dumps(bb)})"))
+        b.click("[data-diffnote-revision-link='1']")
+        self.assertTrue(b.wait_exists(bb), "b.txt has changed since: to be looked at again")
+        self.assertFalse(b.exists(a), "a.txt is the same: still looked at")
+        # Taken back in the second revision: there, and not in the first.
+        b.click(f"{CUR} [data-diffnote-check='a.txt']")
+        self.assertTrue(b.wait_exists(a))
+        harness.until(lambda: "null" in harness.member(self.review, "viewed.json"))
+
+        self.server.stop()
+        again = Served(self.review, author="検証者")
+        self.addCleanup(again.stop)
+        b.open(again.url, ready="!!document.querySelector('.diffnote-filelist')")
+        self.assertTrue(b.wait_exists(a), "the second revision: taken back")
+        b.click("[data-diffnote-revision-link='0']")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(a)}) && !document.querySelector({json.dumps(bb)})"), "the first: as it was")
+
+
 PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 SVG_OK = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="blue"/></svg>'
 

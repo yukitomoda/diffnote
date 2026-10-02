@@ -533,6 +533,8 @@ bundle:
     {path} のコメントの記録
   reactions_read_failed: |-
     {path} のリアクションの記録を読めませんでした
+  viewed_read_failed: |-
+    {path} の確認済みの記録を読めませんでした
   settings_read_failed: |-
     {path} の設定を読めませんでした
   attachments_read_failed: |-

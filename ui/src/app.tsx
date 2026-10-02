@@ -29,7 +29,7 @@ import {
   showScreen,
   startRoute,
 } from './state/route.ts';
-import { isViewed, seen, toggleViewed } from './state/viewed.ts';
+import { isViewed, keepWith, marksOf, seen, toggleViewed } from './state/viewed.ts';
 import {
   hideResolved,
   sidebarWidth,
@@ -49,6 +49,15 @@ function App(props: { model: ViewModel }) {
   var review = useReview(props.model);
   var openedFiles = useOpened(props.model.interactive);
   var model = review.model;
+  // The files marked as looked at (see `state/viewed.ts`): on the served page,
+  // what the review keeps for this name, taken again with each new model --
+  // before anything below is drawn from them the first time.
+  useState(function () { seen.set(marksOf(model)); return null; });
+  useEffect(function () {
+    // (An exported page has no new model, and keeps what was marked on it.)
+    if (model.interactive) seen.set(marksOf(model));
+  }, [model.revisions]);
+  keepWith(review.actions ? review.actions.setViewed : null);
   // Where the page is: the revision shown, the settings screen, what it is
   // compared against and the last place jumped to, all of which are in the
   // address (see `state/route.ts`).
@@ -110,7 +119,7 @@ function App(props: { model: ViewModel }) {
       var of = place.kind === 'thread' ? revision.placements[place.id] : null;
       var path = place.kind === 'thread' ? (of && 'file' in of ? of.file : null) : place.path;
       var file = path && revision.files.filter(function (f) { return f.path === path; })[0];
-      if (file && isViewed(file, seen.get())) toggleViewed(file);
+      if (file && isViewed(file, seen.get(), revision.id)) toggleViewed(file, revision.id);
       if (place.kind === 'file') interact.showFile(rev, place.path);
       else if (place.kind === 'thread') interact.jumpWhenShown('r' + rev + '-thread-' + place.id);
       else interact.showLines(rev, place.path, place.side, place.start, place.end);

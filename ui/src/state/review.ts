@@ -148,6 +148,11 @@ export function useReview(initial: ViewModel): Review {
           return res;
         });
       },
+      // The signed-in name's mark of a file looked at, kept in the review. Not a
+      // change to the review's log: the answer says only that it was kept.
+      setViewed: function (revision, path, sig, viewed) {
+        return server().post<{}>('/api/viewed', { revision: revision, path: path, sig: sig, viewed: viewed });
+      },
       setResolved: function (id, resolved) {
         var before = ref.current.threads.filter(function (t) { return t.id === id; })[0];
         setModel(replace(Object.assign({}, before, { resolved: resolved })));

@@ -497,6 +497,7 @@ impl Server {
         let mut model = html::view_model_for(loaded, true).map_err(internal)?;
         model.editable = self.editable(loaded);
         model.changed = self.changed(loaded);
+        html::mark_viewed(&mut model, loaded, &self.author());
         model.author = Some(self.author());
         model.refreshable = self.refresh.is_some();
         model.settings = Some(loaded.settings.clone());
@@ -1398,6 +1399,7 @@ impl Server {
             ["api", "comments", id, "edit"] => self.edit_comment(id, request.body),
             ["api", "comments", id, "delete"] => self.delete_comment(id),
             ["api", "comments", id, "react"] => self.react(id, request.body),
+            ["api", "viewed"] => self.set_viewed(request.body),
             _ => return Reply::error(404, m("serve.not_found")),
         };
         match result {
@@ -1949,6 +1951,44 @@ impl Server {
             }
         });
         self.model_answer(&before, serde_json::json!({ "reacted": now }))
+    }
+
+    /// The signed-in name marking a file of a revision as looked at (with what
+    /// the file is, `sig`), or taking the mark back (`viewed: false`). Kept in
+    /// the review, for that name alone. Not a change to the review's log, so
+    /// the page is answered with nothing but that it was kept.
+    fn set_viewed(&self, body: &[u8]) -> Result<Reply, Failure> {
+        #[derive(serde::Deserialize)]
+        struct Asked {
+            revision: String,
+            path: String,
+            sig: String,
+            viewed: bool,
+        }
+        let asked: Asked = serde_json::from_slice(body)
+            .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
+        if asked.path.is_empty() {
+            return Err(Failure(400, m("serve.body_unreadable").into()));
+        }
+        let mut loaded = bundle::load(&self.review).map_err(internal)?;
+        if !loaded
+            .revisions()
+            .any(|r| r.id.to_string() == asked.revision)
+        {
+            return Err(Failure(404, m("serve.revision_missing").into()));
+        }
+        let order: Vec<String> = loaded.revisions().map(|r| r.id.to_string()).collect();
+        review::set_viewed(
+            &mut loaded.viewed,
+            &order,
+            &asked.revision,
+            &self.author(),
+            &asked.path,
+            asked.viewed.then_some(asked.sig.as_str()),
+        );
+        let events = loaded.events.clone();
+        self.save(&loaded, &events)?;
+        Ok(Reply::json(200, &serde_json::json!({ "ok": true })))
     }
 
     /// Rewrites the text of a comment (whoever wrote it, and whenever).
@@ -3865,6 +3905,53 @@ mod tests {
                 .unwrap()
                 .to_string();
             assert!(told.contains("リアクション"), "{told}");
+        });
+    }
+
+    #[test]
+    fn a_file_looked_at_is_kept_in_the_review_for_its_revision_and_the_name_that_marked_it() {
+        crate::user_config::with_test_config_dir(|_| {
+            let f = fixture();
+            let model =
+                |f: &Fixture| json(&f.request("GET", "/api/model", &[], ""))["model"].clone();
+            let first = model(&f)["revisions"][0].clone();
+            let rev = first["id"].as_str().unwrap().to_string();
+            let file = first["files"][0].clone();
+            let (path, sig) = (
+                file["path"].as_str().unwrap(),
+                file["sig"].as_str().unwrap(),
+            );
+            let mark = |f: &Fixture, rev: &str, viewed: bool| {
+                f.post(
+                    "/api/viewed",
+                    &serde_json::json!({ "revision": rev, "path": path, "sig": sig, "viewed": viewed })
+                        .to_string(),
+                )
+            };
+            let stamp = model(&f)["stamp"].clone();
+            let before = f.events().len();
+            assert_eq!(json(&mark(&f, &rev, true))["ok"], true);
+            assert_eq!(f.events().len(), before, "state, not an event");
+            assert_eq!(model(&f)["stamp"], stamp, "nor a change to the log");
+            assert_eq!(
+                bundle::load(&f.path).unwrap().viewed[&rev]["tester"][path].as_deref(),
+                Some(sig)
+            );
+            // The page is given it with the revision, for the name it is served to.
+            assert_eq!(model(&f)["revisions"][0]["viewed"][path], sig);
+            f.post("/api/user-settings", r#"{"author":"別の人"}"#);
+            assert!(
+                model(&f)["revisions"][0].get("viewed").is_none(),
+                "another's are not"
+            );
+            f.post("/api/user-settings", r#"{"author":"tester"}"#);
+            assert_eq!(model(&f)["revisions"][0]["viewed"][path], sig);
+            // Taken back; a revision the review hasn't is refused.
+            mark(&f, &rev, false);
+            assert!(model(&f)["revisions"][0].get("viewed").is_none());
+            assert!(bundle::load(&f.path).unwrap().viewed.is_empty());
+            assert_eq!(mark(&f, "01ARZ3NDEKTSV4RRFFQ69G5FAV", true).status, 404);
+            assert_eq!(f.post("/api/viewed", r#"{"revision":"x"}"#).status, 400);
         });
     }
 

@@ -91,6 +91,8 @@ export type Placement =
   | { kind: 'unplaced'; file: string; was: string[] };
 
 export interface RevisionData {
+  /** The revision's id: what a mark of a file looked at is kept by. */
+  id: string;
   label: string;
   /** When it was recorded (RFC 3339): the page says it in the reader's time. */
   at: string;
@@ -101,6 +103,10 @@ export interface RevisionData {
   order: string[];
   /** The diff's files the review leaves out (`Settings.ignore`). */
   ignored?: string[];
+  /** The signed-in name's marks of files looked at here (served page only),
+   * by path: what each was when marked, or `null` where the mark was taken
+   * back (see `state/viewed.ts`). */
+  viewed?: Record<string, string | null>;
 }
 
 // ---- a comment's text -----------------------------------------------------

@@ -35,7 +35,9 @@
 
 use crate::messages::{m, mf};
 pub use crate::model::SnapshotMode;
-use crate::model::{Attachments, Commits, Event, Reactions, Revision, Settings, Source, TreeFile};
+use crate::model::{
+    Attachments, Commits, Event, Reactions, Revision, Settings, Source, TreeFile, Viewed,
+};
 use anyhow::{Context, Result};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -50,6 +52,10 @@ pub struct Loaded {
     /// The reactions to comments (state, see [`Reactions`]); a change is made
     /// here and saved with the bundle.
     pub reactions: Reactions,
+    /// The files each person marked as looked at, per revision (state, see
+    /// [`Viewed`]); a change is made here and saved with the bundle. A save
+    /// keeps only the marks on a revision the bundle still has.
+    pub viewed: Viewed,
     /// What is known about the attachments (state, see [`Attachments`]); a
     /// change is made here and saved with the bundle. A save keeps only what
     /// is about an attachment the bundle still holds.
@@ -184,6 +190,7 @@ pub fn empty() -> Loaded {
         events: Vec::new(),
         settings: Settings::default(),
         reactions: Reactions::new(),
+        viewed: Viewed::new(),
         attached: Attachments::new(),
         commits: Commits::new(),
         carried_entries: Vec::new(),
@@ -213,6 +220,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
     let mut settings = Settings::default();
     let mut from_file: Option<serde_json::Map<String, serde_json::Value>> = None;
     let mut reactions = Reactions::new();
+    let mut viewed = Viewed::new();
     let mut attached = Attachments::new();
     let mut commits = Commits::new();
     let mut carried_entries = Vec::new();
@@ -252,6 +260,13 @@ pub fn load(path: &Path) -> Result<Loaded> {
                     &[("path", &path.display().to_string())],
                 )
             })?;
+        } else if name == "viewed.json" {
+            viewed = serde_json::from_slice(&bytes).with_context(|| {
+                mf(
+                    "bundle.viewed_read_failed",
+                    &[("path", &path.display().to_string())],
+                )
+            })?;
         } else if name == "commits.json" {
             commits = serde_json::from_slice(&bytes).with_context(|| {
                 mf(
@@ -283,6 +298,7 @@ pub fn load(path: &Path) -> Result<Loaded> {
         events,
         settings,
         reactions,
+        viewed,
         attached,
         commits,
         carried_entries,
@@ -486,6 +502,26 @@ pub fn save_with(
             writer.start_file("reactions.json", options)?;
             writer.write_all(
                 serde_json::to_string_pretty(&loaded.reactions)
+                    .context(m("bundle.encode_failed"))?
+                    .as_bytes(),
+            )?;
+        }
+
+        // Marks on a revision the log no longer has are not kept.
+        let viewed: Viewed = loaded
+            .viewed
+            .iter()
+            .filter(|(id, _)| {
+                events
+                    .iter()
+                    .any(|e| matches!(e, Event::Revision(r) if r.id.to_string() == **id))
+            })
+            .map(|(id, by)| (id.clone(), by.clone()))
+            .collect();
+        if !viewed.is_empty() {
+            writer.start_file("viewed.json", options)?;
+            writer.write_all(
+                serde_json::to_string_pretty(&viewed)
                     .context(m("bundle.encode_failed"))?
                     .as_bytes(),
             )?;
@@ -1087,6 +1123,50 @@ mod tests {
         crate::review::toggle_reaction(&mut again.reactions, "c1", "👍", "a");
         save(&path, &again, &events, &Additions::default()).unwrap();
         assert!(!names(&path).contains(&"reactions.json".to_string()));
+    }
+
+    #[test]
+    fn marks_of_files_looked_at_are_kept_in_viewed_json_for_the_revisions_there_are() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.diffnote");
+        let first = revision("sha256:a", SnapshotMode::Changed);
+        let Event::Revision(r) = &first else {
+            unreachable!()
+        };
+        let id = r.id.to_string();
+        let order = vec![id.clone()];
+        let events = vec![sample_event(), first];
+        let names = |p: &Path| -> Vec<String> {
+            let mut a = ZipArchive::new(std::fs::File::open(p).unwrap()).unwrap();
+            (0..a.len())
+                .map(|i| a.by_index(i).unwrap().name().to_string())
+                .collect()
+        };
+        let mut loaded = load(&path).unwrap();
+        save(&path, &loaded, &events, &Additions::default()).unwrap();
+        assert!(!names(&path).contains(&"viewed.json".to_string()));
+
+        crate::review::set_viewed(&mut loaded.viewed, &order, &id, "a", "x.rs", Some("o|n"));
+        // A mark on a revision the log doesn't have is not kept.
+        crate::review::set_viewed(&mut loaded.viewed, &order, "gone", "a", "x.rs", Some("o|n"));
+        save(&path, &loaded, &events, &Additions::default()).unwrap();
+        let again = load(&path).unwrap();
+        assert_eq!(again.viewed[&id]["a"]["x.rs"].as_deref(), Some("o|n"));
+        assert!(!again.viewed.contains_key("gone"));
+        assert!(
+            !entry_names(&again).contains(&"viewed.json"),
+            "not carried as an entry"
+        );
+        save(&path, &again, &events, &Additions::default()).unwrap();
+        assert_eq!(
+            names(&path).iter().filter(|n| *n == "viewed.json").count(),
+            1
+        );
+
+        let mut last = load(&path).unwrap();
+        crate::review::set_viewed(&mut last.viewed, &order, &id, "a", "x.rs", None);
+        save(&path, &last, &events, &Additions::default()).unwrap();
+        assert!(!names(&path).contains(&"viewed.json".to_string()));
     }
 
     #[test]

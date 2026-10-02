@@ -76,7 +76,7 @@ export function Revision(props: RevisionProps) {
   var marks = useStore(seen);
   var hidden = useStore(sidebarHidden);
   var viewedPaths: Record<string, boolean> = {};
-  files.forEach(function (f) { if (isViewed(f, marks)) viewedPaths[f.path] = true; });
+  files.forEach(function (f) { if (isViewed(f, marks, model.revisions[rev].id)) viewedPaths[f.path] = true; });
   var listOrder: ListCtx = { diffFiles: revision.files, model: model, rev: rev, revision: Object.assign({}, revision, { files: files }), hideResolved: props.hideResolved, byId: byId, order: revision.order, placements: revision.placements };
 
   // The file list marks the files that are on screen.

@@ -88,9 +88,10 @@ export function File(props: FileProps) {
   // A file that was added or deleted as a whole (a binary one too) is tinted.
   var kind = file.status === 'binary' ? file.change : file.status;
   var marks = useStore(seen);
+  var revId = ctx.model.revisions[ctx.rev].id;
   // A file that was looked at is not shown at all (with its threads): the
   // list at the side says so, and takes it back.
-  if (isViewed(file, marks)) return null;
+  if (isViewed(file, marks, revId)) return null;
   // What the file's menu offers (the served page only): a thread on the file
   // as a whole, and leaving the file out of what is shown (the review's
   // settings: a file only opened to look at, or brought in by its threads,
@@ -102,7 +103,7 @@ export function File(props: FileProps) {
       <summary>
         {<button type="button" class="diffnote-mini--check" data-diffnote-viewed={file.path} title={lib.m('ui.file.viewed_title')}
           aria-label={lib.m('ui.file.viewed_button')}
-          onClick={function (e) { e.preventDefault(); e.stopPropagation(); toggleViewed(file); }}><span class="diffnote-tick"><Icon name="check" /></span></button>}
+          onClick={function (e) { e.preventDefault(); e.stopPropagation(); toggleViewed(file, revId); }}><span class="diffnote-tick"><Icon name="check" /></span></button>}
         {(canComment || canIgnore) && <FileMenu
           onComment={canComment ? function () {
             details.current!.open = true;
