@@ -1107,6 +1107,12 @@ ui:
   tree:
     files_summary: |-
       ファイル
+    ignore_dir: |-
+      このディレクトリを無視
+    ignore_file: |-
+      このファイルを無視
+    ignore_title: |-
+      {pattern} を、レビューの設定の「表示しないファイル」に加えます(設定からいつでも戻せます)
     ignored_summary: |-
       表示しないファイル({n})
     ignored_title: |-

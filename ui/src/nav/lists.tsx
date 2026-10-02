@@ -1,10 +1,10 @@
 // The lists beside the diff: the files, and the threads.
-import { useContext } from 'preact/hooks';
+import { useContext, useEffect, useRef, useState } from 'preact/hooks';
 import { EMOJI } from '../emoji.ts';
 import { lib } from '../lib.ts';
 import { htmlId } from '../dom.ts';
 import { useStore } from '@nanostores/preact';
-import { LinksContext } from '../state/contexts.ts';
+import { ActionsContext, LinksContext } from '../state/contexts.ts';
 import { isViewed, seen, toggleViewed } from '../state/viewed.ts';
 import type { ListCtx } from '../state/contexts.ts';
 import type { FileTreeNode } from '../lib.ts';
@@ -14,13 +14,30 @@ interface ListProps {
   ctx: ListCtx;
 }
 
+/** What a right click in the file list is on: a directory or a file to leave
+ * out, and where to show what can be done to it. */
+interface Target {
+  path: string;
+  dir: boolean;
+  /** A file with threads: left out, it would be shown all the same. */
+  blocked: boolean;
+  x: number;
+  y: number;
+}
+
 // The files, as a tree of their directories (see `lib.fileTree`). Each file
 // says how many threads are on it, and, at the right, whether it was looked at.
+// On the served page, a right click on a directory (each of a joined row's by
+// itself) or a file offers to leave it out (the review's settings).
 export function FileList(props: ListProps) {
   var ctx = props.ctx;
   var marks = useStore(seen);
   var revId = ctx.model.revisions[ctx.rev].id;
   var links = useContext(LinksContext);
+  var actions = useContext(ActionsContext);
+  var _t = useState<Target | null>(null);
+  var target = _t[0];
+  var setTarget = _t[1];
   // The files of the diff (not those opened to look at) are what is counted.
   var files = ctx.diffFiles;
   var byPath: Record<string, (typeof ctx.revision.files)[number]> = {};
@@ -28,6 +45,31 @@ export function FileList(props: ListProps) {
   var tree = lib.fileTree(ctx.revision.files.map(function (f) { return f.path; }));
   // What the review leaves out (its settings): named here, not shown.
   var ignored = ctx.revision.ignored || [];
+  // Each directory of a row by itself, for a right click to name.
+  var segments = function (node: FileTreeNode) {
+    return node.dirs.map(function (d) {
+      return <span key={d.path} data-diffnote-tree-dir={d.path} class={target && target.dir && target.path === d.path ? 'is-target' : undefined}>{d.label}</span>;
+    });
+  };
+  var onMenu = function (e: MouseEvent) {
+    if (!actions) return;
+    var at = e.target as Element;
+    var dir = at.closest('[data-diffnote-tree-dir]');
+    var link = dir ? null : at.closest('[data-diffnote-file-link]');
+    var path = dir ? dir.getAttribute('data-diffnote-tree-dir') : link && link.getAttribute('data-diffnote-file-link');
+    if (!path) return;
+    // A file only opened to look at, or brought in by its threads, isn't one
+    // the diff shows: nothing to leave out (the browser's own menu, then).
+    if (!dir && (!byPath[path] || byPath[path].status === 'context')) return;
+    e.preventDefault();
+    setTarget({
+      path: path,
+      dir: !!dir,
+      blocked: !dir && lib.threadsOfFile(ctx.order, ctx.placements, path).length > 0,
+      x: e.clientX,
+      y: e.clientY,
+    });
+  };
   var file = function (node: FileTreeNode) {
     var f = byPath[node.path!];
     var done = isViewed(f, marks, revId);
@@ -44,7 +86,7 @@ export function FileList(props: ListProps) {
           // A file that was looked at comes back; one that was folded opens; and it is marked.
           e.preventDefault();
           links.go({ kind: 'file', path: f.path });
-        }}>{node.label}</a>
+        }}>{segments(node)}<span data-diffnote-tree-file={f.path}>{node.label.slice(node.dirs.map(function (d) { return d.label; }).join('').length)}</span></a>
       {done
         ? open > 0 && <span class="diffnote-badge" data-diffnote-open-count title={lib.mf('ui.thread.open_count_title', { n: String(open) })}>{open}</span>
         : n > 0 && <span class="diffnote-badge">{n}</span>}
@@ -66,20 +108,75 @@ export function FileList(props: ListProps) {
     return nodes.map(function (node) {
       if (node.path != null) return file(node);
       return <li key={'dir:' + node.label} class="diffnote-filelist__dir">
-        <span class="diffnote-filelist__dirname">{node.label}</span>
+        <span class="diffnote-filelist__dirname">{segments(node)}</span>
         <ul>{rows(node.children)}</ul>
       </li>;
     });
   };
   return <details class="diffnote-side" open>
     <summary>{lib.m('ui.tree.files_summary')}{files.length > 0 && <>{' '}<span class="diffnote-badge diffnote-badge--viewed" data-diffnote-viewed-count title={lib.m('ui.tree.viewed_count_title')}><Icon name="check" />{' '}{files.filter(function (f) { return isViewed(f, marks, revId); }).length}/{files.length}</span></>}</summary>
-    <nav class="diffnote-filelist"><ul>{rows(tree)}</ul>
+    <nav class="diffnote-filelist" onContextMenu={onMenu}><ul>{rows(tree)}</ul>
       {ignored.length > 0 && <details class="diffnote-filelist__ignored" data-diffnote-ignored>
         <summary title={lib.m('ui.tree.ignored_title')}>{lib.mf('ui.tree.ignored_summary', { n: String(ignored.length) })}</summary>
         <ul>{names(lib.fileTree(ignored))}</ul>
       </details>}
     </nav>
+    {target && actions && <TreeMenu target={target} close={function () { setTarget(null); }}
+      leaveOut={function () {
+        return actions!.saveSettings({ ignore: lib.withIgnored(ctx.model.settings && ctx.model.settings.ignore, target!.path) });
+      }} />}
   </details>;
+}
+
+// What a right click in the file list offers, where it was made: leaving the
+// directory or the file out. Goes on Escape, a click elsewhere, or a scroll
+// (which would leave it where the row no longer is).
+function TreeMenu(props: { target: Target; close: () => void; leaveOut: () => Promise<{ ok: boolean; error?: string }> }) {
+  var t = props.target;
+  var box = useRef<HTMLDivElement | null>(null);
+  var _e = useState('');
+  var error = _e[0];
+  var setError = _e[1];
+  useEffect(function () {
+    var away = function (e: MouseEvent) { if (box.current && !box.current.contains(e.target as Node)) props.close(); };
+    var key = function (e: KeyboardEvent) { if (e.key === 'Escape') props.close(); };
+    var gone = function (e: Event) { if (!(box.current && box.current.contains(e.target as Node))) props.close(); };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', key);
+    document.addEventListener('scroll', gone, true);
+    window.addEventListener('blur', props.close);
+    return function () {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('keydown', key);
+      document.removeEventListener('scroll', gone, true);
+      window.removeEventListener('blur', props.close);
+    };
+  }, []);
+  // Kept inside the window (a click near its bottom or right edge would put
+  // the menu past it); and its first item takes the keys, as a menu opened
+  // from the keyboard should.
+  useEffect(function () {
+    var el = box.current;
+    if (!el) return;
+    var r = el.getBoundingClientRect();
+    el.style.left = Math.max(0, Math.min(t.x, window.innerWidth - r.width - 4)) + 'px';
+    el.style.top = Math.max(0, Math.min(t.y, window.innerHeight - r.height - 4)) + 'px';
+    var first = el.querySelector('button');
+    if (first) first.focus();
+  }, [t.path, t.dir, t.x, t.y]);
+  var pattern = lib.ignoreLine(t.path);
+  return <div class="diffnote-comment__panel diffnote-treemenu" role="menu" ref={box} data-diffnote-tree-menu={t.path}
+    style={'left:' + t.x + 'px;top:' + t.y + 'px'}>
+    <button type="button" role="menuitem" class="diffnote-comment__item" data-diffnote-tree-ignore={t.path} disabled={t.blocked}
+      title={t.blocked ? lib.m('ui.file.menu_ignore_blocked') : lib.mf('ui.tree.ignore_title', { pattern: pattern })}
+      onClick={function () {
+        props.leaveOut().then(function (res) {
+          if (res.ok) props.close();
+          else setError(res.error || lib.m('ui.save_failed'));
+        });
+      }}>{lib.m(t.dir ? 'ui.tree.ignore_dir' : 'ui.tree.ignore_file')}</button>
+    {error && <span class="diffnote-error" role="alert">{error}</span>}
+  </div>;
 }
 
 export function ThreadList(props: ListProps) {

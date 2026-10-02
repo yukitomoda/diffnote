@@ -170,6 +170,8 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-filelist__file { display: flex; align-items: center; gap: 6px; }
 /* A directory: its name, then what is in it, a step in. */
 .diffnote-filelist__dirname { display: block; padding: 3px 8px; font-family: var(--diffnote-font-mono); color: var(--diffnote-color-muted); word-break: break-all; }
+.diffnote-filelist [data-diffnote-tree-dir].is-target { background: var(--diffnote-color-hunk-bg); border-radius: 4px; }
+.diffnote-comment__panel.diffnote-treemenu { position: fixed; right: auto; min-width: 13em; }
 .diffnote-filelist__dir > ul { margin-left: 10px; padding-left: 4px; border-left: 1px solid var(--diffnote-color-border); }
 .diffnote-filelist a { flex: 1; min-width: 0; padding: 3px 8px; color: var(--diffnote-color-fg); text-decoration: none; font-family: var(--diffnote-font-mono); word-break: break-all; border-radius: 6px; }
 .diffnote-filelist a:hover { background: var(--diffnote-color-gutter); }

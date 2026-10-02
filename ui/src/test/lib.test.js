@@ -565,6 +565,18 @@ test('the files are a tree, with a directory that holds one thing joined to it',
   assert.deepEqual(lib.fileTree([]), []);
 });
 
+test('each directory of a joined row is named with its whole path', () => {
+  const dirs = (node) => node.dirs.map((d) => d.label + '=' + d.path);
+  const [ab] = lib.fileTree(['a/b/c/d', 'a/b/e/f/g', 'a/b/e/f/h']);
+  assert.deepEqual(dirs(ab), ['a/=a/', 'b/=a/b/']);
+  const [cd, ef] = ab.children;
+  assert.deepEqual(dirs(cd), ['c/=a/b/c/'], 'the directories before a file, not the file');
+  assert.deepEqual(dirs(ef), ['e/=a/b/e/', 'f/=a/b/e/f/']);
+  assert.deepEqual(dirs(ef.children[0]), []);
+  assert.deepEqual(dirs(lib.fileTree(['x/y/z.txt'])[0]), ['x/=x/', 'y/=x/y/']);
+  assert.deepEqual(dirs(lib.fileTree(['top.txt'])[0]), []);
+});
+
 test('a file is named in a .gitignore from the top, with what would be a pattern written as itself', () => {
   assert.equal(lib.ignoreLine('src/a.rs'), '/src/a.rs');
   assert.equal(lib.ignoreLine('a*b?[c].txt'), '/a\\*b\\?\\[c].txt');
@@ -572,6 +584,8 @@ test('a file is named in a .gitignore from the top, with what would be a pattern
   assert.equal(lib.ignoreLine('#not-a-comment'), '/#not-a-comment');
   assert.equal(lib.ignoreLine('!not-negated'), '/!not-negated');
   assert.equal(lib.ignoreLine('ends '), '/ends\\ ');
+  // A directory: with its `/`, so that it is the directory and all in it.
+  assert.equal(lib.ignoreLine('foo/bar/'), '/foo/bar/');
 });
 
 test('a file is added to the end of the list once', () => {

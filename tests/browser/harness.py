@@ -156,8 +156,8 @@ class Cdp:
               % (timeout, expression, seen, later), file=sys.stderr)
         return False
 
-    def mouse(self, kind, x, y, buttons=0, modifiers=0):
-        self.call("Input.dispatchMouseEvent", type=kind, x=x, y=y, button="left",
+    def mouse(self, kind, x, y, buttons=0, modifiers=0, button="left"):
+        self.call("Input.dispatchMouseEvent", type=kind, x=x, y=y, button=button,
                   buttons=buttons, clickCount=1, modifiers=modifiers)
 
     def key(self, key, code, vk):
@@ -428,6 +428,14 @@ class Browser:
           b.dispatchEvent(new MouseEvent('mouseup', Object.assign({}, o, { buttons: 0 })));
         })(document.querySelector(%s), document.querySelector(%s))""" % (json.dumps(first), json.dumps(last)))
         self.settle()
+
+    def right_click(self, selector):
+        """Presses the right button at an element, as a person opens the menu
+        of what is under the pointer (the page hears `contextmenu` there)."""
+        x, y = self.center(selector)
+        self.cdp.mouse("mouseMoved", x, y)
+        self.cdp.mouse("mousePressed", x, y, 2, button="right")
+        self.cdp.mouse("mouseReleased", x, y, 0, button="right")
 
     def click_at(self, selector, modifiers=0):
         """Presses and lets go at one point.

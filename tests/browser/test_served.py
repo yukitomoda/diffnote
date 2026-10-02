@@ -946,6 +946,43 @@ class FileTree(ServedCase):
         b.click(f"{CUR} [data-diffnote-file-link='a/b/c/d']")
         self.assertTrue(b.wait("location.hash.includes('file')"))
 
+    def ignore(self, under, item):
+        """Right-clicks `under` in the file list, and takes what the menu
+        offers: the review's list of files not to show, as it then is."""
+        b = self.b
+        b.right_click(f"{CUR} .diffnote-filelist {under}")
+        menu = "[data-diffnote-tree-menu] [data-diffnote-tree-ignore]"
+        self.assertTrue(b.wait_exists(menu))
+        self.assertEqual(b.js("document.querySelector(%s).textContent" % json.dumps(menu)), item)
+        before = harness.member(self.review, "settings.json")
+        b.click(menu)
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-tree-menu]')"))
+        harness.until(lambda: harness.member(self.review, "settings.json") != before)
+        return json.loads(harness.member(self.review, "settings.json"))["ignore"]
+
+    def test_each_directory_of_a_joined_row_and_each_file_can_be_left_out_by_a_right_click(self):
+        self.serve(tree_review(self.root, "tree-ignore"))
+        b = self.b
+        # `e/f/` is one row: `e/` is the directory `a/b/e/` by itself.
+        self.assertEqual(
+            b.js("[...document.querySelectorAll('%s .diffnote-filelist [data-diffnote-tree-dir]')].map(s => s.textContent + '=' + s.dataset.diffnoteTreeDir)" % CUR),
+            ["a/=a/", "b/=a/b/", "c/=a/b/c/", "e/=a/b/e/", "f/=a/b/e/f/"])
+        self.assertEqual(self.ignore("[data-diffnote-tree-dir='a/b/e/']", "このディレクトリを無視"), "/a/b/e/")
+        # g goes; h stays for its thread.
+        self.assertTrue(b.wait_exists(f"{CUR} [data-diffnote-ignored-file='a/b/e/f/g']"))
+        self.assertTrue(b.exists(f"{CUR} [data-diffnote-file-link='a/b/e/f/h']"))
+        # The file name of a row: the file. (The `c/` before it is a directory.)
+        self.assertEqual(self.ignore("[data-diffnote-tree-file='a/b/c/d']", "このファイルを無視"), "/a/b/e/\n/a/b/c/d")
+        # A file with a thread would be shown all the same: not offered.
+        b.right_click(f"{CUR} .diffnote-filelist [data-diffnote-tree-file='a/b/e/f/h']")
+        self.assertTrue(b.wait_exists("[data-diffnote-tree-menu]"))
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-tree-ignore]').disabled"))
+        b.settle()  # (the menu listens for Escape once it has been drawn)
+        b.escape()
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-tree-menu]')"))
+        # The top of a joined row is the directory at the top.
+        self.assertEqual(self.ignore("[data-diffnote-tree-dir='a/']", "このディレクトリを無視"), "/a/b/e/\n/a/b/c/d\n/a/")
+
 
 class NewThreadsOnLines(ServedCase):
     def gutter(self, kind, n, table=LOGIN):

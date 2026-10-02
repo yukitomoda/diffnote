@@ -115,6 +115,10 @@ export interface FileTreeNode {
   label: string;
   path?: string;
   children: FileTreeNode[];
+  /** The directories the label is made of, in order, each with its whole
+   * path (`a/b/` of `a/b/c.txt`'s row is `a/` and `a/b/`): so each can be
+   * named by itself, though a run of them is one row. */
+  dirs: { label: string; path: string }[];
 }
 
 /** A piece of a line, and whether it is one of the words that changed. */
@@ -566,22 +570,24 @@ lib.fileTree = function (paths) {
     });
     at.order.push({ file: parts[parts.length - 1], path: path });
   });
-  var nodes = function (dir: Dir): FileTreeNode[] {
+  var nodes = function (dir: Dir, above: string): FileTreeNode[] {
     return dir.order.map(function (entry) {
-      if (typeof entry !== 'string') return { label: entry.file, path: entry.path, children: [] };
+      if (typeof entry !== 'string') return { label: entry.file, path: entry.path, children: [], dirs: [] };
       var label = entry + '/';
+      var dirs = [{ label: label, path: above + label }];
       var inner = dir.dirs.get(entry)!;
       // Down a run of directories that each hold one thing.
       while (inner.order.length === 1) {
         var only = inner.order[0];
-        if (typeof only !== 'string') return { label: label + only.file, path: only.path, children: [] };
+        if (typeof only !== 'string') return { label: label + only.file, path: only.path, children: [], dirs: dirs };
         label += only + '/';
+        dirs.push({ label: only + '/', path: above + label });
         inner = inner.dirs.get(only)!;
       }
-      return { label: label, children: nodes(inner) };
+      return { label: label, children: nodes(inner, above + label), dirs: dirs };
     });
   };
-  return nodes(root);
+  return nodes(root, '');
 };
 
 // How wide a line is, in the columns of a fixed-width font: a tab takes a
