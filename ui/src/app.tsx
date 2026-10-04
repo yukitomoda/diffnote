@@ -74,7 +74,7 @@ function App(props: { model: ViewModel }) {
   useEffect(function () {
     if (!review.actions || against == null || against >= current) { setCmp(null); return undefined; }
     var stale = false;
-    server().get<{ revision: RevisionData }>('/api/compare?rev=' + current + '&from=' + against).then(function (res) {
+    server().get<{ revision: RevisionData }>('api/compare?rev=' + current + '&from=' + against).then(function (res) {
       if (stale) return;
       if (res.ok) setCmp({ rev: current, from: against!, data: res.revision });
       else { setCmp(null); compareWith(null); }
@@ -135,16 +135,16 @@ function App(props: { model: ViewModel }) {
       // is left as written): the link is simply broken from then on.
       file: function (id, name) {
         if (model.attachments && model.attachments[id]) return model.attachments[id];
-        return model.interactive ? '/api/attachments/' + id + '?name=' + encodeURIComponent(name) : '';
+        return model.interactive ? 'api/attachments/' + id + '?name=' + encodeURIComponent(name) : '';
       },
       // Where an image is: in the page (an exported one), or at the server.
       image: function (id) {
         if (model.images && model.images[id]) return model.images[id];
-        return model.interactive ? '/api/images/' + id : '';
+        return model.interactive ? 'api/images/' + id : '';
       },
       blob: function (digest) {
         if (model.blobs && model.blobs[digest]) return model.blobs[digest];
-        return model.interactive ? '/api/blobs/' + digest : '';
+        return model.interactive ? 'api/blobs/' + digest : '';
       },
       // A place chosen by clicking: a line reference (`{path,side,start,end,rev}`,
       // as `lib.lineRefs` gives them), or `{kind:'file'|'thread', ...}`. Also

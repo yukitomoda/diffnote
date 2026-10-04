@@ -44,7 +44,7 @@ export const api: Transport = {
   },
 
   upload(blob: Blob, name?: string): Promise<UploadAnswer> {
-    return call((name ? '/api/images?name=' + encodeURIComponent(name) : '/api/images'), {
+    return call((name ? 'api/images?name=' + encodeURIComponent(name) : 'api/images'), {
       method: 'POST',
       headers: { 'Content-Type': blob.type || 'application/octet-stream', ...OURS },
       body: blob,
@@ -52,7 +52,7 @@ export const api: Transport = {
   },
 
   uploadFile(blob: Blob, name: string): Promise<UploadAnswer> {
-    return call('/api/attachments?name=' + encodeURIComponent(name), {
+    return call('api/attachments?name=' + encodeURIComponent(name), {
       method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream', ...OURS },
       body: blob,

@@ -3,6 +3,7 @@ resolving, the version check, shutting down."""
 import unittest
 
 import json
+import urllib.parse
 
 import harness
 from harness import BrowserCase, Served, add_settings, entries, make_calc_review, make_gaps_review, make_indent_review, make_login_review, recorded
@@ -85,6 +86,38 @@ class ServedCase(BrowserCase):
         self.assertTrue(b.wait_exists("[data-diffnote-user-settings-saved]"))
         b.click("[data-diffnote-screen-back]")
         self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"))
+
+
+class ForwardedHost(ServedCase):
+    """The page served under a path of another host's, as an editor in the
+    browser forwards a port (code-server's `/proxy/<port>/`): it works when
+    the server is told of that host (`--allow-host`), and not otherwise."""
+
+    def forward(self, *extra):
+        self.review = os.path.join(self.fresh("review"), "r.diffnote")
+        shutil.copy(self.calc, self.review)
+        self.server = Served(self.review, author="検証者", extra=extra)
+        self.addCleanup(self.server.stop)
+        proxy = harness.Forwarded(self.server)
+        self.addCleanup(proxy.stop)
+        self.b = self.browser
+        return proxy
+
+    def test_a_page_under_a_path_of_its_own_works_once_its_host_is_allowed(self):
+        proxy = self.forward("--allow-host", harness.Forwarded.HOST)
+        b = self.b
+        b.open(proxy.url)
+        port = urllib.parse.urlsplit(self.server.url).port
+        self.assertEqual(b.js("location.pathname"), f"/proxy/{port}/", "the token taken, the page stays under the path")
+        # The page asks the server from where it is, and may change the review.
+        self.reply_to(self.card("mul の型を確認してください。"), "転送先から")
+        self.assertIn("転送先から", recorded(self.review))
+
+    def test_a_host_it_was_not_told_of_is_refused(self):
+        proxy = self.forward()
+        b = self.b
+        b.open(proxy.url, ready="!!document.body && document.body.textContent.includes('--allow-host')")
+        self.assertFalse(b.exists(".diffnote-diff"))
 
 
 class Replies(ServedCase):
@@ -1380,8 +1413,9 @@ class Images(ServedCase):
         link = f"#{card} .diffnote-comment__body a.diffnote-attachment"
         self.assertTrue(b.wait_exists(link))
         self.assertEqual(b.js(f"document.querySelector({json.dumps(link)}).getAttribute('download')"), "notes.txt")
+        # (Relative to the page: a host that forwards the port may serve it under a path of its own.)
         href = b.js(f"document.querySelector({json.dumps(link)}).getAttribute('href')")
-        self.assertTrue(href.startswith("/api/attachments/"), href)
+        self.assertTrue(href.startswith("api/attachments/"), href)
         got = b.js("fetch(%s).then(async r => [r.headers.get('content-disposition'), r.headers.get('content-type'), await r.text()])" % json.dumps(href))
         self.assertTrue(got[0].startswith("attachment;"), got)
         self.assertEqual(got[1], "application/octet-stream")

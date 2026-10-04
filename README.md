@@ -29,6 +29,12 @@ diffnote review
 
 もし相手が diffnote をインストールしていない場合は、左上のタイトルを押して、「エクスポート」ボタンでHTMLファイルとしてエクスポートできます（エクスポートの場合、返信等はできません）。
 
+ブラウザの中のエディタ(code-server など)がポートを転送する環境では、そのホスト名を `--allow-host` で指定すると、転送先の URL(code-server なら `https://<ホスト>/proxy/<ポート>/?t=...`)から開けます。`--port` でポートを決めておくと、URL を組み立てやすくなります。
+
+```sh
+diffnote review --no-browser --port 7777 --allow-host code.example.com
+```
+
 ### レビューされる人
 
 相手から受けとった `.diffnote` をリポジトリに置いて、

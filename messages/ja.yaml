@@ -57,6 +57,10 @@ cli:
       ブラウザを開かない(URL だけを表示する)。
     repo: |-
       対象の git リポジトリ(省略時はカレント)。
+    allow_host: |-
+      127.0.0.1 と localhost のほかに、このアドレスからの要求も受け付ける(例: `--allow-host code.example.com`。ポートを転送するエディタなどから開くとき)。何度でも指定できる。
+    allow_host_invalid: |-
+      ホスト名だけを指定してください(例: code.example.com。https:// やポート、パスは付けません)
 
   export:
     about: |-
@@ -351,7 +355,7 @@ serve:
       このリポジトリに、レビューのコミットが {missing} 件ありません。保存されていないファイルは開けません(`--repo` で指定できます)
 
   forbidden_host: |-
-    このサーバーのアドレス以外からの要求は受け付けません
+    このサーバーのアドレス以外からの要求は受け付けません(別のアドレスから開くときは、--allow-host で指定してください)
   forbidden_no_token: |-
     アクセスできません。diffnote が表示した URL から開いてください
   forbidden_operation: |-

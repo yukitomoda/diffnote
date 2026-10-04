@@ -48,7 +48,7 @@ export function ReposPane(props: ReposProps) {
   var found = _f[0];
   var setFound = _f[1];
   useEffect(function () {
-    server().get<{ found: string[] }>('/api/repos/found').then(function (res) { setFound(res.ok ? res.found : []); });
+    server().get<{ found: string[] }>('api/repos/found').then(function (res) { setFound(res.ok ? res.found : []); });
   }, [repos.length]);
   // The one being added: looked up by its path, then its base chosen.
   var _p = useState('');
@@ -69,16 +69,16 @@ export function ReposPane(props: ReposProps) {
     if (!at) return;
     setAddError('');
     setAdding(null);
-    server().get<{ repo: SetupRepo }>('/api/repos/at?path=' + encodeURIComponent(at)).then(function (res) {
+    server().get<{ repo: SetupRepo }>('api/repos/at?path=' + encodeURIComponent(at)).then(function (res) {
       if (res.ok) setAdding(rowOf(res.repo));
       else setAddError(res.error);
     });
   };
   var preview = function (repoPath: string, rev: string) {
-    return server().get<{ preview: SetupPreview }>('/api/repos/preview?path=' + encodeURIComponent(repoPath) + '&rev=' + encodeURIComponent(rev));
+    return server().get<{ preview: SetupPreview }>('api/repos/preview?path=' + encodeURIComponent(repoPath) + '&rev=' + encodeURIComponent(rev));
   };
   var span = function (repoPath: string, base: string, target: string) {
-    return server().get<{ span: SetupSpan }>('/api/repos/preview?path=' + encodeURIComponent(repoPath) + '&rev=' + encodeURIComponent(target) + '&from=' + encodeURIComponent(base));
+    return server().get<{ span: SetupSpan }>('api/repos/preview?path=' + encodeURIComponent(repoPath) + '&rev=' + encodeURIComponent(target) + '&from=' + encodeURIComponent(base));
   };
   var remove = function (at: string) {
     setBusy(true);

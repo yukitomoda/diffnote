@@ -45,6 +45,15 @@ test('only api.ts talks to the server', () => {
   }
 });
 
+test('the server is asked by a path relative to the page', () => {
+  // A host that forwards the port (an editor in the browser) may serve the
+  // page under a path of its own: `/api/...` would leave it.
+  for (const [name, body] of sources()) {
+    const found = body.match(/['"\`]\/(api|export|download)\b/);
+    assert.ok(!found, `${name} names ${found && found[0].slice(1)} from the top`);
+  }
+});
+
 test('an element that loads something is built, not written as markup', () => {
   // `h('img', { src })`, never `` html`<img src=${...}>` ``: an exported page
   // is opened from a file, so what a page loads is checked over its markup

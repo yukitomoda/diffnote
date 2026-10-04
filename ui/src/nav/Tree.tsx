@@ -22,7 +22,7 @@ function TreeList(props: ListProps) {
   useEffect(function () {
     var stale = false;
     setData(null);
-    server().get<{ entries: TreeEntry[]; message: string | null; note: string | null; more: number }>('/api/files/' + props.rev + '/tree?json=1&dir=' + encodeURIComponent(props.dir) + '&q=' + encodeURIComponent(props.query)).then(function (res) {
+    server().get<{ entries: TreeEntry[]; message: string | null; note: string | null; more: number }>('api/files/' + props.rev + '/tree?json=1&dir=' + encodeURIComponent(props.dir) + '&q=' + encodeURIComponent(props.query)).then(function (res) {
       if (!stale) setData(res);
     });
     return function () { stale = true; };

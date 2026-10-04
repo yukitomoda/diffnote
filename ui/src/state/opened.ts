@@ -37,7 +37,7 @@ export function useOpened(interactive: boolean): Opened | null {
           show(rev, path);
           return Promise.resolve({ ok: true });
         }
-        return server().get<{ file: OpenedFile }>('/api/files/' + rev + '/open?json=1&path=' + encodeURIComponent(path)).then(function (res) {
+        return server().get<{ file: OpenedFile }>('api/files/' + rev + '/open?json=1&path=' + encodeURIComponent(path)).then(function (res) {
           if (!res.ok) return res;
           update(rev, function (list) { return list.concat([res.file]); });
           setTimeout(function () { show(rev, path); }, 0);
@@ -50,7 +50,7 @@ export function useOpened(interactive: boolean): Opened | null {
       more: function (rev, path) {
         var file = (ref.current[rev] || []).filter(function (f) { return f.path === path; })[0];
         if (!file || !file.next) return Promise.resolve({ ok: true });
-        return server().get<{ hunk: Hunk; next: number | null }>('/api/files/' + rev + '/more?json=1&path=' + encodeURIComponent(path) + '&from=' + file.next).then(function (res) {
+        return server().get<{ hunk: Hunk; next: number | null }>('api/files/' + rev + '/more?json=1&path=' + encodeURIComponent(path) + '&from=' + file.next).then(function (res) {
           if (res.ok) {
             update(rev, function (list) {
               return list.map(function (f) {

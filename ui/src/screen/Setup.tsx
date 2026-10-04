@@ -173,7 +173,7 @@ export function SetupScreen(props: { setup: SetupData }) {
   // directory takes a moment, and a review of commits never needs it).
   useEffect(function () {
     if (state.kind !== 'raw' || raw) return;
-    server().get<{ raw: SetupRaw }>('/api/setup/raw').then(function (res) { if (res.ok) setRaw(res.raw); });
+    server().get<{ raw: SetupRaw }>('api/setup/raw').then(function (res) { if (res.ok) setRaw(res.raw); });
   }, [state.kind]);
   var setRepo = function (i: number, row: RepoRow) {
     setState(function (cur) {
@@ -197,7 +197,7 @@ export function SetupScreen(props: { setup: SetupData }) {
     var path = addPath.trim();
     if (!path) return;
     setAddError('');
-    server().get<{ repo: SetupRepo }>('/api/setup/repo?path=' + encodeURIComponent(path)).then(function (res) {
+    server().get<{ repo: SetupRepo }>('api/setup/repo?path=' + encodeURIComponent(path)).then(function (res) {
       if (!res.ok) { setAddError(res.error); return; }
       var repos = withRepo(state.repos, res.repo);
       if (!repos) { setAddError(lib.mf('ui.setup.add_twice', { path: res.repo.path })); return; }
@@ -211,7 +211,7 @@ export function SetupScreen(props: { setup: SetupData }) {
     if (busy || problem) return;
     setBusy(true);
     setError('');
-    server().post<{ message: string }>('/api/setup', choiceOf(state)).then(function (res) {
+    server().post<{ message: string }>('api/setup', choiceOf(state)).then(function (res) {
       if (res.ok) { location.reload(); return; }
       setBusy(false);
       setError(res.error || lib.m('ui.save_failed'));
@@ -219,10 +219,10 @@ export function SetupScreen(props: { setup: SetupData }) {
   };
   var kindLabel = function (kind: ReviewKind) { return lib.m('ui.setup.kind_' + kind); };
   var preview = function (path: string, rev: string) {
-    return server().get<{ preview: SetupPreview }>('/api/setup/preview?repo=' + encodeURIComponent(path) + '&rev=' + encodeURIComponent(rev));
+    return server().get<{ preview: SetupPreview }>('api/setup/preview?repo=' + encodeURIComponent(path) + '&rev=' + encodeURIComponent(rev));
   };
   var span = function (path: string, base: string, target: string) {
-    return server().get<{ span: SetupSpan }>('/api/setup/preview?repo=' + encodeURIComponent(path) + '&rev=' + encodeURIComponent(target) + '&from=' + encodeURIComponent(base));
+    return server().get<{ span: SetupSpan }>('api/setup/preview?repo=' + encodeURIComponent(path) + '&rev=' + encodeURIComponent(target) + '&from=' + encodeURIComponent(base));
   };
   return <main class="diffnote-screen diffnote-setup" data-diffnote-setup>
     <form class="diffnote-screen__form diffnote-setup__form" noValidate onSubmit={submit}>

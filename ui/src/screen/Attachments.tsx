@@ -52,14 +52,14 @@ export function AttachmentsPane(props: AttachmentsProps) {
           {order.map(function (a) {
             var used = uses[a.id] || [];
             var image = a.kind === 'image';
-            var href = (image ? '/api/images/' : '/api/attachments/') + a.id
+            var href = (image ? 'api/images/' : 'api/attachments/') + a.id
               + (image ? '' : '?name=' + encodeURIComponent(fileName(a)));
             return <li key={a.id} class="diffnote-attached__item" data-diffnote-attached={a.id}>
               <div class="diffnote-attached__thumb">{image
                 ? <button type="button" class="diffnote-attached__zoom" data-diffnote-attached-zoom={a.id}
                     title={lib.m('ui.attachments.zoom')} aria-label={lib.m('ui.attachments.zoom')}
-                    onClick={function () { interact.zoom('/api/images/' + a.id, nameOf(a)); }}>
-                    {h('img', { src: '/api/images/' + a.id, alt: '' })}
+                    onClick={function () { interact.zoom('api/images/' + a.id, nameOf(a)); }}>
+                    {h('img', { src: 'api/images/' + a.id, alt: '' })}
                   </button>
                 : <Icon name="attach" class="diffnote-attached__clip" />}</div>
               <div class="diffnote-attached__what">

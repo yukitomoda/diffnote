@@ -8,6 +8,7 @@ or `cargo build` for target/debug).
 """
 import base64
 import http.client
+import http.server
 import json
 import os
 import re
@@ -18,6 +19,7 @@ import subprocess
 import urllib.parse
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import urllib.request
@@ -183,6 +185,9 @@ CHROME_FLAGS = [
     # Nothing to set up: the profile is thrown away anyway.
     "--no-first-run",
     "--disable-extensions",
+    # A name that is not 127.0.0.1 or localhost, for a host that forwards the
+    # port (`Forwarded`): the server refuses one it isn't told of.
+    "--host-resolver-rules=MAP %s 127.0.0.1" % "code.diffnote.test",
 ]
 # (`--no-default-browser-check` is deliberately not here: with it, a drag over
 # the diff stops selecting anything, and the test that copies what was dragged
@@ -634,6 +639,53 @@ def entries(review):
 
 def zip_names(review):
     return subprocess.run(["unzip", "-Z1", review], capture_output=True, text=True).stdout.split()
+
+
+class Forwarded:
+    """What an editor in the browser (code-server) does with a port it
+    forwards: serves it under `/proxy/<port>/` of a host of its own, taking
+    that off the path and passing the rest on as it came -- the `Host` the
+    browser asked for included. `url` is where the page then is."""
+
+    HOST = "code.diffnote.test"
+
+    def __init__(self, served):
+        target = urllib.parse.urlsplit(served.url)
+        prefix = "/proxy/%d" % target.port
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def forward(self):
+                if not self.path.startswith(prefix + "/"):
+                    self.send_error(404)
+                    return
+                length = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(length) if length else None
+                c = http.client.HTTPConnection(target.hostname, target.port, timeout=15)
+                headers = {k: v for k, v in self.headers.items() if k.lower() not in ("connection", "content-length")}
+                c.request(self.command, self.path[len(prefix):], body, headers)
+                answer = c.getresponse()
+                data = answer.read()
+                self.send_response(answer.status)
+                for k, v in answer.getheaders():
+                    if k.lower() not in ("connection", "transfer-encoding", "content-length"):
+                        self.send_header(k, v)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                c.close()
+
+            do_GET = do_POST = forward
+
+        self.http = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.http.serve_forever, daemon=True).start()
+        self.url = "http://%s:%d%s/?%s" % (self.HOST, self.http.server_address[1], prefix, target.query)
+
+    def stop(self):
+        self.http.shutdown()
+        self.http.server_close()
 
 
 class Served:

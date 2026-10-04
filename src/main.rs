@@ -144,6 +144,22 @@ struct Server {
     no_browser: bool,
     #[arg(long, value_name = "DIR", help = m("cli.server.repo"))]
     repo: Option<PathBuf>,
+    #[arg(long = "allow-host", value_name = "HOST", value_parser = host_name, help = m("cli.server.allow_host"))]
+    allow_hosts: Vec<String>,
+}
+
+/// A name for `--allow-host`: the host alone, as a `Host` header names it
+/// (no scheme, port or path).
+fn host_name(text: &str) -> std::result::Result<String, String> {
+    let ok = !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+    if ok {
+        Ok(text.to_string())
+    } else {
+        Err(m("cli.server.allow_host_invalid").to_string())
+    }
 }
 
 /// What a review is of: commits of a git repository, several repositories
@@ -659,6 +675,7 @@ fn cmd_serve(review: PathBuf, server: Server, compare: Option<Compare>) -> Resul
         port,
         no_browser,
         repo,
+        allow_hosts,
     } = server;
     let open = !no_browser;
     let reopen = compare.is_none();
@@ -799,6 +816,7 @@ fn cmd_serve(review: PathBuf, server: Server, compare: Option<Compare>) -> Resul
         refresh: refresher,
         before: Some(before),
         setup,
+        allowed_hosts: allow_hosts,
     };
     diffnote::serve::run(&options, |url, notices| {
         for notice in notices {

@@ -59,6 +59,12 @@ pub struct Options {
     /// and what makes the review from the answers. Until the review is made,
     /// the page is this screen.
     pub setup: Option<std::sync::Arc<crate::setup::Setup>>,
+    /// Other names the server may be reached by (`--allow-host`), beside
+    /// `127.0.0.1` and `localhost`: a host that forwards the port, such as an
+    /// editor in the browser that serves it under a path of its own. Without
+    /// them, a request to any other name is refused (a page of another site
+    /// can make the browser send one to this port, by a name that leads here).
+    pub allowed_hosts: Vec<String>,
 }
 
 /// See [`Options::refresh`].
@@ -210,6 +216,8 @@ pub struct Server {
     explicit_author: Option<String>,
     token: String,
     port: u16,
+    /// See [`Options::allowed_hosts`]: in lower case.
+    allowed_hosts: Vec<String>,
     git: GitFiles,
     /// The comments added since this server started: the ones the page may
     /// still edit or delete. Once the server stops, they are settled.
@@ -357,6 +365,11 @@ impl Server {
             explicit_author: options.author.clone(),
             token,
             port,
+            allowed_hosts: options
+                .allowed_hosts
+                .iter()
+                .map(|h| h.to_ascii_lowercase())
+                .collect(),
             git: GitFiles {
                 dir: options.repo.clone().unwrap_or_else(|| PathBuf::from(".")),
                 trees: Default::default(),
@@ -613,7 +626,9 @@ impl Server {
             && query_value(query, "t") == Some(self.token.as_str())
         {
             let mut reply = Reply::new(302, "text/plain", "");
-            reply.headers.push(("Location".into(), "/".into()));
+            // (Where the page is, as the browser has it: a host that forwards
+            // the port may serve it under a path of its own.)
+            reply.headers.push(("Location".into(), "./".into()));
             reply.headers.push((
                 "Set-Cookie".into(),
                 format!(
@@ -2205,7 +2220,7 @@ impl Server {
         ];
         request
             .header("host")
-            .is_some_and(|h| ours.iter().any(|o| o == h))
+            .is_some_and(|h| ours.iter().any(|o| o == h) || self.is_allowed(h))
     }
 
     fn origin_is_ours(&self, request: &Request) -> bool {
@@ -2213,9 +2228,24 @@ impl Server {
             format!("http://127.0.0.1:{}", self.port),
             format!("http://localhost:{}", self.port),
         ];
-        request
-            .header("origin")
-            .is_none_or(|o| ours.iter().any(|x| x == o))
+        request.header("origin").is_none_or(|o| {
+            ours.iter().any(|x| x == o)
+                || o.strip_prefix("https://")
+                    .or_else(|| o.strip_prefix("http://"))
+                    .is_some_and(|h| self.is_allowed(h))
+        })
+    }
+
+    /// Whether `host` (as a `Host` header or an origin has it, with or without
+    /// a port) is one of [`Options::allowed_hosts`].
+    fn is_allowed(&self, host: &str) -> bool {
+        let name = match host.rsplit_once(':') {
+            Some((name, port)) if port.chars().all(|c| c.is_ascii_digit()) => name,
+            _ => host,
+        };
+        self.allowed_hosts
+            .iter()
+            .any(|a| a.eq_ignore_ascii_case(name))
     }
 
     pub fn cookie_name(&self) -> String {
@@ -2485,6 +2515,7 @@ mod tests {
                 refresh: None,
                 before: None,
                 setup: None,
+                allowed_hosts: Vec::new(),
             },
             4242,
         );
@@ -2587,7 +2618,7 @@ mod tests {
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default()
         };
-        assert_eq!(get("Location"), "/");
+        assert_eq!(get("Location"), "./");
         let cookie = get("Set-Cookie");
         assert!(cookie.starts_with(&f.cookie()), "{cookie}");
         assert!(
@@ -2635,6 +2666,51 @@ mod tests {
         }
         let reply = f.request("GET", "/", &[("host", "localhost:4242")], "");
         assert_eq!(reply.status, 200, "localhost is fine");
+    }
+
+    #[test]
+    fn a_host_that_forwards_the_port_is_let_in_when_named_and_no_other() {
+        let mut f = fixture();
+        f.server = Server::new(
+            &Options {
+                review: f.path.clone(),
+                port: 0,
+                author: Some("tester".into()),
+                repo: None,
+                refresh: None,
+                before: None,
+                setup: None,
+                allowed_hosts: vec!["Code.Example.com".into()],
+            },
+            4242,
+        );
+        // By that name (any case, with a port or without), and still by ours.
+        for host in ["code.example.com", "CODE.example.com:443", "localhost:4242"] {
+            let reply = f.request("GET", "/", &[("host", host)], "");
+            assert_eq!(reply.status, 200, "{host:?}");
+        }
+        for host in [
+            "evil.example",
+            "code.example.com.evil.example",
+            "example.com",
+        ] {
+            let reply = f.request("GET", "/", &[("host", host)], "");
+            assert_eq!(reply.status, 403, "{host:?}");
+        }
+        // A change from its page (https, as such a host serves it).
+        let resolve = format!("/api/threads/{}/resolve", f.thread);
+        let from = |origin: &str| {
+            f.request(
+                "POST",
+                &resolve,
+                &[("host", "code.example.com"), ("origin", origin)],
+                "{}",
+            )
+            .status
+        };
+        assert_eq!(from("https://evil.example"), 403);
+        assert_eq!(from("https://code.example.com.evil.example"), 403);
+        assert_eq!(from("https://code.example.com"), 200);
     }
 
     #[test]
@@ -2957,6 +3033,7 @@ mod tests {
                 refresh: None,
                 before: None,
                 setup: None,
+                allowed_hosts: Vec::new(),
             },
             4242,
         );
@@ -3305,6 +3382,7 @@ mod tests {
                 })),
                 before: None,
                 setup: None,
+                allowed_hosts: Vec::new(),
             },
             4242,
         );
@@ -3376,6 +3454,7 @@ mod tests {
                 refresh: None,
                 before: None,
                 setup: None,
+                allowed_hosts: Vec::new(),
             },
             4242,
         );
@@ -3980,6 +4059,7 @@ mod tests {
                 refresh: None,
                 before: None,
                 setup: None,
+                allowed_hosts: Vec::new(),
             },
             4243,
         );
@@ -4567,6 +4647,7 @@ mod tests {
                     refresh: None,
                     before: None,
                     setup: None,
+                    allowed_hosts: Vec::new(),
                 },
                 4242,
             ),
@@ -5091,6 +5172,7 @@ mod tests {
                 refresh: None,
                 before: None,
                 setup: None,
+                allowed_hosts: Vec::new(),
             },
             4242,
         );
@@ -5230,6 +5312,7 @@ mod tests {
             refresh: None,
             before: None,
             setup: None,
+            allowed_hosts: Vec::new(),
         };
         let err = run(&options, |_, _| panic!("must not start")).unwrap_err();
         assert!(
@@ -5277,6 +5360,7 @@ mod tests {
             refresh: None,
             before: None,
             setup: None,
+            allowed_hosts: Vec::new(),
         };
         let (sender, receiver) = std::sync::mpsc::channel();
         let thread = std::thread::spawn(move || {
@@ -5298,7 +5382,7 @@ mod tests {
         assert_eq!(status, 302);
         let name = format!("diffnote_token_{port}");
         assert!(head.contains(&format!("set-cookie: {name}=")), "{head}");
-        assert!(head.contains("location: /"), "{head}");
+        assert!(head.contains("location: ./"), "{head}");
 
         // With the cookie: the page, then a change, whose answer is JSON.
         let cookie = format!("{name}={token}");

@@ -53,7 +53,7 @@ export function useReview(initial: ViewModel): Review {
   var setPending = _p[1];
 
   var reloadModel = useCallback(function () {
-    return server().get<{ model: ViewModel }>('/api/model').then(function (res) {
+    return server().get<{ model: ViewModel }>('api/model').then(function (res) {
       if (res.ok) setModel(res.model);
       return res;
     });
@@ -86,61 +86,61 @@ export function useReview(initial: ViewModel): Review {
     };
     return {
       reply: function (id, text) {
-        return server().post<ThreadChange>('/api/threads/' + id + '/replies', { body: text }).then(function (res) {
+        return server().post<ThreadChange>('api/threads/' + id + '/replies', { body: text }).then(function (res) {
           if (res.ok) settle(res);
           return res;
         });
       },
       // A new thread: the answer has the whole model, with it placed.
       create: function (request) {
-        return server().post<{ model: ViewModel }>('/api/threads', request).then(whole);
+        return server().post<{ model: ViewModel }>('api/threads', request).then(whole);
       },
       // Comments added since the server started can be rewritten or taken out.
       edit: function (id, text) {
-        return server().post<{ model: ViewModel }>('/api/comments/' + id + '/edit', { body: text }).then(whole);
+        return server().post<{ model: ViewModel }>('api/comments/' + id + '/edit', { body: text }).then(whole);
       },
       remove: function (id) {
-        return server().post<{ model: ViewModel }>('/api/comments/' + id + '/delete').then(whole);
+        return server().post<{ model: ViewModel }>('api/comments/' + id + '/delete').then(whole);
       },
       // The signed-in name reacting to a comment with an emoji (or taking it back).
       react: function (id, emoji) {
-        return server().post<{ model: ViewModel }>('/api/comments/' + id + '/react', { emoji: emoji }).then(whole);
+        return server().post<{ model: ViewModel }>('api/comments/' + id + '/react', { emoji: emoji }).then(whole);
       },
       // The review's settings (the ones given; the answer is the whole model).
       saveSettings: function (settings) {
-        return server().post<{ model: ViewModel }>('/api/settings', settings).then(whole);
+        return server().post<{ model: ViewModel }>('api/settings', settings).then(whole);
       },
       // Takes an image or another attached file out of the bundle. What the
       // comments say is left as it was, so a link to it simply goes nowhere.
       removeAttached: function (attached) {
-        var where = attached.kind === 'image' ? '/api/images/' : '/api/attachments/';
+        var where = attached.kind === 'image' ? 'api/images/' : 'api/attachments/';
         return server().post<{ model: ViewModel }>(where + attached.id + '/delete').then(whole);
       },
       // This machine's user settings (author name; kept for every review, not
       // only this one): the answer is the whole model, with the name applied
       // for the rest of this session too.
       saveUserSettings: function (author) {
-        return server().post<{ model: ViewModel }>('/api/user-settings', { author: author }).then(whole);
+        return server().post<{ model: ViewModel }>('api/user-settings', { author: author }).then(whole);
       },
       saveIgnorePresets: function (presets) {
-        return server().post<{ model: ViewModel }>('/api/user-settings/ignore-presets', { presets: presets }).then(whole);
+        return server().post<{ model: ViewModel }>('api/user-settings/ignore-presets', { presets: presets }).then(whole);
       },
       // A review of several repositories: one added (from the next revision
       // on, from the commit chosen) or taken out (the revisions so far keep
       // it). The answer is the whole model.
       addRepo: function (path, base, target) {
-        return server().post<{ model: ViewModel }>('/api/repos', { path: path, base: base, target: target }).then(whole);
+        return server().post<{ model: ViewModel }>('api/repos', { path: path, base: base, target: target }).then(whole);
       },
       removeRepo: function (path) {
-        return server().post<{ model: ViewModel }>('/api/repos/remove', { path: path }).then(whole);
+        return server().post<{ model: ViewModel }>('api/repos/remove', { path: path }).then(whole);
       },
       setRepoTarget: function (path, target) {
-        return server().post<{ model: ViewModel }>('/api/repos/target', { path: path, target: target }).then(whole);
+        return server().post<{ model: ViewModel }>('api/repos/target', { path: path, target: target }).then(whole);
       },
       // What was added to the target since the server started becomes a new
       // revision (the answer says what was done; the page keeps its place).
       refresh: function () {
-        return server().post<{ model: ViewModel }>('/api/refresh').then(function (res) {
+        return server().post<{ model: ViewModel }>('api/refresh').then(function (res) {
           if (res.ok) {
             setModel(res.model);
             setPending(false);
@@ -151,7 +151,7 @@ export function useReview(initial: ViewModel): Review {
       // The signed-in name's mark of a file looked at, kept in the review. Not a
       // change to the review's log: the answer says only that it was kept.
       setViewed: function (revision, path, sig, viewed) {
-        return server().post<{}>('/api/viewed', { revision: revision, path: path, sig: sig, viewed: viewed });
+        return server().post<{}>('api/viewed', { revision: revision, path: path, sig: sig, viewed: viewed });
       },
       setResolved: function (id, resolved) {
         var before = ref.current.threads.filter(function (t) { return t.id === id; })[0];
@@ -159,7 +159,7 @@ export function useReview(initial: ViewModel): Review {
         // Pressed again before the answer came: only the last answer says how
         // the thread is (an earlier one would flip it back for a moment).
         var n = (latest[id] = (latest[id] || 0) + 1);
-        return server().post<ThreadChange>('/api/threads/' + id + '/' + (resolved ? 'resolve' : 'reopen')).then(function (res) {
+        return server().post<ThreadChange>('api/threads/' + id + '/' + (resolved ? 'resolve' : 'reopen')).then(function (res) {
           if (latest[id] !== n) {
             if (res.ok) setModel(function (cur) { return Object.assign({}, cur, { stamp: res.stamp, editable: res.editable, changed: res.changed }); });
           } else if (res.ok) settle(res);
@@ -174,7 +174,7 @@ export function useReview(initial: ViewModel): Review {
     if (!initial.interactive) return undefined;
     var check = function () {
       if (document.hidden) return;
-      server().get<{ stamp: string; pending: boolean }>('/api/version').then(function (res) {
+      server().get<{ stamp: string; pending: boolean }>('api/version').then(function (res) {
         if (!res.ok) return;
         setPending(!!res.pending);
         if (res.stamp !== ref.current.stamp) reloadModel();

@@ -18,7 +18,7 @@ import type { ViewPrefs } from '../model.ts';
  * fall back to before anything is in them). */
 function remember(key: string, value: string, pref: ViewPrefs): void {
   keep(key, value);
-  if (transport) transport.post('/api/view', pref).catch(function () { /* kept for this page only */ });
+  if (transport) transport.post('api/view', pref).catch(function () { /* kept for this page only */ });
 }
 
 /** One column of both sides, two columns, or the new side alone. */

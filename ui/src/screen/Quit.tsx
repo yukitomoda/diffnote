@@ -42,7 +42,7 @@ export function QuitButton() {
     };
   }, [open]);
   var quit = function (discard: boolean) {
-    server().post<{ summary: Farewell }>('/api/shutdown', discard ? { discard: true } : undefined).then(function (res) {
+    server().post<{ summary: Farewell }>('api/shutdown', discard ? { discard: true } : undefined).then(function (res) {
       if (res.ok) stopped(res.summary);
       else setError(res.error || lib.m('ui.quit.shutdown_failed'));
     });

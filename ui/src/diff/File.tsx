@@ -68,7 +68,7 @@ export function File(props: FileProps) {
       if (held) return Promise.resolve(held.slice(offset, offset + count));
       var part = function (from: number, left: number, acc: Token[][]): Promise<Token[][]> {
         var take = Math.min(left, 1000);
-        return server().get<{ lines: Token[][] }>('/api/files/' + ctx.rev + '/lines?path=' + encodeURIComponent(file.path) + '&from=' + (g.w + from) + '&count=' + take).then(function (res) {
+        return server().get<{ lines: Token[][] }>('api/files/' + ctx.rev + '/lines?path=' + encodeURIComponent(file.path) + '&from=' + (g.w + from) + '&count=' + take).then(function (res) {
           if (!res.ok || res.lines.length === 0) return acc;
           acc = acc.concat(res.lines);
           return left > take ? part(from + take, left - take, acc) : acc;

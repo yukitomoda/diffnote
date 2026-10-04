@@ -32,11 +32,11 @@ export function GeneralPane(props: GeneralProps) {
       {props.note && <p class={'diffnote-pull__note' + (props.note.failed ? ' is-failed' : '')} data-diffnote-pull-note role="status">{props.note.text}</p>}
     </div>}
     <div class="diffnote-screen__action">
-      <a class="diffnote-button" data-diffnote-download href="/download">{lib.m('ui.settings.download_button')}</a>
+      <a class="diffnote-button" data-diffnote-download href="download">{lib.m('ui.settings.download_button')}</a>
       <p class="diffnote-screen__action-note">{lib.m('ui.settings.download_note')}</p>
     </div>
     <div class="diffnote-screen__action">
-      <a class="diffnote-button" data-diffnote-export href="/export">{lib.m('ui.settings.export_button')}</a>
+      <a class="diffnote-button" data-diffnote-export href="export">{lib.m('ui.settings.export_button')}</a>
       <p class="diffnote-screen__action-note">{lib.m('ui.settings.export_note')}</p>
     </div>
     {bundle && <dl class="diffnote-screen__info" data-diffnote-bundle-info>
