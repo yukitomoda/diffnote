@@ -170,7 +170,12 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-filelist__file { display: flex; align-items: center; gap: 6px; }
 /* A directory: its name, then what is in it, a step in. */
 .diffnote-filelist__dirname { display: block; padding: 3px 8px; font-family: var(--diffnote-font-mono); color: var(--diffnote-color-muted); word-break: break-all; }
-.diffnote-filelist [data-diffnote-tree-dir].is-target { background: var(--diffnote-color-hunk-bg); border-radius: 4px; }
+/* A directory a right click can leave out (the served page): each one of a
+   joined row lights up by itself under the pointer, so it is plain which
+   one the menu would name. */
+.diffnote-filelist--menu [data-diffnote-tree-dir] { cursor: context-menu; border-radius: 4px; padding: 0 2px; margin: 0 -2px; transition: background-color .1s, color .1s, box-shadow .1s; }
+.diffnote-filelist--menu [data-diffnote-tree-dir]:hover,
+.diffnote-filelist [data-diffnote-tree-dir].is-target { color: var(--diffnote-color-accent); background: color-mix(in srgb, var(--diffnote-color-accent) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--diffnote-color-accent) 55%, transparent); }
 .diffnote-comment__panel.diffnote-treemenu { position: fixed; right: auto; min-width: 13em; }
 .diffnote-filelist__dir > ul { margin-left: 10px; padding-left: 4px; border-left: 1px solid var(--diffnote-color-border); }
 .diffnote-filelist a { flex: 1; min-width: 0; padding: 3px 8px; color: var(--diffnote-color-fg); text-decoration: none; font-family: var(--diffnote-font-mono); word-break: break-all; border-radius: 6px; }

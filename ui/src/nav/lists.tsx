@@ -48,7 +48,9 @@ export function FileList(props: ListProps) {
   // Each directory of a row by itself, for a right click to name.
   var segments = function (node: FileTreeNode) {
     return node.dirs.map(function (d) {
-      return <span key={d.path} data-diffnote-tree-dir={d.path} class={target && target.dir && target.path === d.path ? 'is-target' : undefined}>{d.label}</span>;
+      // (Where a right click offers something, it says so: see `onMenu`.)
+      return <span key={d.path} data-diffnote-tree-dir={d.path} class={target && target.dir && target.path === d.path ? 'is-target' : undefined}
+        title={actions ? lib.mf('ui.tree.dir_menu_title', { pattern: lib.ignoreLine(d.path) }) : undefined}>{d.label}</span>;
     });
   };
   var onMenu = function (e: MouseEvent) {
@@ -86,7 +88,8 @@ export function FileList(props: ListProps) {
           // A file that was looked at comes back; one that was folded opens; and it is marked.
           e.preventDefault();
           links.go({ kind: 'file', path: f.path });
-        }}>{segments(node)}<span data-diffnote-tree-file={f.path}>{node.label.slice(node.dirs.map(function (d) { return d.label; }).join('').length)}</span></a>
+        }}>{segments(node)}<span data-diffnote-tree-file={f.path}
+          title={actions && f.status !== 'context' ? lib.mf('ui.tree.file_menu_title', { path: f.path }) : undefined}>{node.label.slice(node.dirs.map(function (d) { return d.label; }).join('').length)}</span></a>
       {done
         ? open > 0 && <span class="diffnote-badge" data-diffnote-open-count title={lib.mf('ui.thread.open_count_title', { n: String(open) })}>{open}</span>
         : n > 0 && <span class="diffnote-badge">{n}</span>}
@@ -115,7 +118,7 @@ export function FileList(props: ListProps) {
   };
   return <details class="diffnote-side" open>
     <summary>{lib.m('ui.tree.files_summary')}{files.length > 0 && <>{' '}<span class="diffnote-badge diffnote-badge--viewed" data-diffnote-viewed-count title={lib.m('ui.tree.viewed_count_title')}><Icon name="check" />{' '}{files.filter(function (f) { return isViewed(f, marks, revId); }).length}/{files.length}</span></>}</summary>
-    <nav class="diffnote-filelist" onContextMenu={onMenu}><ul>{rows(tree)}</ul>
+    <nav class={'diffnote-filelist' + (actions ? ' diffnote-filelist--menu' : '')} onContextMenu={onMenu}><ul>{rows(tree)}</ul>
       {ignored.length > 0 && <details class="diffnote-filelist__ignored" data-diffnote-ignored>
         <summary title={lib.m('ui.tree.ignored_title')}>{lib.mf('ui.tree.ignored_summary', { n: String(ignored.length) })}</summary>
         <ul>{names(lib.fileTree(ignored))}</ul>

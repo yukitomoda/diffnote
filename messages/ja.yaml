@@ -1117,6 +1117,10 @@ ui:
       このファイルを無視
     ignore_title: |-
       {pattern} を、レビューの設定の「表示しないファイル」に加えます(設定からいつでも戻せます)
+    dir_menu_title: |-
+      右クリックで「このディレクトリを無視」({pattern})
+    file_menu_title: |-
+      {path}(右クリックで「このファイルを無視」)
     ignored_summary: |-
       表示しないファイル({n})
     ignored_title: |-
