@@ -132,6 +132,9 @@ interface Lib {
 
   PALETTE: string[];
   color(n: number): string;
+  REPO_PALETTE: string[];
+  repoColor(n: number): string;
+  repoOf(repos: { path: string }[] | undefined, path: string): string | null;
   bars(colors: number[]): string;
 
   baseName(path: string): string;
@@ -155,7 +158,7 @@ interface Lib {
   pairRows(rows: Row[]): { left: Row | null; right: Row | null }[];
   diffStat(file: FileData): { added: number; removed: number };
   columns(pieces: Token[] | null | undefined): number;
-  fileTree(paths: string[]): FileTreeNode[];
+  fileTree(paths: string[], base?: string): FileTreeNode[];
   ignoreLine(path: string): string;
   withIgnored(text: string | undefined, path: string): string;
   diffBlocks(added: number, removed: number): string[];
@@ -235,6 +238,24 @@ lib.PALETTE = ['#1f77b4', '#ff7f0e', '#9467bd', '#8c564b', '#e377c2', '#17becf',
 
 lib.color = function (n) {
   return lib.PALETTE[n % lib.PALETTE.length];
+};
+
+// The colors of the repositories of a review of several (each one's is the
+// server's to say: `RevisionRepo.color`). Apart from the threads' own, so
+// that a file's color and a thread's are never taken for each other.
+lib.REPO_PALETTE = ['#3b6fd8', '#d97706', '#0f9b8e', '#9b51e0', '#db2777', '#0891b2', '#a16207', '#4d7c0f'];
+lib.repoColor = function (n) {
+  return lib.REPO_PALETTE[n % lib.REPO_PALETTE.length];
+};
+
+// The repository (of a revision's) a path is in: the nearest one, as a
+// repository inside another's directory is.
+lib.repoOf = function (repos, path) {
+  var found: string | null = null;
+  (repos || []).forEach(function (r) {
+    if (path.indexOf(r.path + '/') === 0 && (found === null || r.path.length > found.length)) found = r.path;
+  });
+  return found;
 };
 
 // The last part of a path.
@@ -552,12 +573,15 @@ lib.withIgnored = function (text, path) {
 // The files as a tree, in the order they come in. A directory that holds
 // only one thing, a directory or a file, is joined to it: `a/b/c/d`,
 // `a/b/e/f/g` and `a/b/e/f/h` are `a/b/` holding `c/d` and `e/f/`, which
-// holds `g` and `h`.
-lib.fileTree = function (paths) {
+// holds `g` and `h`. With a `base` (a directory, with its `/`), the tree is
+// of what is under it, and is never joined to it (the files of a repository
+// of a review of several); the paths it names are the whole ones still.
+lib.fileTree = function (paths, base) {
+  var under = base || '';
   interface Dir { dirs: Map<string, Dir>; order: (string | { file: string; path: string })[] }
   var root: Dir = { dirs: new Map(), order: [] };
   paths.forEach(function (path) {
-    var parts = path.split('/');
+    var parts = (path.indexOf(under) === 0 ? path.slice(under.length) : path).split('/');
     var at = root;
     parts.slice(0, -1).forEach(function (name) {
       var next = at.dirs.get(name);
@@ -587,7 +611,7 @@ lib.fileTree = function (paths) {
       return { label: label, children: nodes(inner, above + label), dirs: dirs };
     });
   };
-  return nodes(root, '');
+  return nodes(root, under);
 };
 
 // How wide a line is, in the columns of a fixed-width font: a tab takes a

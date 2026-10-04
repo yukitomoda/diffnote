@@ -283,6 +283,10 @@ pub struct RevisionData {
     /// `files` doesn't have: those with no thread on them.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ignored: Vec<String>,
+    /// A review of several repositories: the ones this revision has, in the
+    /// order it has them (empty for a review of one, or of a directory).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub repos: Vec<RevisionRepo>,
     /// The marks of files looked at that the one the page is served to made
     /// here, by path: what each was when marked (its `sig`), or `null` where
     /// the mark was taken back (see [`crate::model::Viewed`]: the page works
@@ -310,6 +314,10 @@ pub struct FileData {
     /// show side by side.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<ImageVersions>,
+    /// A review of several repositories: the directory of the one the file
+    /// is in (see [`RevisionRepo`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
     /// What the file is in this revision (its two versions' digests): the page
     /// takes a file marked as looked at for a new one if this changes.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -319,6 +327,21 @@ pub struct FileData {
     /// between each two, one after the last (`null` where nothing is left out).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub gaps: Vec<Option<GapData>>,
+}
+
+/// One repository of a revision of a review of several.
+#[derive(Serialize)]
+pub struct RevisionRepo {
+    /// Its directory under the project's (`backend/repo-a`).
+    pub path: String,
+    /// The commits it is compared from and up to, short.
+    pub base: String,
+    pub head: String,
+    /// What it was compared up to, as asked (a branch, a commit; `HEAD`).
+    pub target: String,
+    /// Which of the page's colors is this repository's: the same in every
+    /// revision, in the order the review first took each one in.
+    pub color: usize,
 }
 
 /// The two versions of a picture, by digest, where the review holds them.
@@ -483,8 +506,10 @@ pub fn view_model_with(
         })
         .collect();
     revisions.reverse();
+    let order = repo_order(loaded);
     for (data, s) in revisions.iter_mut().zip(&shown) {
         data.id = s.revision.id.to_string();
+        place_in_repos(data, s.revision, &order);
     }
     let pictures = if interactive {
         BTreeMap::new()
@@ -579,6 +604,45 @@ pub fn served_model_json(
     model.setup = served.setup;
     model.workspace = served.workspace;
     model_json(&model)
+}
+
+/// The repositories of a review of several, in the order the review first
+/// took each one in: what gives each its color.
+fn repo_order(loaded: &crate::bundle::Loaded) -> Vec<String> {
+    let mut order: Vec<String> = Vec::new();
+    for revision in loaded.revisions() {
+        if let crate::model::Source::Workspace(ws) = &revision.source {
+            for repo in &ws.repos {
+                if !order.contains(&repo.path) {
+                    order.push(repo.path.clone());
+                }
+            }
+        }
+    }
+    order
+}
+
+/// A revision of a review of several repositories: which ones it has, and
+/// which each file is in. (Nothing for any other review.)
+fn place_in_repos(data: &mut RevisionData, revision: &crate::model::Revision, order: &[String]) {
+    let crate::model::Source::Workspace(ws) = &revision.source else {
+        return;
+    };
+    let short = |id: &str| id.chars().take(7).collect::<String>();
+    data.repos = ws
+        .repos
+        .iter()
+        .map(|r| RevisionRepo {
+            path: r.path.clone(),
+            base: short(&r.range.base),
+            head: short(&r.range.head),
+            target: r.target().to_string(),
+            color: order.iter().position(|p| *p == r.path).unwrap_or(0),
+        })
+        .collect();
+    for file in &mut data.files {
+        file.repo = ws.locate(&file.path).map(|(r, _)| r.path.clone());
+    }
 }
 
 /// What `author` marked as looked at, put on each revision of the model.
@@ -821,6 +885,7 @@ fn revision_data(
                     .filter(|f| f.is_binary)
                     .and_then(|_| image_versions(view.files, key, blobs)),
                 sig: file_sig(view.files, key),
+                repo: None,
                 hunks,
                 gaps,
             }
@@ -864,6 +929,7 @@ fn revision_data(
         placements,
         order,
         ignored,
+        repos: Vec::new(),
         viewed: BTreeMap::new(),
     }
 }
@@ -1108,6 +1174,7 @@ pub fn compare_data(
         crate::review::ignore_matcher(&loaded.settings).as_ref(),
     );
     data.id = after.revision.id.to_string();
+    place_in_repos(&mut data, after.revision, &repo_order(loaded));
     Ok(data)
 }
 

@@ -2293,6 +2293,21 @@ fn a_project_of_repositories_is_reviewed_as_one_each_from_where_it_left_main() {
         .map(|f| f["path"].as_str().unwrap().to_string())
         .collect();
     assert_eq!(files, ["backend/repo-a/a.txt", "mobile-app/m.txt"]);
+    // Each file says which repository it is in, and the revision has each
+    // one: what it is compared from and up to, and its color.
+    let first = served.api("/api/model", None)["model"]["revisions"][0].clone();
+    let in_repo: Vec<&str> = first["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["repo"].as_str().unwrap())
+        .collect();
+    assert_eq!(in_repo, ["backend/repo-a", "mobile-app"]);
+    let repos = first["repos"].as_array().unwrap();
+    assert_eq!(repos[1]["path"], "mobile-app");
+    assert_eq!(repos[1]["color"], 1);
+    assert_eq!(repos[1]["target"], "HEAD");
+    assert_eq!(repos[1]["base"].as_str().unwrap().len(), 7);
     let base = served.api("/api/model", None)["model"]["base"].clone();
     assert_eq!(base["kind"], "workspace");
     assert_eq!(base["repos"].as_array().unwrap().len(), 2);

@@ -116,9 +116,44 @@ export function FileList(props: ListProps) {
       </li>;
     });
   };
+  // A review of several repositories: the files by repository, each a group
+  // that folds, in the repository's color, with what it is compared from and
+  // up to and how many of its files were looked at. The files are named from
+  // the repository's directory, which is never joined to them.
+  var repos = ctx.revision.repos || [];
+  var groups = function (): preact.ComponentChildren {
+    var all = ctx.revision.files;
+    var known: Record<string, boolean> = {};
+    var shown = repos.map(function (r) {
+      known[r.path] = true;
+      var mine = all.filter(function (f) { return f.repo === r.path; });
+      if (!mine.length) return null;
+      var counted = files.filter(function (f) { return f.repo === r.path; });
+      var done = counted.filter(function (f) { return isViewed(f, marks, revId); }).length;
+      var dir = r.path + '/';
+      return <li key={'repo:' + r.path} class="diffnote-filelist__repo" data-diffnote-repo-group={r.path} style={'--diffnote-repo-color:' + lib.repoColor(r.color)}>
+        <details open>
+          <summary class="diffnote-filelist__reponame" title={lib.mf('ui.repolist.group_title', { path: r.path, target: r.target, base: r.base, head: r.head })}>
+            {/* (First, so that it floats beside the name's line.) */}
+            {counted.length > 0 && <span class="diffnote-filelist__repocount" data-diffnote-repo-viewed title={lib.m('ui.tree.viewed_count_title')}>{done}/{counted.length}</span>}
+            <span class="diffnote-repo-dot" aria-hidden="true"></span>
+            <span class="diffnote-filelist__repopath">
+              <span data-diffnote-tree-dir={dir} class={target && target.dir && target.path === dir ? 'is-target' : undefined}
+                title={actions ? lib.mf('ui.tree.dir_menu_title', { pattern: lib.ignoreLine(dir) }) : undefined}>{r.path}</span>
+              <small class="diffnote-filelist__reporange" data-diffnote-repo-range>{r.target} {r.base}→{r.head}</small>
+            </span>
+          </summary>
+          <ul>{rows(lib.fileTree(mine.map(function (f) { return f.path; }), dir))}</ul>
+        </details>
+      </li>;
+    });
+    // (A file in none of them, if there were one, is listed after them.)
+    var loose = all.filter(function (f) { return !f.repo || !known[f.repo]; });
+    return [shown, rows(lib.fileTree(loose.map(function (f) { return f.path; })))];
+  };
   return <details class="diffnote-side" open>
     <summary>{lib.m('ui.tree.files_summary')}{files.length > 0 && <>{' '}<span class="diffnote-badge diffnote-badge--viewed" data-diffnote-viewed-count title={lib.m('ui.tree.viewed_count_title')}><Icon name="check" />{' '}{files.filter(function (f) { return isViewed(f, marks, revId); }).length}/{files.length}</span></>}</summary>
-    <nav class={'diffnote-filelist' + (actions ? ' diffnote-filelist--menu' : '')} onContextMenu={onMenu}><ul>{rows(tree)}</ul>
+    <nav class={'diffnote-filelist' + (actions ? ' diffnote-filelist--menu' : '')} onContextMenu={onMenu}><ul>{repos.length ? groups() : rows(tree)}</ul>
       {ignored.length > 0 && <details class="diffnote-filelist__ignored" data-diffnote-ignored>
         <summary title={lib.m('ui.tree.ignored_title')}>{lib.mf('ui.tree.ignored_summary', { n: String(ignored.length) })}</summary>
         <ul>{names(lib.fileTree(ignored))}</ul>
@@ -184,6 +219,7 @@ function TreeMenu(props: { target: Target; close: () => void; leaveOut: () => Pr
 
 export function ThreadList(props: ListProps) {
   var ctx = props.ctx;
+  var repos = ctx.revision.repos || [];
   var links = useContext(LinksContext);
   var open = ctx.model.threads.filter(function (t) { return !t.resolved; }).length;
   return <details class="diffnote-side" open>
@@ -193,7 +229,12 @@ export function ThreadList(props: ListProps) {
         var t = ctx.byId[id];
         var p = ctx.placements[id];
         var color = p && p.kind === 'line' ? lib.color(p.color) : '#8b949e';
-        return <li key={id} class={t.resolved ? 'is-resolved' : ''}>
+        // A review of several repositories: the thread's file's, in its color.
+        var file = p && 'file' in p ? p.file : null;
+        var inRepo = file ? lib.repoOf(repos, file) : null;
+        var repo = inRepo ? repos.filter(function (r) { return r.path === inRepo; })[0] : null;
+        return <li key={id} class={(t.resolved ? 'is-resolved' : '') + (repo ? ' has-repo' : '')} data-diffnote-thread-repo={repo ? repo.path : undefined}
+          style={repo ? '--diffnote-repo-color:' + lib.repoColor(repo.color) : undefined}>
           <a href={'#r' + ctx.rev + '-thread-' + id} data-diffnote-jump={id} title={lib.location(p) || lib.m('ui.thread.jump_title_fallback')}
             onClick={function (e) { e.preventDefault(); links.go({ kind: 'thread', id: id }); }}>
             <span class="diffnote-thread__swatch" style={'background:' + color}></span><span class="diffnote-threadlist__where">{lib.shortLocation(p)}</span>{t.resolved && <span class="diffnote-threadlist__state">{lib.m('ui.thread.resolved')}</span>}<span class="diffnote-threadlist__preview">{lib.withShortcodes(EMOJI, lib.preview((t.comments.filter(function (c) { return !c.deleted; })[0] || t.comments[0]).doc)) || lib.m('ui.thread.deleted_preview')}</span>

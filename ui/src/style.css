@@ -80,6 +80,7 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-threadlist a { display: block; padding: 4px 8px; color: var(--diffnote-color-fg); text-decoration: none; border-radius: 6px; line-height: 1.35; }
 .diffnote-threadlist a:hover { background: var(--diffnote-color-gutter); }
 .diffnote-threadlist .is-resolved a { color: var(--diffnote-color-muted); }
+.diffnote-threadlist li.has-repo a { box-shadow: inset 3px 0 0 var(--diffnote-repo-color); border-radius: 0 6px 6px 0; }
 .diffnote-threadlist__where { font-family: var(--diffnote-font-mono); font-size: 12px; font-weight: 600; word-break: break-all; }
 .diffnote-threadlist__state { margin-left: 6px; font-size: 11px; color: var(--diffnote-color-muted); border: 1px solid var(--diffnote-color-border); border-radius: 1em; padding: 0 6px; white-space: nowrap; }
 .diffnote-threadlist__preview { display: block; margin-left: 16px; color: var(--diffnote-color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -176,6 +177,28 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-filelist--menu [data-diffnote-tree-dir] { cursor: context-menu; border-radius: 4px; padding: 0 2px; margin: 0 -2px; transition: background-color .1s, color .1s, box-shadow .1s; }
 .diffnote-filelist--menu [data-diffnote-tree-dir]:hover,
 .diffnote-filelist [data-diffnote-tree-dir].is-target { color: var(--diffnote-color-accent); background: color-mix(in srgb, var(--diffnote-color-accent) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--diffnote-color-accent) 55%, transparent); }
+/* A review of several repositories: a group per repository, in its color. */
+.diffnote-filelist__repo { margin: 4px 0 8px; padding-left: 2px; border-left: 3px solid var(--diffnote-repo-color); border-radius: 2px; }
+.diffnote-filelist__reponame { padding: 3px 6px; cursor: pointer; font-family: var(--diffnote-font-mono); font-weight: 600; color: var(--diffnote-color-fg); word-break: break-all; user-select: none; }
+.diffnote-repo-dot { display: inline-block; width: 10px; height: 10px; margin: 0 6px 0 2px; border-radius: 3px; background: var(--diffnote-repo-color); vertical-align: -1px; }
+.diffnote-filelist__reporange { display: block; margin-left: 30px; font-size: 11px; font-weight: 400; color: var(--diffnote-color-muted); }
+.diffnote-filelist__repocount { float: right; margin-left: 6px; font-size: 11px; font-weight: 400; color: var(--diffnote-color-muted); }
+.diffnote-filelist__repo > details > ul { margin-left: 8px; }
+.diffnote-file.diffnote-file--repo { border-left: 4px solid var(--diffnote-repo-color); }
+.diffnote-repolist { position: relative; display: inline-flex; }
+.diffnote-repolist__button { display: inline-flex; align-items: center; gap: 0; font: inherit; font-size: 12.5px; color: var(--diffnote-color-muted); background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 1px 6px; cursor: pointer; }
+.diffnote-repolist__button:hover, .diffnote-repolist__button[aria-expanded="true"] { border-color: var(--diffnote-color-border); background: var(--diffnote-color-bg); color: var(--diffnote-color-fg); }
+.diffnote-repolist__button .diffnote-repo-dot { width: 8px; height: 8px; margin: 0 2px 0 0; }
+.diffnote-repolist__button .diffnote-repo-dot:last-of-type { margin-right: 6px; }
+.diffnote-viewmenu__panel.diffnote-repolist__panel { left: 0; right: auto; min-width: 22em; max-width: min(36em, 90vw); display: flex; flex-direction: column; white-space: normal; }
+.diffnote-viewmenu__panel.diffnote-repolist__panel[hidden] { display: none; }
+.diffnote-repolist__item { display: flex; align-items: center; gap: 4px; font: inherit; text-align: left; padding: 6px 8px; color: var(--diffnote-color-fg); background: none; border: 0; border-left: 3px solid var(--diffnote-repo-color); border-radius: 4px; cursor: pointer; }
+.diffnote-repolist__item + .diffnote-repolist__item { margin-top: 2px; }
+.diffnote-repolist__item:hover { background: var(--diffnote-color-gutter); }
+.diffnote-repolist__name { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.diffnote-repolist__name code { font-weight: 600; word-break: break-all; }
+.diffnote-repolist__name small, .diffnote-repolist__count { font-size: 11px; color: var(--diffnote-color-muted); font-family: var(--diffnote-font-mono); }
+.diffnote-repolist__count { white-space: nowrap; font-family: inherit; }
 .diffnote-comment__panel.diffnote-treemenu { position: fixed; right: auto; min-width: 13em; }
 .diffnote-filelist__dir > ul { margin-left: 10px; padding-left: 4px; border-left: 1px solid var(--diffnote-color-border); }
 .diffnote-filelist a { flex: 1; min-width: 0; padding: 3px 8px; color: var(--diffnote-color-fg); text-decoration: none; font-family: var(--diffnote-font-mono); word-break: break-all; border-radius: 6px; }
@@ -681,6 +704,7 @@ details[open] > summary > .diffnote-timeline__chevron { transform: rotate(180deg
 .diffnote-timeline__who { font-size: 12.5px; color: var(--diffnote-color-muted); white-space: nowrap; }
 /* The commits of a revision, by repository (a review of several). */
 .diffnote-timeline__group { margin-top: 4px; }
+.diffnote-timeline__repo .diffnote-repo-dot { width: 8px; height: 8px; margin: 0 5px 0 0; vertical-align: 0; }
 .diffnote-timeline__repo { display: inline-block; margin: 2px 0; padding: 0 6px; font-size: 11px; color: var(--diffnote-color-muted); border: 1px solid var(--diffnote-color-border); border-radius: 4px; }
 .diffnote-timeline__message { padding: 0 10px 10px 10px; background: var(--diffnote-color-gutter); }
 .diffnote-timeline__body { margin: 8px 0; white-space: pre-wrap; font-size: 12.5px; }

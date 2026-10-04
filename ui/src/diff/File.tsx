@@ -98,7 +98,12 @@ export function File(props: FileProps) {
   // isn't one the diff shows).
   var canComment = !!compose && (!!file.opened || file.status !== 'context' || mine.length > 0);
   var canIgnore = !!actions && file.status !== 'context';
-  return <section class={'diffnote-file' + (kind === 'added' || kind === 'deleted' ? ' diffnote-file--' + kind : '')} id={'r' + ctx.rev + '-file-' + htmlId(file.path)} data-diffnote-file={file.path}>
+  // A review of several repositories: the file is drawn in its repository's
+  // color (a band at its left, no words: the path says the rest).
+  var repo = file.repo ? (ctx.revision.repos || []).filter(function (r) { return r.path === file.repo; })[0] : undefined;
+  return <section class={'diffnote-file' + (kind === 'added' || kind === 'deleted' ? ' diffnote-file--' + kind : '') + (repo ? ' diffnote-file--repo' : '')}
+    id={'r' + ctx.rev + '-file-' + htmlId(file.path)} data-diffnote-file={file.path} data-diffnote-file-repo={repo ? repo.path : undefined}
+    style={repo ? '--diffnote-repo-color:' + lib.repoColor(repo.color) : undefined}>
     <details ref={details} open={startsOpen} onToggle={function (e) { if (e.currentTarget.open && !opened) setOpened(true); }}>
       <summary>
         {<button type="button" class="diffnote-mini--check" data-diffnote-viewed={file.path} title={lib.m('ui.file.viewed_title')}

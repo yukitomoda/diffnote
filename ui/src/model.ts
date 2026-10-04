@@ -58,6 +58,8 @@ export interface FileData {
    * one when this changes.
    */
   sig?: string;
+  /** A review of several repositories: the directory of the one it is in. */
+  repo?: string;
   hunks: Hunk[];
   /**
    * One before the first hunk, one between each two, one after the last;
@@ -90,6 +92,19 @@ export type Placement =
   /** The versions needed to place it are not held. */
   | { kind: 'unplaced'; file: string; was: string[] };
 
+/** One repository of a revision of a review of several. */
+export interface RevisionRepo {
+  /** Its directory under the project's. */
+  path: string;
+  /** The commits compared from and up to, short. */
+  base: string;
+  head: string;
+  /** What it was compared up to, as asked (a branch, a commit; `HEAD`). */
+  target: string;
+  /** Its color (`lib.repoColor`): the same in every revision. */
+  color: number;
+}
+
 export interface RevisionData {
   /** The revision's id: what a mark of a file looked at is kept by. */
   id: string;
@@ -103,6 +118,8 @@ export interface RevisionData {
   order: string[];
   /** The diff's files the review leaves out (`Settings.ignore`). */
   ignored?: string[];
+  /** A review of several repositories: the ones this revision has. */
+  repos?: RevisionRepo[];
   /** The signed-in name's marks of files looked at here (served page only),
    * by path: what each was when marked, or `null` where the mark was taken
    * back (see `state/viewed.ts`). */

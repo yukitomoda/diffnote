@@ -565,6 +565,25 @@ test('the files are a tree, with a directory that holds one thing joined to it',
   assert.deepEqual(lib.fileTree([]), []);
 });
 
+test('the files of a repository are a tree of what is under it, never joined to it', () => {
+  const tree = lib.fileTree(['backend/repo-a/a.txt', 'backend/repo-a/src/x/y.rs'], 'backend/repo-a/');
+  // Named from the repository's directory, with the whole paths kept.
+  assert.deepEqual(tree.map((n) => n.label + '=' + (n.path || '')), ['a.txt=backend/repo-a/a.txt', 'src/x/y.rs=backend/repo-a/src/x/y.rs']);
+  assert.deepEqual(tree[1].dirs.map((d) => d.path), ['backend/repo-a/src/', 'backend/repo-a/src/x/']);
+  // One file alone is its own row, not the repository's.
+  assert.deepEqual(lib.fileTree(['mobile-app/m.txt'], 'mobile-app/').map((n) => n.label), ['m.txt']);
+});
+
+test('a path is in the nearest repository that holds it', () => {
+  const repos = [{ path: 'apps' }, { path: 'apps/web' }, { path: 'api' }];
+  assert.equal(lib.repoOf(repos, 'apps/web/src/a.ts'), 'apps/web', 'the inner one');
+  assert.equal(lib.repoOf(repos, 'apps/cli.ts'), 'apps');
+  assert.equal(lib.repoOf(repos, 'apix/a.ts'), null, 'a name that only begins the same is another');
+  assert.equal(lib.repoOf(undefined, 'a.ts'), null);
+  assert.notEqual(lib.repoColor(0), lib.repoColor(1));
+  assert.equal(lib.repoColor(lib.REPO_PALETTE.length), lib.repoColor(0));
+});
+
 test('each directory of a joined row is named with its whole path', () => {
   const dirs = (node) => node.dirs.map((d) => d.label + '=' + d.path);
   const [ab] = lib.fileTree(['a/b/c/d', 'a/b/e/f/g', 'a/b/e/f/h']);

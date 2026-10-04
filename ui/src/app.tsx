@@ -44,6 +44,7 @@ import type { RevisionData, ViewModel, BaseData } from './model.ts';
 import type { Links } from './state/contexts.ts';
 import type { PullNote } from './screen/General.tsx';
 import { Icon } from './icon.tsx';
+import { RepoButton } from './nav/RepoButton.tsx';
 
 function App(props: { model: ViewModel }) {
   var review = useReview(props.model);
@@ -250,6 +251,7 @@ function App(props: { model: ViewModel }) {
             </select>
           : model.base.kind === 'files' ? lib.formatTime(model.base.at)
             : <code title={model.base.kind === 'workspace' ? baseTip(model.base) : undefined}>{baseText(model.base)}</code>}</p>}
+        {model.revisions[current] && <RepoButton rev={current} revision={model.revisions[current]} />}
       </header>
       {model.revisions.length > 0 && <nav class="diffnote-revisions" ref={tabs} onWheel={function (e) {
         // The tabs scroll sideways (no bar is shown): the wheel does it too.

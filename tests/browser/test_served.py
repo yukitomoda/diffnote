@@ -903,10 +903,31 @@ class Workspace(ServedCase):
         b.reload(ready="!!document.querySelector('.diffnote-file')")
         files = b.js("[...document.querySelectorAll('%s section.diffnote-file')].map(function (s) { return s.dataset.diffnoteFile; })" % CUR)
         self.assertEqual(files, ["backend/repo-a/a.txt", "mobile-app/m.txt", "mobile-app/n.txt"])
-        # The file list is a tree under the repositories' directories (one
-        # with a single file is one row, as the tree always is).
-        rows = b.js("[...document.querySelectorAll('%s .diffnote-filelist__dirname, %s .diffnote-filelist__file a')].map(function (e) { return e.textContent; })" % (CUR, CUR))
-        self.assertEqual(rows, ["backend/repo-a/a.txt", "mobile-app/", "m.txt", "n.txt"])
+        # The file list is a group per repository, its files named from the
+        # repository's directory (which is never joined to them), with what
+        # it is compared from and up to.
+        groups = b.js("""[...document.querySelectorAll('%s [data-diffnote-repo-group]')].map(function (g) {
+          return [g.dataset.diffnoteRepoGroup, [...g.querySelectorAll('.diffnote-filelist__file a')].map(function (a) { return a.textContent; })];
+        })""" % CUR)
+        self.assertEqual(groups, [["backend/repo-a", ["a.txt"]], ["mobile-app", ["m.txt", "n.txt"]]])
+        self.assertRegex(b.text(f"{CUR} [data-diffnote-repo-group='mobile-app'] [data-diffnote-repo-range]"), r"^HEAD [0-9a-f]{7}→[0-9a-f]{7}$")
+        # Each repository has a color of its own, and its files are drawn in it.
+        color = lambda sel, prop: b.js("getComputedStyle(document.querySelector(%s)).%s" % (json.dumps(sel), prop))
+        a_band = color(f"{CUR} section[data-diffnote-file='backend/repo-a/a.txt']", "borderLeftColor")
+        m_band = color(f"{CUR} section[data-diffnote-file='mobile-app/m.txt']", "borderLeftColor")
+        self.assertNotEqual(a_band, m_band)
+        self.assertEqual(m_band, color(f"{CUR} [data-diffnote-repo-group='mobile-app']", "borderLeftColor"))
+        self.assertEqual(m_band, color(f"{CUR} section[data-diffnote-file='mobile-app/n.txt']", "borderLeftColor"))
+        # The top lists them; one is gone to from there.
+        b.click("[data-diffnote-repos-button]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-repos-panel]').hidden"))
+        self.assertEqual(b.js("[...document.querySelectorAll('[data-diffnote-repo-jump]')].map(function (e) { return e.dataset.diffnoteRepoJump; })"), ["backend/repo-a", "mobile-app"])
+        self.assertIn("2 ファイル", b.text("[data-diffnote-repo-jump='mobile-app']"))
+        b.click(f"{CUR} [data-diffnote-repo-group='mobile-app'] summary")  # (folded, to be opened by the jump)
+        self.assertTrue(b.wait(f"!document.querySelector(\"{CUR} [data-diffnote-repo-group='mobile-app'] details\").open"))
+        b.click("[data-diffnote-repo-jump='mobile-app']")
+        self.assertTrue(b.wait(f"document.querySelector(\"{CUR} [data-diffnote-repo-group='mobile-app'] details\").open"))
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-repos-panel]').hidden"), "and the list goes")
         # The base names how many, and says each one's commit when asked.
         self.assertIn("2 リポジトリ", b.text("[data-diffnote-base]"))
         self.assertIn("backend/repo-a:", b.js("document.querySelector('[data-diffnote-base] code').title"))
@@ -920,6 +941,8 @@ class Workspace(ServedCase):
         b.js("document.querySelector('.diffnote-compose').requestSubmit()")
         self.assertTrue(b.wait("!document.querySelector('.diffnote-compose-wrap')"))
         self.assertIn("mobile-app/m.txt:2", recorded(self.review))
+        # The thread list says whose it is, in the same color.
+        self.assertTrue(b.wait_exists(f"{CUR} .diffnote-threadlist li[data-diffnote-thread-repo='mobile-app']"))
         # The timeline lists the revision's commits by repository.
         b.click("[data-diffnote-screen-open]")
         b.click("[data-diffnote-screen-nav='timeline']")

@@ -70,6 +70,9 @@ function Commit(props: { commit: TimelineCommit }) {
 
 export function TimelinePane(props: TimelineProps) {
   var model = props.model;
+  // A review of several repositories: each one's color, as the diff has it.
+  var colorOf: Record<string, number> = {};
+  model.revisions.forEach(function (r) { (r.repos || []).forEach(function (repo) { colorOf[repo.path] = repo.color; }); });
   var entries = model.timeline || [];
   var days = daysOf(entries);
 
@@ -99,7 +102,8 @@ export function TimelinePane(props: TimelineProps) {
         {line(entry)}
         {entry.kind === 'revision' && (entry.commits || []).length > 0 && byRepo(entry.commits!).map(function (group) {
           return <div key={group.repo || ''} class="diffnote-timeline__group" data-diffnote-commit-repo={group.repo || undefined}>
-            {group.repo && <code class="diffnote-timeline__repo">{group.repo}</code>}
+            {group.repo && <code class="diffnote-timeline__repo">{group.repo in colorOf && <span class="diffnote-repo-dot" aria-hidden="true"
+              style={'--diffnote-repo-color:' + lib.repoColor(colorOf[group.repo])}></span>}{group.repo}</code>}
             <ul class="diffnote-timeline__commits">
               {group.commits.map(function (c) { return <Commit key={c.id} commit={c} />; })}
             </ul>

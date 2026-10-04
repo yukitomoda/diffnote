@@ -1108,6 +1108,19 @@ ui:
     open_failed: |-
       開けませんでした
 
+  repolist:
+    group_title: |-
+      {path}: {target}({base} → {head})
+    button: |-
+      リポジトリ({n})
+    button_title: |-
+      このリビジョンのリポジトリと、それぞれの比較の範囲
+    files: |-
+      {n} ファイル
+    no_files: |-
+      変更なし
+    jump_title: |-
+      ファイル一覧の {path} へ移動します
   tree:
     files_summary: |-
       ファイル
