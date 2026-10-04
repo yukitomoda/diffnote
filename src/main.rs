@@ -279,7 +279,7 @@ fn cmd_config(action: ConfigAction) -> Result<()> {
         ConfigAction::Get { key: None } => {
             let config = diffnote::user_config::load();
             let mut any = false;
-            for key in [ConfigKey::Author] {
+            for &key in <ConfigKey as clap::ValueEnum>::value_variants() {
                 if let Some(value) = config_field(&config, key) {
                     println!(
                         "{}",
