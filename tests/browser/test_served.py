@@ -952,6 +952,77 @@ class Workspace(ServedCase):
         self.assertEqual(groups, [["mobile-app", 1], ["backend/repo-a", 1]])
 
 
+class ViewedLeavesTheNextFileInPlace(ServedCase):
+    """A file marked as looked at leaves the page: if it was being read (its
+    top scrolled away, its end not), the page goes to where it began, which
+    is where the next file then starts."""
+
+    def long_review(self):
+        repo = os.path.join(self.root, "long-%s" % self._testMethodName)
+        os.makedirs(repo)
+        harness.git(repo, "init", "-q", "-b", "main")
+        names = ["a.txt", "b.txt", "c.txt"]
+        for n in names:
+            harness.write(repo, n, "".join("%s %d\n" % (n, i) for i in range(120)))
+        harness.git(repo, "add", "-A")
+        harness.git(repo, "commit", "-q", "-m", "c1")
+        for n in names:
+            harness.write(repo, n, "".join("%s %d!\n" % (n, i) for i in range(120)))
+        harness.git(repo, "commit", "-q", "-am", "c2")
+        master = repo + ".diffnote"
+        # (A thread on each, so that each starts open.)
+        harness.review_of(repo, master, "HEAD", base="HEAD~1",
+                          comments=[{"file": n, "line": "%s 0!" % n, "body": n} for n in names])
+        self.serve(master)
+        return self.b
+
+    def section(self, name):
+        return f"{CUR} section.diffnote-file[data-diffnote-file='{name}']"
+
+    def top(self, name):
+        return self.b.js("document.querySelector(%s).getBoundingClientRect().top" % json.dumps(self.section(name)))
+
+    def bars(self, name):
+        return self.b.js("parseFloat(getComputedStyle(document.querySelector(%s)).scrollMarginTop)" % json.dumps(self.section(name)))
+
+    def scroll_to(self, y):
+        self.b.js("window.scrollTo(0, %d)" % y)
+        self.b.settle()
+
+    def test_marked_at_its_end_the_next_file_is_where_the_marked_one_began(self):
+        b = self.long_review()
+        bars = self.bars("b.txt")
+        # Near the end of a.txt: its top far above, its end still in view.
+        a_end = b.js("(function(){var r=document.querySelector(%s).getBoundingClientRect(); return r.bottom + window.scrollY})()" % json.dumps(self.section("a.txt")))
+        self.scroll_to(a_end - 300)
+        self.assertLess(self.top("a.txt"), bars)
+        b.click(f"{self.section('a.txt')} [data-diffnote-viewed]")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(self.section('a.txt'))})"))
+        self.assertTrue(b.wait(f"Math.abs(document.querySelector({json.dumps(self.section('b.txt'))}).getBoundingClientRect().top - {bars}) < 2"),
+                        "b.txt starts under the bars: %s" % self.top("b.txt"))
+
+    def test_a_file_whose_top_is_in_view_moves_nothing(self):
+        b = self.long_review()
+        self.scroll_to(0)
+        b.click(f"{self.section('a.txt')} [data-diffnote-viewed]")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(self.section('a.txt'))})"))
+        b.settle()
+        self.assertEqual(b.js("window.scrollY"), 0)
+
+    def test_a_file_above_what_is_read_leaves_the_reading_where_it_was(self):
+        b = self.long_review()
+        # Reading b.txt, part way down; a.txt is wholly above.
+        b_top = b.js("document.querySelector(%s).getBoundingClientRect().top + window.scrollY" % json.dumps(self.section("b.txt")))
+        self.scroll_to(b_top + 400)
+        line = f"{self.section('b.txt')} tr[data-diffnote-new='40']"
+        before = b.js("document.querySelector(%s).getBoundingClientRect().top" % json.dumps(line))
+        b.click(f"{CUR} [data-diffnote-check='a.txt']")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(self.section('a.txt'))})"))
+        b.settle()
+        after = b.js("document.querySelector(%s).getBoundingClientRect().top" % json.dumps(line))
+        self.assertLess(abs(after - before), 2, "the line read stays put")
+
+
 class FoldAll(ServedCase):
     """Every file of the revision opened, or folded, at once."""
 

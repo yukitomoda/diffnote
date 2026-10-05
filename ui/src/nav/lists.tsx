@@ -2,6 +2,7 @@
 import { useContext, useEffect, useRef, useState } from 'preact/hooks';
 import { EMOJI } from '../emoji.ts';
 import { lib } from '../lib.ts';
+import { interact } from '../interact.ts';
 import { htmlId } from '../dom.ts';
 import { useStore } from '@nanostores/preact';
 import { ActionsContext, LinksContext } from '../state/contexts.ts';
@@ -94,7 +95,12 @@ export function FileList(props: ListProps) {
         ? open > 0 && <span class="diffnote-badge" data-diffnote-open-count title={lib.mf('ui.thread.open_count_title', { n: String(open) })}>{open}</span>
         : n > 0 && <span class="diffnote-badge">{n}</span>}
       <button type="button" class="diffnote-check" data-diffnote-check={f.path} aria-pressed={done}
-        title={done ? lib.m('ui.file.unmark_viewed_title') : lib.m('ui.file.mark_viewed_title')} onClick={function () { toggleViewed(f, revId); }}><span class={'diffnote-tick' + (done ? ' is-on' : '')}><Icon name="check" /></span></button>
+        title={done ? lib.m('ui.file.unmark_viewed_title') : lib.m('ui.file.mark_viewed_title')} onClick={function () {
+          // (Marked, the file leaves the page: see `interact.leaving`.)
+          var then = done ? function () {} : interact.leaving(ctx.rev, f.path);
+          toggleViewed(f, revId);
+          then();
+        }}><span class={'diffnote-tick' + (done ? ' is-on' : '')}><Icon name="check" /></span></button>
     </li>;
   };
   // The files left out, as a tree like the files above: named, nothing to press.

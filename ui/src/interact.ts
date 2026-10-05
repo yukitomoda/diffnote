@@ -344,6 +344,14 @@ function install() {
   });
 }
 
+/** A revision's section of a file, if the page has it. */
+function fileSection(rev: number, path: string): HTMLElement | null {
+  return Array.prototype.filter.call(
+    document.querySelectorAll('#rev-' + rev + ' section.diffnote-file'),
+    function (e: Element) { return e.getAttribute('data-diffnote-file') === path; }
+  )[0] || null;
+}
+
 export const interact = {
   install: install,
   // Show a picture by itself over the page, as pressing one in a comment
@@ -356,6 +364,30 @@ export const interact = {
   reset: function () {
     pinned = null;
     clear();
+  },
+  // A file about to leave the page (marked as looked at), and what to do once
+  // it has gone. If the reader is in it -- its top above the bars at the top
+  // of the window, its end not -- the page goes to where the file began,
+  // which is where the one after it then starts: read to the end and marked,
+  // the next file is there to read, not scrolled past. (One wholly above or
+  // below what is shown changes nothing: the browser keeps what is shown
+  // where it was.)
+  leaving: function (rev: number, path: string): () => void {
+    var section = fileSection(rev, path);
+    if (!section) return function () {};
+    var bars = parseFloat(getComputedStyle(section).scrollMarginTop) || 0;
+    var at = section.getBoundingClientRect();
+    if (!(at.top < bars && at.bottom > bars)) return function () {};
+    var top = at.top + window.scrollY;
+    return function () {
+      var tries = 0;
+      var go = function () {
+        // (Once the page has drawn it gone.)
+        if (section!.isConnected && ++tries < 40) { requestAnimationFrame(go); return; }
+        window.scrollTo(0, Math.max(0, top - bars));
+      };
+      requestAnimationFrame(go);
+    };
   },
   // Show a file: open it, scroll to it and mark it for a moment (once the page
   // has drawn it, if it is being brought back).

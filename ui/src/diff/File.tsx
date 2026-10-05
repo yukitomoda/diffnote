@@ -1,6 +1,7 @@
 // One file of the diff, open or folded away.
 import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
+import { interact } from '../interact.ts';
 import { server } from '../transport.ts';
 import { DiffTable, SplitTable } from './tables.jsx';
 import { ImageDiff } from './Image.jsx';
@@ -108,7 +109,13 @@ export function File(props: FileProps) {
       <summary>
         {<button type="button" class="diffnote-mini--check" data-diffnote-viewed={file.path} title={lib.m('ui.file.viewed_title')}
           aria-label={lib.m('ui.file.viewed_button')}
-          onClick={function (e) { e.preventDefault(); e.stopPropagation(); toggleViewed(file, revId); }}><span class="diffnote-tick"><Icon name="check" /></span></button>}
+          onClick={function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var then = interact.leaving(ctx.rev, file.path);
+            toggleViewed(file, revId);
+            then();
+          }}><span class="diffnote-tick"><Icon name="check" /></span></button>}
         {(canComment || canIgnore) && <FileMenu
           onComment={canComment ? function () {
             details.current!.open = true;
