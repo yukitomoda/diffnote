@@ -787,10 +787,16 @@ class SidebarWidth(ServedCase):
         self.assertTrue(self.becomes(196), self.width())
         b.js("document.querySelector('[data-diffnote-sidebar-resize]').dispatchEvent(new MouseEvent('dblclick', {bubbles: true}))")
         self.assertTrue(self.becomes(start), self.width())
-        # The screens beside the review keep to the same column.
+        # The settings screens have a column of their own: the review's pane
+        # made wider leaves theirs as it is, and is as it was when back.
+        self.drag_by(120)
+        self.assertTrue(self.becomes(start + 120), self.width())
         b.click("[data-diffnote-screen-open]")
         self.assertTrue(b.wait_exists("[data-diffnote-screen]"))
         self.assertAlmostEqual(b.js("document.querySelector('.diffnote-screen-nav').getBoundingClientRect().width"), start, delta=2)
+        b.click("[data-diffnote-screen-back]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-screen]')"))
+        self.assertTrue(self.becomes(start + 120), self.width())
 
 
 def tree_review(root, name):

@@ -507,11 +507,11 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
 /* The settings screen: in place of the review. */
 .diffnote-review-body[hidden] { display: none; }
 .diffnote-title[aria-pressed="true"] { background: var(--diffnote-color-bg); border-color: var(--diffnote-color-accent); }
-/* A page of the review, laid out as the review is: the same column on the
-   left, so that going in and coming back moves nothing. */
+/* A page of the review, laid out as the review is, a column on the left. Its
+   own width, though: how wide the review's pane was made is the review's. */
 .diffnote-screen { padding: 12px 16px 48px; }
 .diffnote-screen__top { margin: 0 0 8px; }
-.diffnote-screen__layout { display: grid; grid-template-columns: var(--diffnote-sidebar-w, 280px) minmax(0, 1fr); column-gap: 16px; align-items: start; }
+.diffnote-screen__layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); column-gap: 16px; align-items: start; }
 .diffnote-screen-nav { position: sticky; top: calc(var(--diffnote-topbar-h) + 12px); padding-right: 8px; border-right: 1px solid var(--diffnote-color-border); }
 /* What the review holds, then what is set. */
 .diffnote-screen-nav ul + ul { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--diffnote-color-border); }
