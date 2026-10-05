@@ -155,8 +155,9 @@ pub fn diff_trees(old: &Tree, new: &Tree) -> (String, Vec<FileDigest>) {
         if before == after {
             continue;
         }
-        let a = format!("a/{path}");
-        let b = format!("b/{path}");
+        // (Written as git writes them, so read back as they are.)
+        let a = crate::diff::quote_path(&format!("a/{path}"));
+        let b = crate::diff::quote_path(&format!("b/{path}"));
         text.push_str(&format!("diff --git {a} {b}\n"));
         match (before, after) {
             (None, Some(_)) => text.push_str("new file mode 100644\n"),
@@ -248,6 +249,29 @@ mod tests {
         assert_eq!(files[1].new, Some(digest(b"one\nTWO\nthree\n")));
         assert_eq!(files[0].new, None);
         assert_eq!(files[2].old, None);
+    }
+
+    #[test]
+    fn names_with_spaces_and_quotes_are_read_back_as_they_are() {
+        let old = tree(&[
+            ("ends ", b"a\n"),
+            ("we\"ird", b"a\n"),
+            ("tab\there", b"a\n"),
+        ]);
+        let new = tree(&[
+            ("ends ", b"b\n"),
+            ("we\"ird", b"b\n"),
+            ("tab\there", b"b\n"),
+        ]);
+        let (text, _) = diff_trees(&old, &new);
+        let mut names: Vec<String> = crate::diff::parse(&text)
+            .unwrap()
+            .files
+            .into_iter()
+            .map(|f| f.new_path.unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["ends ", "tab\there", "we\"ird"]);
     }
 
     #[test]

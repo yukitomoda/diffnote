@@ -147,13 +147,13 @@ pub fn parse(text: &str) -> Result<UnifiedDiff, ParseError> {
         if let Some(rest) = raw_line.strip_prefix("rename from ") {
             let file = current_file.get_or_insert_with(FileDiff::default);
             file.is_rename = true;
-            file.old_path = Some(rest.trim().to_string());
+            file.old_path = Some(written_path(rest));
             continue;
         }
         if let Some(rest) = raw_line.strip_prefix("rename to ") {
             let file = current_file.get_or_insert_with(FileDiff::default);
             file.is_rename = true;
-            file.new_path = Some(rest.trim().to_string());
+            file.new_path = Some(written_path(rest));
             continue;
         }
 
@@ -301,17 +301,107 @@ pub fn parse(text: &str) -> Result<UnifiedDiff, ParseError> {
     Ok(UnifiedDiff { files })
 }
 
+/// The path of a `---`/`+++` line (or a side of a `Binary files` one), without
+/// its `a/` or `b/`; `None` for `/dev/null`. Spaces are part of a name: git
+/// ends one that has any with a tab (and may put a time after it), so what
+/// comes before a tab is the name, as it is, spaces at either end and all.
 pub(crate) fn parse_path(rest: &str) -> Option<String> {
-    let path_part = rest.split('\t').next().unwrap_or(rest).trim();
+    let path_part = if rest.starts_with('"') {
+        written_path(rest)
+    } else {
+        rest.split('\t').next().unwrap_or(rest).to_string()
+    };
     if path_part == "/dev/null" {
         None
     } else {
         let stripped = path_part
             .strip_prefix("a/")
             .or_else(|| path_part.strip_prefix("b/"))
-            .unwrap_or(path_part);
+            .unwrap_or(&path_part);
         Some(stripped.to_string())
     }
+}
+
+/// A path as git writes it in a diff: as it is, or, where it has a character
+/// that would be read as something else (a `"`, a `\`, a tab, a line break,
+/// another control character), in quotes with those written as C does.
+/// (Other characters, Japanese ones too, are written as they are: diffnote
+/// runs git with `core.quotepath` off.)
+pub(crate) fn quote_path(path: &str) -> String {
+    if !path
+        .chars()
+        .any(|c| c == '"' || c == '\\' || c.is_control())
+    {
+        return path.to_string();
+    }
+    let mut out = String::from("\"");
+    for c in path.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c if c.is_control() => {
+                let mut bytes = [0; 4];
+                for b in c.encode_utf8(&mut bytes).bytes() {
+                    out.push_str(&format!("\\{b:03o}"));
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// A path as git wrote it (see [`quote_path`]): in quotes, what they hold,
+/// read as C writes it; else the text as it is.
+fn written_path(text: &str) -> String {
+    let Some(inner) = text.strip_prefix('"') else {
+        return text.to_string();
+    };
+    let mut bytes = Vec::new();
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => break,
+            '\\' => match chars.next() {
+                Some('a') => bytes.push(0x07),
+                Some('b') => bytes.push(0x08),
+                Some('t') => bytes.push(b'\t'),
+                Some('n') => bytes.push(b'\n'),
+                Some('v') => bytes.push(0x0b),
+                Some('f') => bytes.push(0x0c),
+                Some('r') => bytes.push(b'\r'),
+                Some(d @ '0'..='7') => {
+                    // Up to three octal digits: one byte of the name.
+                    let mut value = d.to_digit(8).unwrap_or(0);
+                    let mut rest = chars.clone();
+                    for _ in 0..2 {
+                        match rest.next().and_then(|x| x.to_digit(8)) {
+                            Some(v) => {
+                                value = value * 8 + v;
+                                chars.next();
+                            }
+                            None => break,
+                        }
+                    }
+                    bytes.push(value as u8);
+                }
+                Some(other) => {
+                    let mut buf = [0; 4];
+                    bytes.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
+                }
+                None => bytes.push(b'\\'),
+            },
+            c => {
+                let mut buf = [0; 4];
+                bytes.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            }
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 /// Parses `Binary files <old> and <new> differ` into the two paths
@@ -510,6 +600,83 @@ diff --git a/t.txt b/t.txt
         );
         assert!(!files[2].is_binary);
         assert_eq!(files[2].hunks.len(), 1);
+    }
+
+    #[test]
+    fn a_name_keeps_its_spaces_at_either_end_and_inside() {
+        // git ends a name with spaces in it with a tab.
+        let text = "diff --git a/ends  b/ends \n--- a/ends \t\n+++ b/ends \t\n@@ -1 +1 @@\n-a\n+b\n\
+diff --git a/ lead.txt b/ lead.txt\n--- a/ lead.txt\t\n+++ b/ lead.txt\t\n@@ -1 +1 @@\n-a\n+b\n\
+diff --git a/a b.txt b/a b.txt\n--- a/a b.txt\t2024-01-01 00:00\n+++ b/a b.txt\t\n@@ -1 +1 @@\n-a\n+b\n";
+        let files = parse(text).unwrap().files;
+        let names: Vec<_> = files
+            .iter()
+            .map(|f| f.new_path.as_deref().unwrap())
+            .collect();
+        assert_eq!(names, ["ends ", " lead.txt", "a b.txt"]);
+        assert_eq!(files[0].old_path.as_deref(), Some("ends "));
+    }
+
+    #[test]
+    fn a_name_git_writes_in_quotes_is_read_as_it_is() {
+        let text = "diff --git \"a/we\\\"ird\" \"b/we\\\"ird\"\n--- \"a/we\\\"ird\"\n+++ \"b/we\\\"ird\"\n@@ -1 +1 @@\n-a\n+b\n\
+diff --git \"a/tab\\there\" \"b/tab\\there\"\n--- \"a/tab\\there\"\n+++ \"b/tab\\there\"\n@@ -1 +1 @@\n-a\n+b\n\
+diff --git \"a/back\\\\slash\" \"b/back\\\\slash\"\n--- \"a/back\\\\slash\"\n+++ \"b/back\\\\slash\"\n@@ -1 +1 @@\n-a\n+b\n\
+diff --git \"a/\\346\\227\\245.txt\" \"b/\\346\\227\\245.txt\"\n--- \"a/\\346\\227\\245.txt\"\n+++ \"b/\\346\\227\\245.txt\"\n@@ -1 +1 @@\n-a\n+b\n";
+        let names: Vec<String> = parse(text)
+            .unwrap()
+            .files
+            .into_iter()
+            .map(|f| f.new_path.unwrap())
+            .collect();
+        // (The last as git writes it with core.quotepath on: byte by byte.)
+        assert_eq!(names, ["we\"ird", "tab\there", "back\\slash", "日.txt"]);
+    }
+
+    #[test]
+    fn a_renamed_name_and_a_picture_keep_their_spaces_and_quotes() {
+        let text = "diff --git a/old  b/new \nsimilarity index 100%\nrename from old \nrename to new \n\
+diff --git \"a/q\\\"\" \"b/q2\\\"\"\nsimilarity index 100%\nrename from \"q\\\"\"\nrename to \"q2\\\"\"\n\
+diff --git a/my pic .png b/my pic .png\nBinary files a/my pic .png and b/my pic .png differ\n";
+        let files = parse(text).unwrap().files;
+        assert_eq!(
+            (files[0].old_path.as_deref(), files[0].new_path.as_deref()),
+            (Some("old "), Some("new "))
+        );
+        assert_eq!(
+            (files[1].old_path.as_deref(), files[1].new_path.as_deref()),
+            (Some("q\""), Some("q2\""))
+        );
+        assert_eq!(files[2].new_path.as_deref(), Some("my pic .png"));
+        assert_eq!(
+            parse_binary_line("Binary files \"a/x\\ty\" and \"b/x\\ty\" differ"),
+            Some((Some("x\ty".into()), Some("x\ty".into())))
+        );
+    }
+
+    #[test]
+    fn a_path_is_quoted_as_git_quotes_it_and_read_back_the_same() {
+        for path in [
+            "plain.txt",
+            "a b.txt",
+            "ends ",
+            "日本語.md",
+            "we\"ird",
+            "back\\slash",
+            "tab\there",
+            "line\nbreak",
+            "bell\u{7}",
+        ] {
+            let written = quote_path(&format!("a/{path}"));
+            assert_eq!(parse_path(&written).as_deref(), Some(path), "{written}");
+        }
+        assert_eq!(
+            quote_path("a b.txt"),
+            "a b.txt",
+            "spaces alone are not quoted"
+        );
+        assert_eq!(quote_path("日本語.md"), "日本語.md");
+        assert_eq!(quote_path("we\"ird"), "\"we\\\"ird\"");
     }
 
     #[test]

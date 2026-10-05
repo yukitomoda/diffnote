@@ -951,6 +951,69 @@ fn repo_with_docs(env: &Env) -> PathBuf {
 }
 
 #[test]
+fn a_file_is_known_by_its_name_as_it_is_spaces_and_quotes_and_all() {
+    let env = Env::new();
+    let repo = env.path("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    // Spaces inside a name, anywhere; on the platforms that allow them, at
+    // either end too, and the characters git writes a name in quotes for.
+    let mut names = vec!["a b.txt", "日本 語.md"];
+    if !cfg!(windows) {
+        names.extend([
+            "ends ",
+            " lead.txt",
+            "we\"ird.txt",
+            "back\\slash.txt",
+            "tab\tname.txt",
+        ]);
+    }
+    for name in &names {
+        std::fs::write(repo.join(name), "one\n").unwrap();
+    }
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "c1"]);
+    git(&repo, &["tag", "c1"]);
+    for name in &names {
+        std::fs::write(repo.join(name), "one\ntwo\n").unwrap();
+    }
+    git(&repo, &["commit", "-q", "-am", "c2"]);
+    let review = env.path("r.diffnote");
+    let served = env.serve(&repo, &review, &["--base", "c1"]);
+    let paths = |model: &serde_json::Value| {
+        let mut p: Vec<String> = model["model"]["revisions"][0]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["path"].as_str().unwrap().to_string())
+            .collect();
+        p.sort();
+        p
+    };
+    let mut expected: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+    expected.sort();
+    assert_eq!(paths(&served.api("/api/model", None)), expected);
+    // A line of one is a place for a thread.
+    served.note(&Note::Line("a b.txt", "two", "空白のある名前"));
+    // Left out by the line the page writes for it (a space at the end as `\ `).
+    if !cfg!(windows) {
+        let set = served.api(
+            "/api/settings",
+            Some(serde_json::json!({ "ignore": "/ends\\ " })),
+        );
+        assert_eq!(
+            set["model"]["revisions"][0]["ignored"],
+            serde_json::json!(["ends "])
+        );
+    }
+    served.stop();
+    assert_eq!(
+        comment_bodies(&bundle::load(&review).unwrap()),
+        ["空白のある名前"]
+    );
+}
+
+#[test]
 fn a_thread_survives_a_second_review_from_the_same_base_with_a_longer_range() {
     let env = Env::new();
     let repo = env.path("repo");
