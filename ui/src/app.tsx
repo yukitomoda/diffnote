@@ -61,7 +61,11 @@ function App(props: { model: ViewModel }) {
   keepWith(review.actions ? review.actions.setViewed : null);
   // Where the page is: the revision shown, the settings screen, what it is
   // compared against and the last place jumped to, all of which are in the
-  // address (see `state/route.ts`).
+  // address (see `state/route.ts`). Where it starts is settled before it is
+  // first drawn: drawn first as it would be with no address (the first
+  // revision), the page would show that for a moment, then the one meant.
+  var _start = useState(function () { return startRoute(location.hash, props.model.revisions.length); });
+  var start = _start[0];
   var here = useStore(route);
   var current = here.rev;
   var screen = here.screen;
@@ -166,7 +170,6 @@ function App(props: { model: ViewModel }) {
   // The address may already point at a specific place (from a copied link, or
   // typed in): jump there once the page has drawn.
   useEffect(function () {
-    var start = startRoute(location.hash, model.revisions.length);
     if (start && start.at) links.jump(start.rev - 1, start.at);
   }, []);
   // The browser's back/forward buttons: retrace the revision, settings screen,

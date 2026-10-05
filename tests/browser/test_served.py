@@ -696,6 +696,23 @@ class Replies(ServedCase):
 LOGIN = "table[data-diffnote-file='src/auth/login.ts']"
 
 
+class StartsAtTheLatest(ServedCase):
+    def test_the_page_is_never_drawn_at_another_revision_first(self):
+        # What the page draws first, seen as it is drawn (a script that runs
+        # before the page's own): never the first revision, for a moment,
+        # before the one it opens at.
+        b = self.browser
+        added = b.cdp.call("Page.addScriptToEvaluateOnNewDocument", source="""
+          window.__firstRevision = null;
+          new MutationObserver(function (_, o) {
+            var r = document.querySelector('.diffnote-revision');
+            if (r) { window.__firstRevision = r.id; o.disconnect(); }
+          }).observe(document, {childList: true, subtree: true});""")["result"]["identifier"]
+        self.addCleanup(lambda: b.cdp.call("Page.removeScriptToEvaluateOnNewDocument", identifier=added))
+        self.serve()
+        self.assertEqual(b.js("window.__firstRevision"), "rev-1")
+
+
 class ViewKeptAcrossRuns(ServedCase):
     """How the page is shown is kept in the user settings, so a later run --
     on another port, which the browser keeps apart -- starts the same."""
@@ -2866,7 +2883,9 @@ class Pictures(ServedCase):
         b.click(f"{logo} [data-diffnote-pixel-diff]")
         self.assertTrue(b.wait(f"document.querySelector(\"{logo} [data-diffnote-pixel-note]\").textContent === '1 ブロックが異なります(面積の 100%)'"))
         self.assertEqual(b.count(f"{logo} [data-diffnote-pixel-marks]"), 2)
-        self.assertEqual(b.js(f"[...document.querySelectorAll(\"{logo} [data-diffnote-pixel-marks]\")].map(function (c) {{ return c.width + 'x' + c.height; }})"), ["4x3", "6x2"], "each over its own picture")
+        # (Each is sized to its picture once drawn: waited for, not taken as it is at once.)
+        marks = f"[...document.querySelectorAll(\"{logo} [data-diffnote-pixel-marks]\")].map(function (c) {{ return c.width + 'x' + c.height; }})"
+        self.assertTrue(b.wait(f"{marks}.join(',') === '4x3,6x2'"), "each over its own picture: %s" % b.js(marks))
         # Shown by itself while compared, a picture carries its marks.
         b.click(f"{logo} img")
         self.assertTrue(b.wait("!!document.querySelector('.diffnote-zoom img') && document.querySelector('.diffnote-zoom img').src.startsWith('data:image/png')"))
