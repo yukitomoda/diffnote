@@ -362,6 +362,24 @@ test('a place in a text is a file of the review with its lines, and nothing else
   assert.deepEqual(lib.lineRefs('', has, 1), []);
 });
 
+test('a file of the review named by its path alone goes to the file', () => {
+  const files = new Set(['src/a.ts', 'a.ts', 'services/web/src/pages/index.rs', 'docs/記事.md']);
+  const has = (p) => files.has(p);
+  const file = (path) => ({ text: path, kind: 'file', path });
+  assert.deepEqual(lib.lineRefs('see services/web/src/pages/index.rs please', has, 1),
+    ['see ', file('services/web/src/pages/index.rs'), ' please']);
+  // A bracket or a full stop around it is not part of it.
+  assert.deepEqual(lib.lineRefs('「src/a.ts」と docs/記事.md。', has, 1), ['「', file('src/a.ts'), '」と ', file('docs/記事.md'), '。']);
+  // Not the end of a longer name, nor the start of one, nor a line that is no line.
+  for (const text of ['data.ts', 'a.tsx', 'a.ts.bak', 'https://example.com/x/src/a.ts', 'lib/src/a.ts', 'src/a.ts:0']) {
+    assert.ok(lib.lineRefs(text, has, 1).every((p) => typeof p === 'string'), text);
+  }
+  // With its lines, it is the lines (as before).
+  assert.equal(lib.lineRefs('src/a.ts:3', has, 1)[0].start, 3);
+  // A line place and a file in one text.
+  assert.deepEqual(lib.lineRefs('src/a.ts:2 and a.ts', has, 1).map((p) => (typeof p === 'string' ? p : p.kind || 'lines')), ['lines', ' and ', 'file']);
+});
+
 test('L is the old side, R or nothing the new, and @ names the revision', () => {
   const has = (p) => p === 'a.ts';
   const ref = (text, start, end, side, rev) => ({ text, path: 'a.ts', side, start, end, rev });

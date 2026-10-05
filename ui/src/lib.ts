@@ -84,6 +84,13 @@ export interface LineRef {
   rev: number | null;
 }
 
+/** A file of the review named in a text by its path alone. */
+export interface FileRef {
+  text: string;
+  kind: 'file';
+  path: string;
+}
+
 /** Where a jump landed. */
 export type At =
   | { kind: 'file'; path: string }
@@ -176,7 +183,7 @@ interface Lib {
   flatRows(file: PageFile): FlatRow[];
   counters(flat: FlatRow[], a: number, b: number, side?: Side | null): Counters;
   chosenLocation(path: string, counters: Counters): string;
-  lineRefs(text: string, has: (path: string) => boolean, revisions: number): (string | LineRef)[];
+  lineRefs(text: string, has: (path: string) => boolean, revisions: number): (string | LineRef | FileRef)[];
 
   plainText(nodes: DocNode[] | null | undefined): string;
   preview(nodes: DocNode[] | null | undefined): string;
@@ -846,9 +853,10 @@ lib.chosenLocation = function (path, counters) {
 // (or nothing) for the new, and `@2` after it for the revision (as the tabs
 // number them): the text as pieces, a piece being a string, or
 // `{ text, path, side, start, end, rev }` (`rev` is `null` if none is named)
-// for such a place. `has(path)` says whether a path is a file of the review
-// (a `12:30` or a `http://…:8080` is not a place), `revisions` how many
-// revisions there are.
+// for such a place, or `{ text, kind: 'file', path }` for a file named by
+// its path alone (see `fileRefs`). `has(path)` says whether a path is a file
+// of the review (a `12:30` or a `http://…:8080` is not a place), `revisions`
+// how many revisions there are.
 lib.lineRefs = function (text, has, revisions) {
   var pieces: (string | LineRef)[] = [];
   var from = 0;
@@ -876,8 +884,49 @@ lib.lineRefs = function (text, has, revisions) {
     from = m.index + m[0].length;
   }
   if (from < text.length) pieces.push(text.slice(from));
-  return pieces;
+  // What is left: a file named by its path alone.
+  var all: (string | LineRef | FileRef)[] = [];
+  pieces.forEach(function (p) {
+    if (typeof p === 'string') all.push.apply(all, fileRefs(p, has));
+    else all.push(p);
+  });
+  return all;
 };
+
+// The files of the review a text names by their paths alone. A path is one
+// only where it stands by itself: not the end of a longer name (`a.ts` of
+// `data.ts`, or of a link's `.../src/a.ts`), and not the start of one
+// (`a.tsx`, `a.ts.bak`); a bracket or a full stop around it is fine. One
+// with a line after it that is no line (`a.ts:0`) is not one either.
+var PATH_CHAR = /[A-Za-z0-9_.\-\/]/;
+function fileRefs(text: string, has: (path: string) => boolean): (string | FileRef)[] {
+  var out: (string | FileRef)[] = [];
+  var from = 0;
+  var re = /\S+/g;
+  var m;
+  while ((m = re.exec(text))) {
+    var token = m[0];
+    // (A word that long names no file: not worth trying every part of.)
+    if (token.length > 1000) continue;
+    var found: { i: number; j: number } | null = null;
+    for (var i = 0; i < token.length && !found; i++) {
+      if (i > 0 && PATH_CHAR.test(token.charAt(i - 1))) continue;
+      for (var j = token.length; j > i; j--) {
+        var next = token.charAt(j);
+        var then = token.charAt(j + 1);
+        if (/[A-Za-z0-9_\-\/]/.test(next) || (next === '.' && /[A-Za-z0-9_]/.test(then)) || (next === ':' && /[0-9LR]/.test(then))) continue;
+        if (has(token.slice(i, j))) { found = { i: i, j: j }; break; }
+      }
+    }
+    if (!found) continue;
+    var path = token.slice(found.i, found.j);
+    if (m.index + found.i > from) out.push(text.slice(from, m.index + found.i));
+    out.push({ text: path, kind: 'file', path: path });
+    from = m.index + found.j;
+  }
+  if (from < text.length) out.push(text.slice(from));
+  return out;
+}
 
 // A size in bytes, roughly: `830 KB`, `2.4 MB`.
 lib.formatSize = function (bytes) {

@@ -798,7 +798,10 @@ class LineLinks(BrowserCase):
         write(repo, "other.txt", "z\n")
         git(repo, "commit", "-q", "-am", "c3")
         git(repo, "tag", "c3")
-        review_of(repo, review, "c3", comments=[{"global": True, "body": "二つ目"}])
+        review_of(repo, review, "c3", comments=[
+            {"global": True, "body": "二つ目"},
+            {"global": True, "body": "ファイルだけなら other.txt と `long.txt` を見てください。other.txt.bak は対象外です。"},
+        ])
         html = os.path.join(cls.root, "links.html")
         assert diffnote("export", "-f", review, html).returncode == 0
         cls.url = pathlib.Path(html).as_uri()
@@ -812,6 +815,16 @@ class LineLinks(BrowserCase):
     def test_only_the_places_that_are_files_of_the_review_are_links(self):
         b = self.b
         self.assertEqual(b.js("[...document.querySelectorAll('[data-diffnote-lineref]')].map(a => a.textContent).join('|')"), "long.txt:40-41|other.txt:1|long.txt:L5@1")
+
+    def test_a_file_named_by_its_path_alone_is_a_link_to_the_file(self):
+        b = self.b
+        refs = f"{CUR} [data-diffnote-fileref]"
+        self.assertEqual(b.js("[...document.querySelectorAll(%s)].map(a => a.textContent).join('|')" % json.dumps(refs)), "other.txt|long.txt")
+        # Written as code, it is a link of code.
+        self.assertTrue(b.exists(f"{CUR} [data-diffnote-fileref='long.txt'] > code"))
+        b.click(f"{CUR} [data-diffnote-fileref='other.txt']")
+        self.assertTrue(b.wait("decodeURIComponent(location.hash).includes('file:other.txt')"), b.js("location.hash"))
+        self.assertTrue(b.wait_exists(f"{CUR} section.diffnote-file[data-diffnote-file='other.txt'].diffnote-flash"))
 
     def test_pressing_one_goes_to_the_lines_and_marks_them(self):
         b = self.b

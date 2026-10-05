@@ -4,6 +4,7 @@ import { EMOJI } from './emoji.ts';
 import { lib } from './lib.ts';
 import type { DocElement, DocNode, Token } from './model.ts';
 import type { Links } from './state/contexts.ts';
+import type { FileRef, LineRef } from './lib.ts';
 import { Icon } from './icon.tsx';
 
 // A comment: the nodes of its Markdown (see `src/html/markdown.rs`) as
@@ -31,13 +32,9 @@ export function markdown(
       // shown so).
       text = lib.withShortcodes(EMOJI, text);
       if (!links || inLink) return text;
-      // `src/a.ts:10-13` in the text goes to those lines.
+      // `src/a.ts:10-13` in the text goes to those lines, `src/a.ts` to the file.
       return lib.lineRefs(text, links.has, links.revisions).map(function (piece, j) {
-        if (typeof piece === 'string') return piece;
-        var where = links.current === (piece.rev == null ? links.current : piece.rev - 1) ? lib.m('ui.link.here') : lib.mf('ui.link.revision', { rev: String(piece.rev) });
-        if (piece.rev != null && piece.rev < links.revisions) where += lib.m('ui.link.not_latest');
-        return <a key={j} href="#" class="diffnote-lineref" data-diffnote-lineref={piece.path + ':' + (piece.side === 'old' ? 'L' : '') + piece.start + '-' + piece.end} title={where}
-          onClick={function (e) { e.preventDefault(); links.go(piece); }}>{piece.text}</a>;
+        return typeof piece === 'string' ? piece : refLink(piece, j, links, piece.text);
       });
     }
     var n: DocElement = node;
@@ -73,7 +70,14 @@ export function markdown(
         var href = links && links.file ? links.file(n.id || '', name) : '';
         return href ? h('a', { key: i, class: 'diffnote-attachment', href: href, download: name, rel: 'noopener' }, h(Icon, { name: 'attach' }), ' ', kids) : h('span', { key: i }, kids);
       }
-      case 'code': return h('code', { key: i }, n.s || '');
+      case 'code': {
+        // Code that is a place and nothing else (`src/a.ts`, `src/a.ts:3`)
+        // goes there too, as code.
+        var code = h('code', { key: i }, n.s || '');
+        if (!links || inLink) return code;
+        var refs = lib.lineRefs(n.s || '', links.has, links.revisions);
+        return refs.length === 1 && typeof refs[0] !== 'string' ? refLink(refs[0], i, links, code) : code;
+      }
       case 'br': return h('br', { key: i });
       case 'a':
         return n.href && SAFE_LINK.test(n.href)
@@ -91,4 +95,17 @@ export function tokens(pieces: Token[] | undefined, changed: [number, number][] 
     var cls = (p[0] ? 'tok tok-' + p[0] : '') + (p[2] ? (p[0] ? ' ' : '') + 'diffnote-word' : '');
     return cls ? <span key={i} class={cls}>{p[1]}</span> : p[1];
   });
+}
+
+/** A place a comment names, as a link that goes there: lines (in a revision,
+ * or the one shown), or a file. */
+function refLink(piece: LineRef | FileRef, key: number, links: Links, children: preact.ComponentChildren) {
+  if ('kind' in piece) {
+    return <a key={key} href="#" class="diffnote-lineref" data-diffnote-fileref={piece.path} title={lib.m('ui.link.here')}
+      onClick={function (e) { e.preventDefault(); links.go({ kind: 'file', path: piece.path }); }}>{children}</a>;
+  }
+  var where = links.current === (piece.rev == null ? links.current : piece.rev - 1) ? lib.m('ui.link.here') : lib.mf('ui.link.revision', { rev: String(piece.rev) });
+  if (piece.rev != null && piece.rev < links.revisions) where += lib.m('ui.link.not_latest');
+  return <a key={key} href="#" class="diffnote-lineref" data-diffnote-lineref={piece.path + ':' + (piece.side === 'old' ? 'L' : '') + piece.start + '-' + piece.end} title={where}
+    onClick={function (e) { e.preventDefault(); links.go(piece); }}>{children}</a>;
 }
