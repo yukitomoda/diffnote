@@ -572,8 +572,11 @@ lib.ignoreLine = function (path) {
 // (as it is, if it is there already).
 lib.withIgnored = function (text, path) {
   var line = lib.ignoreLine(path);
-  var lines = (text || '').replace(/\s+$/, '').split('\n').filter(function (l) { return l !== ''; });
-  if (lines.indexOf(line) >= 0) return (text || '').replace(/\s+$/, '');
+  // (Without the empty lines at its end, and only those: a last line that
+  // ends in a space written `\ ` keeps it, as the server keeps it.)
+  var kept = /^\s*$/.test(text || '') ? '' : (text || '').replace(/(\r?\n[ \t]*)+$/, '');
+  var lines = kept.split(/\r?\n/).filter(function (l) { return l !== ''; });
+  if (lines.indexOf(line) >= 0) return kept;
   return lines.concat([line]).join('\n');
 };
 

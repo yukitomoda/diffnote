@@ -106,6 +106,18 @@ pub fn is_ignored(matcher: &ignore::gitignore::Gitignore, path: &str) -> bool {
     matcher.matched_path_or_any_parents(path, false).is_ignore()
 }
 
+/// A list of files to leave out as it is kept: as written, but for the empty
+/// lines at its end. Only those: the last line keeps what it ends with, as a
+/// space written `\ ` (a name that ends in one) is part of the pattern, and
+/// taken off it would leave a `\` with nothing after it -- no pattern at all.
+pub fn tidy_ignore(text: &str) -> String {
+    let mut lines: Vec<&str> = text.lines().collect();
+    while lines.last().is_some_and(|l| l.trim().is_empty()) {
+        lines.pop();
+    }
+    lines.join("\n")
+}
+
 /// The first line of `text` that is not a pattern `.gitignore` can take, and
 /// why (for the settings screen to say).
 pub fn ignore_error(text: &str) -> Option<(usize, String)> {
@@ -346,6 +358,127 @@ mod tests {
             Some(Vec::new()),
             "none left is still an answer"
         );
+    }
+
+    #[test]
+    fn a_list_of_files_to_leave_out_is_read_as_a_gitignore_is() {
+        // Each: the list, then paths of the review and whether each is left out.
+        let cases: &[(&str, &[(&str, bool)])] = &[
+            // `/` in front: from the top of the review only.
+            (
+                "/foo",
+                &[
+                    ("foo", true),
+                    ("foo/a.rs", true),
+                    ("x/foo", false),
+                    ("x/foo/a.rs", false),
+                ],
+            ),
+            // No `/`: a file or a directory of that name, however deep.
+            (
+                "foo",
+                &[
+                    ("foo", true),
+                    ("foo/a.rs", true),
+                    ("x/foo", true),
+                    ("x/foo/a.rs", true),
+                ],
+            ),
+            // `/` at the end: a directory only, however deep.
+            (
+                "foo/",
+                &[
+                    ("foo", false),
+                    ("foo/a.rs", true),
+                    ("x/foo", false),
+                    ("x/foo/a.rs", true),
+                ],
+            ),
+            (
+                "/foo/",
+                &[("foo", false), ("foo/a.rs", true), ("x/foo/a.rs", false)],
+            ),
+            // A `/` in the middle: from the top, as if it began with one.
+            (
+                "src/gen",
+                &[("src/gen/a.rs", true), ("x/src/gen/a.rs", false)],
+            ),
+            // `*`: anything but a `/`.
+            (
+                "*.lock",
+                &[
+                    ("Cargo.lock", true),
+                    ("a/b/yarn.lock", true),
+                    ("lock", false),
+                ],
+            ),
+            ("/*.lock", &[("Cargo.lock", true), ("a/yarn.lock", false)]),
+            ("src/*.rs", &[("src/a.rs", true), ("src/x/a.rs", false)]),
+            // `**`: across directories.
+            (
+                "src/**/*.rs",
+                &[("src/a.rs", true), ("src/x/y/a.rs", true), ("a.rs", false)],
+            ),
+            ("**/gen", &[("gen/a", true), ("x/y/gen/a", true)]),
+            ("a/**", &[("a/b", true), ("a/b/c", true), ("a", false)]),
+            (
+                "a/**/b",
+                &[("a/b", true), ("a/x/y/b", true), ("a/x/c", false)],
+            ),
+            // `?`: one character, not a `/`; `[...]`: one of a set (or not, with `!`).
+            (
+                "a?.rs",
+                &[("ab.rs", true), ("a/.rs", false), ("abc.rs", false)],
+            ),
+            (
+                "[ab].rs",
+                &[("a.rs", true), ("b.rs", true), ("c.rs", false)],
+            ),
+            ("[!a]*.rs", &[("a.rs", false), ("b.rs", true)]),
+            // `!`: shown again. The line about the file itself is the one that
+            // counts, even in a directory left out (where git would not show it).
+            (
+                "*.ts\n!src/auth/login.ts",
+                &[("src/a.ts", true), ("src/auth/login.ts", false)],
+            ),
+            (
+                "src/\n!src/a.ts",
+                &[("src/a.ts", false), ("src/b.ts", true)],
+            ),
+            // The last line about a path wins.
+            ("!*.md\n*.md", &[("a.md", true)]),
+            // Case counts.
+            ("Foo.rs", &[("Foo.rs", true), ("foo.rs", false)]),
+            // `#` begins a comment, `\#` and `\!` a name; spaces at the end of a
+            // line don't count, but one written `\ ` does.
+            (
+                "\\#x\n#y\n\\!z",
+                &[("#x", true), ("#y", false), ("y", false), ("!z", true)],
+            ),
+            ("foo   ", &[("foo", true)]),
+            ("/ends\\ ", &[("ends ", true), ("ends", false)]),
+        ];
+        for (text, paths) in cases {
+            let settings = Settings {
+                ignore: text.to_string(),
+                ..Settings::default()
+            };
+            let m = ignore_matcher(&settings).unwrap();
+            for (path, out) in *paths {
+                assert_eq!(is_ignored(&m, path), *out, "{text:?} and {path:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_list_is_kept_without_the_empty_lines_at_its_end_and_nothing_else() {
+        assert_eq!(tidy_ignore("*.lock\n\n  \n"), "*.lock");
+        assert_eq!(tidy_ignore("a\r\n\r\nb\r\n"), "a\n\nb");
+        // A space written `\ ` at the very end is part of the pattern: taken
+        // off, it would leave a `\` that is no pattern at all.
+        assert_eq!(tidy_ignore("/ends\\ "), "/ends\\ ");
+        assert!(ignore_error(&tidy_ignore("/ends\\ \n")).is_none());
+        assert_eq!(tidy_ignore("  \n"), "");
     }
 
     #[test]

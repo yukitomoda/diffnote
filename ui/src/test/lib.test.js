@@ -630,6 +630,11 @@ test('a file is added to the end of the list once', () => {
   assert.equal(lib.withIgnored(undefined, 'a.txt'), '/a.txt');
   assert.equal(lib.withIgnored('# 生成物\n*.lock\n', 'b/c.txt'), '# 生成物\n*.lock\n/b/c.txt');
   assert.equal(lib.withIgnored('/b/c.txt', 'b/c.txt'), '/b/c.txt', 'already there');
+  // A last line that ends in a space written `\ ` keeps it (a name that ends
+  // in a space); the empty lines at the end are what goes.
+  assert.equal(lib.withIgnored('/ends\\ ', 'x.txt'), '/ends\\ \n/x.txt');
+  assert.equal(lib.withIgnored('/ends\\ \n\n  \n', 'ends '), '/ends\\ ', 'already there, as written');
+  assert.equal(lib.withIgnored('  \n', 'a.txt'), '/a.txt');
 });
 
 test('a limit typed in megabytes is a number from 1 KB to 100 MB', () => {

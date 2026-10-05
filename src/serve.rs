@@ -1537,7 +1537,7 @@ impl Server {
             }
             presets.push(crate::user_config::IgnorePreset {
                 name,
-                patterns: preset.patterns.trim_end().to_string(),
+                patterns: review::tidy_ignore(&preset.patterns),
             });
         }
         let mut config = crate::user_config::load();
@@ -1885,7 +1885,7 @@ impl Server {
                         ),
                     ));
                 }
-                Some(text.trim_end().to_string())
+                Some(review::tidy_ignore(text))
             }
         };
         let mut loaded = bundle::load(&self.review).map_err(internal)?;
@@ -3140,6 +3140,17 @@ mod tests {
             "# 生成物\n*.txt"
         );
         assert_eq!(f.post("/api/settings", r#"{"ignore":3}"#).status, 400);
+        // A last line that ends in a space written `\ ` (a name that ends in
+        // one) is kept so: taken off, it would be a line that is no pattern,
+        // and the next save of the same would be refused.
+        let ends = serde_json::json!({ "ignore": "*.txt\n/ends\\ \n\n" }).to_string();
+        assert_eq!(f.post("/api/settings", &ends).status, 200);
+        assert_eq!(
+            bundle::load(&f.path).unwrap().settings.ignore,
+            "*.txt\n/ends\\ "
+        );
+        let again = serde_json::json!({ "ignore": bundle::load(&f.path).unwrap().settings.ignore });
+        assert_eq!(f.post("/api/settings", &again.to_string()).status, 200);
         // Emptied: nothing left out, and nothing kept in settings.json for it.
         json(&f.post("/api/settings", r#"{"ignore":""}"#));
         assert_eq!(bundle::load(&f.path).unwrap().settings.ignore, "");
@@ -3184,6 +3195,12 @@ mod tests {
                 );
             }
             assert_eq!(crate::user_config::load().ignore_presets.len(), 2);
+            // A space written `\ ` at the end of the last line is kept (see
+            // `review::tidy_ignore`).
+            let ends =
+                serde_json::json!({ "presets": [{ "name": "末尾", "patterns": "/ends\\ \n" }] });
+            let kept = json(&f.post("/api/user-settings/ignore-presets", &ends.to_string()));
+            assert_eq!(presets(&kept)[0]["patterns"], "/ends\\ ");
             // The review's own settings are left alone.
             assert_eq!(bundle::load(&f.path).unwrap().settings.ignore, "");
             let none = json(&f.post("/api/user-settings/ignore-presets", r#"{"presets":[]}"#));
