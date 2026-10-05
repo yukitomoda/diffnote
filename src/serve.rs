@@ -793,6 +793,11 @@ impl Server {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .filter(|s| !s.is_empty())
+            // A browser saves no name that begins with `.` (it would be
+            // hidden), so `.diffnote` would come down as `diffnote`, with no
+            // `.diffnote` to tell what it is: named so it keeps one.
+            // (`diffnote open` takes the one review file it finds.)
+            .filter(|s| s != ".diffnote")
             .unwrap_or_else(|| "review.diffnote".into());
         let ascii: String = name
             .chars()
@@ -2791,6 +2796,39 @@ mod tests {
             body: b"",
         });
         assert_eq!(bare.status, 403);
+    }
+
+    #[test]
+    fn a_review_named_dot_diffnote_is_downloaded_under_a_name_a_browser_keeps() {
+        // A browser drops a leading `.` (`.diffnote` would be `diffnote`).
+        let mut f = fixture();
+        let dotted = f.path.with_file_name(".diffnote");
+        std::fs::copy(&f.path, &dotted).unwrap();
+        f.server = Server::new(
+            &Options {
+                review: dotted,
+                port: 0,
+                author: Some("tester".into()),
+                repo: None,
+                refresh: None,
+                before: None,
+                setup: None,
+                allowed_hosts: Vec::new(),
+            },
+            4242,
+        );
+        let reply = f.request("GET", "/download", &[], "");
+        assert_eq!(reply.status, 200);
+        let disposition = reply
+            .headers
+            .iter()
+            .find(|(n, _)| n == "Content-Disposition")
+            .map(|(_, v)| v.clone())
+            .unwrap();
+        assert!(
+            disposition.starts_with("attachment; filename=\"review.diffnote\""),
+            "{disposition}"
+        );
     }
 
     #[test]

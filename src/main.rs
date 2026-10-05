@@ -77,14 +77,8 @@ fn command() -> clap::Command {
 enum Cmd {
     #[command(about = m("cli.review.about"))]
     Review {
-        #[arg(
-            short = 'f',
-            long = "file",
-            default_value = ".diffnote",
-            hide_default_value = true,
-            help = m("cli.review.review")
-        )]
-        review: PathBuf,
+        #[arg(short = 'f', long = "file", help = m("cli.review.review"))]
+        review: Option<PathBuf>,
         #[arg(value_name = "REV|DIR", help = m("cli.review.target"))]
         target: Option<String>,
         #[arg(long, value_name = "REV|DIR", help = m("cli.review.base"))]
@@ -100,27 +94,15 @@ enum Cmd {
     },
     #[command(about = m("cli.open.about"))]
     Open {
-        #[arg(
-            short = 'f',
-            long = "file",
-            default_value = ".diffnote",
-            hide_default_value = true,
-            help = m("cli.open.review")
-        )]
-        review: PathBuf,
+        #[arg(short = 'f', long = "file", help = m("cli.open.review"))]
+        review: Option<PathBuf>,
         #[command(flatten)]
         server: Server,
     },
     #[command(about = m("cli.export.about"))]
     Export {
-        #[arg(
-            short = 'f',
-            long = "file",
-            default_value = ".diffnote",
-            hide_default_value = true,
-            help = m("cli.export.review")
-        )]
-        review: PathBuf,
+        #[arg(short = 'f', long = "file", help = m("cli.export.review"))]
+        review: Option<PathBuf>,
         #[arg(long, short, help = m("cli.export.output"))]
         output: Option<PathBuf>,
         #[arg(index = 1, value_name = "OUTPUT", help = m("cli.export.output_pos"))]
@@ -232,7 +214,7 @@ fn main() -> Result<()> {
             title,
             server,
         } => cmd_serve(
-            review,
+            review_to_make(review),
             server,
             Some(Compare {
                 target,
@@ -242,7 +224,7 @@ fn main() -> Result<()> {
                 title,
             }),
         ),
-        Cmd::Open { review, server } => cmd_serve(review, server, None),
+        Cmd::Open { review, server } => cmd_serve(review_to_open(review)?, server, None),
         Cmd::Export {
             review,
             output,
@@ -258,7 +240,7 @@ fn main() -> Result<()> {
                     anyhow::bail!(m("main.output_path_missing"))
                 }
             };
-            cmd_export(review, output, expand_limit)
+            cmd_export(review_to_open(review)?, output, expand_limit)
         }
         Cmd::Config { action } => cmd_config(action),
     }
@@ -1421,6 +1403,69 @@ fn first_events() -> Vec<Event> {
         description: None,
         context_lines: 3,
     }]
+}
+
+/// The review file a command uses when none is named (`-f`).
+const REVIEW_FILE: &str = "review.diffnote";
+/// What it was called before: a review by that name is still the one.
+const OLD_REVIEW_FILE: &str = ".diffnote";
+
+/// The review `review` makes or adds to: the one named, else
+/// `review.diffnote` -- or, where there is none but a `.diffnote` (made
+/// before the name was changed), that one.
+fn review_to_make(named: Option<PathBuf>) -> PathBuf {
+    named.unwrap_or_else(|| {
+        if !Path::new(REVIEW_FILE).exists() && Path::new(OLD_REVIEW_FILE).exists() {
+            PathBuf::from(OLD_REVIEW_FILE)
+        } else {
+            PathBuf::from(REVIEW_FILE)
+        }
+    })
+}
+
+/// The review `open` and `export` read: the one named, else
+/// `review.diffnote`, else `.diffnote`; or, with neither, the one review file
+/// in the directory (`*.diffnote`), as one received may be saved under a name
+/// of its own. Two or more: which is for the user to say.
+fn review_to_open(named: Option<PathBuf>) -> Result<PathBuf> {
+    let default = PathBuf::from(REVIEW_FILE);
+    if let Some(path) = named {
+        return Ok(path);
+    }
+    for known in [REVIEW_FILE, OLD_REVIEW_FILE] {
+        if Path::new(known).exists() {
+            return Ok(PathBuf::from(known));
+        }
+    }
+    let mut found: Vec<PathBuf> = std::fs::read_dir(".")
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+                .map(|e| PathBuf::from(e.file_name()))
+                .filter(|p| p.extension().is_some_and(|x| x == "diffnote"))
+                .collect()
+        })
+        .unwrap_or_default();
+    found.sort();
+    match found.len() {
+        0 => Ok(default),
+        1 => {
+            let path = found.remove(0);
+            println!(
+                "{}",
+                mf("main.open.found", &[("path", &path.display().to_string())])
+            );
+            Ok(path)
+        }
+        _ => {
+            let names: Vec<String> = found.iter().map(|p| p.display().to_string()).collect();
+            anyhow::bail!(mf(
+                "main.open.several",
+                &[("names", &names.join(m("ui.list_separator")))]
+            ))
+        }
+    }
 }
 
 /// A new bundle with its title, if one is given.

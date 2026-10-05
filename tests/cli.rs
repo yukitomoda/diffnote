@@ -338,12 +338,16 @@ impl Env {
 
     fn start(&self, command: &str, cwd: &Path, review: &Path, args: &[&str]) -> Served {
         use std::io::{BufRead, BufReader, Read};
-        let mut child = Command::new(bin())
+        let mut command_line = Command::new(bin());
+        command_line
             .current_dir(cwd)
             .env("DIFFNOTE_CONFIG_DIR", self.path("user-config"))
-            .arg(command)
-            .arg("-f")
-            .arg(review)
+            .arg(command);
+        // (No path: the command finds the review itself.)
+        if !review.as_os_str().is_empty() {
+            command_line.arg("-f").arg(review);
+        }
+        let mut child = command_line
             .arg("--no-browser")
             .args(args)
             .stdout(std::process::Stdio::piped())
@@ -933,7 +937,11 @@ fn a_directory_review_keeps_the_full_tree_and_refuses_to_be_told_otherwise() {
 /// A repo whose `docs.md` (20 lines: `line 1`..`line 20`) is never touched,
 /// with a binary `logo.bin`, and `calc.txt` (30 lines) changing at line 30.
 fn repo_with_docs(env: &Env) -> PathBuf {
-    let repo = env.path("repo");
+    repo_with_docs_at(env, "repo")
+}
+
+fn repo_with_docs_at(env: &Env, name: &str) -> PathBuf {
+    let repo = env.path(name);
     std::fs::create_dir(&repo).unwrap();
     git(&repo, &["init", "-q", "-b", "main"]);
     let docs: String = (1..=20).map(|n| format!("line {n}\n")).collect();
@@ -948,6 +956,81 @@ fn repo_with_docs(env: &Env) -> PathBuf {
     git(&repo, &["commit", "-q", "-am", "c2"]);
     git(&repo, &["tag", "c2"]);
     repo
+}
+
+#[test]
+fn open_with_no_file_named_takes_the_one_review_file_in_the_directory() {
+    let env = Env::new();
+    let repo = repo_with_docs(&env);
+    let made = env.path("made.diffnote");
+    env.review(
+        &repo,
+        &made,
+        &["--base", "c1"],
+        &[Note::Line("calc.txt", "C30", "受け取った")],
+    );
+    // Received under a name of its own, where there is no review by the
+    // usual names: `open` takes it, and says so.
+    let inbox = env.path("inbox");
+    std::fs::create_dir(&inbox).unwrap();
+    std::fs::copy(&made, inbox.join("received.diffnote")).unwrap();
+    let served = env.open(&inbox, Path::new(""));
+    assert!(
+        served.said.contains("received.diffnote を開きます"),
+        "{}",
+        served.said
+    );
+    let model = served.api("/api/model", None);
+    assert_eq!(
+        model["model"]["threads"][0]["comments"][0]["body"],
+        "受け取った"
+    );
+    served.stop();
+    // Two of them: which is for the user to say.
+    std::fs::copy(&made, inbox.join("other.diffnote")).unwrap();
+    let out = env.run(&inbox, &["open", "--no-browser"]);
+    assert!(!out.status.success());
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        said.contains("other.diffnote")
+            && said.contains("received.diffnote")
+            && said.contains("-f"),
+        "{said}"
+    );
+    // A review by the old name is the one, and by the usual name first of all.
+    std::fs::copy(&made, inbox.join(".diffnote")).unwrap();
+    let served = env.open(&inbox, Path::new(""));
+    assert!(!served.said.contains("を開きます"), "{}", served.said);
+    served.stop();
+    std::fs::copy(&made, inbox.join("review.diffnote")).unwrap();
+    std::fs::write(inbox.join(".diffnote"), b"not a review").unwrap();
+    let served = env.open(&inbox, Path::new(""));
+    served.stop();
+}
+
+#[test]
+fn a_review_is_review_diffnote_unless_one_by_the_old_name_is_there() {
+    let env = Env::new();
+    let repo = repo_with_docs(&env);
+    // Named nothing: `review.diffnote`.
+    env.serve(&repo, Path::new(""), &["--base", "c1"]).stop();
+    assert!(repo.join("review.diffnote").is_file());
+    assert!(!repo.join(".diffnote").exists());
+    // One made before, by the old name, is added to, and kept by that name.
+    let old = repo_with_docs_at(&env, "old-repo");
+    env.serve(&old, Path::new(".diffnote"), &["--base", "c1"])
+        .stop();
+    git(&old, &["commit", "-q", "--allow-empty", "-m", "c3"]);
+    std::fs::write(old.join("calc.txt"), "changed\n").unwrap();
+    git(&old, &["commit", "-q", "-am", "c4"]);
+    let served = env.serve(&old, Path::new(""), &[]);
+    let revisions = served.api("/api/model", None)["model"]["revisions"]
+        .as_array()
+        .unwrap()
+        .len();
+    served.stop();
+    assert_eq!(revisions, 2, "the second added to the old one");
+    assert!(!old.join("review.diffnote").exists());
 }
 
 #[test]

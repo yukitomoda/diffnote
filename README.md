@@ -25,7 +25,7 @@ diffnote review
 
 画面を開かずに作るなら `diffnote review --base main` のように基準を指定してください。複数の git リポジトリがあるディレクトリで実行すると、まとめて 1 つのレビューになります。
 
-レビューを実施し終わったら、右上の「終了」ボタンを押して内容を確定し、作成された `.diffnote` ファイルを相手に渡してください。
+レビューを実施し終わったら、右上の「終了」ボタンを押して内容を確定し、作成された `review.diffnote` ファイルを相手に渡してください(画面の「ダウンロード」からも取り出せます)。以前の版で作った `.diffnote` があるリポジトリでは、引き続きそちらに記録します。
 
 もし相手が diffnote をインストールしていない場合は、左上のタイトルを押して、「エクスポート」ボタンでHTMLファイルとしてエクスポートできます（エクスポートの場合、返信等はできません）。
 
@@ -37,7 +37,7 @@ diffnote review --no-browser --port 7777 --allow-host code.example.com
 
 ### レビューされる人
 
-相手から受けとった `.diffnote` をリポジトリに置いて、
+相手から受けとった `review.diffnote` をリポジトリに置いて、
 
 ```sh
 cd your-repository
@@ -47,10 +47,12 @@ diffnote open
 レビュー対象として保存されていないファイルは閲覧できなくなりますが、リポジトリにない場合でも開けます。
 
 ```sh
-# .diffnote ファイルを置いているとき
+# review.diffnote(または以前の名前の .diffnote)を置いているとき
 diffnote open
 
-# 別の名前のとき
+# 別の名前のとき: そのディレクトリにある *.diffnote が 1 つだけなら、そのまま開けます
+diffnote open
+# 複数あるときは、開くものを指定します
 diffnote open -f some-review.diffnote
 ```
 

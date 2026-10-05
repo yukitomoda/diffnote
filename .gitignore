@@ -1,5 +1,6 @@
 /target
 /.diffnote
+/review.diffnote
 __pycache__/
 # The page is built from ui/src (`mise run build`), not kept here.
 /ui/dist

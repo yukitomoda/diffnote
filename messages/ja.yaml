@@ -32,7 +32,7 @@ cli:
     about: |-
       レビューをブラウザで開く。まだ無ければ作る(何も指定しなければ画面で設定する)。あれば、最新のコミットやディレクトリの状態を取り込む。
     review: |-
-      レビューのパス(省略時は ./.diffnote)。
+      レビューのパス(省略時は ./review.diffnote。以前の名前の ./.diffnote しか無ければ、それ)。
     target: |-
       レビューに加えるコミット、またはディレクトリ(省略時は、git なら HEAD、raw ならカレントディレクトリ)。
     base: |-
@@ -48,7 +48,7 @@ cli:
     about: |-
       既存のレビューをブラウザで開く。
     review: |-
-      レビューのパス(省略時は ./.diffnote)。
+      レビューのパス(省略時は ./review.diffnote か、以前の名前の ./.diffnote。どちらも無ければ、このディレクトリにある 1 つだけの *.diffnote)。
 
   server:
     port: |-
@@ -66,7 +66,7 @@ cli:
     about: |-
       レビューを、単体で開ける HTML に書き出す。
     review: |-
-      レビューのパス(省略時は ./.diffnote)。
+      レビューのパス(省略時は ./review.diffnote か、以前の名前の ./.diffnote。どちらも無ければ、このディレクトリにある 1 つだけの *.diffnote)。
     output: |-
       出力する HTML のパス。
     output_pos: |-
@@ -161,6 +161,11 @@ main:
       `--type workspace` には、このディレクトリの下に git リポジトリが必要です(4 階層まで探します)
     mismatch: |-
       このレビューは {type} のレビューです。種類は変えられません
+  open:
+    found: |-
+      {path} を開きます
+    several: |-
+      このディレクトリにレビューファイルが複数あります({names})。開くものを -f で指定してください
   serve:
     open_no_bundle: |-
       {path} がありません。先に `diffnote review` でレビューを作ってください
