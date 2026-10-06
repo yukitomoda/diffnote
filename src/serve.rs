@@ -1224,20 +1224,6 @@ impl Server {
                     Err(message) => refused(message),
                 }
             }
-            // Lines of the files named (`path`, each) that `q` may be in, for
-            // the page to search what the diffs leave out (it says, itself,
-            // where in each line it is).
-            "search" => Reply::json(
-                200,
-                &serde_json::json!({ "ok": true, "lines": html::search_lines(
-                    &loaded,
-                    revision,
-                    &query_params(query, "path"),
-                    &param("q"),
-                    param("case") == "1",
-                    self.git(),
-                ) }),
-            ),
             "open" => match html::opened_data(&loaded, revision, &param("path"), self.git()) {
                 Ok(file) => Reply::json(200, &serde_json::json!({ "ok": true, "file": file })),
                 Err(message) => refused(message),
@@ -1435,12 +1421,44 @@ impl Server {
             ["api", "comments", id, "delete"] => self.delete_comment(id),
             ["api", "comments", id, "react"] => self.react(id, request.body),
             ["api", "viewed"] => self.set_viewed(request.body),
+            ["api", "files", rev, "search"] => self.search(rev, request.body),
             _ => return Reply::error(404, m("serve.not_found")),
         };
         match result {
             Ok(reply) => reply,
             Err(Failure(status, message)) => Reply::error(status, &message),
         }
+    }
+
+    /// The lines of the files named (`paths`) that `q` may be in, for the
+    /// page to search what the diffs leave out (it says, itself, where in
+    /// each line it is). Asked as a POST: the names of many files.
+    fn search(&self, rev: &str, body: &[u8]) -> Result<Reply, Failure> {
+        #[derive(serde::Deserialize)]
+        struct Asked {
+            q: String,
+            #[serde(default)]
+            case: bool,
+            paths: Vec<String>,
+        }
+        let revision = rev
+            .parse::<usize>()
+            .map_err(|_| Failure(404, m("serve.not_found").into()))?;
+        let asked: Asked = serde_json::from_slice(body)
+            .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
+        let loaded = bundle::load(&self.review).map_err(internal)?;
+        let lines = html::search_lines(
+            &loaded,
+            revision,
+            &asked.paths,
+            &asked.q,
+            asked.case,
+            self.git(),
+        );
+        Ok(Reply::json(
+            200,
+            &serde_json::json!({ "ok": true, "lines": lines }),
+        ))
     }
 
     /// Runs `action` on the thread with this id, then answers with what the
@@ -2334,16 +2352,6 @@ fn attached_name(target: &str) -> Option<String> {
     }
     let name = crate::image::file_name(&asked);
     (name != "image.png").then_some(name)
-}
-
-/// Every value of `key` in a query (`path=a&path=b`), each as `query_param`
-/// reads one.
-fn query_params(query: &str, key: &str) -> Vec<String> {
-    query
-        .split('&')
-        .filter(|p| p.split_once('=').is_some_and(|(k, _)| k == key))
-        .filter_map(|p| query_param(p, key))
-        .collect()
 }
 
 fn query_param(query: &str, key: &str) -> Option<String> {
@@ -4994,8 +5002,11 @@ mod tests {
     #[test]
     fn the_lines_of_the_files_named_that_may_have_what_is_searched_for_are_given() {
         let f = fixture_with_a_tree();
-        let found = |q: &str| -> Vec<(String, u64, String)> {
-            json(&get(&f, &format!("/api/files/0/search?{q}")))["lines"]
+        let found = |q: &str, case: bool, paths: &[&str]| -> Vec<(String, u64, String)> {
+            let body = serde_json::json!({ "q": q, "case": case, "paths": paths }).to_string();
+            let reply = f.post("/api/files/0/search", &body);
+            assert_eq!(reply.status, 200, "{}", text(&reply));
+            json(&reply)["lines"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -5009,20 +5020,23 @@ mod tests {
                 .collect()
         };
         // Every line of the files named, by its number: `line 120` and `line 1200`.
-        let hits = found("q=LINE%20120&path=big.txt");
         assert_eq!(
-            hits,
+            found("LINE 120", false, &["big.txt"]),
             [
                 ("big.txt".to_string(), 120, "line 120".to_string()),
                 ("big.txt".to_string(), 1200, "line 1200".to_string())
             ]
         );
         // As written, when the case counts; only in the files named.
-        assert!(found("q=LINE%20120&case=1&path=big.txt").is_empty());
-        assert!(found("q=line%20120").is_empty(), "no file named");
-        assert!(found("q=&path=big.txt").is_empty(), "nothing to search for");
+        assert!(found("LINE 120", true, &["big.txt"]).is_empty());
+        assert!(found("line 120", false, &[]).is_empty(), "no file named");
+        assert!(
+            found("", false, &["big.txt"]).is_empty(),
+            "nothing to search for"
+        );
         // A file that isn't there (or isn't text) has nothing to give.
-        assert!(found("q=line&path=nope.txt&path=bin.dat").is_empty());
+        assert!(found("line", false, &["nope.txt", "bin.dat"]).is_empty());
+        assert_eq!(f.post("/api/files/0/search", "{}").status, 400);
     }
 
     #[test]

@@ -1467,9 +1467,12 @@ pub fn search_lines(
     if q.is_empty() {
         return out;
     }
+    let Ok(mut files) = FileReader::new(loaded, revision, git) else {
+        return out;
+    };
     let lower = q.to_lowercase();
     for path in paths {
-        let Ok(text) = stored_text(loaded, revision, path, git) else {
+        let Ok(text) = files.text(path) else {
             continue;
         };
         for (i, line) in text.lines().enumerate() {

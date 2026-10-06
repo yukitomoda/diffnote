@@ -541,46 +541,110 @@ fn file_content(
     path: &str,
     git: Option<&dyn CommitFiles>,
 ) -> Result<FileContent, String> {
-    let shown = shown_revisions(loaded).map_err(|e| e.to_string())?;
-    let rev = shown
-        .get(revision)
-        .ok_or_else(|| m("html.revision_missing").to_string())?
-        .revision;
-    if let Some(entry) = loaded.manifest(rev).into_iter().find(|f| f.path == path)
-        && let Some(bytes) = loaded.blob(&entry.digest)
-    {
-        return Ok(FileContent {
-            bytes: bytes.to_vec(),
-            stored: true,
-        });
+    FileReader::new(loaded, revision, git)?.read(path)
+}
+
+/// Reads the files of one revision, one after another: what is the same for
+/// each (the revision, what the bundle stores, the commits' trees) is worked
+/// out once.
+struct FileReader<'a> {
+    rev: &'a crate::model::Revision,
+    /// The digest of each file the bundle stores for the revision.
+    stored: HashMap<String, String>,
+    blobs: HashMap<&'a str, &'a [u8]>,
+    git: Option<&'a dyn CommitFiles>,
+    /// Each commit's tree, by repository and commit, with where each path is
+    /// in it (`None`: the repository doesn't have it).
+    trees: HashMap<(String, String), Option<GitTree>>,
+}
+
+struct GitTree {
+    entries: std::sync::Arc<Vec<crate::git::TreeEntry>>,
+    at: HashMap<String, usize>,
+}
+
+impl<'a> FileReader<'a> {
+    fn new(
+        loaded: &'a crate::bundle::Loaded,
+        revision: usize,
+        git: Option<&'a dyn CommitFiles>,
+    ) -> Result<Self, String> {
+        let shown = shown_revisions(loaded).map_err(|e| e.to_string())?;
+        let rev = shown
+            .get(revision)
+            .ok_or_else(|| m("html.revision_missing").to_string())?
+            .revision;
+        Ok(FileReader {
+            rev,
+            stored: loaded
+                .manifest(rev)
+                .into_iter()
+                .map(|f| (f.path, f.digest))
+                .collect(),
+            blobs: loaded.blob_index(),
+            git,
+            trees: HashMap::new(),
+        })
     }
-    // Not stored: from the commit, if the repository is there and has it.
-    let git = git.ok_or_else(|| m("html.file_not_stored").to_string())?;
-    let (repo, commit, inner) =
-        in_git(rev, path).ok_or_else(|| m("html.file_not_stored").to_string())?;
-    let tree = git
-        .tree(repo, commit)
-        .ok_or_else(|| m("html.no_repo_for_file").to_string())?;
-    let entry = tree
-        .iter()
-        .find(|e| e.path == inner)
-        .ok_or_else(|| m("html.not_in_commit").to_string())?;
-    if entry.size > MAX_FILE_BYTES {
-        return Err(mf(
-            "html.too_big",
-            &[
-                (
-                    "size",
-                    &format!("{:.1}", entry.size as f64 / (1024.0 * 1024.0)),
-                ),
-                ("limit", &(MAX_FILE_BYTES / (1024 * 1024)).to_string()),
-            ],
-        ));
+
+    fn read(&mut self, path: &str) -> Result<FileContent, String> {
+        if let Some(digest) = self.stored.get(path)
+            && let Some(bytes) = self
+                .blobs
+                .get(digest.strip_prefix("sha256:").unwrap_or(digest))
+        {
+            return Ok(FileContent {
+                bytes: bytes.to_vec(),
+                stored: true,
+            });
+        }
+        // Not stored: from the commit, if the repository is there and has it.
+        let git = self
+            .git
+            .ok_or_else(|| m("html.file_not_stored").to_string())?;
+        let (repo, commit, inner) =
+            in_git(self.rev, path).ok_or_else(|| m("html.file_not_stored").to_string())?;
+        let tree = self
+            .trees
+            .entry((repo.to_string(), commit.to_string()))
+            .or_insert_with(|| {
+                git.tree(repo, commit).map(|entries| GitTree {
+                    at: entries
+                        .iter()
+                        .enumerate()
+                        .map(|(i, e)| (e.path.clone(), i))
+                        .collect(),
+                    entries,
+                })
+            })
+            .as_ref()
+            .ok_or_else(|| m("html.no_repo_for_file").to_string())?;
+        let entry = tree
+            .at
+            .get(inner)
+            .map(|&i| &tree.entries[i])
+            .ok_or_else(|| m("html.not_in_commit").to_string())?;
+        if entry.size > MAX_FILE_BYTES {
+            return Err(mf(
+                "html.too_big",
+                &[
+                    (
+                        "size",
+                        &format!("{:.1}", entry.size as f64 / (1024.0 * 1024.0)),
+                    ),
+                    ("limit", &(MAX_FILE_BYTES / (1024 * 1024)).to_string()),
+                ],
+            ));
+        }
+        Ok(FileContent {
+            bytes: git.read(repo, entry)?,
+            stored: false,
+        })
     }
-    Ok(FileContent {
-        bytes: git.read(repo, entry)?,
-        stored: false,
-    })
+
+    fn text(&mut self, path: &str) -> Result<String, String> {
+        String::from_utf8(self.read(path)?.bytes).map_err(|_| m("html.not_text").to_string())
+    }
 }
 
 /// The text of a file of the revision, or why it can't be shown.
@@ -590,8 +654,7 @@ fn stored_text(
     path: &str,
     git: Option<&dyn CommitFiles>,
 ) -> Result<String, String> {
-    String::from_utf8(file_content(loaded, revision, path, git)?.bytes)
-        .map_err(|_| m("html.not_text").to_string())
+    FileReader::new(loaded, revision, git)?.text(path)
 }
 
 /// `OPEN_CHUNK` lines of `text` from line `from` (1-based) as a hunk of

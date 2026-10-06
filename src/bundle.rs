@@ -39,6 +39,7 @@ use crate::model::{
     Attachments, Commits, Event, Reactions, Revision, Settings, Source, TreeFile, Viewed,
 };
 use anyhow::{Context, Result};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
 use zip::write::SimpleFileOptions;
@@ -116,6 +117,15 @@ impl Loaded {
             .iter()
             .find(|(name, _)| *name == wanted)
             .map(|(_, bytes)| bytes.as_slice())
+    }
+
+    /// Every stored blob by its digest, to look up many (`blob` looks
+    /// through them all each time).
+    pub fn blob_index(&self) -> HashMap<&str, &[u8]> {
+        self.carried_entries
+            .iter()
+            .filter_map(|(name, bytes)| Some((name.strip_prefix("blobs/")?, bytes.as_slice())))
+            .collect()
     }
 
     /// The head tree `revision` recorded: its own `tree` plus every `Pin`

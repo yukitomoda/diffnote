@@ -47,8 +47,7 @@ export function SearchPane(props: SearchPaneProps) {
   }, [text]);
   var query: SearchQuery = { text: asked, caseSensitive: caseSensitive };
   // The files' every line: the lines the diffs leave out too -- what an
-  // exported page carries, or, served, what the server finds (a hundred
-  // files at a time).
+  // exported page carries, or, served, what the server finds.
   var _g = useState<{ for: string; lines: GapLine[] } | null>(null);
   var gaps = _g[0];
   var setGaps = _g[1];
@@ -60,14 +59,8 @@ export function SearchPane(props: SearchPaneProps) {
     if (!wanted) { setGaps(null); return undefined; }
     if (!transport) { setGaps({ for: wanted, lines: carriedGapLines(props.files) }); return undefined; }
     var stale = false;
-    var asks: Promise<GapLine[]>[] = [];
-    for (var i = 0; i < paths.length; i += 100) {
-      var part = paths.slice(i, i + 100);
-      asks.push(server().get<{ lines: GapLine[] }>('api/files/' + props.rev + '/search?q=' + encodeURIComponent(asked) + '&case=' + (caseSensitive ? '1' : '0')
-        + part.map(function (p) { return '&path=' + encodeURIComponent(p); }).join('')).then(function (res) { return res.ok ? res.lines : []; }));
-    }
-    Promise.all(asks).then(function (all) {
-      if (!stale) setGaps({ for: wanted, lines: ([] as GapLine[]).concat.apply([], all) });
+    server().post<{ lines: GapLine[] }>('api/files/' + props.rev + '/search', { q: asked, case: caseSensitive, paths: paths }).then(function (res) {
+      if (!stale) setGaps({ for: wanted, lines: res.ok ? res.lines : [] });
     });
     return function () { stale = true; };
   }, [wanted, pathsKey]);
