@@ -64,6 +64,38 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-js .diffnote-revision:not(.is-current) { display: none; }
 .diffnote-sidebar { grid-column: 1; grid-row: 1 / span 200; position: sticky; top: calc(var(--diffnote-topbar-h) + 12px); height: calc(100vh - var(--diffnote-topbar-h) - 24px); display: flex; flex-direction: column; margin-top: 12px; border-right: 1px solid var(--diffnote-color-border); padding-right: 8px; font-size: 12.5px; }
 .diffnote-sidebar__lists { flex: 1; min-height: 0; overflow: auto; }
+/* The left pane's two views: the files and threads, or the search. */
+.diffnote-sidebar__tabs { display: flex; gap: 2px; margin: 0 0 6px; padding: 2px; border-bottom: 1px solid var(--diffnote-color-border); }
+.diffnote-sidebar__tab { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; font: inherit; font-size: 12.5px; color: var(--diffnote-color-muted); background: none; border: 0; border-bottom: 2px solid transparent; cursor: pointer; }
+.diffnote-sidebar__tab:hover { color: var(--diffnote-color-fg); }
+.diffnote-sidebar__tab.is-on { color: var(--diffnote-color-fg); font-weight: 600; border-bottom-color: var(--diffnote-color-accent); }
+/* The search: its box, how many and which, and what was found. */
+.diffnote-search__box { display: flex; gap: 4px; padding: 0 4px; }
+.diffnote-search__input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 4px 8px; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; }
+.diffnote-search__input:focus { outline: 2px solid color-mix(in srgb, var(--diffnote-color-accent) 50%, transparent); outline-offset: -1px; }
+.diffnote-search__case { font: inherit; font-size: 12px; font-weight: 600; padding: 0 7px; color: var(--diffnote-color-muted); background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
+.diffnote-search__case.is-on { color: var(--diffnote-color-accent); border-color: var(--diffnote-color-accent); background: color-mix(in srgb, var(--diffnote-color-accent) 10%, transparent); }
+.diffnote-search__bar { display: flex; align-items: center; gap: 2px; padding: 4px 4px 4px 8px; }
+.diffnote-search__count { flex: 1; min-width: 0; font-size: 12px; color: var(--diffnote-color-muted); }
+.diffnote-search__note { margin: 0 8px 6px; font-size: 12px; color: var(--diffnote-color-muted); }
+.diffnote-search__group > summary { display: flex; align-items: center; gap: 6px; padding: 2px 4px; cursor: pointer; font-family: var(--diffnote-font-mono); font-size: 12.5px; }
+.diffnote-search__path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.diffnote-search__path small { margin-left: 6px; font-weight: 400; color: var(--diffnote-color-muted); }
+.diffnote-search__badge { flex: none; }
+.diffnote-search__group ol { list-style: none; margin: 0 0 4px; padding: 0 0 0 12px; }
+.diffnote-search__hit { display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 2px 6px; font: inherit; font-size: 12.5px; text-align: left; color: var(--diffnote-color-fg); background: none; border: 0; border-radius: 4px; cursor: pointer; }
+.diffnote-search__hit:hover { background: var(--diffnote-color-gutter); }
+.diffnote-search__hit.is-current { background: color-mix(in srgb, var(--diffnote-color-accent) 14%, transparent); }
+.diffnote-search__name { flex: 1; min-width: 0; padding: 0; font-weight: 600; }
+.diffnote-search__line { flex: none; min-width: 2.5em; text-align: right; font-family: var(--diffnote-font-mono); font-size: 11.5px; color: var(--diffnote-color-muted); }
+.diffnote-search__line.is-old { color: #cf222e; }
+.diffnote-search__text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--diffnote-font-mono); }
+.diffnote-search__hit mark { color: inherit; background: color-mix(in srgb, #f2cc60 60%, transparent); border-radius: 2px; }
+.diffnote-search__who { flex: none; display: flex; flex-direction: column; max-width: 40%; font-size: 12px; font-weight: 600; }
+.diffnote-search__who small { font-weight: 400; color: var(--diffnote-color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* What was found, in the page: every one, and the one gone to more strongly. */
+::highlight(diffnote-search) { background-color: color-mix(in srgb, #f2cc60 55%, transparent); }
+::highlight(diffnote-search-now) { background-color: #f09d38; color: #000; }
 /* Who is signing the comments, and the button that puts the lists away, at
    the foot of the column. */
 /* At the foot of the column whether or not the lists are there to fill it. */

@@ -45,6 +45,7 @@ import type { Links } from './state/contexts.ts';
 import type { PullNote } from './screen/General.tsx';
 import { Icon } from './icon.tsx';
 import { RepoButton } from './nav/RepoButton.tsx';
+import { openSearch } from './state/search.ts';
 
 function App(props: { model: ViewModel }) {
   var review = useReview(props.model);
@@ -171,6 +172,22 @@ function App(props: { model: ViewModel }) {
   // typed in): jump there once the page has drawn.
   useEffect(function () {
     if (start && start.at) links.jump(start.rev - 1, start.at);
+  }, []);
+  // Ctrl+F (⌘F): the review's own search, which has every file, folded or
+  // not (the browser's finds only what is drawn). From the search's own box,
+  // or where no review is shown (a settings screen, the first screen), the
+  // browser's.
+  useEffect(function () {
+    var key = function (e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'f') return;
+      var at = document.activeElement;
+      if (at && at.matches('[data-diffnote-search-input]')) return;
+      if (!document.querySelector('.diffnote-revision.is-current') || document.querySelector('[data-diffnote-screen]')) return;
+      e.preventDefault();
+      openSearch();
+    };
+    document.addEventListener('keydown', key);
+    return function () { document.removeEventListener('keydown', key); };
   }, []);
   // The browser's back/forward buttons: retrace the revision, settings screen,
   // compare target and last jump, exactly as the address says.

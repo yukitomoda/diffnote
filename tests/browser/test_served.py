@@ -713,6 +713,89 @@ class StartsAtTheLatest(ServedCase):
         self.assertEqual(b.js("window.__firstRevision"), "rev-1")
 
 
+class Search(ServedCase):
+    """The search in the left pane (Ctrl+F): the files' names, the diff's
+    lines (folded files too) and the comments, each gone to from the list,
+    or one after another with Enter."""
+
+    def ctrl_f(self):
+        """Ctrl+F where the keys are: whether the page took it."""
+        return self.b.js("""(function () {
+          var e = new KeyboardEvent('keydown', {key: 'f', ctrlKey: true, bubbles: true, cancelable: true});
+          (document.activeElement || document.body).dispatchEvent(e);
+          return e.defaultPrevented; })()""")
+
+    def search(self, text):
+        """Types `text` into the box and waits for what it finds (typing is
+        searched for once it stops)."""
+        b = self.b
+        b.set_value("[data-diffnote-search-input]", text)
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-search]').dataset.diffnoteSearchAsked === %s" % json.dumps(text)))
+        b.settle()
+
+    def count(self):
+        return self.b.text("[data-diffnote-search-count]")
+
+    def now_marked(self):
+        """How many places the page marks as the one gone to."""
+        return self.b.js("CSS.highlights.get('diffnote-search-now') ? CSS.highlights.get('diffnote-search-now').size : 0")
+
+    def test_ctrl_f_opens_it_and_what_is_found_is_listed_and_gone_to(self):
+        self.serve()
+        b = self.b
+        self.assertFalse(b.exists("[data-diffnote-search]"), "the files and threads, at first")
+        self.assertTrue(self.ctrl_f(), "the page's own search")
+        self.assertTrue(b.wait("document.activeElement && document.activeElement.matches('[data-diffnote-search-input]')"))
+        self.assertFalse(self.ctrl_f(), "again from its box: the browser's")
+        # A name and a line of calc.py.
+        self.search("calc")
+        self.assertEqual(self.count(), "2 件")
+        self.assertEqual(b.js("[...document.querySelectorAll('[data-diffnote-search-file]')].map(g => g.dataset.diffnoteSearchFile)"), ["calc.py"])
+        # Enter goes to each in turn, the page marking the one gone to.
+        b.js("document.querySelector('[data-diffnote-search-input]').dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}))")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-search-count]').textContent === '1 / 2'"))
+        b.js("document.querySelector('[data-diffnote-search-input]').dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}))")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-search-count]').textContent === '2 / 2'"))
+        self.assertTrue(b.wait("CSS.highlights.get('diffnote-search-now') && CSS.highlights.get('diffnote-search-now').size === 1"))
+        self.assertTrue(b.wait("CSS.highlights.get('diffnote-search').size >= 2"), "every one in view is marked")
+        b.js("document.querySelector('[data-diffnote-search-input]').dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', shiftKey: true, bubbles: true}))")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-search-count]').textContent === '1 / 2'"), "and back")
+        # The comments too, after the files; pressing one goes to its thread.
+        self.search("mul")
+        self.assertTrue(b.exists("[data-diffnote-search-comments]"))
+        hit = b.js("document.querySelector('[data-diffnote-search-comments] [data-diffnote-search-hit]').dataset.diffnoteSearchHit")
+        b.click(f"[data-diffnote-search-hit='{hit}']")
+        self.assertTrue(b.wait(f"document.querySelector('[data-diffnote-search-count]').textContent.startsWith('{int(hit) + 1} / ')"))
+        self.assertTrue(b.wait("CSS.highlights.get('diffnote-search-now').size === 1"), "in the comment")
+        # Upper and lower case told apart when asked.
+        self.search("MUL")
+        self.assertNotEqual(self.count(), "一致なし")
+        b.click("[data-diffnote-search-case]")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-search-count]').textContent === '一致なし'"))
+        # Escape: back to the files and threads.
+        b.js("document.querySelector('[data-diffnote-search-input]').dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-search]') && !!document.querySelector('.diffnote-filelist')"))
+
+    def test_a_folded_file_and_one_looked_at_are_searched_and_opened_to_what_was_found(self):
+        self.serve(tree_review(self.root, "search-folded"))
+        b = self.b
+        d = f"{CUR} section.diffnote-file[data-diffnote-file='a/b/c/d']"
+        self.assertFalse(b.js(f"document.querySelector({json.dumps(d + ' details')}).open"), "a file with no thread starts folded")
+        # Looked at, g is not in the page at all.
+        g = f"{CUR} section.diffnote-file[data-diffnote-file='a/b/e/f/g']"
+        b.click(f"{g} [data-diffnote-viewed]")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(g)})"))
+        self.ctrl_f()
+        self.search("two")
+        self.assertEqual(self.count(), "3 件", "every file's line, folded or looked at")
+        b.click("[data-diffnote-search-file='a/b/c/d'] [data-diffnote-search-hit]")
+        self.assertTrue(b.wait(f"document.querySelector({json.dumps(d + ' details')}).open"), "opened")
+        self.assertTrue(b.wait("CSS.highlights.get('diffnote-search-now') && CSS.highlights.get('diffnote-search-now').size === 1"))
+        b.click("[data-diffnote-search-file='a/b/e/f/g'] [data-diffnote-search-hit]")
+        self.assertTrue(b.wait_exists(g), "brought back")
+        self.assertTrue(b.wait("CSS.highlights.get('diffnote-search-now').size === 1"))
+
+
 class ViewKeptAcrossRuns(ServedCase):
     """How the page is shown is kept in the user settings, so a later run --
     on another port, which the browser keeps apart -- starts the same."""

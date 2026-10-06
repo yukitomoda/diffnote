@@ -838,6 +838,16 @@ class LineLinks(BrowserCase):
         self.assertTrue(b.wait("window.__copied.length === 1"))
         self.assertEqual(b.js("window.__copied"), ["other.txt"])
 
+    def test_an_exported_page_has_the_search_too(self):
+        # Everything it searches is in the page: no server is asked.
+        b = self.b
+        b.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'f', ctrlKey: true, bubbles: true}))")
+        self.assertTrue(b.wait_exists("[data-diffnote-search-input]"))
+        b.set_value("[data-diffnote-search-input]", "other.txt")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-search]').dataset.diffnoteSearchAsked === 'other.txt'"))
+        self.assertTrue(b.exists("[data-diffnote-search-file='other.txt']"), "its name")
+        self.assertTrue(b.exists("[data-diffnote-search-comments]"), "and the comment that names it")
+
     def test_pressing_one_goes_to_the_lines_and_marks_them(self):
         b = self.b
         b.click("[data-diffnote-lineref]")

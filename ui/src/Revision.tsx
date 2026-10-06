@@ -6,6 +6,8 @@ import { ViewMenu } from './ViewMenu.tsx';
 import { File } from './diff/File.tsx';
 import { Tree } from './nav/Tree.tsx';
 import { FileList, ThreadList } from './nav/lists.tsx';
+import { SearchPane } from './nav/SearchPane.tsx';
+import { openSearch, showFiles, sidebarView } from './state/search.ts';
 import { useStore } from '@nanostores/preact';
 import { OpenedContext } from './state/contexts.ts';
 import { isViewed, seen } from './state/viewed.ts';
@@ -75,6 +77,7 @@ export function Revision(props: RevisionProps) {
   var globals = order.filter(function (id) { return revision.placements[id].kind === 'global'; });
   var marks = useStore(seen);
   var hidden = useStore(sidebarHidden);
+  var view = useStore(sidebarView);
   var viewedPaths: Record<string, boolean> = {};
   files.forEach(function (f) { if (isViewed(f, marks, model.revisions[rev].id)) viewedPaths[f.path] = true; });
   var listOrder: ListCtx = { diffFiles: revision.files, model: model, rev: rev, revision: Object.assign({}, revision, { files: files }), hideResolved: props.hideResolved, byId: byId, order: revision.order, placements: revision.placements };
@@ -105,9 +108,20 @@ export function Revision(props: RevisionProps) {
     <aside class="diffnote-sidebar">
       {!hidden && <SidebarResize />}
       <div class="diffnote-sidebar__lists" id={'rev-' + rev + '-lists'} hidden={hidden}>
-        <FileList ctx={listOrder} />
-        {model.threads.length > 0 && <ThreadList ctx={listOrder} />}
-        {opened && <Tree rev={rev} />}
+        {/* What the pane shows: the files and threads, or the search (Ctrl+F). */}
+        <div class="diffnote-sidebar__tabs" role="tablist">
+          <button type="button" role="tab" class={'diffnote-sidebar__tab' + (view === 'files' ? ' is-on' : '')} data-diffnote-sidebar-tab="files"
+            aria-selected={view === 'files'} onClick={showFiles}>{lib.m('ui.search.tab_files')}</button>
+          <button type="button" role="tab" class={'diffnote-sidebar__tab' + (view === 'search' ? ' is-on' : '')} data-diffnote-sidebar-tab="search"
+            aria-selected={view === 'search'} title={lib.m('ui.search.tab_title')} onClick={openSearch}><Icon name="search" />{lib.m('ui.search.tab_search')}</button>
+        </div>
+        {view === 'search'
+          ? <SearchPane rev={rev} files={files} threads={model.threads} placements={revision.placements} />
+          : <>
+            <FileList ctx={listOrder} />
+            {model.threads.length > 0 && <ThreadList ctx={listOrder} />}
+            {opened && <Tree rev={rev} />}
+          </>}
       </div>
       <div class="diffnote-sidebar__foot">
         {props.author != null && props.onToggleUserSettings && <UserChip name={props.author} open={!!props.userSettingsOpen} onToggle={props.onToggleUserSettings} />}

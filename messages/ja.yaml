@@ -1113,6 +1113,39 @@ ui:
     open_failed: |-
       開けませんでした
 
+  search:
+    tab_files: |-
+      ファイル
+    tab_search: |-
+      検索
+    tab_title: |-
+      ファイル名・差分・コメントを検索(Ctrl+F)
+    placeholder: |-
+      検索(ファイル名・差分・コメント)
+    case_title: |-
+      大文字と小文字を区別する
+    prev_title: |-
+      前の一致(Shift+Enter)
+    next_title: |-
+      次の一致(Enter)
+    hint: |-
+      たたんだファイルも探します(差分の外の行は対象外です)
+    none: |-
+      一致なし
+    count: |-
+      {n} 件
+    count_at: |-
+      {at} / {n}
+    capped: |-
+      {n} 件を超えたので、ここまでを表示しています
+    comments: |-
+      コメント
+    review_wide: |-
+      レビュー全体
+    old_title: |-
+      変更前の行
+    new_title: |-
+      変更後の行
   repolist:
     group_title: |-
       {path}: {target}({base} → {head})
