@@ -2585,6 +2585,33 @@ fn the_first_screen_in_a_repository_offers_the_bases_and_makes_the_review_chosen
     let span = served.api("/api/setup/preview?repo=&rev=HEAD&from=c1", None)["span"].clone();
     assert_eq!(span["subject"], "f1");
     assert_eq!(span["commits"].as_u64(), Some(2));
+    // ...which commits they are, how many files differ, and the base as an id.
+    assert_eq!(span["ids"].as_array().unwrap().len(), 2);
+    assert_eq!(span["from"], commit_id(&repo, "c1"));
+    assert!(span["files"].as_u64().unwrap() >= 1);
+    // The base that leaves something to review: where feature left main.
+    assert_eq!(setup["git"]["suggested"]["id"], commit_id(&repo, "c2"));
+    assert_eq!(setup["git"]["suggested"]["why"], "fork");
+    // The history to choose from: HEAD and the branches named, newest first.
+    let graph = served.api("/api/setup/graph?repo=", None)["graph"].clone();
+    let rows = graph["rows"].as_array().unwrap();
+    assert_eq!(rows[0]["id"], commit_id(&repo, "HEAD"));
+    let names = |row: &serde_json::Value| -> Vec<String> {
+        row["refs"]
+            .as_array()
+            .map(|r| {
+                r.iter()
+                    .map(|n| n["name"].as_str().unwrap().to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    assert!(
+        names(&rows[0]).contains(&"HEAD".to_string())
+            && names(&rows[0]).contains(&"feature".to_string())
+    );
+    assert!(rows.iter().any(|r| names(r).contains(&"main".to_string())));
+    assert!(graph["lanes"].as_u64().unwrap() >= 1);
     assert_eq!(
         served.api("/api/setup/preview?repo=&rev=c1&from=c1", None)["span"]["commits"].as_u64(),
         Some(0)

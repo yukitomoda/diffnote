@@ -6,7 +6,8 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { lib } from '../lib.ts';
 import { server } from '../transport.ts';
 import type { Answer, ReviewKind, SetupData, SetupPreview, SetupRaw, SetupRepo, SetupSpan } from '../model.ts';
-import { MANUAL, baseOf, candidateLabel, choiceOf, previewText, problemOf, spanText, stateOf, withRepo } from './setup.ts';
+import { MANUAL, baseFor, baseOf, candidateLabel, choiceOf, previewText, problemOf, rangeText, spanText, stateOf, targetOf, totalsOf, withRepo } from './setup.ts';
+import { CommitGraph } from './SetupGraph.tsx';
 import type { RepoRow, SetupState } from './setup.ts';
 
 const KINDS: ReviewKind[] = ['git', 'workspace', 'raw'];
@@ -126,17 +127,6 @@ export function TargetField(props: BaseProps) {
   </label>;
 }
 
-/** For a review of one repository, which is compared up to `HEAD`: what
- * comparing from the base chosen takes in. */
-export function ToHead(props: BaseProps) {
-  var row = props.row;
-  useSpan(row, props.span, props.patch);
-  if (!row.targetPreview && !row.targetChecking && !row.targetError) return null;
-  return <p class="diffnote-setup__to-head" data-diffnote-setup-to-head>
-    {row.targetPreview ? lib.mf('ui.setup.to_head', { span: spanText(row.targetPreview.commits) }) : <SpanSaid row={row} />}
-  </p>;
-}
-
 export function RepoHead(props: { info: SetupRepo }) {
   var info = props.info;
   return <p class="diffnote-setup__repo-head">
@@ -146,12 +136,81 @@ export function RepoHead(props: { info: SetupRepo }) {
   </p>;
 }
 
+/** Keeps a row of the first screen told what its range takes in (see
+ * `useSpan` for the 「リポジトリ」 screen's): asked again whenever where it
+ * starts or ends changes. Draws nothing. */
+function RangeWatch(props: { path: string; base: string; target: string; patch(part: Partial<RepoRow>): void }) {
+  var latest = useRef(0);
+  useEffect(function () {
+    var n = ++latest.current;
+    if (!props.base || !props.target) {
+      props.patch({ span: null, spanError: '', spanChecking: false });
+      return;
+    }
+    props.patch({ spanError: '', spanChecking: true });
+    server().get<{ span: SetupSpan }>('api/setup/preview?repo=' + encodeURIComponent(props.path) + '&rev=' + encodeURIComponent(props.target) + '&from=' + encodeURIComponent(props.base))
+      .then(function (res) {
+        if (latest.current !== n) return;
+        props.patch({ spanChecking: false, span: res.ok ? res.span : null, spanError: res.ok ? '' : res.error });
+      });
+  }, [props.path, props.base, props.target]);
+  return null;
+}
+
+/** What a row's range takes in, said in a few words. */
+function RangeSaid(props: { row: RepoRow }) {
+  var row = props.row;
+  if (row.spanError) return <span class="diffnote-error">{row.spanError}</span>;
+  if (row.spanChecking || !row.span) return <>{lib.m('ui.setup.checking')}</>;
+  return <>{rangeText(row.span)}</>;
+}
+
+/** Where a repository's review starts and ends, side by side: what is
+ * chosen for all (or, typed in, for this one alone), and what each review
+ * goes up to. */
+function RangeFields(props: { state: SetupState; row: RepoRow; canTarget: boolean; names: string[]; patch(part: Partial<RepoRow>): void }) {
+  var row = props.row;
+  var list = 'diffnote-setup-names-' + (row.info.path || 'one').replace(/[^A-Za-z0-9_-]/g, '_');
+  var base = baseFor(props.state, row);
+  var why = row.custom ? lib.m('ui.setup.from_custom')
+    : props.state.bulk.mode === 'last' && props.state.kind === 'workspace' ? lib.mf('ui.setup.from_last', { n: String(props.state.bulk.count) })
+    : lib.m('ui.setup.from_' + row.info.suggested.why);
+  return <div class="diffnote-setup__range" data-diffnote-setup-range={row.info.path}>
+    <label class="diffnote-field">
+      <span>{lib.m('ui.setup.from_label')}<small>{why}</small></span>
+      <input type="text" class="diffnote-setup__rev" data-diffnote-setup-from
+        value={row.custom ? row.manual : (base === row.info.suggested.id ? row.info.suggested.short : base)}
+        onInput={function (e) { props.patch({ custom: true, base: MANUAL, manual: e.currentTarget.value }); }} />
+    </label>
+    <label class="diffnote-field">
+      <span>{lib.m('ui.setup.to_label')}<small>{lib.m(props.canTarget ? 'ui.setup.to_hint' : 'ui.setup.to_head_only')}</small></span>
+      <input type="text" class="diffnote-setup__rev" data-diffnote-setup-to value={props.canTarget ? row.target : 'HEAD'} disabled={!props.canTarget}
+        list={props.canTarget ? list : undefined}
+        onInput={function (e) { props.patch({ target: e.currentTarget.value }); }} />
+      {props.canTarget && <datalist id={list}>{props.names.map(function (n) { return <option key={n} value={n} />; })}</datalist>}
+    </label>
+    <p class="diffnote-setup__said" data-diffnote-setup-said>
+      <RangeSaid row={row} />
+      {row.custom && props.state.kind === 'workspace' && <button type="button" class="diffnote-link-button" data-diffnote-setup-uncustom
+        onClick={function () { props.patch({ custom: false }); }}>{lib.m('ui.setup.uncustom')}</button>}
+    </p>
+  </div>;
+}
+
 export function SetupScreen(props: { setup: SetupData }) {
   var setup = props.setup;
   var _s = useState<SetupState>(function () { return stateOf(setup); });
   var state = _s[0];
   var setState = _s[1];
   var change = function (part: Partial<SetupState>) { setState(function (cur) { return Object.assign({}, cur, part); }); };
+  // The names each repository's graph has (`HEAD`, branches, tags), for the
+  // field where its review ends to offer.
+  var _n = useState<Record<string, string[]>>({});
+  var names = _n[0];
+  var setNames = _n[1];
+  var _k = useState(false);
+  var choosingKind = _k[0];
+  var setChoosingKind = _k[1];
   var _r = useState<SetupRaw | null>(null);
   var raw = _r[0];
   var setRaw = _r[1];
@@ -167,27 +226,18 @@ export function SetupScreen(props: { setup: SetupData }) {
   var _e = useState('');
   var error = _e[0];
   var setError = _e[1];
-  var first = useRef<HTMLInputElement | null>(null);
-  useEffect(function () { if (first.current) first.current.focus(); }, []);
   // The directory's files are counted when they are asked about (a big
   // directory takes a moment, and a review of commits never needs it).
   useEffect(function () {
     if (state.kind !== 'raw' || raw) return;
     server().get<{ raw: SetupRaw }>('api/setup/raw').then(function (res) { if (res.ok) setRaw(res.raw); });
   }, [state.kind]);
-  var setRepo = function (i: number, row: RepoRow) {
+  // A part of a row, merged into the row as it is then (an answer from the
+  // server and a keystroke can land in either order without one losing the
+  // other).
+  var patchRepo = function (path: string, part: Partial<RepoRow>) {
     setState(function (cur) {
-      var repos = cur.repos.slice();
-      repos[i] = row;
-      return Object.assign({}, cur, { repos: repos });
-    });
-  };
-  // A part of a row, merged into the row as it is then (see `patch`).
-  var patchRepo = function (i: number, part: Partial<RepoRow>) {
-    setState(function (cur) {
-      var repos = cur.repos.slice();
-      repos[i] = Object.assign({}, repos[i], part);
-      return Object.assign({}, cur, { repos: repos });
+      return Object.assign({}, cur, { repos: cur.repos.map(function (r) { return r.info.path === path ? Object.assign({}, r, part) : r; }) });
     });
   };
   var patchGit = function (part: Partial<RepoRow>) {
@@ -201,11 +251,12 @@ export function SetupScreen(props: { setup: SetupData }) {
       if (!res.ok) { setAddError(res.error); return; }
       var repos = withRepo(state.repos, res.repo);
       if (!repos) { setAddError(lib.mf('ui.setup.add_twice', { path: res.repo.path })); return; }
-      change({ repos: repos });
+      change({ repos: repos, active: res.repo.path });
       setAddPath('');
     });
   };
   var problem = problemOf(state);
+  var totals = totalsOf(state);
   var submit = function (e: Event) {
     e.preventDefault();
     if (busy || problem) return;
@@ -217,101 +268,151 @@ export function SetupScreen(props: { setup: SetupData }) {
       setError(res.error || lib.m('ui.save_failed'));
     });
   };
-  var kindLabel = function (kind: ReviewKind) { return lib.m('ui.setup.kind_' + kind); };
-  var preview = function (path: string, rev: string) {
-    return server().get<{ preview: SetupPreview }>('api/setup/preview?repo=' + encodeURIComponent(path) + '&rev=' + encodeURIComponent(rev));
-  };
-  var span = function (path: string, base: string, target: string) {
-    return server().get<{ span: SetupSpan }>('api/setup/preview?repo=' + encodeURIComponent(path) + '&rev=' + encodeURIComponent(target) + '&from=' + encodeURIComponent(base));
+  // The repository whose history is beside the form, and how to change its range.
+  var activeRow = state.kind === 'git' ? state.git
+    : state.kind === 'workspace' ? state.repos.filter(function (r) { return r.info.path === state.active; })[0] || null
+    : null;
+  var patchActive = function (part: Partial<RepoRow>) {
+    if (!activeRow) return;
+    if (state.kind === 'git') patchGit(part);
+    else patchRepo(activeRow.info.path, part);
   };
   return <main class="diffnote-screen diffnote-setup" data-diffnote-setup>
-    <form class="diffnote-screen__form diffnote-setup__form" noValidate onSubmit={submit}>
-      <h2>{lib.m('ui.setup.heading')}</h2>
-      <p class="diffnote-screen__note">{lib.mf('ui.setup.intro', { review: setup.review })}</p>
+    <form class="diffnote-setup__layout" noValidate onSubmit={submit}>
+      <div class="diffnote-setup__form">
+        <h2>{lib.m('ui.setup.heading')}</h2>
+        <p class="diffnote-screen__note">{lib.mf('ui.setup.intro', { review: setup.review })}</p>
 
-      <fieldset class="diffnote-setup__group">
-        <legend>{lib.m('ui.setup.kind_label')}</legend>
-        {KINDS.map(function (kind) {
-          var can = setup.kinds[kind];
-          return <label key={kind} class={'diffnote-setup__option' + (can.ok ? '' : ' is-off')}>
-            <input type="radio" name="kind" value={kind} data-diffnote-setup-kind={kind} checked={state.kind === kind} disabled={!can.ok}
-              onChange={function () { change({ kind: kind }); }} />
-            <span>{kindLabel(kind)}<small>{can.ok ? lib.m('ui.setup.kind_' + kind + '_hint') : can.why}</small></span>
-          </label>;
-        })}
-      </fieldset>
+        {/* What it is of: as the directory looks, said in a line; changed when asked. */}
+        <p class="diffnote-setup__kind-line" data-diffnote-setup-kind-line>
+          {lib.mf('ui.setup.kind_line', { kind: lib.m('ui.setup.kind_' + state.kind) })}
+          <button type="button" class="diffnote-link-button" data-diffnote-setup-kind-change aria-expanded={choosingKind}
+            onClick={function () { setChoosingKind(!choosingKind); }}>{lib.m(choosingKind ? 'ui.setup.kind_done' : 'ui.setup.kind_change')}</button>
+        </p>
+        {choosingKind && <fieldset class="diffnote-setup__group">
+          <legend>{lib.m('ui.setup.kind_label')}</legend>
+          {KINDS.map(function (kind) {
+            var can = setup.kinds[kind];
+            return <label key={kind} class={'diffnote-setup__option' + (can.ok ? '' : ' is-off')}>
+              <input type="radio" name="kind" value={kind} data-diffnote-setup-kind={kind} checked={state.kind === kind} disabled={!can.ok}
+                onChange={function () { change({ kind: kind }); }} />
+              <span>{lib.m('ui.setup.kind_' + kind)}<small>{can.ok ? lib.m('ui.setup.kind_' + kind + '_hint') : can.why}</small></span>
+            </label>;
+          })}
+        </fieldset>}
 
-      {state.kind === 'git' && state.git && <fieldset class="diffnote-setup__group" data-diffnote-setup-git>
-        <legend>{lib.m('ui.setup.base_label')}</legend>
-        <RepoHead info={state.git.info} />
-        <BasePicker row={state.git} id="git" preview={preview} span={span} patch={patchGit} />
-        <ToHead row={state.git} id="git" preview={preview} span={span} patch={patchGit} />
-      </fieldset>}
+        {state.kind === 'git' && state.git && <fieldset class="diffnote-setup__group" data-diffnote-setup-git>
+          <legend>{lib.m('ui.setup.range_label')}</legend>
+          <RepoHead info={state.git.info} />
+          <RangeWatch path="" base={baseFor(state, state.git)} target="HEAD" patch={patchGit} />
+          <RangeFields state={state} row={state.git} canTarget={false} names={[]} patch={patchGit} />
+        </fieldset>}
 
-      {state.kind === 'workspace' && <fieldset class="diffnote-setup__group" data-diffnote-setup-repos>
-        <legend>{lib.m('ui.setup.repos_label')}</legend>
-        <p class="diffnote-screen__note">{lib.m('ui.setup.repos_note')}</p>
-        {state.repos.map(function (row, i) {
-          // Nothing is in until it is ticked; the ones ticked open, to have
-          // their base chosen. (The whole heading is the tick.)
-          return <div key={row.info.path} class={'diffnote-setup__repo' + (row.on ? ' is-on' : ' is-off')} data-diffnote-setup-repo={row.info.path}>
-            <label class="diffnote-setup__repo-title">
-              <input type="checkbox" data-diffnote-setup-include checked={row.on}
-                onChange={function (e) { setRepo(i, Object.assign({}, row, { on: e.currentTarget.checked })); }} />
-              <code>{row.info.path}</code>
-              <span class="diffnote-setup__summary">{row.info.branch || ''}</span>
+        {state.kind === 'workspace' && <>
+          <fieldset class="diffnote-setup__group" data-diffnote-setup-bulk>
+            <legend>{lib.m('ui.setup.bulk_label')}</legend>
+            <label class="diffnote-setup__option">
+              <input type="radio" name="bulk" data-diffnote-setup-bulk-mode="suggested" checked={state.bulk.mode === 'suggested'}
+                onChange={function () { change({ bulk: Object.assign({}, state.bulk, { mode: 'suggested' }) }); }} />
+              <span>{lib.m('ui.setup.bulk_suggested')}<small>{lib.m('ui.setup.bulk_suggested_hint')}</small></span>
             </label>
-            {row.on && <>
-              <RepoHead info={row.info} />
-              <BasePicker row={row} id={'repo-' + i} preview={preview} span={span} patch={function (part) { patchRepo(i, part); }} />
-              <TargetField row={row} id={'repo-' + i} preview={preview} span={span} patch={function (part) { patchRepo(i, part); }} />
-            </>}
-          </div>;
-        })}
-        <div class="diffnote-setup__add">
-          <label class="diffnote-field">
-            <span>{lib.m('ui.setup.add_path_label')}</span>
-            <span class="diffnote-setup__add-row">
-              <input type="text" data-diffnote-setup-add-path value={addPath} placeholder={lib.m('ui.setup.add_path_placeholder')}
-                onInput={function (e) { setAddPath(e.currentTarget.value); setAddError(''); }}
-                onKeyDown={function (e) { if (e.key === 'Enter') { e.preventDefault(); add(); } }} />
-              <button type="button" class="diffnote-button" data-diffnote-setup-add disabled={!addPath.trim()} onClick={add}>{lib.m('ui.setup.add_button')}</button>
-            </span>
-          </label>
-          {addError && <p class="diffnote-error" data-diffnote-setup-add-error role="alert">{addError}</p>}
-        </div>
-      </fieldset>}
+            <label class="diffnote-setup__option">
+              <input type="radio" name="bulk" data-diffnote-setup-bulk-mode="last" checked={state.bulk.mode === 'last'}
+                onChange={function () { change({ bulk: Object.assign({}, state.bulk, { mode: 'last' }) }); }} />
+              <span class="diffnote-setup__last">{lib.m('ui.setup.bulk_last_before')}
+                <input type="number" min={1} max={999} class="diffnote-setup__count" data-diffnote-setup-bulk-count value={state.bulk.count}
+                  onFocus={function () { if (state.bulk.mode !== 'last') change({ bulk: Object.assign({}, state.bulk, { mode: 'last' }) }); }}
+                  onInput={function (e) { change({ bulk: { mode: 'last', count: Math.max(1, Math.min(999, Number(e.currentTarget.value) || 1)) } }); }} />
+                {lib.m('ui.setup.bulk_last_after')}</span>
+            </label>
+            <p class="diffnote-screen__note">{lib.m('ui.setup.bulk_note')}</p>
+          </fieldset>
 
-      {state.kind === 'raw' && <fieldset class="diffnote-setup__group" data-diffnote-setup-raw>
-        <legend>{lib.m('ui.setup.raw_label')}</legend>
-        <p class="diffnote-screen__note" data-diffnote-setup-raw-note>{raw
-          ? lib.mf('ui.setup.raw_files', { files: String(raw.files), size: lib.formatSize(raw.bytes) })
-          : lib.m('ui.setup.raw_loading')}</p>
-      </fieldset>}
+          <fieldset class="diffnote-setup__group" data-diffnote-setup-repos>
+            <legend>{lib.m('ui.setup.repos_label')}</legend>
+            <p class="diffnote-screen__note">{lib.m('ui.setup.repos_note')}</p>
+            {state.repos.map(function (row) {
+              var path = row.info.path;
+              var active = state.active === path;
+              var patch = function (part: Partial<RepoRow>) { patchRepo(path, part); };
+              // One line each: whether it is in, its name and branch, what
+              // it would review. The one chosen opens, with its range, and
+              // its history is beside the form.
+              return <div key={path} class={'diffnote-setup__repo' + (row.on ? ' is-on' : ' is-off') + (active ? ' is-active' : '')} data-diffnote-setup-repo={path}
+                onClick={function () { if (!active) change({ active: path }); }}>
+                <RangeWatch path={path} base={baseFor(state, row)} target={targetOf(row)} patch={patch} />
+                <div class="diffnote-setup__repo-line">
+                  <input type="checkbox" data-diffnote-setup-include checked={row.on} aria-label={path}
+                    onChange={function (e) { patch({ on: e.currentTarget.checked }); change({ active: path }); }} />
+                  <code class="diffnote-setup__repo-name">{path}</code>
+                  <span class="diffnote-setup__branch">{row.info.branch || lib.m('ui.setup.detached')}</span>
+                  {row.custom && <span class="diffnote-setup__badge" data-diffnote-setup-custom>{lib.m('ui.setup.custom_badge')}</span>}
+                  <span class="diffnote-setup__summary" data-diffnote-setup-summary><RangeSaid row={row} /></span>
+                </div>
+                {active && <RangeFields state={state} row={row} canTarget={true} names={names[path] || ['HEAD']} patch={patch} />}
+              </div>;
+            })}
+            <div class="diffnote-setup__add">
+              <label class="diffnote-field">
+                <span>{lib.m('ui.setup.add_path_label')}</span>
+                <span class="diffnote-setup__add-row">
+                  <input type="text" data-diffnote-setup-add-path value={addPath} placeholder={lib.m('ui.setup.add_path_placeholder')}
+                    onInput={function (e) { setAddPath(e.currentTarget.value); setAddError(''); }}
+                    onKeyDown={function (e) { if (e.key === 'Enter') { e.preventDefault(); add(); } }} />
+                  <button type="button" class="diffnote-button" data-diffnote-setup-add disabled={!addPath.trim()} onClick={add}>{lib.m('ui.setup.add_button')}</button>
+                </span>
+              </label>
+              {addError && <p class="diffnote-error" data-diffnote-setup-add-error role="alert">{addError}</p>}
+            </div>
+          </fieldset>
+        </>}
 
-      <label class="diffnote-field">
-        <span>{lib.m('ui.setup.title_label')}</span>
-        <input ref={first} type="text" maxlength={200} data-diffnote-setup-title value={state.title} placeholder={lib.m('ui.setup.title_placeholder')}
-          onInput={function (e) { change({ title: e.currentTarget.value }); }} />
-      </label>
+        {state.kind === 'raw' && <fieldset class="diffnote-setup__group" data-diffnote-setup-raw>
+          <legend>{lib.m('ui.setup.raw_label')}</legend>
+          <p class="diffnote-screen__note" data-diffnote-setup-raw-note>{raw
+            ? lib.mf('ui.setup.raw_files', { files: String(raw.files), size: lib.formatSize(raw.bytes) })
+            : lib.m('ui.setup.raw_loading')}</p>
+        </fieldset>}
 
-      {state.kind !== 'raw' && <fieldset class="diffnote-setup__group">
-        <legend>{lib.m('ui.setup.snapshot_label')}</legend>
-        {(['changed', 'full'] as const).map(function (mode) {
-          return <label key={mode} class="diffnote-setup__option">
-            <input type="radio" name="snapshot" value={mode} data-diffnote-setup-snapshot={mode} checked={state.snapshot === mode}
-              onChange={function () { change({ snapshot: mode }); }} />
-            <span>{lib.m('ui.setup.snapshot_' + mode)}</span>
-          </label>;
-        })}
-        <p class="diffnote-screen__note">{lib.m('ui.setup.snapshot_hint')}</p>
-      </fieldset>}
+        <label class="diffnote-field">
+          <span>{lib.m('ui.setup.title_label')}</span>
+          <input type="text" maxlength={200} data-diffnote-setup-title value={state.title} placeholder={lib.m('ui.setup.title_placeholder')}
+            onInput={function (e) { change({ title: e.currentTarget.value }); }} />
+        </label>
 
-      {error && <p class="diffnote-error" data-diffnote-setup-error role="alert">{error}</p>}
-      <div class="diffnote-reply__buttons">
+        {state.kind !== 'raw' && <details class="diffnote-setup__more" data-diffnote-setup-more>
+          <summary>{lib.m('ui.setup.more_label')}</summary>
+          <fieldset class="diffnote-setup__group">
+            <legend>{lib.m('ui.setup.snapshot_label')}</legend>
+            {(['changed', 'full'] as const).map(function (mode) {
+              return <label key={mode} class="diffnote-setup__option">
+                <input type="radio" name="snapshot" value={mode} data-diffnote-setup-snapshot={mode} checked={state.snapshot === mode}
+                  onChange={function () { change({ snapshot: mode }); }} />
+                <span>{lib.m('ui.setup.snapshot_' + mode)}</span>
+              </label>;
+            })}
+            <p class="diffnote-screen__note">{lib.m('ui.setup.snapshot_hint')}</p>
+          </fieldset>
+        </details>}
+      </div>
+
+      {activeRow && <aside class="diffnote-setup__side">
+        <CommitGraph repo={activeRow.info.path} span={activeRow.span} canTarget={state.kind === 'workspace'}
+          onFrom={function (base) { patchActive({ custom: true, base: MANUAL, manual: base.slice(0, 12) }); }}
+          onTo={function (target) { patchActive({ target: /^[0-9a-f]{40}$/.test(target) ? target.slice(0, 12) : target }); }}
+          onNames={function (list) { var path = activeRow!.info.path; setNames(function (cur) { return Object.assign({}, cur, { [path]: list }); }); }} />
+      </aside>}
+
+      {/* What the review takes in, and the button that makes it: always in view. */}
+      <div class="diffnote-setup__foot">
+        {error && <p class="diffnote-error" data-diffnote-setup-error role="alert">{error}</p>}
+        {state.kind !== 'raw' && totals.repos > 0 && <span class="diffnote-setup__totals" data-diffnote-setup-totals>
+          {state.kind === 'workspace'
+            ? lib.mf('ui.setup.totals', { repos: String(totals.repos), commits: String(totals.commits), files: String(totals.files) })
+            : lib.mf('ui.setup.totals_one', { commits: String(totals.commits), files: String(totals.files) })}</span>}
+        {problem && <span class="diffnote-screen__dirty" data-diffnote-setup-problem>{lib.m(problem)}</span>}
         <button type="submit" class="diffnote-button diffnote-button--primary" data-diffnote-setup-create disabled={busy || !!problem}>
           {busy ? lib.m('ui.setup.creating') : lib.m('ui.setup.create_button')}</button>
-        {problem && <span class="diffnote-screen__dirty" data-diffnote-setup-problem>{lib.m(problem)}</span>}
       </div>
     </form>
   </main>;

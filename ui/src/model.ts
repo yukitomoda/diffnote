@@ -307,6 +307,10 @@ export interface SetupRepo {
   head: SetupCommit;
   default_branch: string | null;
   candidates: SetupCandidate[];
+  /** The base a review of it starts from, which leaves it something to
+   * review: where the work left the default branch, else the commit before
+   * `HEAD` (the default branch is what is checked out), else `HEAD`. */
+  suggested: SetupCommit & { why: 'fork' | 'previous' | 'head' };
 }
 
 export interface SetupKind {
@@ -334,10 +338,39 @@ export interface SetupPreview extends SetupCommit {
   files: number;
 }
 
-/** What comparing from a base up to a target takes in: the target, and
- * how many commits. */
+/** What comparing from a base up to a target takes in: the target, how
+ * many commits and files, which commits (newest first), and the base's id. */
 export interface SetupSpan extends SetupCommit {
   commits: number;
+  files: number;
+  ids: string[];
+  from: string;
+}
+
+/** A name a commit of the graph goes by. */
+export interface GraphRef {
+  name: string;
+  kind: 'head' | 'branch' | 'remote' | 'tag';
+}
+
+/** One commit of a repository's graph, and where it is drawn (see
+ * `GraphRow` in `src/setup.rs`): its column, the columns that come down
+ * into it, go on down from it, and pass by it. */
+export interface GraphRow extends SetupCommit {
+  author: string;
+  at: string;
+  refs?: GraphRef[];
+  lane: number;
+  up: number[];
+  down: number[];
+  through: number[];
+}
+
+/** A repository's history to choose a range from: newest first. */
+export interface SetupGraph {
+  rows: GraphRow[];
+  lanes: number;
+  more: boolean;
 }
 
 export interface SetupRaw {

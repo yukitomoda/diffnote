@@ -658,6 +658,7 @@ impl Server {
             ("GET", "/api/version") => self.version(),
             ("GET", "/api/compare") => self.compare(query),
             ("GET", "/api/setup/preview") => self.setup_preview(query),
+            ("GET", "/api/setup/graph") => self.setup_graph(query),
             ("GET", "/api/setup/repo") => self.setup_repo(query),
             ("GET", "/api/setup/raw") => self.setup_raw(),
             ("GET", "/api/repos/found") => self.repos_found(),
@@ -1591,6 +1592,21 @@ impl Server {
 
     /// What reviewing a repository (`repo`; none: the one repository) from
     /// `rev` would take in.
+    /// The history of a repository (`repo`; none: the one repository) to
+    /// choose from, as far as it goes of itself, or `limit` commits.
+    fn setup_graph(&self, query: &str) -> Reply {
+        let setup = match self.first_screen_of() {
+            Ok(setup) => setup,
+            Err(Failure(status, message)) => return Reply::error(status, &message),
+        };
+        let repo = query_param(query, "repo").unwrap_or_default();
+        let limit = query_param(query, "limit").and_then(|l| l.parse().ok());
+        match setup.graph(&repo, limit) {
+            Ok(graph) => Self::answer("graph", graph),
+            Err(e) => Reply::error(400, &e.to_string()),
+        }
+    }
+
     fn setup_preview(&self, query: &str) -> Reply {
         let setup = match self.first_screen_of() {
             Ok(setup) => setup,

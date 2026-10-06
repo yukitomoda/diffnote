@@ -2671,65 +2671,150 @@ class FirstScreen(ServedCase):
         self.assertTrue(b.wait("!window.__marker && document.readyState==='complete' && !!document.querySelector('[data-diffnote-revision-link]')", timeout=15))
         self.assertFalse(b.exists("[data-diffnote-setup]"))
 
-    def test_in_a_repository_a_base_is_chosen_or_typed_and_the_review_is_made(self):
+    def says(self, where, text):
+        """Waits for what a repository's range takes in to say `text` (an
+        answer still on its way, or an earlier one still shown, is waited
+        out)."""
+        b = self.b
+        sel = json.dumps(where)
+        self.assertTrue(b.wait("(function(e){ return !!e && e.textContent.includes(%s); })(document.querySelector(%s))" % (json.dumps(text), sel)),
+                        b.js("(function(e){return e && e.textContent})(document.querySelector(%s))" % sel))
+
+    def test_in_a_repository_its_range_is_chosen_from_the_form_or_the_graph_and_the_review_is_made(self):
         repo = harness.make_gaps_review(self.root, name="first-git")[1]
         b = self.start(repo, "first")
         self.assertFalse(os.path.exists(self.review), "nothing until it is answered")
+        # What it is of: said in a line, the choices only when asked for.
+        self.assertIn("このリポジトリのコミット", b.text("[data-diffnote-setup-kind-line]"))
+        self.assertFalse(b.exists("[data-diffnote-setup-kind]"))
+        b.click("[data-diffnote-setup-kind-change]")
+        self.assertTrue(b.wait_exists("[data-diffnote-setup-kind=git]"))
         self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-kind=git]').checked"))
         self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-kind=workspace]').disabled"), "no repositories under a repository")
         self.assertFalse(b.js("document.querySelector('[data-diffnote-setup-kind=raw]').disabled"))
-        # On main at its tip: one commit offered, by all its names, with nothing to review yet.
-        self.assertEqual(b.count("[data-diffnote-setup-base=git] input[type=radio]"), 2, "the one offered, and 指定する")
-        self.assertIn("main からの分岐点 / main の先端 / HEAD", b.text("[data-diffnote-setup-base=git]"))
-        self.assertIn("1 ファイル", b.text("[data-diffnote-setup-base=git] input:checked + span"), "the tree at that commit")
-        self.assertTrue(b.wait("document.querySelector('[data-diffnote-setup-to-head]') && document.querySelector('[data-diffnote-setup-to-head]').textContent.includes('差分なし')"))
-        # Typed in: what it would review is said as it is typed, and a
-        # mistake is said too.
-        b.set_value("[data-diffnote-setup-rev]", "nope")
-        self.assertTrue(b.wait("document.querySelector('[data-diffnote-setup-preview]').textContent.includes('nope')"))
-        self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
-        b.set_value("[data-diffnote-setup-rev]", "c1")
-        self.assertTrue(b.wait("document.querySelector('[data-diffnote-setup-preview]').textContent.includes('1 ファイル')"))
-        self.assertTrue(b.wait("document.querySelector('[data-diffnote-setup-to-head]').textContent.includes('HEAD まで 1 コミット')"))
+        # On main at its tip: reviewed from the commit before HEAD, so that
+        # there is something to review.
+        c1 = harness.git(repo, "rev-parse", "--short=7", "c1")
+        self.assertEqual(b.value("[data-diffnote-setup-from]"), c1)
+        self.assertIn("直前のコミット", b.text("[data-diffnote-setup-range]"))
+        self.says("[data-diffnote-setup-said]", "1 コミット")
+        self.assertEqual(b.value("[data-diffnote-setup-to]"), "HEAD")
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-to]').disabled"), "a review of one goes to HEAD, each time")
         self.assertFalse(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
+        self.assertIn("1 コミット", b.text("[data-diffnote-setup-totals]"))
+        # Typed in: a mistake is said, and nothing can be made until it is put right.
+        b.set_value("[data-diffnote-setup-from]", "nope")
+        self.says("[data-diffnote-setup-said]", "nope")
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
+        # The graph: HEAD and its branch named, and a commit chosen as where
+        # it compares from: that commit's snapshot.
+        graph = "[data-diffnote-graph='']"
+        self.assertTrue(b.wait_exists(f"{graph} [data-diffnote-graph-ref='HEAD']"))
+        head = harness.git(repo, "rev-parse", "HEAD")
+        first = harness.git(repo, "rev-parse", "c1")
+        b.click(f"{graph} [data-diffnote-graph-commit='{first}'] [data-diffnote-graph-from]")
+        self.assertEqual(b.value("[data-diffnote-setup-from]"), first[:12])
+        self.says("[data-diffnote-setup-said]", "1 コミット")
+        self.assertTrue(b.wait_exists(f"{graph} [data-diffnote-graph-commit='{first}'] [data-diffnote-graph-from-mark]"), "where it compares from")
+        self.assertTrue(b.exists(f"{graph} [data-diffnote-graph-commit='{head}'] [data-diffnote-graph-to-mark]"), "and up to")
+        self.assertTrue(b.exists(f"{graph} [data-diffnote-graph-commit='{head}'][data-diffnote-graph-in]"), "what came after it is marked")
+        self.assertFalse(b.exists(f"{graph} [data-diffnote-graph-commit='{first}'][data-diffnote-graph-in]"))
+        self.assertFalse(b.exists(f"{graph} [data-diffnote-graph-to]"), "where it ends is not chosen here")
         b.set_value("[data-diffnote-setup-title]", "最初の画面から")
+        b.click("[data-diffnote-setup-more] summary")
         b.click("[data-diffnote-setup-snapshot=full]")
         self.create()
         self.assertTrue(os.path.exists(self.review))
         self.assertEqual(b.count("[data-diffnote-revision-link]"), 1)
         self.assertEqual(b.text(".diffnote-title"), "最初の画面から")
-        self.assertEqual(b.text("[data-diffnote-base] code"), harness.git(repo, "rev-parse", "--short=7", "c1"))
+        self.assertEqual(b.text("[data-diffnote-base] code"), c1)
         self.assertEqual(json.loads(harness.member(self.review, "settings.json"))["title"], "最初の画面から")
         self.assertIn('"snapshot_mode":"full"', harness.member(self.review, "review.jsonl"))
 
-    def test_in_a_project_of_repositories_each_is_offered_and_one_can_be_left_out(self):
+    def test_where_it_ends_is_chosen_from_a_list_even_for_a_commit_with_no_name(self):
+        project = os.path.join(self.root, "first-ends")
+        repo = os.path.join(project, "x")
+        os.makedirs(repo)
+        harness.git(repo, "init", "-q", "-b", "main")
+        for n in (1, 2, 3):
+            harness.write(repo, "a.txt", "%d\n" % n)
+            harness.git(repo, "add", "-A")
+            harness.git(repo, "commit", "-q", "-m", "c%d" % n)
+        b = self.start(project, "first")
+        middle = harness.git(repo, "rev-parse", "HEAD~1")
+        graph = "[data-diffnote-graph='x']"
+        self.assertTrue(b.wait_exists(f"{graph} [data-diffnote-graph-commit='{middle}']"))
+        b.click(f"{graph} [data-diffnote-graph-commit='{middle}'] [data-diffnote-graph-to]")
+        self.assertTrue(b.wait_exists("[data-diffnote-graph-names]"), "a list, though there is one thing in it")
+        self.assertFalse(b.exists("[data-diffnote-graph-to-name]"))
+        self.assertEqual(b.value("[data-diffnote-setup-repo='x'] [data-diffnote-setup-to]"), "HEAD", "nothing chosen yet")
+        b.click("[data-diffnote-graph-to-commit]")
+        self.assertEqual(b.value("[data-diffnote-setup-repo='x'] [data-diffnote-setup-to]"), middle[:12])
+
+    def test_in_a_project_of_repositories_each_is_a_line_and_the_one_chosen_has_its_range_and_graph(self):
         project = project_of_repos(self.root, "first-ws")
         b = self.start(project, "first")
-        self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-kind=workspace]').checked"))
-        self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-kind=git]').disabled"))
+        self.assertIn("複数のリポジトリ", b.text("[data-diffnote-setup-kind-line]"))
         repos = b.js("[...document.querySelectorAll('[data-diffnote-setup-repo]')].map(function (d) { return d.dataset.diffnoteSetupRepo; })")
         self.assertEqual(repos, ["backend/repo-a", "mobile-app"])
-        # None is in until it is ticked, and only the ticked ask for a base.
-        self.assertFalse(b.exists("[data-diffnote-setup-base]"))
+        row = lambda path: f"[data-diffnote-setup-repo='{path}']"
+        # Each says what it would review, before it is ticked; none is in yet.
+        self.says(f"{row('backend/repo-a')} [data-diffnote-setup-summary]", "1 コミット・1 ファイル")
+        self.says(f"{row('mobile-app')} [data-diffnote-setup-summary]", "1 コミット・2 ファイル")
         self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
-        b.click("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-include]")
-        self.assertTrue(b.wait_exists("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-base]"))
-        self.assertIn("1 ファイル", b.text("[data-diffnote-setup-repo='backend/repo-a'] input:checked + span"))
-        self.assertTrue(b.wait("document.querySelector(\"[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-target-preview]\").textContent.includes('1 コミット')"), "up to HEAD, from the base chosen")
-        # What it is compared up to: HEAD unless named; named, it is looked up.
-        self.assertEqual(b.value("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-target-rev]"), "HEAD")
-        b.set_value("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-target-rev]", "nowhere")
-        self.assertTrue(b.wait("document.querySelector(\"[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-target-preview]\").textContent.includes('nowhere')"))
+        # The first is the one chosen: its range open, its history beside.
+        self.assertTrue(b.exists(f"{row('backend/repo-a')} [data-diffnote-setup-range]"))
+        self.assertFalse(b.exists(f"{row('mobile-app')} [data-diffnote-setup-range]"))
+        self.assertTrue(b.wait_exists("[data-diffnote-graph='backend/repo-a'] [data-diffnote-graph-commit]"))
+        b.click(f"{row('backend/repo-a')} [data-diffnote-setup-include]")
+        self.assertTrue(b.wait("!document.querySelector('[data-diffnote-setup-create]').disabled"))
+        self.assertIn("1 リポジトリ・1 コミット・1 ファイル", b.text("[data-diffnote-setup-totals]"))
+        # Where it ends: HEAD unless named; named, it is looked up.
+        to = f"{row('backend/repo-a')} [data-diffnote-setup-to]"
+        b.set_value(to, "nowhere")
+        self.says(f"{row('backend/repo-a')} [data-diffnote-setup-said]", "nowhere")
         self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
-        b.set_value("[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-target-rev]", "feature")
-        self.assertTrue(b.wait("document.querySelector(\"[data-diffnote-setup-repo='backend/repo-a'] [data-diffnote-setup-target-preview]\").textContent.includes('c2 backend/repo-a')"))
-        self.assertFalse(b.exists("[data-diffnote-setup-repo='mobile-app'] [data-diffnote-setup-base]"), "left out: its base is not asked")
-        self.assertFalse(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
+        b.set_value(to, "feature")
+        self.says(f"{row('backend/repo-a')} [data-diffnote-setup-said]", "1 コミット")
+        # For all at once: the last commits (two is more than repo-a has).
+        b.click("[data-diffnote-setup-bulk-mode=last]")
+        b.set_value("[data-diffnote-setup-bulk-count]", "2")
+        self.says(f"{row('backend/repo-a')} [data-diffnote-setup-said]", "feature~2")
+        self.assertTrue(b.js("document.querySelector('[data-diffnote-setup-create]').disabled"))
+        b.set_value("[data-diffnote-setup-bulk-count]", "1")
+        self.says(f"{row('backend/repo-a')} [data-diffnote-setup-said]", "1 コミット")
+        b.click("[data-diffnote-setup-bulk-mode=suggested]")
+        # From the graph: chosen for this one alone, and back to all's.
+        c2 = harness.git(os.path.join(project, "backend/repo-a"), "rev-parse", "feature")
+        graph = "[data-diffnote-graph='backend/repo-a']"
+        b.click(f"{graph} [data-diffnote-graph-commit='{c2}'] [data-diffnote-graph-from]")
+        self.assertTrue(b.wait_exists(f"{row('backend/repo-a')} [data-diffnote-setup-custom]"))
+        # Where it ends, from the graph: a commit with names asks which --
+        # a name, which moves on with what is done after, or the commit.
+        b.click(f"{graph} [data-diffnote-graph-commit='{c2}'] [data-diffnote-graph-to]")
+        self.assertTrue(b.wait_exists("[data-diffnote-graph-names]"))
+        self.assertEqual(b.js("[...document.querySelectorAll('[data-diffnote-graph-to-name]')].map(e => e.dataset.diffnoteGraphToName)"), ["HEAD", "feature"])
+        b.click("[data-diffnote-graph-to-commit]")
+        self.assertEqual(b.value(to), c2[:12])
+        b.click(f"{graph} [data-diffnote-graph-commit='{c2}'] [data-diffnote-graph-to]")
+        self.assertTrue(b.wait_exists("[data-diffnote-graph-to-name='feature']"))
+        b.click("[data-diffnote-graph-to-name='feature']")
+        self.assertEqual(b.value(to), "feature")
+        self.assertFalse(b.exists("[data-diffnote-graph-names]"), "the choice goes once made")
+        # The field offers the names the graph has.
+        self.assertEqual(b.js("[...document.querySelectorAll('#' + document.querySelector(%s).getAttribute('list') + ' option')].map(o => o.value)" % json.dumps(to)), ["HEAD", "feature", "main"])
+        b.click(f"{row('backend/repo-a')} [data-diffnote-setup-uncustom]")
+        self.assertTrue(b.wait(f"!document.querySelector({json.dumps(row('backend/repo-a') + ' [data-diffnote-setup-custom]')})"))
+        # Another chosen: its range and its history.
+        b.click(f"{row('mobile-app')} .diffnote-setup__repo-name")
+        self.assertTrue(b.wait_exists(f"{row('mobile-app')} [data-diffnote-setup-range]"))
+        self.assertTrue(b.wait_exists("[data-diffnote-graph='mobile-app'] [data-diffnote-graph-commit]"))
+        self.assertFalse(b.exists(f"{row('backend/repo-a')} [data-diffnote-setup-range]"))
         # A path that is no repository is refused where it is typed.
         b.set_value("[data-diffnote-setup-add-path]", "docs")
         b.click("[data-diffnote-setup-add]")
         self.assertTrue(b.wait_exists("[data-diffnote-setup-add-error]"))
-        # The review is of repo-a alone.
+        # The review is of repo-a alone, up to `feature` (by its name).
         self.create()
         files = b.js("[...document.querySelectorAll('%s section.diffnote-file')].map(function (s) { return s.dataset.diffnoteFile; })" % CUR)
         self.assertEqual(files, ["backend/repo-a/a.txt"])

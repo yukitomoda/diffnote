@@ -576,7 +576,6 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
 .diffnote-setup__option code { font-size: 13px; }
 .diffnote-setup__rev { display: block; width: 100%; max-width: 32em; margin-top: 4px; font: inherit; font-family: var(--diffnote-font-mono); font-size: 12.5px; padding: 3px 8px; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; box-sizing: border-box; }
 .diffnote-setup__repo-head { margin: 0 0 8px; font-size: 12.5px; color: var(--diffnote-color-muted); }
-.diffnote-setup__to-head { margin: 4px 0 4px 24px; font-size: 12.5px; color: var(--diffnote-color-muted); }
 .diffnote-setup__target { margin: 10px 0 4px; padding-top: 8px; border-top: 1px solid var(--diffnote-color-border); }
 .diffnote-setup__target-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .diffnote-setup__target-row .diffnote-setup__rev { width: 16em; margin: 0; }
@@ -592,6 +591,71 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
 .diffnote-setup__add { margin-top: 12px; }
 .diffnote-setup__add-row { display: flex; gap: 6px; }
 .diffnote-setup__add-row input { flex: 1; min-width: 0; }
+/* The first screen: the form on the left, the chosen repository's history
+   on the right (below it, where the window is narrow), and what the review
+   takes in, with its button, kept in view at the bottom. */
+.diffnote-setup__layout { display: grid; grid-template-columns: minmax(0, 44em) minmax(0, 1fr); gap: 0 24px; align-items: start; }
+.diffnote-setup__layout .diffnote-setup__form { max-width: none; }
+.diffnote-setup__side { position: sticky; top: calc(var(--diffnote-topbar-h) + 12px); max-height: calc(100vh - var(--diffnote-topbar-h) - 90px); overflow: auto; border: 1px solid var(--diffnote-color-border); border-radius: 8px; }
+.diffnote-setup__foot { grid-column: 1 / -1; position: sticky; bottom: 0; z-index: 4; display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; margin-top: 8px; padding: 10px 0; background: var(--diffnote-color-bg); border-top: 1px solid var(--diffnote-color-border); }
+.diffnote-setup__totals { margin-right: auto; font-weight: 600; }
+@media (max-width: 1100px) {
+  .diffnote-setup__layout { grid-template-columns: minmax(0, 1fr); }
+  .diffnote-setup__side { position: static; max-height: 60vh; margin-top: 8px; }
+}
+.diffnote-link-button { margin-left: 8px; padding: 0; font: inherit; font-size: 12.5px; color: var(--diffnote-color-accent); background: none; border: 0; cursor: pointer; text-decoration: underline; }
+.diffnote-setup__kind-line { margin: 0 0 12px; }
+.diffnote-setup__last { display: inline-flex; align-items: center; gap: 4px; }
+.diffnote-setup__count { width: 4.5em; font: inherit; padding: 1px 4px; border: 1px solid var(--diffnote-color-border); border-radius: 4px; background: var(--diffnote-color-bg); color: var(--diffnote-color-fg); }
+/* A repository: one line, and, chosen, its range. */
+.diffnote-setup__repo { cursor: pointer; border: 1px solid transparent; }
+.diffnote-setup__repo.is-active { border-color: var(--diffnote-color-accent); background: var(--diffnote-color-gutter); cursor: default; }
+.diffnote-setup__repo.is-off { background: none; }
+.diffnote-setup__repo.is-active.is-off { background: var(--diffnote-color-gutter); }
+.diffnote-setup__repo-line { display: flex; align-items: center; gap: 8px; min-height: 24px; }
+.diffnote-setup__repo-name { font-weight: 600; }
+.diffnote-setup__repo.is-off .diffnote-setup__repo-name { color: var(--diffnote-color-muted); font-weight: 400; }
+.diffnote-setup__branch { font-size: 12px; color: var(--diffnote-color-muted); }
+.diffnote-setup__badge { font-size: 11px; padding: 0 6px; border: 1px solid var(--diffnote-color-border); border-radius: 1em; color: var(--diffnote-color-muted); }
+/* Where it starts and ends, side by side, and what that takes in. */
+.diffnote-setup__range { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 16px; margin-top: 8px; }
+.diffnote-setup__range .diffnote-field { margin: 0; }
+.diffnote-setup__range .diffnote-setup__rev { max-width: none; }
+.diffnote-setup__range .diffnote-setup__rev:disabled { color: var(--diffnote-color-muted); background: var(--diffnote-color-gutter); }
+.diffnote-setup__said { grid-column: 1 / -1; margin: 2px 0 4px; font-size: 12.5px; color: var(--diffnote-color-muted); }
+.diffnote-setup__more { margin: 0 0 16px; }
+.diffnote-setup__more > summary { cursor: pointer; color: var(--diffnote-color-muted); margin-bottom: 8px; }
+/* The history: one row a commit, its lines drawn at the left. The range is
+   tinted; a row's buttons show under the pointer (or the keys' focus). */
+.diffnote-graph__head { position: sticky; top: 0; z-index: 1; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0; padding: 8px 10px; background: var(--diffnote-color-bg); border-bottom: 1px solid var(--diffnote-color-border); }
+.diffnote-graph__head small { color: var(--diffnote-color-muted); font-size: 12px; }
+.diffnote-graph > .diffnote-screen__note, .diffnote-graph > .diffnote-error { margin: 8px 10px; }
+.diffnote-graph__rows { list-style: none; margin: 0; padding: 0 0 4px; }
+.diffnote-graph__row { position: relative; display: flex; align-items: center; gap: 6px; height: 26px; padding-right: 8px; font-size: 12.5px; white-space: nowrap; }
+.diffnote-graph__row:hover, .diffnote-graph__row:focus-within { background: var(--diffnote-color-gutter); }
+.diffnote-graph__row.is-in { background: color-mix(in srgb, var(--diffnote-color-accent) 10%, transparent); }
+.diffnote-graph__row.is-in:hover { background: color-mix(in srgb, var(--diffnote-color-accent) 16%, transparent); }
+.diffnote-graph__row.is-from { box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--diffnote-color-accent) 60%, transparent); }
+.diffnote-graph__lines { flex: none; overflow: visible; }
+.diffnote-graph__lines path { fill: none; stroke-width: 2; }
+.diffnote-graph__text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.diffnote-graph__text code { margin-right: 6px; color: var(--diffnote-color-muted); }
+.diffnote-graph__ref { display: inline-block; margin-right: 4px; padding: 0 5px; font-size: 11px; line-height: 16px; border-radius: 4px; border: 1px solid var(--diffnote-color-border); color: var(--diffnote-color-muted); }
+.diffnote-graph__ref.is-head { color: #fff; background: var(--diffnote-color-accent); border-color: var(--diffnote-color-accent); font-weight: 600; }
+.diffnote-graph__ref.is-branch { color: var(--diffnote-color-fg); font-weight: 600; }
+.diffnote-graph__ref.is-tag { border-style: dashed; }
+.diffnote-graph__at { flex: none; font-size: 11.5px; color: var(--diffnote-color-muted); }
+.diffnote-graph__mark { flex: none; font-size: 11px; color: var(--diffnote-color-accent); }
+.diffnote-graph__actions { position: absolute; right: 6px; top: 2px; display: none; gap: 4px; }
+.diffnote-graph__row:hover .diffnote-graph__actions, .diffnote-graph__row:focus-within .diffnote-graph__actions { display: flex; }
+.diffnote-graph__pick { font: inherit; font-size: 11.5px; padding: 1px 8px; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 4px; cursor: pointer; }
+.diffnote-graph__pick:hover { border-color: var(--diffnote-color-accent); color: var(--diffnote-color-accent); }
+.diffnote-graph__more { display: block; margin: 6px auto 10px; }
+/* Which name of a commit a review ends at (or the commit itself). */
+.diffnote-graph__names { position: absolute; right: 6px; top: 24px; z-index: 3; display: flex; flex-direction: column; min-width: 16em; padding: 4px; white-space: normal; background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18); }
+.diffnote-graph__names .diffnote-comment__item { display: flex; align-items: center; gap: 6px; }
+.diffnote-graph__names small { color: var(--diffnote-color-muted); font-size: 11.5px; }
+.diffnote-graph__row:has([data-diffnote-graph-names]) .diffnote-graph__actions { display: flex; }
 .diffnote-empty h2 { margin-top: 24px; }
 .diffnote-repos { list-style: none; margin: 0 0 16px; padding: 0; }
 .diffnote-repos__item { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--diffnote-color-border); }

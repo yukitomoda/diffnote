@@ -1,6 +1,7 @@
 // The first screen's choices, apart from how they are drawn (Setup.tsx), so
-// that what a repository is offered and what is sent can be tested without
-// a page.
+// that what a repository is reviewed from and what is sent can be tested
+// without a page. (The 「リポジトリ」 screen adds a repository with the same
+// rows: `MANUAL`, `baseOf`, `targetSettled`.)
 import { lib } from '../lib.ts';
 import type { ReviewKind, SetupCandidate, SetupChoice, SetupData, SetupPreview, SetupRepo, SetupSpan } from '../model.ts';
 
@@ -26,6 +27,21 @@ export interface RepoRow {
   targetPreview: SetupSpan | null;
   targetError: string;
   targetChecking: boolean;
+  /** The first screen: whether its base was chosen for it alone (else the
+   * one chosen for all, `Bulk`), and what its range takes in, as the server
+   * said. */
+  custom: boolean;
+  span: SetupSpan | null;
+  spanError: string;
+  spanChecking: boolean;
+}
+
+/** How every repository is reviewed from, unless one is chosen for it: from
+ * its suggested base (where its work left the default branch, or the commit
+ * before `HEAD`), or from the last `count` commits. */
+export interface Bulk {
+  mode: 'suggested' | 'last';
+  count: number;
 }
 
 /** Whether a target typed in is settled (`HEAD` needs no asking). */
@@ -41,6 +57,9 @@ export interface SetupState {
   snapshot: 'changed' | 'full';
   git: RepoRow | null;
   repos: RepoRow[];
+  bulk: Bulk;
+  /** The repository whose graph is shown (its path; empty: the one). */
+  active: string;
 }
 
 export function rowOf(info: SetupRepo): RepoRow {
@@ -56,6 +75,10 @@ export function rowOf(info: SetupRepo): RepoRow {
     targetPreview: null,
     targetError: '',
     targetChecking: false,
+    custom: false,
+    span: null,
+    spanError: '',
+    spanChecking: false,
   };
 }
 
@@ -69,7 +92,31 @@ export function stateOf(setup: SetupData): SetupState {
     snapshot: setup.snapshot || 'changed',
     git: setup.git ? rowOf(setup.git) : null,
     repos: setup.repos.map(function (info) { return Object.assign(rowOf(info), { on: false }); }),
+    bulk: { mode: 'suggested', count: 3 },
+    active: setup.kind === 'workspace' && setup.repos.length ? setup.repos[0].path : '',
   };
+}
+
+/** What a row compares up to: what is typed, or `HEAD`. */
+export function targetOf(row: RepoRow): string {
+  return row.target.trim() || 'HEAD';
+}
+
+/** What a row is reviewed from: what was chosen for it alone, or else what
+ * is chosen for all. */
+export function baseFor(state: SetupState, row: RepoRow): string {
+  if (row.custom) return baseOf(row);
+  if (state.bulk.mode === 'last') return targetOf(row) + '~' + Math.max(1, Math.floor(state.bulk.count) || 1);
+  return row.info.suggested.id;
+}
+
+/** How many repositories, commits and files the review takes in, as far as
+ * the server has said. */
+export function totalsOf(state: SetupState): { repos: number; commits: number; files: number } {
+  var rows = rowsOf(state);
+  return rows.reduce(function (t, r) {
+    return { repos: t.repos, commits: t.commits + (r.span ? r.span.commits : 0), files: t.files + (r.span ? r.span.files : 0) };
+  }, { repos: rows.length, commits: 0, files: 0 });
 }
 
 /** What a candidate is called: each of its names, joined. */
@@ -92,6 +139,12 @@ export function spanText(commits: number): string {
   return lib.mf('ui.setup.span', { commits: String(commits) });
 }
 
+/** What a range takes in, said in a line: how many commits and files. */
+export function rangeText(span: SetupSpan): string {
+  if (span.commits === 0 && span.files === 0) return lib.m('ui.setup.span_none');
+  return lib.mf('ui.setup.range', { commits: String(span.commits), files: String(span.files) });
+}
+
 /** The commit a row's base names: the candidate's, or what was typed. */
 export function baseOf(row: RepoRow): string {
   return row.base === MANUAL ? row.manual.trim() : row.base;
@@ -104,17 +157,19 @@ function rowsOf(state: SetupState): RepoRow[] {
   return [];
 }
 
-/** Why the choice can't be sent yet (a message key), or `null`. */
+/** Why the choice can't be sent yet (a message key), or `null`: every
+ * repository's range said by the server to be one, and something in it. */
 export function problemOf(state: SetupState): string | null {
   var rows = rowsOf(state);
   if (state.kind === 'git' && !state.git) return 'ui.setup.not_a_repo';
   if (state.kind === 'workspace' && rows.length === 0) return 'ui.setup.no_repos_chosen';
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i];
-    if (!baseOf(row)) return 'ui.setup.base_needed';
-    if (row.base === MANUAL && (row.checking || !row.preview)) return 'ui.setup.base_unchecked';
-    if (!targetSettled(row)) return 'ui.setup.target_unchecked';
+    if (!baseFor(state, row)) return 'ui.setup.base_needed';
+    if (row.spanError) return 'ui.setup.range_invalid';
+    if (row.spanChecking || !row.span) return 'ui.setup.range_unchecked';
   }
+  if (rows.length && totalsOf(state).files === 0) return 'ui.setup.nothing_to_review';
   return null;
 }
 
@@ -125,12 +180,12 @@ export function choiceOf(state: SetupState): SetupChoice {
   if (title) choice.title = title;
   if (state.kind === 'git') {
     choice.snapshot = state.snapshot;
-    choice.base = state.git ? baseOf(state.git) : '';
+    choice.base = state.git ? baseFor(state, state.git) : '';
   } else if (state.kind === 'workspace') {
     choice.snapshot = state.snapshot;
     choice.repos = rowsOf(state).map(function (r) {
-      var one: { path: string; base: string; target?: string } = { path: r.info.path, base: baseOf(r) };
-      if (r.target.trim() !== 'HEAD') one.target = r.target.trim();
+      var one: { path: string; base: string; target?: string } = { path: r.info.path, base: baseFor(state, r) };
+      if (targetOf(r) !== 'HEAD') one.target = targetOf(r);
       return one;
     });
   }

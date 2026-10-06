@@ -61,6 +61,21 @@ pub struct RepoInfo {
     pub default_branch: Option<String>,
     /// Best first: where the work left the default branch, its tip, `HEAD`.
     pub candidates: Vec<Candidate>,
+    /// The base a review of it starts from, which leaves it something to
+    /// review: where the work left the default branch -- or, where that is
+    /// `HEAD` itself (the default branch is what is checked out), the
+    /// commit before `HEAD`.
+    pub suggested: Suggested,
+}
+
+/// See [`RepoInfo::suggested`].
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct Suggested {
+    #[serde(flatten)]
+    pub commit: CommitRef,
+    /// `fork` (where the work left the default branch), `previous` (the
+    /// commit before `HEAD`), or `head` (`HEAD` itself: nothing came before).
+    pub why: &'static str,
 }
 
 /// Whether a kind of review can be made here, and why not.
@@ -108,14 +123,73 @@ pub struct Preview {
     pub files: usize,
 }
 
-/// What comparing from a base up to a target takes in: the target, and
-/// how many commits.
+/// What comparing from a base up to a target takes in: the target, how many
+/// commits, how many files differ, and which commits they are (newest first,
+/// as many as [`SPAN_IDS`]: what the graph marks).
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct Span {
     #[serde(flatten)]
     pub commit: CommitRef,
     pub commits: usize,
+    pub files: usize,
+    pub ids: Vec<String>,
+    /// The base, as an id (what was asked for may be a name: `HEAD~3`).
+    pub from: String,
 }
+
+/// The most commits of a span named one by one.
+pub const SPAN_IDS: usize = 1000;
+
+/// A name a commit of the graph goes by.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct GraphRef {
+    pub name: String,
+    /// `head` (`HEAD` itself), `branch`, `remote` (a remote-tracking
+    /// branch) or `tag`.
+    pub kind: &'static str,
+}
+
+/// One commit of the graph, with where it is drawn: its column (`lane`),
+/// the columns whose lines come down into it from the row above (`up`),
+/// the columns its lines go on down in to its parents (`down`), and the
+/// columns whose lines pass by it (`through`).
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct GraphRow {
+    #[serde(flatten)]
+    pub commit: CommitRef,
+    pub author: String,
+    /// When it was committed (RFC 3339, UTC): the page says it in the
+    /// reader's time.
+    pub at: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub refs: Vec<GraphRef>,
+    pub lane: usize,
+    pub up: Vec<usize>,
+    pub down: Vec<usize>,
+    pub through: Vec<usize>,
+}
+
+/// The history of a repository as the first screen draws it: the commits of
+/// its local branches and `HEAD`, newest first, as far back as the work on
+/// `HEAD` left the default branch (and a few before) or four weeks,
+/// whichever goes further.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct Graph {
+    pub rows: Vec<GraphRow>,
+    /// How many columns the lines take.
+    pub lanes: usize,
+    /// Whether there are older commits than these (asked for with a limit).
+    pub more: bool,
+}
+
+/// How many commits before the fork point the graph shows.
+const GRAPH_BEFORE_FORK: usize = 10;
+/// How far back in time the graph goes at least.
+const GRAPH_DAYS: i64 = 28;
+/// What it shows when neither says anything (no default branch, and nothing
+/// lately), and the most it shows unless asked for more.
+const GRAPH_LEAST: usize = 20;
+const GRAPH_MOST: usize = 500;
 
 /// A directory's files as they are.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -243,6 +317,12 @@ impl Setup {
         span_of(&self.repo_of(path)?, base, target)
     }
 
+    /// The history of `path` (empty: the one repository) to choose from.
+    pub fn graph(&self, path: &str, limit: Option<usize>) -> Result<Graph> {
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        graph_of(&self.repo_of(path)?, limit, now)
+    }
+
     /// A repository named by hand (one deeper than they are looked for).
     pub fn repo_at(&self, path: &str) -> Result<RepoInfo> {
         repo_info(&self.project, path)
@@ -347,7 +427,162 @@ pub fn span_of(repo: &Repo, base: &str, target: &str) -> Result<Span> {
     Ok(Span {
         commit: commit_ref(repo, &to)?,
         commits: repo.count_commits(&from, &to)?,
+        files: repo.count_changed_files(&from, &to)?,
+        ids: repo.commit_ids(&from, &to, SPAN_IDS)?,
+        from,
     })
+}
+
+/// The graph of `repo` (see [`Graph`]): as far as it goes of itself, or, with
+/// a `limit`, that many commits. `now` is the time it is (seconds).
+pub fn graph_of(repo: &Repo, limit: Option<usize>, now: i64) -> Result<Graph> {
+    let asked = limit.unwrap_or(GRAPH_MOST).clamp(1, 5000);
+    let history = repo.history(asked + 1)?;
+    let shown = match limit {
+        Some(n) => n.min(history.len()),
+        None => {
+            let head = repo.commit_id("HEAD")?;
+            let fork = repo
+                .default_branch()
+                .and_then(|b| repo.merge_base(&b, &head).ok());
+            let to_fork = fork
+                .and_then(|f| history.iter().position(|e| e.id == f))
+                .map_or(0, |i| i + 1 + GRAPH_BEFORE_FORK);
+            let since = now - GRAPH_DAYS * 24 * 60 * 60;
+            let to_date = history
+                .iter()
+                .rposition(|e| e.at >= since)
+                .map_or(0, |i| i + 1);
+            let n = to_fork.max(to_date);
+            (if n == 0 { GRAPH_LEAST } else { n })
+                .min(asked)
+                .min(history.len())
+        }
+    };
+    let more = history.len() > shown;
+    let head = repo.commit_id("HEAD").ok();
+    let mut names: std::collections::HashMap<String, Vec<GraphRef>> = Default::default();
+    if let Some(head) = &head {
+        names.entry(head.clone()).or_default().push(GraphRef {
+            name: "HEAD".into(),
+            kind: "head",
+        });
+    }
+    for (id, name, kind) in repo.refs()? {
+        names.entry(id).or_default().push(GraphRef { name, kind });
+    }
+    let entries = &history[..shown];
+    let placed = lay_out(entries);
+    let lanes = placed.iter().map(|p| p.width).max().unwrap_or(0);
+    let rows = entries
+        .iter()
+        .zip(placed)
+        .map(|(e, p)| GraphRow {
+            commit: CommitRef {
+                id: e.id.clone(),
+                short: e.id.chars().take(7).collect(),
+                subject: e.subject.clone(),
+            },
+            author: e.author.clone(),
+            at: time::OffsetDateTime::from_unix_timestamp(e.at)
+                .ok()
+                .and_then(|t| {
+                    t.format(&time::format_description::well_known::Rfc3339)
+                        .ok()
+                })
+                .unwrap_or_default(),
+            refs: names.remove(&e.id).unwrap_or_default(),
+            lane: p.lane,
+            up: p.up,
+            down: p.down,
+            through: p.through,
+        })
+        .collect();
+    Ok(Graph { rows, lanes, more })
+}
+
+/// Where one commit of the graph is drawn (see [`GraphRow`]), and how many
+/// columns are taken at its row.
+#[derive(Debug, PartialEq, Eq)]
+struct Placed {
+    lane: usize,
+    up: Vec<usize>,
+    down: Vec<usize>,
+    through: Vec<usize>,
+    width: usize,
+}
+
+/// The columns of a graph, newest commit first: each column waits for the
+/// commit its line goes down to. A commit takes the first column waiting for
+/// it (or a free one: a tip nothing came down to), and its first parent goes
+/// on in that column -- or in one to its left already waiting for it; one to
+/// its right waits too, so that lines meet in the leftmost. Each other parent
+/// goes in a column already waiting for it, or a free one. The columns of the
+/// others go straight past.
+fn lay_out(entries: &[crate::git::LogEntry]) -> Vec<Placed> {
+    let mut waiting: Vec<Option<&str>> = Vec::new();
+    let mut out = Vec::new();
+    let free = |waiting: &mut Vec<Option<&str>>| -> usize {
+        match waiting.iter().position(Option::is_none) {
+            Some(i) => i,
+            None => {
+                waiting.push(None);
+                waiting.len() - 1
+            }
+        }
+    };
+    for e in entries {
+        let up: Vec<usize> = waiting
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| **w == Some(e.id.as_str()))
+            .map(|(i, _)| i)
+            .collect();
+        let through: Vec<usize> = waiting
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| w.is_some_and(|w| w != e.id))
+            .map(|(i, _)| i)
+            .collect();
+        let lane = match up.first() {
+            Some(&i) => i,
+            None => free(&mut waiting),
+        };
+        for &i in &up {
+            waiting[i] = None;
+        }
+        let mut down = Vec::new();
+        for (k, parent) in e.parents.iter().enumerate() {
+            let already = waiting.iter().position(|w| *w == Some(parent.as_str()));
+            let at = match already {
+                Some(i) if k > 0 || i < lane => i,
+                _ if k == 0 => lane,
+                _ => free(&mut waiting),
+            };
+            waiting[at] = Some(parent.as_str());
+            if !down.contains(&at) {
+                down.push(at);
+            }
+        }
+        while waiting.last().is_some_and(Option::is_none) {
+            waiting.pop();
+        }
+        let width = up
+            .iter()
+            .chain(&down)
+            .chain(&through)
+            .chain(std::iter::once(&lane))
+            .max()
+            .map_or(1, |m| m + 1);
+        out.push(Placed {
+            lane,
+            up,
+            down,
+            through,
+            width,
+        });
+    }
+    out
 }
 
 /// One repository to add to a review of several, from `rev` up to
@@ -477,12 +712,29 @@ fn describe_repo(repo: &Repo, path: String) -> std::result::Result<RepoInfo, Str
             branch: None,
         },
     )?;
+    // Where the work left the default branch, unless that is `HEAD` itself
+    // (nothing to review from there): then the commit before it.
+    let fork = default_branch
+        .as_deref()
+        .and_then(|b| repo.merge_base(b, &head).ok())
+        .filter(|f| *f != head);
+    let (suggested, why) = match fork {
+        Some(fork) => (fork, "fork"),
+        None => match repo.commit_id(&format!("{head}~1")) {
+            Ok(previous) => (previous, "previous"),
+            Err(_) => (head.clone(), "head"),
+        },
+    };
     Ok(RepoInfo {
         path,
         branch: repo.current_branch(),
         head: describe(&head)?,
         default_branch,
         candidates,
+        suggested: Suggested {
+            commit: describe(&suggested)?,
+            why,
+        },
     })
 }
 
@@ -527,6 +779,40 @@ mod tests {
         (c1, c2)
     }
 
+    /// A commit at `dir` of a file `name` written `text`, committed at `at`
+    /// (seconds since 1970): its id.
+    fn commit_at(dir: &Path, name: &str, text: &str, at: i64) -> String {
+        std::fs::write(dir.join(name), text).unwrap();
+        git(dir, &["add", "-A"]);
+        let out = Command::new("git")
+            .current_dir(dir)
+            .env("GIT_COMMITTER_DATE", format!("@{at} +0000"))
+            .env("GIT_AUTHOR_DATE", format!("@{at} +0000"))
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(["commit", "-q", "-m", text.trim()])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        git(dir, &["rev-parse", "HEAD"])
+    }
+
+    fn entry(id: &str, parents: &[&str]) -> crate::git::LogEntry {
+        crate::git::LogEntry {
+            id: id.into(),
+            parents: parents.iter().map(|p| p.to_string()).collect(),
+            author: String::new(),
+            at: 0,
+            subject: String::new(),
+        }
+    }
+
     fn setup_in(dir: &Path) -> Setup {
         Setup {
             review: dir.join("r.diffnote"),
@@ -536,6 +822,169 @@ mod tests {
             snapshot: None,
             create: Arc::new(|_| Ok(String::new())),
         }
+    }
+
+    #[test]
+    fn a_line_of_commits_is_one_column() {
+        let placed = lay_out(&[entry("c", &["b"]), entry("b", &["a"]), entry("a", &[])]);
+        let lanes: Vec<_> = placed
+            .iter()
+            .map(|p| (p.lane, p.up.clone(), p.down.clone()))
+            .collect();
+        assert_eq!(
+            lanes,
+            [
+                (0, vec![], vec![0]),
+                (0, vec![0], vec![0]),
+                (0, vec![0], vec![])
+            ]
+        );
+        assert!(placed.iter().all(|p| p.through.is_empty() && p.width == 1));
+    }
+
+    #[test]
+    fn a_branch_takes_a_column_of_its_own_until_it_is_merged() {
+        // m merges f into c; f and c both come from b.
+        //   m      lane 0, down to c (0) and f (1)
+        //   f      lane 1, c's line passes by at 0
+        //   c      lane 0, f's line passes by at 1
+        //   b      lane 0, both come into it
+        let placed = lay_out(&[
+            entry("m", &["c", "f"]),
+            entry("f", &["b"]),
+            entry("c", &["b"]),
+            entry("b", &[]),
+        ]);
+        assert_eq!((placed[0].lane, placed[0].down.clone()), (0, vec![0, 1]));
+        assert_eq!(
+            (
+                placed[1].lane,
+                placed[1].up.clone(),
+                placed[1].through.clone()
+            ),
+            (1, vec![1], vec![0])
+        );
+        assert_eq!((placed[2].lane, placed[2].through.clone()), (0, vec![1]));
+        assert_eq!(
+            (placed[3].lane, placed[3].up.clone()),
+            (0, vec![0, 1]),
+            "both lines end in it"
+        );
+        assert_eq!(placed.iter().map(|p| p.width).max(), Some(2));
+    }
+
+    #[test]
+    fn a_tip_nothing_came_down_to_starts_a_column_of_its_own() {
+        // Two branches' tips, newest first: `x` (from b) is no one's parent.
+        let placed = lay_out(&[entry("c", &["b"]), entry("x", &["b"]), entry("b", &[])]);
+        assert_eq!((placed[1].lane, placed[1].up.clone()), (1, vec![]));
+        assert_eq!(
+            placed[1].down,
+            vec![0],
+            "its parent is already waited for in column 0"
+        );
+        assert_eq!(placed[2].up, vec![0]);
+    }
+
+    #[test]
+    fn the_graph_goes_back_past_the_fork_or_four_weeks_whichever_is_further() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("r");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        git(&repo_dir, &["init", "-q", "-b", "main"]);
+        let day = 24 * 60 * 60;
+        let now = 1_800_000_000;
+        // 60 old commits on main (a year ago), then a branch of 3 recent ones.
+        let mut ids = Vec::new();
+        for n in 0..60 {
+            ids.push(commit_at(
+                &repo_dir,
+                "a.txt",
+                &format!("main {n}\n"),
+                now - 365 * day + n,
+            ));
+        }
+        git(&repo_dir, &["checkout", "-q", "-b", "feature"]);
+        for n in 0..3 {
+            commit_at(&repo_dir, "a.txt", &format!("feature {n}\n"), now - day + n);
+        }
+        let repo = Repo::at(&repo_dir);
+        let graph = graph_of(&repo, None, now).unwrap();
+        // The 3, the fork, and 10 before it; the 4 weeks have only the 3.
+        assert_eq!(graph.rows.len(), 3 + 1 + GRAPH_BEFORE_FORK);
+        assert!(graph.more);
+        assert!(
+            graph.rows[0].refs.iter().any(|r| r.kind == "head")
+                && graph.rows[0].refs.iter().any(|r| r.name == "feature")
+        );
+        assert!(
+            graph.rows[3]
+                .refs
+                .iter()
+                .any(|r| r.name == "main" && r.kind == "branch")
+        );
+        assert_eq!(graph.rows[3].commit.id, ids[59]);
+        // Asked for more: as many as that.
+        let more = graph_of(&repo, Some(40), now).unwrap();
+        assert_eq!(more.rows.len(), 40);
+        let all = graph_of(&repo, Some(1000), now).unwrap();
+        assert_eq!(all.rows.len(), 63);
+        assert!(!all.more);
+        // Everything lately: four weeks of commits, more than the fork asks for.
+        let busy = graph_of(&repo, None, now - 365 * day + 27 * day).unwrap();
+        assert_eq!(
+            busy.rows.len(),
+            63,
+            "all of them are within the four weeks then"
+        );
+    }
+
+    #[test]
+    fn the_suggested_base_leaves_something_to_review() {
+        let dir = tempfile::tempdir().unwrap();
+        let (c1, _) = repo_on_a_branch(&dir.path().join("r"));
+        let r = dir.path().join("r");
+        // On `feature`: where it left main.
+        let info = describe_repo(&Repo::at(&r), String::new()).unwrap();
+        assert_eq!(
+            (info.suggested.commit.id.as_str(), info.suggested.why),
+            (c1.as_str(), "fork")
+        );
+        // On `main` itself: the commit before `HEAD`.
+        git(&r, &["checkout", "-q", "main"]);
+        std::fs::write(r.join("c.txt"), "c\n").unwrap();
+        git(&r, &["add", "-A"]);
+        git(&r, &["commit", "-q", "-m", "c3"]);
+        let info = describe_repo(&Repo::at(&r), String::new()).unwrap();
+        assert_eq!(
+            (info.suggested.commit.id.as_str(), info.suggested.why),
+            (c1.as_str(), "previous")
+        );
+        // One commit, nothing before it: `HEAD`.
+        let lone = dir.path().join("lone");
+        std::fs::create_dir_all(&lone).unwrap();
+        git(&lone, &["init", "-q", "-b", "main"]);
+        std::fs::write(lone.join("a.txt"), "a\n").unwrap();
+        git(&lone, &["add", "-A"]);
+        git(&lone, &["commit", "-q", "-m", "c1"]);
+        assert_eq!(
+            describe_repo(&Repo::at(&lone), String::new())
+                .unwrap()
+                .suggested
+                .why,
+            "head"
+        );
+    }
+
+    #[test]
+    fn a_span_says_how_many_commits_and_files_and_which_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        let (c1, c2) = repo_on_a_branch(dir.path());
+        let span = span_of(&Repo::at(dir.path()), &c1, &c2).unwrap();
+        assert_eq!((span.commits, span.files), (1, 2), "a.txt and b.txt");
+        assert_eq!(span.ids, vec![c2.clone()]);
+        let none = span_of(&Repo::at(dir.path()), &c2, &c2).unwrap();
+        assert_eq!((none.commits, none.files, none.ids.len()), (0, 0, 0));
     }
 
     #[test]

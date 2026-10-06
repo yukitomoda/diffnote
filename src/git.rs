@@ -27,6 +27,18 @@ pub struct TreeEntry {
 
 /// A git repository, addressed by any directory inside it. All commands
 /// run as `git -C <dir>`, so nothing depends on the process's cwd.
+/// One commit of [`Repo::history`]: its id, its parents' ids, who wrote it,
+/// when it was committed (seconds since 1970), and the first line of what
+/// it says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogEntry {
+    pub id: String,
+    pub parents: Vec<String>,
+    pub author: String,
+    pub at: i64,
+    pub subject: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct Repo {
     dir: PathBuf,
@@ -253,6 +265,92 @@ impl Repo {
         cmd.args(["diff", "--name-only", "-z", base, head, "--"]);
         let out = run(cmd)?;
         Ok(out.split(|b| *b == 0).filter(|p| !p.is_empty()).count())
+    }
+
+    /// Up to `limit` commits of every local branch and of `HEAD`, newest
+    /// first and each before its parents (as `git log --topo-order` has
+    /// them): what the first screen draws its graph from.
+    pub fn history(&self, limit: usize) -> Result<Vec<LogEntry>> {
+        let mut cmd = self.git();
+        cmd.args([
+            "log",
+            "--topo-order",
+            "-z",
+            "--format=%H\x1f%P\x1f%an\x1f%ct\x1f%s",
+        ])
+        .arg(format!("--max-count={limit}"))
+        .args(["--branches", "HEAD", "--"]);
+        let mut out = Vec::new();
+        for record in run_text(cmd)?.split('\0').filter(|r| !r.trim().is_empty()) {
+            let mut field = record.trim_start_matches('\n').split('\x1f');
+            let (Some(id), Some(parents), Some(author), Some(at), Some(subject)) = (
+                field.next(),
+                field.next(),
+                field.next(),
+                field.next(),
+                field.next(),
+            ) else {
+                continue;
+            };
+            out.push(LogEntry {
+                id: id.to_string(),
+                parents: parents.split_whitespace().map(str::to_string).collect(),
+                author: author.to_string(),
+                at: at.trim().parse().unwrap_or(0),
+                subject: subject.to_string(),
+            });
+        }
+        Ok(out)
+    }
+
+    /// The names that point at commits: local branches, remote-tracking
+    /// branches and tags, each as (the commit's id, its short name, which
+    /// of the three). A remote's own `HEAD` (`origin/HEAD`) is left out: it
+    /// only says which of its branches is the default.
+    pub fn refs(&self) -> Result<Vec<(String, String, &'static str)>> {
+        let mut cmd = self.git();
+        cmd.args([
+            "for-each-ref",
+            "--format=%(objectname)\x1f%(*objectname)\x1f%(refname)",
+            "refs/heads",
+            "refs/remotes",
+            "refs/tags",
+        ]);
+        let mut out = Vec::new();
+        for line in run_text(cmd)?.lines() {
+            let mut field = line.split('\x1f');
+            let (Some(object), Some(peeled), Some(name)) =
+                (field.next(), field.next(), field.next())
+            else {
+                continue;
+            };
+            // (An annotated tag names a tag object; the commit is what it peels to.)
+            let id = if peeled.is_empty() { object } else { peeled };
+            let (kind, short) = if let Some(n) = name.strip_prefix("refs/heads/") {
+                ("branch", n)
+            } else if let Some(n) = name.strip_prefix("refs/remotes/") {
+                ("remote", n)
+            } else if let Some(n) = name.strip_prefix("refs/tags/") {
+                ("tag", n)
+            } else {
+                continue;
+            };
+            if kind == "remote" && short.ends_with("/HEAD") {
+                continue;
+            }
+            out.push((id.to_string(), short.to_string(), kind));
+        }
+        Ok(out)
+    }
+
+    /// The commits `base..head` has, newest first, at most `limit` of them.
+    pub fn commit_ids(&self, base: &str, head: &str, limit: usize) -> Result<Vec<String>> {
+        let mut cmd = self.git();
+        cmd.arg("rev-list")
+            .arg(format!("--max-count={limit}"))
+            .arg(format!("{base}..{head}"))
+            .arg("--");
+        Ok(run_text(cmd)?.lines().map(str::to_string).collect())
     }
 
     /// Where `a` and `b` last met: their nearest common ancestor.

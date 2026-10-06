@@ -1221,8 +1221,6 @@ ui:
       {commits} コミット
     span_none: |-
       差分なし
-    to_head: |-
-      HEAD まで {span}
     on_branch: |-
       ブランチ: {branch}
     detached: |-
@@ -1237,8 +1235,6 @@ ui:
       比較対象
     target_hint: |-
       取り込むたびに、ここまでの変更を見ます。ブランチ名かコミット(既定は HEAD)。
-    target_unchecked: |-
-      比較対象の確認が終わるまでお待ちください
     add_path_label: |-
       リポジトリを追加する
     add_path_placeholder: |-
@@ -1275,8 +1271,100 @@ ui:
       リポジトリを 1 つ以上選んでください
     base_needed: |-
       ベースを指定してください
-    base_unchecked: |-
-      ベースの確認が終わるまでお待ちください
+    range_unchecked: |-
+      範囲の確認が終わるまでお待ちください
+    range_invalid: |-
+      範囲を確かめられないリポジトリがあります
+    nothing_to_review: |-
+      レビューする変更がありません(どこからを前にずらしてください)
+    kind_line: |-
+      レビューの対象: {kind}
+    kind_change: |-
+      変更
+    kind_done: |-
+      閉じる
+    range_label: |-
+      レビューする範囲
+    bulk_label: |-
+      どこから(すべてのリポジトリ)
+    bulk_suggested: |-
+      ブランチが分かれた所から
+    bulk_suggested_hint: |-
+      既定のブランチから分かれた所。今が既定のブランチの上なら、直前のコミットから
+    bulk_last_before: |-
+      直前の
+    bulk_last_after: |-
+      コミット
+    bulk_note: |-
+      リポジトリごとに変えたいときは、そのリポジトリを選んで「どこから」を変えます
+    from_label: |-
+      どこから
+    from_custom: |-
+      このリポジトリだけ指定しています(このコミットの状態から比べます)
+    from_fork: |-
+      ブランチが分かれた所(このコミットの状態から比べます)
+    from_previous: |-
+      直前のコミット(今は既定のブランチの上にいます)
+    from_head: |-
+      HEAD(この前にコミットがありません)
+    from_last: |-
+      直前の {n} コミット
+    to_label: |-
+      どこまで
+    to_hint: |-
+      取り込むたびに、ここまでを見ます。HEAD やブランチ名なら、その時の位置まで
+    to_head_only: |-
+      取り込むたびに、HEAD までを見ます
+    uncustom: |-
+      すべてのリポジトリの設定に戻す
+    custom_badge: |-
+      個別
+    range: |-
+      {commits} コミット・{files} ファイル
+    totals: |-
+      {repos} リポジトリ・{commits} コミット・{files} ファイルをレビューします
+    totals_one: |-
+      {commits} コミット・{files} ファイルをレビューします
+    more_label: |-
+      詳しい設定
+    graph_heading: |-
+      {repo} の履歴
+    graph_heading_one: |-
+      履歴
+    graph_hint: |-
+      行にマウスを載せると、範囲の端を選べます
+    graph_hint_from: |-
+      行にマウスを載せると、どこからを選べます
+    graph_loading: |-
+      履歴を読み込んでいます…
+    graph_from: |-
+      ここから
+    graph_from_title: |-
+      このコミットの状態から比べます
+    graph_to: |-
+      ここまで
+    graph_to_title: |-
+      このコミットの状態まで比べます
+    graph_to_name_title: |-
+      この名前の状態まで比べます(取り込むたびに、この名前の今の位置まで)
+    graph_to_name_head: |-
+      今の作業位置。取り込むたびに進む
+    graph_to_name_branch: |-
+      ブランチ。取り込むたびに、その先端まで
+    graph_to_name_tag: |-
+      タグ
+    graph_to_name_remote: |-
+      リモートのブランチ。取り込むたびに、その先端まで
+    graph_to_commit: |-
+      このコミットに固定(動かない)
+    graph_to_commit_title: |-
+      このコミットの状態まで比べます(取り込んでも、ここから先は見ません)
+    graph_from_mark: |-
+      ここから
+    graph_to_mark: |-
+      ここまで
+    graph_more: |-
+      もっと前を表示
 
   repos:
     heading: |-
