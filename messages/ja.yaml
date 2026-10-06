@@ -1119,17 +1119,15 @@ ui:
     tab_search: |-
       検索
     tab_title: |-
-      ファイル名・差分・コメントを検索(Ctrl+F)
+      検索(Ctrl+F)
     placeholder: |-
-      検索(ファイル名・差分・コメント)
+      検索
     case_title: |-
-      大文字と小文字を区別する
+      大文字と小文字を区別
     prev_title: |-
-      前の一致(Shift+Enter)
+      前へ
     next_title: |-
-      次の一致(Enter)
-    hint: |-
-      たたんだファイルも探します(差分の外の行は対象外です)
+      次へ
     none: |-
       一致なし
     count: |-
@@ -1137,15 +1135,15 @@ ui:
     count_at: |-
       {at} / {n}
     capped: |-
-      {n} 件を超えたので、ここまでを表示しています
+      {n} 件以上
     comments: |-
       コメント
     review_wide: |-
       レビュー全体
     old_title: |-
-      変更前の行
+      変更前
     new_title: |-
-      変更後の行
+      変更後
   repolist:
     group_title: |-
       {path}: {target}({base} → {head})

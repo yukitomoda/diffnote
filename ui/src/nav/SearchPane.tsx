@@ -105,7 +105,7 @@ export function SearchPane(props: SearchPaneProps) {
     </div>
     <div class="diffnote-search__bar">
       <span class="diffnote-search__count" data-diffnote-search-count>
-        {!asked ? lib.m('ui.search.hint')
+        {!asked ? ''
           : !total ? lib.m('ui.search.none')
           : current >= 0 ? lib.mf('ui.search.count_at', { at: String(current + 1), n: String(total) + (result.capped ? '+' : '') })
           : lib.mf('ui.search.count', { n: String(total) + (result.capped ? '+' : '') })}
