@@ -74,6 +74,7 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-search__input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 4px 8px; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; }
 .diffnote-search__input:focus { outline: 2px solid color-mix(in srgb, var(--diffnote-color-accent) 50%, transparent); outline-offset: -1px; }
 .diffnote-search__case { font: inherit; font-size: 12px; font-weight: 600; padding: 0 7px; color: var(--diffnote-color-muted); background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
+.diffnote-search__scope { font: inherit; font-size: 12px; padding: 0 2px; color: var(--diffnote-color-fg); background: var(--diffnote-color-bg); border: 1px solid var(--diffnote-color-border); border-radius: 6px; }
 .diffnote-search__case.is-on { color: var(--diffnote-color-accent); border-color: var(--diffnote-color-accent); background: color-mix(in srgb, var(--diffnote-color-accent) 10%, transparent); }
 .diffnote-search__bar { display: flex; align-items: center; gap: 2px; padding: 4px 4px 4px 8px; }
 .diffnote-search__count { flex: 1; min-width: 0; font-size: 12px; color: var(--diffnote-color-muted); }

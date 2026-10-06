@@ -1224,6 +1224,20 @@ impl Server {
                     Err(message) => refused(message),
                 }
             }
+            // Lines of the files named (`path`, each) that `q` may be in, for
+            // the page to search what the diffs leave out (it says, itself,
+            // where in each line it is).
+            "search" => Reply::json(
+                200,
+                &serde_json::json!({ "ok": true, "lines": html::search_lines(
+                    &loaded,
+                    revision,
+                    &query_params(query, "path"),
+                    &param("q"),
+                    param("case") == "1",
+                    self.git(),
+                ) }),
+            ),
             "open" => match html::opened_data(&loaded, revision, &param("path"), self.git()) {
                 Ok(file) => Reply::json(200, &serde_json::json!({ "ok": true, "file": file })),
                 Err(message) => refused(message),
@@ -2320,6 +2334,16 @@ fn attached_name(target: &str) -> Option<String> {
     }
     let name = crate::image::file_name(&asked);
     (name != "image.png").then_some(name)
+}
+
+/// Every value of `key` in a query (`path=a&path=b`), each as `query_param`
+/// reads one.
+fn query_params(query: &str, key: &str) -> Vec<String> {
+    query
+        .split('&')
+        .filter(|p| p.split_once('=').is_some_and(|(k, _)| k == key))
+        .filter_map(|p| query_param(p, key))
+        .collect()
 }
 
 fn query_param(query: &str, key: &str) -> Option<String> {
@@ -4965,6 +4989,40 @@ mod tests {
             get(&f, "/api/files/0/lines?path=nope.txt&from=1&count=3").status,
             400
         );
+    }
+
+    #[test]
+    fn the_lines_of_the_files_named_that_may_have_what_is_searched_for_are_given() {
+        let f = fixture_with_a_tree();
+        let found = |q: &str| -> Vec<(String, u64, String)> {
+            json(&get(&f, &format!("/api/files/0/search?{q}")))["lines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|l| {
+                    (
+                        l["path"].as_str().unwrap().to_string(),
+                        l["line"].as_u64().unwrap(),
+                        l["text"].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect()
+        };
+        // Every line of the files named, by its number: `line 120` and `line 1200`.
+        let hits = found("q=LINE%20120&path=big.txt");
+        assert_eq!(
+            hits,
+            [
+                ("big.txt".to_string(), 120, "line 120".to_string()),
+                ("big.txt".to_string(), 1200, "line 1200".to_string())
+            ]
+        );
+        // As written, when the case counts; only in the files named.
+        assert!(found("q=LINE%20120&case=1&path=big.txt").is_empty());
+        assert!(found("q=line%20120").is_empty(), "no file named");
+        assert!(found("q=&path=big.txt").is_empty(), "nothing to search for");
+        // A file that isn't there (or isn't text) has nothing to give.
+        assert!(found("q=line&path=nope.txt&path=bin.dat").is_empty());
     }
 
     #[test]

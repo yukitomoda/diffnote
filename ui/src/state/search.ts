@@ -9,6 +9,8 @@ export type SidebarView = 'files' | 'search';
 export const sidebarView = atom<SidebarView>('files');
 
 export const searchText = atom('');
+/** How far a search goes (see `SearchScope`). */
+export const searchScope = atom<'diff' | 'file'>('diff');
 export const searchCase = atom(false);
 /** Which hit is the one gone to (its place in `SearchResult.all`); -1 for
  * none yet. */

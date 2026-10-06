@@ -10,6 +10,10 @@ import { useStore } from '@nanostores/preact';
 import { ActionsContext, ComposeContext, OpenedContext } from '../state/contexts.ts';
 import { isViewed, seen, toggleViewed } from '../state/viewed.ts';
 import { allFolded } from '../state/view.ts';
+import { setRevealer } from '../state/reveal.ts';
+
+/** How many lines past a line the diff leaves out are shown with it. */
+var REVEAL_AROUND = 3;
 import { Card } from '../thread/Card.tsx';
 import { Composer } from '../thread/Composer.tsx';
 import type { Token } from '../model.ts';
@@ -58,33 +62,60 @@ export function File(props: FileProps) {
   // What the diff of the file adds and removes, as it is shown (so, with white
   // space ignored if it is).
   var stat = lib.diffStat(ctx.ignoreSpace ? lib.withoutSpaceChanges(file) : file);
+  // `count` lines of left-out place `g`, from its `offset`, as their pieces:
+  // carried by the page (in pieces, or as text, shown without colors), or
+  // asked of the server.
+  var linesOf = function (g: NonNullable<NonNullable<typeof file.gaps>[number]>, offset: number, count: number): Promise<Token[][]> {
+    if (g.t) return Promise.resolve(g.t.slice(offset, offset + count));
+    if (g.s) return Promise.resolve(g.s.slice(offset, offset + count).map(function (text) { return [text]; }));
+    var part = function (from: number, left: number, acc: Token[][]): Promise<Token[][]> {
+      var take = Math.min(left, 1000);
+      return server().get<{ lines: Token[][] }>('api/files/' + ctx.rev + '/lines?path=' + encodeURIComponent(file.path) + '&from=' + (g.w + from) + '&count=' + take).then(function (res) {
+        if (!res.ok || res.lines.length === 0) return acc;
+        acc = acc.concat(res.lines);
+        return left > take ? part(from + take, left - take, acc) : acc;
+      });
+    };
+    return part(offset, count, []);
+  };
+  var show = function (g: NonNullable<NonNullable<typeof file.gaps>[number]>, offset: number, count: number): Promise<void> {
+    return linesOf(g, offset, count).then(function (lines) {
+      setRevealed(function (cur) {
+        var all: Record<number, Token[]> = Object.assign({}, cur);
+        lines.forEach(function (pieces, i) { all[g.w + offset + i] = pieces; });
+        return all;
+      });
+    });
+  };
   var expand: Expand = function (gap, where) {
     const g = (file.gaps || [])[gap];
     const req = g && lib.expandRequest(g, shown[gap] || { top: [], bottom: [] }, where);
     if (!g || !req) return Promise.resolve();
     // Rows of the file are counted by position: what was chosen is let go.
     if (compose && compose!.sel && compose!.sel.path === file.path) compose!.close();
-    var get = function (offset: number, count: number): Promise<Token[][]> {
-      var held = g.t;
-      if (held) return Promise.resolve(held.slice(offset, offset + count));
-      var part = function (from: number, left: number, acc: Token[][]): Promise<Token[][]> {
-        var take = Math.min(left, 1000);
-        return server().get<{ lines: Token[][] }>('api/files/' + ctx.rev + '/lines?path=' + encodeURIComponent(file.path) + '&from=' + (g.w + from) + '&count=' + take).then(function (res) {
-          if (!res.ok || res.lines.length === 0) return acc;
-          acc = acc.concat(res.lines);
-          return left > take ? part(from + take, left - take, acc) : acc;
-        });
-      };
-      return part(offset, count, []);
-    };
-    return get(req.offset, req.count).then(function (lines) {
-      setRevealed(function (cur) {
-        var all: Record<number, Token[]> = Object.assign({}, cur);
-        lines.forEach(function (pieces, i) { all[g.w + req.offset + i] = pieces; });
-        return all;
-      });
-    });
+    return show(g, req.offset, req.count);
   };
+  // A line the diff leaves out, shown (a search goes to it): from the
+  // nearer end of its place to a few lines past it, as expanding shows them.
+  useEffect(function () {
+    setRevealer(ctx.rev, file.path, function (line) {
+      var gaps = file.gaps || [];
+      for (var i = 0; i < gaps.length; i++) {
+        var g = gaps[i];
+        if (!g || line < g.w || line >= g.w + g.n) continue;
+        var st = shown[i] || { top: [], bottom: [] };
+        var at = line - g.w;
+        var end = g.n - st.bottom.length;
+        if (at < st.top.length || at >= end) return Promise.resolve();
+        if (compose && compose!.sel && compose!.sel.path === file.path) compose!.close();
+        if (at - st.top.length <= end - 1 - at) return show(g, st.top.length, Math.min(at + 1 + REVEAL_AROUND, end) - st.top.length);
+        var from = Math.max(at - REVEAL_AROUND, st.top.length);
+        return show(g, from, end - from);
+      }
+      return Promise.resolve();
+    });
+    return function () { setRevealer(ctx.rev, file.path, null); };
+  });
   var composing = compose && compose!.scope && compose!.scope.kind === 'file' && compose!.scope.rev === ctx.rev && compose!.scope.path === file.path;
   // A file that was added or deleted as a whole (a binary one too) is tinted.
   var kind = file.status === 'binary' ? file.change : file.status;

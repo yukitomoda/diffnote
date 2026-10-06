@@ -16,6 +16,19 @@ export interface SearchQuery {
   caseSensitive: boolean;
 }
 
+/** How far a search goes: the diffs' lines, or the files' every line (the
+ * lines the diffs leave out too). */
+export type SearchScope = 'diff' | 'file';
+
+/** A line of a file the diff leaves out, with its text: what the server
+ * answers with, or what an exported page carries. */
+export interface GapLine {
+  path: string;
+  /** Its number on the new side (it is the same on both). */
+  line: number;
+  text: string;
+}
+
 /** Where in a text it was found: `[start, end)`, in UTF-16 units. */
 export type Span = [number, number];
 
@@ -29,6 +42,8 @@ export interface LineHit {
   text: string;
   span: Span;
   nth: number;
+  /** A line the diff leaves out: to be shown before it is gone to. */
+  gap?: boolean;
 }
 
 /** A file whose name (its path) it is in. */
@@ -92,14 +107,33 @@ export function lineText(tokens: Token[]): string {
   return tokens.map(function (t) { return typeof t === 'string' ? t : t[1]; }).join('');
 }
 
+/** The lines the diffs leave out that an exported page carries (in pieces,
+ * or as text). */
+export function carriedGapLines(files: FileData[]): GapLine[] {
+  var out: GapLine[] = [];
+  files.forEach(function (f) {
+    (f.gaps || []).forEach(function (g) {
+      if (!g) return;
+      if (g.t) g.t.forEach(function (pieces, i) { out.push({ path: f.path, line: g.w + i, text: lineText(pieces) }); });
+      else if (g.s) g.s.forEach(function (text, i) { out.push({ path: f.path, line: g.w + i, text: text }); });
+    });
+  });
+  return out;
+}
+
 /**
  * What `query` finds in a revision: its files' names and lines (`files`, in
  * the order the page shows them), and the comments of `threads`. A line both
  * sides have is counted once, on the new side; a removed one on the old.
+ * `gaps` are lines the diffs leave out, to search as well: each goes where
+ * the page has it, between the diff's lines (one the diff has after all is
+ * not counted twice).
  */
-export function searchRevision(files: FileData[], threads: ThreadData[], query: SearchQuery): SearchResult {
+export function searchRevision(files: FileData[], threads: ThreadData[], query: SearchQuery, gaps?: GapLine[]): SearchResult {
   var result: SearchResult = { files: [], comments: [], all: [], capped: false };
   if (!query.text) return result;
+  var byPath: Record<string, GapLine[]> = {};
+  (gaps || []).forEach(function (g) { (byPath[g.path] = byPath[g.path] || []).push(g); });
   var full = function (): boolean {
     if (result.all.length < SEARCH_MOST) return false;
     result.capped = true;
@@ -113,20 +147,35 @@ export function searchRevision(files: FileData[], threads: ThreadData[], query: 
       group.name = { kind: 'name', path: f.path, span: inName };
       result.all.push(group.name);
     }
+    // Each line with where the page has it: by its new number (a removed one
+    // just after the new line before it).
+    var found: { at: number; hit: LineHit }[] = [];
+    var inDiff: Record<number, boolean> = {};
+    var lastNew = 0;
     (f.hunks || []).forEach(function (h) {
       h.rows.forEach(function (row) {
-        if (full()) return;
+        if (row.n != null) { inDiff[row.n] = true; lastNew = row.n; }
         var side: Side = row.k === 'd' ? 'old' : 'new';
         var line = side === 'old' ? row.o : row.n;
         if (line == null) return;
         var text = lineText(row.t);
+        var at = side === 'old' ? lastNew + 0.5 : line;
         occurrences(text, query).forEach(function (span, nth) {
-          if (full()) return;
-          var hit: LineHit = { kind: 'line', path: f.path, side: side, line: line!, text: text, span: span, nth: nth };
-          group.lines.push(hit);
-          result.all.push(hit);
+          found.push({ at: at, hit: { kind: 'line', path: f.path, side: side, line: line!, text: text, span: span, nth: nth } });
         });
       });
+    });
+    (byPath[f.path] || []).forEach(function (g) {
+      if (inDiff[g.line]) return;
+      occurrences(g.text, query).forEach(function (span, nth) {
+        found.push({ at: g.line, hit: { kind: 'line', path: f.path, side: 'new', line: g.line, text: g.text, span: span, nth: nth, gap: true } });
+      });
+    });
+    found.sort(function (a, b) { return a.at - b.at; });
+    found.forEach(function (x) {
+      if (full()) return;
+      group.lines.push(x.hit);
+      result.all.push(x.hit);
     });
     if (group.name || group.lines.length) result.files.push(group);
   });

@@ -2,7 +2,7 @@
 // (each on its side), and the comments; in the order they are gone to.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SEARCH_MOST, excerpt, lineText, occurrences, searchRevision } from '../search.ts';
+import { SEARCH_MOST, carriedGapLines, excerpt, lineText, occurrences, searchRevision } from '../search.ts';
 
 const q = (text, caseSensitive = false) => ({ text, caseSensitive });
 const row = (k, o, n, text) => ({ k, o, n, t: [['kw', text.slice(0, 2)], text.slice(2)] });
@@ -67,4 +67,22 @@ test('a line is cut down to what is around what was found', () => {
   assert.equal(e.head, '…' + 'a'.repeat(10));
   assert.equal(e.found, 'FOUND');
   assert.ok(e.tail.endsWith('…') && e.tail.length <= 40);
+});
+
+test('the lines the diff leaves out go where the page has them, and a line the diff has is not counted twice', () => {
+  const f = file('a.ts', [row('c', 10, 10, 'login ten'), row('d', 11, null, 'old login'), row('a', null, 11, 'new login')]);
+  const gaps = [
+    { path: 'a.ts', line: 3, text: 'login three' },
+    { path: 'a.ts', line: 11, text: 'new login' }, // the diff has it
+    { path: 'a.ts', line: 40, text: 'login forty' },
+    { path: 'other.ts', line: 1, text: 'login' }, // not a file of the page
+  ];
+  const r = searchRevision([f], [], q('login'), gaps);
+  assert.deepEqual(r.files[0].lines.map((h) => (h.gap ? 'gap ' : '') + (h.side === 'old' ? '-' : '+') + h.line),
+    ['gap +3', '+10', '-11', '+11', 'gap +40']);
+});
+
+test('an exported page searches what it carries of the lines left out, in pieces or as text', () => {
+  const f = Object.assign(file('a.ts', []), { gaps: [{ n: 2, o: 1, w: 1, t: [['x'], [['kw', 'let'], ' y']] }, null, { n: 2, o: 9, w: 9, s: ['nine', 'ten'] }, { n: 3, o: 20, w: 20 }] });
+  assert.deepEqual(carriedGapLines([f]).map((g) => g.line + ':' + g.text), ['1:x', '2:let y', '9:nine', '10:ten']);
 });

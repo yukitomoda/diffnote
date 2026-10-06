@@ -38,6 +38,8 @@ export interface Gap {
   w: number;
   /** The lines themselves, where the page has them (an export carries some). */
   t?: Token[][];
+  /** The same as plain text, where an export carries them that way instead. */
+  s?: string[];
   /** Whether they can be had at all: the text of the file is known. */
   x?: boolean;
 }

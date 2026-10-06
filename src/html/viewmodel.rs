@@ -370,6 +370,11 @@ pub struct GapData {
     /// exported page carries some; the served page asks for them).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub t: Option<Vec<Vec<Token>>>,
+    /// The lines as plain text, where an exported page has them that way
+    /// instead (past what it carries in pieces): to search, and to show
+    /// without their colors.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s: Option<Vec<String>>,
     /// Whether they can be had at all: the text of the file is known.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub x: bool,
@@ -506,6 +511,15 @@ pub fn view_model_with(
         })
         .collect();
     revisions.reverse();
+    // An exported page has no server to ask for the lines a diff leaves out:
+    // what it doesn't carry in pieces, it carries as text (as far as there is
+    // room), to be searched and shown -- unless it was asked to carry none.
+    if !interactive && !matches!(limit, ExpandLimit::Lines(0)) {
+        let mut room = EXPORT_TEXT_MOST;
+        for (data, view) in revisions.iter_mut().zip(&views).rev() {
+            carry_gap_text(&mut data.files, view, &blobs, &mut room);
+        }
+    }
     let order = repo_order(loaded);
     for (data, s) in revisions.iter_mut().zip(&shown) {
         data.id = s.revision.id.to_string();
@@ -1344,6 +1358,7 @@ fn gaps_of(hunks: &[Hunk], text: Option<&str>) -> Vec<Option<GapData>> {
             o: old,
             w: new,
             t: None,
+            s: None,
             x: text.is_some(),
         })
     };
@@ -1421,6 +1436,102 @@ fn carry_gap_lines(
         let mut tokenizer = Tokenizer::new(guess_syntax(&path, syntax_set), syntax_set);
         gap.t = Some(lines.iter().map(|l| tokenizer.line(l)).collect());
         *budget = budget.saturating_sub(n as usize);
+    }
+}
+
+/// A line of a file that what is searched for may be in.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+pub struct FoundLine {
+    pub path: String,
+    /// Its number on the new side.
+    pub line: u32,
+    pub text: String,
+}
+
+/// The most lines a search answers with.
+const SEARCH_LINES_MOST: usize = 5000;
+
+/// The lines of the files `paths` (as revision `revision` has them, new side)
+/// that have `q` in them (upper and lower case alike, unless `case`): for the
+/// page to search what the diffs leave out. The page says, itself, where in
+/// a line it is (and so whether it is there at all, as it reads case).
+pub fn search_lines(
+    loaded: &crate::bundle::Loaded,
+    revision: usize,
+    paths: &[String],
+    q: &str,
+    case: bool,
+    git: Option<&dyn CommitFiles>,
+) -> Vec<FoundLine> {
+    let mut out = Vec::new();
+    if q.is_empty() {
+        return out;
+    }
+    let lower = q.to_lowercase();
+    for path in paths {
+        let Ok(text) = stored_text(loaded, revision, path, git) else {
+            continue;
+        };
+        for (i, line) in text.lines().enumerate() {
+            let found = if case {
+                line.contains(q)
+            } else {
+                line.to_lowercase().contains(&lower)
+            };
+            if found {
+                if out.len() >= SEARCH_LINES_MOST {
+                    return out;
+                }
+                out.push(FoundLine {
+                    path: path.clone(),
+                    line: i as u32 + 1,
+                    text: line.to_string(),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// How much of the lines a diff leaves out an exported page carries as plain
+/// text, over all its revisions (bytes).
+const EXPORT_TEXT_MOST: usize = 16 * 1024 * 1024;
+
+/// The lines a diff leaves out that a page doesn't carry in pieces, as text
+/// (`GapData::s`), place by place, for as long as `room` (bytes) lasts.
+fn carry_gap_text(
+    files: &mut [FileData],
+    view: &RevisionView,
+    blobs: &crate::digest::Blobs,
+    room: &mut usize,
+) {
+    for file in files.iter_mut() {
+        let path = file.path.clone();
+        let mut text: Option<String> = None;
+        for gap in file.gaps.iter_mut().flatten() {
+            if gap.t.is_some() || !gap.x || *room == 0 {
+                continue;
+            }
+            if text.is_none() {
+                text = new_text(view, blobs, &path).map(str::to_string);
+            }
+            let Some(text) = text.as_deref() else {
+                break;
+            };
+            let lines: Vec<String> = text
+                .lines()
+                .skip(gap.w as usize - 1)
+                .take(gap.n as usize)
+                .map(str::to_string)
+                .collect();
+            let size: usize = lines.iter().map(|l| l.len() + 1).sum();
+            if size > *room {
+                *room = 0;
+                return;
+            }
+            *room -= size;
+            gap.s = Some(lines);
+        }
     }
 }
 

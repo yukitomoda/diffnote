@@ -631,14 +631,30 @@ class ExpandLeftOutLines(BrowserCase):
         self.assertEqual(b.count(".diffnote-hunk-header"), 1, "the second hunk's @@ row is not needed")
         self.assertIn("row 50", b.text("table.diffnote-diff"))
 
-    def test_a_place_over_the_limit_is_only_named_and_the_smaller_ones_can_be_shown(self):
+    def test_a_place_over_the_limit_is_carried_as_text_and_shown_without_its_colors(self):
         self.open("some")
-        markers = self.markers()
-        # Limit 20: the places of 16 and of 17 lines fit (not both), the 53 don't.
-        buttons = self.b.js("Array.from(document.querySelectorAll('.diffnote-expand-row')).map(function(r){return r.querySelectorAll('button').length})")
-        self.assertEqual(buttons[1], 0, markers)
-        self.assertIn("含まれていません", markers[1])
-        self.assertEqual(sum(1 for n in buttons if n > 0), 1, "one of the two smaller places fits in 20")
+        b = self.b
+        # Limit 20: one of the smaller places fits in pieces; the rest are
+        # carried as text, and can be shown all the same.
+        buttons = b.js("Array.from(document.querySelectorAll('.diffnote-expand-row')).map(function(r){return r.querySelectorAll('button').length})")
+        self.assertTrue(all(n > 0 for n in buttons), self.markers())
+        self.assertFalse(any("含まれていません" in m for m in self.markers()))
+        b.js("Array.from(document.querySelectorAll('.diffnote-expand-row')).filter(function(r){return r.textContent.includes('53')})[0].querySelector('[data-diffnote-expand=all]').click()")
+        self.assertTrue(b.wait("!!document.querySelector('.diffnote-diff tr[data-diffnote-new=\"50\"]')"))
+        self.assertEqual(b.text(".diffnote-diff tr[data-diffnote-new='50'] .diffnote-line__content"), "row 50")
+
+    def test_the_search_finds_the_lines_left_out_and_shows_them(self):
+        # No server: what the page carries (here, as text) is what is searched.
+        self.open("some")
+        b = self.b
+        b.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'f', ctrlKey: true, bubbles: true}))")
+        self.assertTrue(b.wait_exists("[data-diffnote-search-input]"))
+        b.js("(function (s) { s.value = 'file'; s.dispatchEvent(new Event('change', {bubbles: true})); })(document.querySelector('[data-diffnote-search-scope]'))")
+        b.set_value("[data-diffnote-search-input]", "row 50")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-search]').dataset.diffnoteSearchAsked === 'row 50' && document.querySelector('[data-diffnote-search-count]').textContent === '1 件'"))
+        b.click("[data-diffnote-search-hit]")
+        self.assertTrue(b.wait("!!document.querySelector('.diffnote-diff tr[data-diffnote-new=\"50\"]')"))
+        self.assertTrue(b.wait("decodeURIComponent(location.hash).includes('at=lines:long.txt:R50')"))
 
     def test_with_none_carried_no_place_can_be_shown(self):
         self.open("none")

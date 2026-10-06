@@ -740,7 +740,7 @@ lib.withGaps = function (file, shown) {
       whole = left <= 0 || st.bottom.length > 0;
       if (st.top.length) hunks.push(block(st.top));
       if (left > 0) {
-        hunks.push({ marker: { gap: i, left: left, n: g.n, prev: i > 0, next: i < count, x: !!g.x, embedded: !!g.t }, header: '', rows: [] });
+        hunks.push({ marker: { gap: i, left: left, n: g.n, prev: i > 0, next: i < count, x: !!g.x, embedded: !!(g.t || g.s) }, header: '', rows: [] });
       }
       if (st.bottom.length) hunks.push(block(st.bottom));
     }

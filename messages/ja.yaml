@@ -74,7 +74,7 @@ cli:
     expand_limit_value_name: |-
       行数|all
     expand_limit: |-
-      差分に出ていない行を HTML に含める上限(`0` で含めない、`all` で全部)。
+      差分に出ていない行を、色付きで HTML に含める上限(超えた分は色なしで含める。`0` で含めない、`all` で全部)。
 
   config:
     about: |-
@@ -1124,6 +1124,12 @@ ui:
       検索
     case_title: |-
       大文字と小文字を区別
+    scope: |-
+      範囲
+    scope_diff: |-
+      差分
+    scope_file: |-
+      ファイル全体
     prev_title: |-
       前へ
     next_title: |-

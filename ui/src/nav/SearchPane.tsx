@@ -8,9 +8,11 @@ import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useStore } from '@nanostores/preact';
 import { lib } from '../lib.ts';
 import { LinksContext } from '../state/contexts.ts';
-import { searchCase, searchCurrent, searchFocus, searchText, showFiles } from '../state/search.ts';
-import { excerpt, occurrences, placeOf, searchRevision } from '../search.ts';
-import type { Hit, SearchQuery, SearchResult, Span } from '../search.ts';
+import { searchCase, searchCurrent, searchFocus, searchScope, searchText, showFiles } from '../state/search.ts';
+import { reveal } from '../state/reveal.ts';
+import { server, transport } from '../transport.ts';
+import { carriedGapLines, excerpt, occurrences, placeOf, searchRevision } from '../search.ts';
+import type { GapLine, Hit, SearchQuery, SearchResult, Span } from '../search.ts';
 import type { FileData, Placement, ThreadData } from '../model.ts';
 import { Icon } from '../icon.tsx';
 
@@ -44,11 +46,39 @@ export function SearchPane(props: SearchPaneProps) {
     return function () { clearTimeout(t); };
   }, [text]);
   var query: SearchQuery = { text: asked, caseSensitive: caseSensitive };
+  // The files' every line: the lines the diffs leave out too -- what an
+  // exported page carries, or, served, what the server finds (a hundred
+  // files at a time).
+  var scope = useStore(searchScope);
+  var _g = useState<{ for: string; lines: GapLine[] } | null>(null);
+  var gaps = _g[0];
+  var setGaps = _g[1];
+  var wanted = scope === 'file' && asked ? asked + '\0' + caseSensitive + '\0' + props.rev : '';
+  // (Asked again when the files are others, not when the same are drawn anew.)
+  var paths = props.files.map(function (f) { return f.path; });
+  var pathsKey = paths.join('\n');
+  useEffect(function () {
+    if (!wanted) { setGaps(null); return undefined; }
+    if (!transport) { setGaps({ for: wanted, lines: carriedGapLines(props.files) }); return undefined; }
+    var stale = false;
+    var asks: Promise<GapLine[]>[] = [];
+    for (var i = 0; i < paths.length; i += 100) {
+      var part = paths.slice(i, i + 100);
+      asks.push(server().get<{ lines: GapLine[] }>('api/files/' + props.rev + '/search?q=' + encodeURIComponent(asked) + '&case=' + (caseSensitive ? '1' : '0')
+        + part.map(function (p) { return '&path=' + encodeURIComponent(p); }).join('')).then(function (res) { return res.ok ? res.lines : []; }));
+    }
+    Promise.all(asks).then(function (all) {
+      if (!stale) setGaps({ for: wanted, lines: ([] as GapLine[]).concat.apply([], all) });
+    });
+    return function () { stale = true; };
+  }, [wanted, pathsKey]);
+  var waiting = !!wanted && (!gaps || gaps.for !== wanted);
   var result: SearchResult = useMemo(function () {
-    return searchRevision(props.files, props.threads, query);
-  }, [props.files, props.threads, asked, caseSensitive]);
-  // A new search starts before its first hit (Enter goes to it).
-  useEffect(function () { searchCurrent.set(-1); }, [result]);
+    return searchRevision(props.files, props.threads, query, gaps && gaps.for === wanted ? gaps.lines : undefined);
+  }, [props.files, props.threads, asked, caseSensitive, gaps, wanted]);
+  // A new search starts before its first hit (Enter goes to it). (Not when
+  // the same is found again: the one gone to stays the one.)
+  useEffect(function () { searchCurrent.set(-1); }, [asked, caseSensitive, scope, props.rev]);
   var total = result.all.length;
   var go = function (i: number) {
     if (!total) return;
@@ -56,8 +86,14 @@ export function SearchPane(props: SearchPaneProps) {
     searchCurrent.set(at);
     var hit = result.all[at];
     if (!links) return;
-    // As a link goes: the address says where, and back returns from it.
-    if (hit.kind === 'line') links.go({ kind: 'lines', path: hit.path, side: hit.side, start: hit.line, end: hit.line });
+    // As a link goes: the address says where, and back returns from it. A
+    // line the diff leaves out is shown first.
+    if (hit.kind === 'line') {
+      var line = hit;
+      (line.gap ? reveal(props.rev, line.path, line.line) : Promise.resolve()).then(function () {
+        links!.go({ kind: 'lines', path: line.path, side: line.side, start: line.line, end: line.line });
+      });
+    }
     else if (hit.kind === 'name') links.go({ kind: 'file', path: hit.path });
     else links.go({ kind: 'thread', id: hit.thread });
   };
@@ -85,7 +121,7 @@ export function SearchPane(props: SearchPaneProps) {
     var e = excerpt(t, span, before, most);
     return <span class="diffnote-search__text">{e.head}<mark>{e.found}</mark>{e.tail}</span>;
   };
-  return <div class="diffnote-search" data-diffnote-search data-diffnote-search-asked={asked}>
+  return <div class="diffnote-search" data-diffnote-search data-diffnote-search-asked={waiting ? undefined : asked}>
     <div class="diffnote-search__box">
       <input ref={box} type="search" class="diffnote-search__input" data-diffnote-search-input value={text}
         placeholder={lib.m('ui.search.placeholder')} aria-label={lib.m('ui.search.placeholder')}
@@ -103,10 +139,16 @@ export function SearchPane(props: SearchPaneProps) {
         }} />
       <button type="button" class={'diffnote-search__case' + (caseSensitive ? ' is-on' : '')} data-diffnote-search-case aria-pressed={caseSensitive}
         title={lib.m('ui.search.case_title')} onClick={function () { searchCase.set(!caseSensitive); }}>Aa</button>
+      <select class="diffnote-search__scope" data-diffnote-search-scope value={scope} aria-label={lib.m('ui.search.scope')}
+        onChange={function (e) { searchScope.set(e.currentTarget.value === 'file' ? 'file' : 'diff'); }}>
+        <option value="diff">{lib.m('ui.search.scope_diff')}</option>
+        <option value="file">{lib.m('ui.search.scope_file')}</option>
+      </select>
     </div>
     <div class="diffnote-search__bar">
       <span class="diffnote-search__count" data-diffnote-search-count>
         {!asked ? ''
+          : waiting && !total ? '…'
           : !total ? lib.m('ui.search.none')
           : current >= 0 ? lib.mf('ui.search.count_at', { at: String(current + 1), n: String(total) + (result.capped ? '+' : '') })
           : lib.mf('ui.search.count', { n: String(total) + (result.capped ? '+' : '') })}
