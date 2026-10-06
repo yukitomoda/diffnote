@@ -826,6 +826,18 @@ class LineLinks(BrowserCase):
         self.assertTrue(b.wait("decodeURIComponent(location.hash).includes('file:other.txt')"), b.js("location.hash"))
         self.assertTrue(b.wait_exists(f"{CUR} section.diffnote-file[data-diffnote-file='other.txt'].diffnote-flash"))
 
+    def test_a_right_click_in_the_file_list_copies_a_path_and_leaves_nothing_out(self):
+        # An exported page changes nothing: the menu only copies.
+        b = self.b
+        b.js("window.__copied = []; navigator.clipboard.writeText = function (t) { window.__copied.push(t); return Promise.resolve(); }")
+        b.right_click(f"{CUR} .diffnote-filelist [data-diffnote-tree-file='other.txt']")
+        self.assertTrue(b.wait_exists("[data-diffnote-tree-menu]"))
+        self.assertEqual(b.js("[...document.querySelectorAll('[data-diffnote-tree-menu] button')].map(e => e.textContent)"),
+                         ["相対パスをコピー", "名前をコピー"])
+        b.click("[data-diffnote-tree-menu] [data-diffnote-tree-copy='path']")
+        self.assertTrue(b.wait("window.__copied.length === 1"))
+        self.assertEqual(b.js("window.__copied"), ["other.txt"])
+
     def test_pressing_one_goes_to_the_lines_and_marks_them(self):
         b = self.b
         b.click("[data-diffnote-lineref]")

@@ -108,6 +108,32 @@ function jumpTo(id: string) {
   if (pinned) activate(scopeOf(card), pinned);
 }
 
+/** Puts `text` on the clipboard: whether it got there. (Where the browser
+ * has no clipboard to write to, the old way, through a selection.) */
+function writeClipboard(text: string): Promise<boolean> {
+  function fallback(): boolean {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch (err) {
+      /* nothing to do */
+    }
+    document.body.removeChild(ta);
+    return ok;
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).then(function () { return true; }, fallback);
+  }
+  return Promise.resolve(fallback());
+}
+
 // Copy buttons (file paths, thread locations). Handled before anything else
 // sees the click, since they sit inside <summary> elements.
 function copyText(text: string, button: HTMLElement) {
@@ -126,27 +152,7 @@ function copyText(text: string, button: HTMLElement) {
       button.classList.remove('is-done');
     }, 1400);
   }
-  function fallback() {
-    var ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', '');
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    try {
-      document.execCommand('copy');
-      done();
-    } catch (err) {
-      /* nothing to do */
-    }
-    document.body.removeChild(ta);
-  }
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(done, fallback);
-  } else {
-    fallback();
-  }
+  writeClipboard(text).then(function (ok) { if (ok) done(); });
 }
 
 var installed = false;
@@ -354,6 +360,8 @@ function fileSection(rev: number, path: string): HTMLElement | null {
 
 export const interact = {
   install: install,
+  // Puts text on the clipboard (a menu's item, which says nothing itself).
+  copy: writeClipboard,
   // Show a picture by itself over the page, as pressing one in a comment
   // does. For a picture that isn't in a comment to begin with (the 添付 list
   // shows thumbnails): `alt` is what a reader is told it is.

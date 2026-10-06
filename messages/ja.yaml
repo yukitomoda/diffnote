@@ -1136,9 +1136,17 @@ ui:
     ignore_title: |-
       {pattern} を、レビューの設定の「表示しないファイル」に加えます(設定からいつでも戻せます)
     dir_menu_title: |-
-      右クリックで「このディレクトリを無視」({pattern})
+      右クリックで、無視したり、パスや名前をコピーしたりできます({pattern})
     file_menu_title: |-
-      {path}(右クリックで「このファイルを無視」)
+      {path}(右クリックで、無視したり、パスや名前をコピーしたりできます)
+    copy_menu_title: |-
+      {path}(右クリックで、パスや名前をコピーできます)
+    copy_path: |-
+      相対パスをコピー
+    copy_name: |-
+      名前をコピー
+    copy_failed: |-
+      コピーできませんでした
     ignored_summary: |-
       表示しないファイル({n})
     ignored_title: |-

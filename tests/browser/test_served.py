@@ -1110,6 +1110,28 @@ class FileTree(ServedCase):
         harness.until(lambda: harness.member(self.review, "settings.json") != before)
         return json.loads(harness.member(self.review, "settings.json"))["ignore"]
 
+    def test_a_right_click_copies_the_path_or_the_name_of_a_directory_or_a_file(self):
+        self.serve(tree_review(self.root, "tree-copy"))
+        b = self.b
+        # (What the page puts on the clipboard, kept to look at.)
+        b.js("window.__copied = []; navigator.clipboard.writeText = function (t) { window.__copied.push(t); return Promise.resolve(); }")
+        def copy(under, which):
+            b.right_click(f"{CUR} .diffnote-filelist {under}")
+            item = f"[data-diffnote-tree-menu] [data-diffnote-tree-copy='{which}']"
+            self.assertTrue(b.wait_exists(item))
+            b.click(item)
+            self.assertTrue(b.wait("!document.querySelector('[data-diffnote-tree-menu]')"), "the menu goes once copied")
+        # `e/` of the row `e/f/`: the directory by itself, without its `/`.
+        copy("[data-diffnote-tree-dir='a/b/e/']", "path")
+        copy("[data-diffnote-tree-dir='a/b/e/']", "name")
+        copy("[data-diffnote-tree-file='a/b/c/d']", "path")
+        copy("[data-diffnote-tree-file='a/b/c/d']", "name")
+        self.assertEqual(b.js("window.__copied"), ["a/b/e", "e", "a/b/c/d", "d"])
+        b.right_click(f"{CUR} .diffnote-filelist [data-diffnote-tree-file='a/b/c/d']")
+        self.assertTrue(b.wait_exists("[data-diffnote-tree-menu]"))
+        self.assertEqual(b.js("[...document.querySelectorAll('[data-diffnote-tree-menu] button')].map(e => e.textContent)"),
+                         ["相対パスをコピー", "名前をコピー", "このファイルを無視"])
+
     def test_each_directory_of_a_joined_row_and_each_file_can_be_left_out_by_a_right_click(self):
         self.serve(tree_review(self.root, "tree-ignore"))
         b = self.b

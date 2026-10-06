@@ -200,6 +200,7 @@ a.diffnote-button { display: inline-block; text-decoration: none; line-height: 1
 .diffnote-repolist__name small, .diffnote-repolist__count { font-size: 11px; color: var(--diffnote-color-muted); font-family: var(--diffnote-font-mono); }
 .diffnote-repolist__count { white-space: nowrap; font-family: inherit; }
 .diffnote-comment__panel.diffnote-treemenu { position: fixed; right: auto; min-width: 13em; }
+.diffnote-treemenu__sep { margin: 4px 2px; border: 0; border-top: 1px solid var(--diffnote-color-border); }
 .diffnote-filelist__dir > ul { margin-left: 10px; padding-left: 4px; border-left: 1px solid var(--diffnote-color-border); }
 .diffnote-filelist a { flex: 1; min-width: 0; padding: 3px 8px; color: var(--diffnote-color-fg); text-decoration: none; font-family: var(--diffnote-font-mono); word-break: break-all; border-radius: 6px; }
 .diffnote-filelist a:hover { background: var(--diffnote-color-gutter); }

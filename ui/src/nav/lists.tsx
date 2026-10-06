@@ -20,6 +20,9 @@ interface ListProps {
 interface Target {
   path: string;
   dir: boolean;
+  /** Whether it can be left out: on the served page, a directory, or a
+   * file of the diff (not one only opened to look at). */
+  canIgnore: boolean;
   /** A file with threads: left out, it would be shown all the same. */
   blocked: boolean;
   x: number;
@@ -51,23 +54,22 @@ export function FileList(props: ListProps) {
     return node.dirs.map(function (d) {
       // (Where a right click offers something, it says so: see `onMenu`.)
       return <span key={d.path} data-diffnote-tree-dir={d.path} class={target && target.dir && target.path === d.path ? 'is-target' : undefined}
-        title={actions ? lib.mf('ui.tree.dir_menu_title', { pattern: lib.ignoreLine(d.path) }) : undefined}>{d.label}</span>;
+        title={menuTitle(d.path, true, !!actions)}>{d.label}</span>;
     });
   };
   var onMenu = function (e: MouseEvent) {
-    if (!actions) return;
     var at = e.target as Element;
     var dir = at.closest('[data-diffnote-tree-dir]');
     var link = dir ? null : at.closest('[data-diffnote-file-link]');
     var path = dir ? dir.getAttribute('data-diffnote-tree-dir') : link && link.getAttribute('data-diffnote-file-link');
     if (!path) return;
-    // A file only opened to look at, or brought in by its threads, isn't one
-    // the diff shows: nothing to leave out (the browser's own menu, then).
-    if (!dir && (!byPath[path] || byPath[path].status === 'context')) return;
     e.preventDefault();
     setTarget({
       path: path,
       dir: !!dir,
+      // A file only opened to look at, or brought in by its threads, isn't
+      // one the diff shows: nothing to leave out.
+      canIgnore: !!actions && (!!dir || (!!byPath[path] && byPath[path].status !== 'context')),
       blocked: !dir && lib.threadsOfFile(ctx.order, ctx.placements, path).length > 0,
       x: e.clientX,
       y: e.clientY,
@@ -90,7 +92,7 @@ export function FileList(props: ListProps) {
           e.preventDefault();
           links.go({ kind: 'file', path: f.path });
         }}>{segments(node)}<span data-diffnote-tree-file={f.path}
-          title={actions && f.status !== 'context' ? lib.mf('ui.tree.file_menu_title', { path: f.path }) : undefined}>{node.label.slice(node.dirs.map(function (d) { return d.label; }).join('').length)}</span></a>
+          title={menuTitle(f.path, false, !!actions && f.status !== 'context')}>{node.label.slice(node.dirs.map(function (d) { return d.label; }).join('').length)}</span></a>
       {done
         ? open > 0 && <span class="diffnote-badge" data-diffnote-open-count title={lib.mf('ui.thread.open_count_title', { n: String(open) })}>{open}</span>
         : n > 0 && <span class="diffnote-badge">{n}</span>}
@@ -145,7 +147,7 @@ export function FileList(props: ListProps) {
             <span class="diffnote-repo-dot" aria-hidden="true"></span>
             <span class="diffnote-filelist__repopath">
               <span data-diffnote-tree-dir={dir} class={target && target.dir && target.path === dir ? 'is-target' : undefined}
-                title={actions ? lib.mf('ui.tree.dir_menu_title', { pattern: lib.ignoreLine(dir) }) : undefined}>{r.path}</span>
+                title={menuTitle(dir, true, !!actions)}>{r.path}</span>
               <small class="diffnote-filelist__reporange" data-diffnote-repo-range>{r.target} {r.base}→{r.head}</small>
             </span>
           </summary>
@@ -159,21 +161,28 @@ export function FileList(props: ListProps) {
   };
   return <details class="diffnote-side" open>
     <summary>{lib.m('ui.tree.files_summary')}{files.length > 0 && <>{' '}<span class="diffnote-badge diffnote-badge--viewed" data-diffnote-viewed-count title={lib.m('ui.tree.viewed_count_title')}><Icon name="check" />{' '}{files.filter(function (f) { return isViewed(f, marks, revId); }).length}/{files.length}</span></>}</summary>
-    <nav class={'diffnote-filelist' + (actions ? ' diffnote-filelist--menu' : '')} onContextMenu={onMenu}><ul>{repos.length ? groups() : rows(tree)}</ul>
+    <nav class="diffnote-filelist diffnote-filelist--menu" onContextMenu={onMenu}><ul>{repos.length ? groups() : rows(tree)}</ul>
       {ignored.length > 0 && <details class="diffnote-filelist__ignored" data-diffnote-ignored>
         <summary title={lib.m('ui.tree.ignored_title')}>{lib.mf('ui.tree.ignored_summary', { n: String(ignored.length) })}</summary>
         <ul>{names(lib.fileTree(ignored))}</ul>
       </details>}
     </nav>
-    {target && actions && <TreeMenu target={target} close={function () { setTarget(null); }}
+    {target && <TreeMenu target={target} close={function () { setTarget(null); }}
       leaveOut={function () {
         return actions!.saveSettings({ ignore: lib.withIgnored(ctx.model.settings && ctx.model.settings.ignore, target!.path) });
       }} />}
   </details>;
 }
 
+/** What a directory or a file of the list says it offers on a right click. */
+function menuTitle(path: string, dir: boolean, canIgnore: boolean): string {
+  if (!canIgnore) return lib.mf('ui.tree.copy_menu_title', { path: path });
+  return dir ? lib.mf('ui.tree.dir_menu_title', { pattern: lib.ignoreLine(path) }) : lib.mf('ui.tree.file_menu_title', { path: path });
+}
+
 // What a right click in the file list offers, where it was made: leaving the
-// directory or the file out. Goes on Escape, a click elsewhere, or a scroll
+// directory or the file out (on the served page), and copying its path or
+// its name. Goes on Escape, a click elsewhere, or a scroll
 // (which would leave it where the row no longer is).
 function TreeMenu(props: { target: Target; close: () => void; leaveOut: () => Promise<{ ok: boolean; error?: string }> }) {
   var t = props.target;
@@ -209,16 +218,30 @@ function TreeMenu(props: { target: Target; close: () => void; leaveOut: () => Pr
     if (first) first.focus();
   }, [t.path, t.dir, t.x, t.y]);
   var pattern = lib.ignoreLine(t.path);
+  // A directory's path is said without its `/`, as a path is.
+  var path = t.dir ? t.path.replace(/\/$/, '') : t.path;
+  var copy = function (text: string) {
+    interact.copy(text).then(function (ok) {
+      if (ok) props.close();
+      else setError(lib.m('ui.tree.copy_failed'));
+    });
+  };
   return <div class="diffnote-comment__panel diffnote-treemenu" role="menu" ref={box} data-diffnote-tree-menu={t.path}
     style={'left:' + t.x + 'px;top:' + t.y + 'px'}>
-    <button type="button" role="menuitem" class="diffnote-comment__item" data-diffnote-tree-ignore={t.path} disabled={t.blocked}
+    <button type="button" role="menuitem" class="diffnote-comment__item" data-diffnote-tree-copy="path" title={path}
+      onClick={function () { copy(path); }}>{lib.m('ui.tree.copy_path')}</button>
+    <button type="button" role="menuitem" class="diffnote-comment__item" data-diffnote-tree-copy="name" title={lib.baseName(path)}
+      onClick={function () { copy(lib.baseName(path)); }}>{lib.m('ui.tree.copy_name')}</button>
+    {/* (What changes the review comes last, set apart.) */}
+    {t.canIgnore && <hr class="diffnote-treemenu__sep" />}
+    {t.canIgnore && <button type="button" role="menuitem" class="diffnote-comment__item" data-diffnote-tree-ignore={t.path} disabled={t.blocked}
       title={t.blocked ? lib.m('ui.file.menu_ignore_blocked') : lib.mf('ui.tree.ignore_title', { pattern: pattern })}
       onClick={function () {
         props.leaveOut().then(function (res) {
           if (res.ok) props.close();
           else setError(res.error || lib.m('ui.save_failed'));
         });
-      }}>{lib.m(t.dir ? 'ui.tree.ignore_dir' : 'ui.tree.ignore_file')}</button>
+      }}>{lib.m(t.dir ? 'ui.tree.ignore_dir' : 'ui.tree.ignore_file')}</button>}
     {error && <span class="diffnote-error" role="alert">{error}</span>}
   </div>;
 }
