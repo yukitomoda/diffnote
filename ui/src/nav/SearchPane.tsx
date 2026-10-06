@@ -56,9 +56,10 @@ export function SearchPane(props: SearchPaneProps) {
     searchCurrent.set(at);
     var hit = result.all[at];
     if (!links) return;
-    if (hit.kind === 'line') links.jump(props.rev, { kind: 'lines', path: hit.path, side: hit.side, start: hit.line, end: hit.line });
-    else if (hit.kind === 'name') links.jump(props.rev, { kind: 'file', path: hit.path });
-    else links.jump(props.rev, { kind: 'thread', id: hit.thread });
+    // As a link goes: the address says where, and back returns from it.
+    if (hit.kind === 'line') links.go({ kind: 'lines', path: hit.path, side: hit.side, start: hit.line, end: hit.line });
+    else if (hit.kind === 'name') links.go({ kind: 'file', path: hit.path });
+    else links.go({ kind: 'thread', id: hit.thread });
   };
   var next = function () { go(current + 1); };
   var prev = function () { go(current < 0 ? total - 1 : current - 1); };

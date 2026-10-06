@@ -758,8 +758,14 @@ class Search(ServedCase):
         self.assertTrue(b.wait("document.querySelector('[data-diffnote-search-count]').textContent === '2 / 2'"))
         self.assertTrue(b.wait("CSS.highlights.get('diffnote-search-now') && CSS.highlights.get('diffnote-search-now').size === 1"))
         self.assertTrue(b.wait("CSS.highlights.get('diffnote-search').size >= 2"), "every one in view is marked")
+        # Each is in the address, and the browser's back returns from it.
+        line = b.js("decodeURIComponent(location.hash)")
+        self.assertRegex(line, r"at=lines:calc\.py:[LR]?\d+(-\d+)?$")
         b.js("document.querySelector('[data-diffnote-search-input]').dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', shiftKey: true, bubbles: true}))")
         self.assertTrue(b.wait("document.querySelector('[data-diffnote-search-count]').textContent === '1 / 2'"), "and back")
+        self.assertTrue(b.wait("decodeURIComponent(location.hash).includes('at=file:calc.py')"), b.js("location.hash"))
+        b.js("history.back()")
+        self.assertTrue(b.wait("decodeURIComponent(location.hash) === %s" % json.dumps(line)))
         # The comments too, after the files; pressing one goes to its thread.
         self.search("mul")
         self.assertTrue(b.exists("[data-diffnote-search-comments]"))
