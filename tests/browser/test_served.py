@@ -740,19 +740,13 @@ class Search(ServedCase):
         """How many places the page marks as the one gone to."""
         return self.b.js("CSS.highlights.get('diffnote-search-now') ? CSS.highlights.get('diffnote-search-now').size : 0")
 
-    def scope(self, value):
-        """Chooses how far the search goes."""
-        self.b.js("(function (s) { s.value = %s; s.dispatchEvent(new Event('change', {bubbles: true})); })(document.querySelector('[data-diffnote-search-scope]'))" % json.dumps(value))
-
     def test_the_lines_the_diff_leaves_out_are_found_and_shown_when_gone_to(self):
         master, _ = harness.make_gaps_review(self.root, name="search-gaps")
         self.serve(master)
         b = self.b
         self.ctrl_f()
         self.search("row 50")
-        self.assertEqual(self.count(), "一致なし", "the diff alone")
-        self.scope("file")
-        self.assertTrue(b.wait("document.querySelector('[data-diffnote-search]').dataset.diffnoteSearchAsked === 'row 50' && document.querySelector('[data-diffnote-search-count]').textContent === '1 件'"))
+        self.assertEqual(self.count(), "1 件", "a line the diff leaves out")
         row50 = f"{CUR} table[data-diffnote-file='long.txt'] [data-diffnote-new='50']"
         self.assertFalse(b.exists(row50), "left out, so not drawn")
         b.click("[data-diffnote-search-file='long.txt'] [data-diffnote-search-hit]")

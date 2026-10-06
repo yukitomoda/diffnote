@@ -649,7 +649,6 @@ class ExpandLeftOutLines(BrowserCase):
         b = self.b
         b.js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'f', ctrlKey: true, bubbles: true}))")
         self.assertTrue(b.wait_exists("[data-diffnote-search-input]"))
-        b.js("(function (s) { s.value = 'file'; s.dispatchEvent(new Event('change', {bubbles: true})); })(document.querySelector('[data-diffnote-search-scope]'))")
         b.set_value("[data-diffnote-search-input]", "row 50")
         self.assertTrue(b.wait("document.querySelector('[data-diffnote-search]').dataset.diffnoteSearchAsked === 'row 50' && document.querySelector('[data-diffnote-search-count]').textContent === '1 件'"))
         b.click("[data-diffnote-search-hit]")

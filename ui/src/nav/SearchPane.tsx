@@ -8,7 +8,7 @@ import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useStore } from '@nanostores/preact';
 import { lib } from '../lib.ts';
 import { LinksContext } from '../state/contexts.ts';
-import { searchCase, searchCurrent, searchFocus, searchScope, searchText, showFiles } from '../state/search.ts';
+import { searchCase, searchCurrent, searchFocus, searchText, showFiles } from '../state/search.ts';
 import { reveal } from '../state/reveal.ts';
 import { server, transport } from '../transport.ts';
 import { carriedGapLines, excerpt, occurrences, placeOf, searchRevision } from '../search.ts';
@@ -49,11 +49,10 @@ export function SearchPane(props: SearchPaneProps) {
   // The files' every line: the lines the diffs leave out too -- what an
   // exported page carries, or, served, what the server finds (a hundred
   // files at a time).
-  var scope = useStore(searchScope);
   var _g = useState<{ for: string; lines: GapLine[] } | null>(null);
   var gaps = _g[0];
   var setGaps = _g[1];
-  var wanted = scope === 'file' && asked ? asked + '\0' + caseSensitive + '\0' + props.rev : '';
+  var wanted = asked ? asked + '\0' + caseSensitive + '\0' + props.rev : '';
   // (Asked again when the files are others, not when the same are drawn anew.)
   var paths = props.files.map(function (f) { return f.path; });
   var pathsKey = paths.join('\n');
@@ -78,7 +77,7 @@ export function SearchPane(props: SearchPaneProps) {
   }, [props.files, props.threads, asked, caseSensitive, gaps, wanted]);
   // A new search starts before its first hit (Enter goes to it). (Not when
   // the same is found again: the one gone to stays the one.)
-  useEffect(function () { searchCurrent.set(-1); }, [asked, caseSensitive, scope, props.rev]);
+  useEffect(function () { searchCurrent.set(-1); }, [asked, caseSensitive, props.rev]);
   var total = result.all.length;
   var go = function (i: number) {
     if (!total) return;
@@ -139,11 +138,6 @@ export function SearchPane(props: SearchPaneProps) {
         }} />
       <button type="button" class={'diffnote-search__case' + (caseSensitive ? ' is-on' : '')} data-diffnote-search-case aria-pressed={caseSensitive}
         title={lib.m('ui.search.case_title')} onClick={function () { searchCase.set(!caseSensitive); }}>Aa</button>
-      <select class="diffnote-search__scope" data-diffnote-search-scope value={scope} aria-label={lib.m('ui.search.scope')}
-        onChange={function (e) { searchScope.set(e.currentTarget.value === 'file' ? 'file' : 'diff'); }}>
-        <option value="diff">{lib.m('ui.search.scope_diff')}</option>
-        <option value="file">{lib.m('ui.search.scope_file')}</option>
-      </select>
     </div>
     <div class="diffnote-search__bar">
       <span class="diffnote-search__count" data-diffnote-search-count>

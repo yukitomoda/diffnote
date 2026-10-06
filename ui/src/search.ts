@@ -16,10 +16,6 @@ export interface SearchQuery {
   caseSensitive: boolean;
 }
 
-/** How far a search goes: the diffs' lines, or the files' every line (the
- * lines the diffs leave out too). */
-export type SearchScope = 'diff' | 'file';
-
 /** A line of a file the diff leaves out, with its text: what the server
  * answers with, or what an exported page carries. */
 export interface GapLine {

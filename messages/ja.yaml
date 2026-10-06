@@ -1124,12 +1124,6 @@ ui:
       検索
     case_title: |-
       大文字と小文字を区別
-    scope: |-
-      範囲
-    scope_diff: |-
-      差分
-    scope_file: |-
-      ファイル全体
     prev_title: |-
       前へ
     next_title: |-
