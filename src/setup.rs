@@ -251,14 +251,32 @@ impl Setup {
     pub fn describe(&self) -> Result<Description> {
         let git = describe_repo(&self.repo, String::new());
         let found = files::find_repos(&self.project)?;
-        let mut repos = Vec::new();
-        for path in found {
-            // A repository with nothing in it yet is listed by the others;
-            // it can't be reviewed until it has a commit.
-            if let Ok(info) = describe_repo(&Repo::at(self.project.join(&path)), path) {
-                repos.push(info);
-            }
-        }
+        // Each repository is asked of on its own (git, several times): side
+        // by side, a share of them to each thread, in the order found.
+        let threads = std::thread::available_parallelism()
+            .map_or(4, |n| n.get())
+            .min(found.len().max(1));
+        let per = found.len().div_ceil(threads).max(1);
+        let repos: Vec<RepoInfo> = std::thread::scope(|scope| {
+            let parts: Vec<_> = found
+                .chunks(per)
+                .map(|part| {
+                    scope.spawn(move || {
+                        part.iter()
+                            // A repository with nothing in it yet is listed by
+                            // the others; it can't be reviewed until it has a commit.
+                            .filter_map(|path| {
+                                describe_repo(&Repo::at(self.project.join(path)), path.clone()).ok()
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            parts
+                .into_iter()
+                .flat_map(|p| p.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+                .collect()
+        });
         let kinds = Kinds {
             git: match &git {
                 Ok(_) => KindInfo {
