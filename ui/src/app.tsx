@@ -12,7 +12,7 @@ import { server } from './transport.ts';
 import { Revision } from './Revision.tsx';
 import { QuitButton } from './screen/Quit.tsx';
 import { ReviewScreen } from './screen/Screen.tsx';
-import { EmptyReview, SetupScreen } from './screen/Setup.tsx';
+import { EmptyReview, SetupLoader } from './screen/Setup.tsx';
 import { useCompose } from './state/compose.ts';
 import { ActionsContext, ComposeContext, LinksContext, OpenedContext } from './state/contexts.ts';
 import { useOpened } from './state/opened.ts';
@@ -255,7 +255,7 @@ function App(props: { model: ViewModel }) {
 
   // No review yet: the page is the first screen, which makes one. Nothing
   // else of the page may write (the settings screens would make the file).
-  var making = !!model.setup && model.revisions.length === 0;
+  var making = !!model.making && model.revisions.length === 0;
   return <article class="diffnote-review">
     <div class="diffnote-topbar">
       <header class="diffnote-summary">
@@ -300,7 +300,7 @@ function App(props: { model: ViewModel }) {
     <ActionsContext.Provider value={review.actions}>
       <ComposeContext.Provider value={compose}>
         <OpenedContext.Provider value={openedFiles}>
-          {making ? <SetupScreen setup={model.setup!} />
+          {making ? <SetupLoader />
             : model.revisions.length === 0 ? <EmptyReview refreshable={!!review.actions && !!model.refreshable}
                 busy={!!(note && note.busy)} note={note ? note.text : null} failed={!!(note && note.failed)} onPull={pull} />
             : <Revision key={current} model={model} index={current} hideResolved={hide} layout={layout} ignoreSpace={ignoreSpace} compose={compose} override={override}

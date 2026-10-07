@@ -1216,6 +1216,10 @@ ui:
   setup:
     heading: |-
       レビューを作る
+    loading: |-
+      リポジトリを調べています…
+    load_failed: |-
+      読み込めませんでした
     intro: |-
       {review} に新しいレビューを作ります。作ったあとは、そのままレビューを始められます。
     kind_label: |-

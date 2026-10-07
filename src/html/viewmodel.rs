@@ -85,10 +85,11 @@ pub struct ViewModel {
     /// What happened to the review, oldest first.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub timeline: Vec<TimelineEntry>,
-    /// The first screen, while there is no review yet (served page only):
-    /// what it is drawn from (see `crate::setup`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub setup: Option<crate::setup::Description>,
+    /// Whether the page is the first screen, while there is no review yet
+    /// (served page only; what it is drawn from is asked for apart, as
+    /// working it out may take a while: see `crate::setup`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub making: bool,
     /// A review of several repositories: which, as it is now (served page
     /// only; the page adds and takes out).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -541,7 +542,7 @@ pub fn view_model_with(
         bundle: None,
         user_settings: None,
         refreshable: false,
-        setup: None,
+        making: false,
         workspace: None,
         base: loaded.revisions().next().map(|r| match &r.source {
             crate::model::Source::Git(g) => BaseData::Git {
@@ -615,7 +616,7 @@ pub fn served_model_json(
         model.revisions.len(),
     ));
     model.user_settings = Some(crate::user_config::load());
-    model.setup = served.setup;
+    model.making = served.making;
     model.workspace = served.workspace;
     model_json(&model)
 }

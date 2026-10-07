@@ -2871,6 +2871,23 @@ class FirstScreen(ServedCase):
         self.assertEqual(json.loads(harness.member(self.review, "settings.json"))["title"], "最初の画面から")
         self.assertIn('"snapshot_mode":"full"', harness.member(self.review, "review.jsonl"))
 
+    def test_the_page_is_shown_first_saying_it_is_reading_and_the_screen_comes_when_it_has(self):
+        repo = harness.make_gaps_review(self.root, name="first-slow")[1]
+        self.review = os.path.join(repo, "slow.diffnote")
+        self.server = Served(self.review, cwd=repo, author="検証者")
+        self.addCleanup(self.server.stop)
+        b = self.b = self.browser
+        # What the screen is drawn from is held back, as a large directory would.
+        b.cdp.call("Fetch.enable", patterns=[{"urlPattern": "*/api/setup"}])
+        self.addCleanup(lambda: b.cdp.call("Fetch.disable"))
+        b.open(self.server.url, ready="!!document.querySelector('[data-diffnote-setup-loading]')")
+        self.assertIn("リポジトリを調べています", b.text("[data-diffnote-setup-loading]"))
+        self.assertFalse(b.exists("[data-diffnote-setup]"))
+        held = b.cdp.event("Fetch.requestPaused")
+        b.cdp.call("Fetch.continueRequest", requestId=held["params"]["requestId"])
+        self.assertTrue(b.wait("!!document.querySelector('[data-diffnote-setup-kind-line]')"))
+        self.assertFalse(b.exists("[data-diffnote-setup-loading]"))
+
     def test_where_it_ends_is_chosen_from_a_list_even_for_a_commit_with_no_name(self):
         project = os.path.join(self.root, "first-ends")
         repo = os.path.join(project, "x")

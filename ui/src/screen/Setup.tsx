@@ -197,6 +197,34 @@ function RangeFields(props: { state: SetupState; row: RepoRow; canTarget: boolea
   </div>;
 }
 
+/** The first screen, once what it is drawn from has come (finding the
+ * repositories of a large directory takes a while: the page is shown first,
+ * saying that it is being read). */
+export function SetupLoader() {
+  var _d = useState<SetupData | null>(null);
+  var setup = _d[0];
+  var setSetup = _d[1];
+  var _e = useState<string | null>(null);
+  var error = _e[0];
+  var setError = _e[1];
+  useEffect(function () {
+    server().get<{ setup: SetupData }>('api/setup').then(function (res) {
+      if (res.ok) setSetup(res.setup);
+      else setError(res.error || lib.m('ui.setup.load_failed'));
+    });
+  }, []);
+  if (setup) return <SetupScreen setup={setup} />;
+  return <main class="diffnote-screen diffnote-setup" data-diffnote-setup-loading>
+    <div class="diffnote-setup__layout">
+      <div class="diffnote-setup__form">
+        <h2>{lib.m('ui.setup.heading')}</h2>
+        {error ? <p class="diffnote-error" role="alert">{error}</p>
+          : <p class="diffnote-screen__note diffnote-setup__loading"><span class="diffnote-spinner" aria-hidden="true" />{lib.m('ui.setup.loading')}</p>}
+      </div>
+    </div>
+  </main>;
+}
+
 export function SetupScreen(props: { setup: SetupData }) {
   var setup = props.setup;
   var _s = useState<SetupState>(function () { return stateOf(setup); });

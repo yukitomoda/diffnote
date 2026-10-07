@@ -1722,10 +1722,7 @@ fn the_target_is_compared_with_the_base_and_ranges_are_not_accepted() {
     // nothing is written until it answers.
     let none = env.path("none.diffnote");
     let served = env.serve(&repo, &none, &[]);
-    assert_eq!(
-        served.api("/api/model", None)["model"]["setup"]["kind"],
-        "git"
-    );
+    assert_eq!(served.api("/api/setup", None)["setup"]["kind"], "git");
     served.stop();
     assert!(!none.exists());
 }
@@ -2547,11 +2544,16 @@ fn the_first_screen_in_a_repository_offers_the_bases_and_makes_the_review_chosen
     let review = env.path("review.diffnote");
     let served = env.serve(&repo, &review, &["--title", "先に"]);
     assert!(!review.exists(), "nothing until it is answered");
-    // The page itself carries the screen.
+    // The page is the first screen; what it is drawn from is asked for apart
+    // (the page shows itself first, as working it out may take a while).
     let (status, _, page) = http(served.port, "GET", "/", &served.cookie, None);
     assert_eq!(status, 200);
-    assert!(page.contains("\"setup\":{"), "the page is the first screen");
-    let setup = served.api("/api/model", None)["model"]["setup"].clone();
+    assert!(
+        page.contains("\"making\":true"),
+        "the page is the first screen"
+    );
+    assert!(!page.contains("\"setup\":{"));
+    let setup = served.api("/api/setup", None)["setup"].clone();
     assert_eq!(setup["kind"], "git");
     assert_eq!(setup["title"], "先に");
     assert_eq!(setup["kinds"]["git"]["ok"], true);
@@ -2704,7 +2706,7 @@ fn the_first_screen_in_a_project_of_repositories_takes_each_ones_base_and_more_b
     git(&deep, &["commit", "-q", "-m", "d1"]);
     let review = root.join("review.diffnote");
     let served = env.serve(&root, &review, &[]);
-    let setup = served.api("/api/model", None)["model"]["setup"].clone();
+    let setup = served.api("/api/setup", None)["setup"].clone();
     assert_eq!(setup["kind"], "workspace");
     assert_eq!(setup["kinds"]["git"]["ok"], false);
     assert_eq!(setup["depth"], 4);
@@ -2823,7 +2825,7 @@ fn the_first_screen_elsewhere_keeps_the_directory_as_it_is_and_leaves_nothing_if
     let review = env.path("plain.diffnote");
     // Quit without answering: nothing is left behind.
     let served = env.serve(&dir, &review, &[]);
-    let setup = served.api("/api/model", None)["model"]["setup"].clone();
+    let setup = served.api("/api/setup", None)["setup"].clone();
     assert_eq!(setup["kind"], "raw");
     assert_eq!(setup["kinds"]["git"]["ok"], false);
     assert_eq!(setup["kinds"]["workspace"]["ok"], false);

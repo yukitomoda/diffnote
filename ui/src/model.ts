@@ -436,8 +436,9 @@ export interface ViewModel {
    * started.
    */
   refreshable?: boolean;
-  /** The first screen, while there is no review yet (served page only). */
-  setup?: SetupData;
+  /** Whether the page is the first screen, while there is no review yet
+   * (served page only; what it is drawn from is asked for apart). */
+  making?: boolean;
   /** A review of several repositories: which, as it is now (served page only). */
   workspace?: { repos: WorkspaceRepo[] };
 }

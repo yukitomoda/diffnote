@@ -73,6 +73,8 @@ class Cdp:
             buf += self.sock.recv(1)
         self.next_id = 0
         self.buf = b""
+        # What the browser told of itself between answers (events), oldest first.
+        self.events = []
 
     def _send(self, text):
         data = text.encode()
@@ -117,6 +119,22 @@ class Cdp:
             m = json.loads(self._receive())
             if m.get("id") == mid:
                 return m
+            if "method" in m:
+                self.events.append(m)
+
+    def event(self, method, timeout=8):
+        """The next event `method` the browser tells of (waiting for it)."""
+        self.sock.settimeout(timeout)
+        try:
+            while True:
+                for i, m in enumerate(self.events):
+                    if m["method"] == method:
+                        return self.events.pop(i)
+                m = json.loads(self._receive())
+                if "method" in m:
+                    self.events.append(m)
+        finally:
+            self.sock.settimeout(None)
 
     def js(self, expression):
         r = self.call("Runtime.evaluate", expression=expression, awaitPromise=True, returnByValue=True)

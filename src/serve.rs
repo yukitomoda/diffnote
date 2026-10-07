@@ -519,7 +519,7 @@ impl Server {
             .unwrap_or(0);
         model.bundle = Some(html::bundle_info(loaded, size, model.revisions.len()));
         model.user_settings = Some(crate::user_config::load());
-        model.setup = self.first_screen()?;
+        model.making = self.making();
         model.workspace = self.workspace_of(loaded);
         Ok(model)
     }
@@ -541,11 +541,10 @@ impl Server {
     }
 
     /// The first screen, while the review is still to be made.
-    fn first_screen(&self) -> Result<Option<crate::setup::Description>, Failure> {
-        match &self.setup {
-            Some(setup) if !self.review.exists() => setup.describe().map(Some).map_err(internal),
-            _ => Ok(None),
-        }
+    /// Whether the page is the first screen (there is no review yet, and it
+    /// can make one).
+    fn making(&self) -> bool {
+        self.setup.is_some() && !self.review.exists()
     }
 
     fn git(&self) -> Option<&dyn html::CommitFiles> {
@@ -657,6 +656,7 @@ impl Server {
             ("GET", "/api/model") => self.model(),
             ("GET", "/api/version") => self.version(),
             ("GET", "/api/compare") => self.compare(query),
+            ("GET", "/api/setup") => self.setup_describe(),
             ("GET", "/api/setup/preview") => self.setup_preview(query),
             ("GET", "/api/setup/graph") => self.setup_graph(query),
             ("GET", "/api/setup/repo") => self.setup_repo(query),
@@ -688,9 +688,6 @@ impl Server {
         match bundle::load(&self.review).and_then(|l| {
             let editable = self.editable(&l);
             let changed = self.changed(&l);
-            let setup = self
-                .first_screen()
-                .map_err(|e| anyhow::anyhow!("{}", e.1))?;
             let workspace = self.workspace_of(&l);
             html::render_served_page(
                 &l,
@@ -702,7 +699,7 @@ impl Server {
                     bundle_size: std::fs::metadata(&self.review)
                         .map(|m| m.len())
                         .unwrap_or(0),
-                    setup,
+                    making: self.making(),
                     workspace,
                 },
             )
@@ -1619,6 +1616,19 @@ impl Server {
             None => Err(Failure(400, m("setup.not_available").into())),
             Some(_) if self.review.exists() => Err(Failure(400, m("setup.already_made").into())),
             Some(setup) => Ok(setup),
+        }
+    }
+
+    /// What the first screen is drawn from: asked for once the page is
+    /// shown (finding the repositories of a large directory takes a while).
+    fn setup_describe(&self) -> Reply {
+        let setup = match self.first_screen_of() {
+            Ok(s) => s,
+            Err(Failure(status, message)) => return Reply::error(status, &message),
+        };
+        match setup.describe() {
+            Ok(description) => Self::answer("setup", description),
+            Err(e) => Reply::error(500, &e.to_string()),
         }
     }
 
@@ -3984,7 +3994,7 @@ mod tests {
                 author: "a".into(),
                 refreshable: false,
                 bundle_size: 0,
-                setup: None,
+                making: false,
                 workspace: None,
             },
         )

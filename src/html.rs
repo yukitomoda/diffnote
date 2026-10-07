@@ -188,8 +188,8 @@ pub struct Served {
     /// Whether it can pull.
     pub refreshable: bool,
     pub bundle_size: u64,
-    /// The first screen, while there is no review.
-    pub setup: Option<crate::setup::Description>,
+    /// Whether the page is the first screen (there is no review yet).
+    pub making: bool,
     /// A review of several repositories: which, as it is now.
     pub workspace: Option<WorkspaceInfo>,
 }
