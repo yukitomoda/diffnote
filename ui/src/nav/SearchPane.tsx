@@ -25,7 +25,7 @@ export interface SearchPaneProps {
 }
 
 /** How long typing has to stop before it is searched for (ms). */
-var SETTLE = 150;
+var SETTLE = 400;
 
 /** How many of what was found the list draws at a time (more as it is
  * scrolled to the end). */
