@@ -1448,30 +1448,41 @@ pub struct FoundLine {
     pub text: String,
 }
 
-/// The most lines a search answers with.
+/// The most lines a search answers with (unless asked for all).
 const SEARCH_LINES_MOST: usize = 5000;
+
+/// How long a search for all may take: past that, it answers with what it
+/// has found (so that a text in nearly every line can't hold the server).
+const SEARCH_ALL_TIME: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The lines of the files `paths` (as revision `revision` has them, new side)
 /// that have `q` in them (upper and lower case alike, unless `case`): for the
 /// page to search what the diffs leave out. The page says, itself, where in
 /// a line it is (and so whether it is there at all, as it reads case).
+/// Up to `SEARCH_LINES_MOST`, or, with `all`, as many as `SEARCH_ALL_TIME`
+/// finds; and whether some were left out.
 pub fn search_lines(
     loaded: &crate::bundle::Loaded,
     revision: usize,
     paths: &[String],
     q: &str,
     case: bool,
+    all: bool,
     git: Option<&dyn CommitFiles>,
-) -> Vec<FoundLine> {
+) -> (Vec<FoundLine>, bool) {
     let mut out = Vec::new();
     if q.is_empty() {
-        return out;
+        return (out, false);
     }
     let Ok(mut files) = FileReader::new(loaded, revision, git) else {
-        return out;
+        return (out, false);
     };
+    let until = std::time::Instant::now() + SEARCH_ALL_TIME;
     let lower = q.to_lowercase();
     for path in paths {
+        if all && std::time::Instant::now() > until {
+            return (out, true);
+        }
         let Ok(text) = files.text(path) else {
             continue;
         };
@@ -1482,8 +1493,8 @@ pub fn search_lines(
                 line.to_lowercase().contains(&lower)
             };
             if found {
-                if out.len() >= SEARCH_LINES_MOST {
-                    return out;
+                if !all && out.len() >= SEARCH_LINES_MOST {
+                    return (out, true);
                 }
                 out.push(FoundLine {
                     path: path.clone(),
@@ -1493,7 +1504,7 @@ pub fn search_lines(
             }
         }
     }
-    out
+    (out, false)
 }
 
 /// How much of the lines a diff leaves out an exported page carries as plain

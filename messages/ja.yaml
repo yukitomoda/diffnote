@@ -1134,8 +1134,10 @@ ui:
       {n} 件
     count_at: |-
       {at} / {n}
-    capped: |-
-      {n} 件以上
+    all: |-
+      すべて検索
+    timed_out: |-
+      時間切れ
     comments: |-
       コメント
     review_wide: |-

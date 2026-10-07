@@ -11,7 +11,7 @@ import { LinksContext } from '../state/contexts.ts';
 import { searchCase, searchCurrent, searchFocus, searchText, showFiles } from '../state/search.ts';
 import { reveal } from '../state/reveal.ts';
 import { server, transport } from '../transport.ts';
-import { carriedGapLines, excerpt, occurrences, placeOf, searchRevision } from '../search.ts';
+import { SEARCH_ALL_TIME, carriedGapLines, excerpt, occurrences, placeOf, searchRevision } from '../search.ts';
 import type { GapLine, Hit, SearchQuery, SearchResult, Span } from '../search.ts';
 import type { FileData, Placement, ThreadData } from '../model.ts';
 import { Icon } from '../icon.tsx';
@@ -26,6 +26,10 @@ export interface SearchPaneProps {
 
 /** How long typing has to stop before it is searched for (ms). */
 var SETTLE = 150;
+
+/** How many of what was found the list draws at a time (more as it is
+ * scrolled to the end). */
+var ROWS = 1000;
 
 export function SearchPane(props: SearchPaneProps) {
   var links = useContext(LinksContext);
@@ -46,28 +50,63 @@ export function SearchPane(props: SearchPaneProps) {
     return function () { clearTimeout(t); };
   }, [text]);
   var query: SearchQuery = { text: asked, caseSensitive: caseSensitive };
+  var wanted = asked ? asked + '\0' + caseSensitive + '\0' + props.rev : '';
+  // Past the most it finds, it can be asked to find them all (for as long as
+  // `SEARCH_ALL_TIME`, from when it was asked).
+  var _w = useState<{ for: string; at: number } | null>(null);
+  var whole = _w[0] && _w[0].for === wanted ? _w[0] : null;
+  var setWhole = _w[1];
+  var asking = wanted ? wanted + (whole ? '\0all' : '') : '';
   // The files' every line: the lines the diffs leave out too -- what an
   // exported page carries, or, served, what the server finds.
-  var _g = useState<{ for: string; lines: GapLine[] } | null>(null);
+  var _g = useState<{ for: string; lines: GapLine[]; cut: boolean } | null>(null);
   var gaps = _g[0];
   var setGaps = _g[1];
-  var wanted = asked ? asked + '\0' + caseSensitive + '\0' + props.rev : '';
   // (Asked again when the files are others, not when the same are drawn anew.)
   var paths = props.files.map(function (f) { return f.path; });
   var pathsKey = paths.join('\n');
   useEffect(function () {
-    if (!wanted) { setGaps(null); return undefined; }
-    if (!transport) { setGaps({ for: wanted, lines: carriedGapLines(props.files) }); return undefined; }
+    if (!asking) { setGaps(null); return undefined; }
+    if (!transport) { setGaps({ for: asking, lines: carriedGapLines(props.files), cut: false }); return undefined; }
     var stale = false;
-    server().post<{ lines: GapLine[] }>('api/files/' + props.rev + '/search', { q: asked, case: caseSensitive, paths: paths }).then(function (res) {
-      if (!stale) setGaps({ for: wanted, lines: res.ok ? res.lines : [] });
+    server().post<{ lines: GapLine[]; cut?: boolean }>('api/files/' + props.rev + '/search', { q: asked, case: caseSensitive, all: !!whole, paths: paths }).then(function (res) {
+      if (!stale) setGaps({ for: asking, lines: res.ok ? res.lines : [], cut: res.ok && !!res.cut });
     });
     return function () { stale = true; };
-  }, [wanted, pathsKey]);
-  var waiting = !!wanted && (!gaps || gaps.for !== wanted);
+  }, [asking, pathsKey]);
+  var waiting = !!asking && (!gaps || gaps.for !== asking);
+  // (While all of them are being found, what was found so far stays.)
+  var last = useRef<{ for: string; result: SearchResult } | null>(null);
   var result: SearchResult = useMemo(function () {
-    return searchRevision(props.files, props.threads, query, gaps && gaps.for === wanted ? gaps.lines : undefined);
-  }, [props.files, props.threads, asked, caseSensitive, gaps, wanted]);
+    if (waiting && whole && last.current && last.current.for === wanted) return last.current.result;
+    var have = gaps && gaps.for === asking ? gaps : null;
+    var r = searchRevision(props.files, props.threads, query, have ? have.lines : undefined,
+      whole ? { most: Infinity, until: whole.at + SEARCH_ALL_TIME } : undefined);
+    if (have && have.cut) { r.capped = true; if (whole) r.timedOut = true; }
+    last.current = { for: wanted, result: r };
+    return r;
+  }, [props.files, props.threads, asked, caseSensitive, gaps, asking, waiting]);
+  // Each hit's place in the order they are gone to.
+  var order = useMemo(function () {
+    var m = new Map<Hit, number>();
+    result.all.forEach(function (h, i) { m.set(h, i); });
+    return m;
+  }, [result]);
+  // How many the list draws (more as its end is scrolled to).
+  var _r = useState(ROWS);
+  var rows = _r[0];
+  var setRows = _r[1];
+  useEffect(function () { setRows(ROWS); }, [result]);
+  var end = useRef<HTMLDivElement | null>(null);
+  useEffect(function () {
+    var el = end.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return undefined;
+    var watch = new IntersectionObserver(function (seen) {
+      if (seen.some(function (e) { return e.isIntersecting; })) setRows(function (n) { return n + ROWS; });
+    });
+    watch.observe(el);
+    return function () { watch.disconnect(); };
+  });
   // A new search starts before its first hit (Enter goes to it). (Not when
   // the same is found again: the one gone to stays the one.)
   useEffect(function () { searchCurrent.set(-1); }, [asked, caseSensitive, props.rev]);
@@ -76,6 +115,7 @@ export function SearchPane(props: SearchPaneProps) {
     if (!total) return;
     var at = ((i % total) + total) % total;
     searchCurrent.set(at);
+    if (at >= rows) setRows(Math.ceil((at + 1) / ROWS) * ROWS);
     var hit = result.all[at];
     if (!links) return;
     // As a link goes: the address says where, and back returns from it. A
@@ -103,7 +143,7 @@ export function SearchPane(props: SearchPaneProps) {
   });
   // What was found, marked in the page as far as it is drawn.
   usePaint(props.rev, query, total ? result.all[current] || null : null);
-  var index = function (hit: Hit) { return result.all.indexOf(hit); };
+  var index = function (hit: Hit) { var i = order.get(hit); return i == null ? -1 : i; };
   var item = function (hit: Hit, children: preact.ComponentChildren, extra?: string) {
     var i = index(hit);
     return <button type="button" class={'diffnote-search__hit' + (i === current ? ' is-current' : '') + (extra ? ' ' + extra : '')} data-diffnote-search-hit={i}
@@ -145,10 +185,17 @@ export function SearchPane(props: SearchPaneProps) {
       <button type="button" class="diffnote-icon-button" data-diffnote-search-next disabled={!total} title={lib.m('ui.search.next_title')} aria-label={lib.m('ui.search.next_title')}
         onClick={next}><Icon name="down" /></button>
     </div>
-    {result.capped && <p class="diffnote-search__note" data-diffnote-search-capped>{lib.mf('ui.search.capped', { n: String(total) })}</p>}
+    {result.capped && <p class="diffnote-search__note" data-diffnote-search-capped>
+      {result.timedOut ? lib.m('ui.search.timed_out')
+        : whole ? '…'
+        : <button type="button" class="diffnote-button diffnote-search__all" data-diffnote-search-all
+          onClick={function () { setWhole({ for: wanted, at: Date.now() }); }}>{lib.m('ui.search.all')}</button>}
+    </p>}
     <div class="diffnote-search__results">
       {result.files.map(function (g) {
         var count = g.lines.length + (g.name ? 1 : 0);
+        var first = g.name ? index(g.name) : g.lines.length ? index(g.lines[0]) : 0;
+        if (first >= rows) return null;
         return <details key={g.path} class="diffnote-search__group" open data-diffnote-search-file={g.path}>
           <summary title={g.path}>
             {/* The file's own name first, its directory faint after it (the
@@ -159,6 +206,7 @@ export function SearchPane(props: SearchPaneProps) {
           </summary>
           {g.lines.length > 0 && <ol>
             {g.lines.map(function (h, j) {
+              if (index(h) >= rows) return null;
               return <li key={j}>{item(h, <>
                 <span class={'diffnote-search__line' + (h.side === 'old' ? ' is-old' : '')} title={lib.m(h.side === 'old' ? 'ui.search.old_title' : 'ui.search.new_title')}>
                   {(h.side === 'old' ? '−' : '') + h.line}</span>
@@ -168,10 +216,11 @@ export function SearchPane(props: SearchPaneProps) {
           </ol>}
         </details>;
       })}
-      {result.comments.length > 0 && <details class="diffnote-search__group" open data-diffnote-search-comments>
+      {result.comments.length > 0 && index(result.comments[0]) < rows && <details class="diffnote-search__group" open data-diffnote-search-comments>
         <summary><span class="diffnote-search__path">{lib.m('ui.search.comments')}</span><span class="diffnote-badge diffnote-search__badge">{result.comments.length}</span></summary>
         <ol>
           {result.comments.map(function (h, j) {
+            if (index(h) >= rows) return null;
             return <li key={j}>{item(h, <>
               <span class="diffnote-search__who">{h.author}<small>{placeOf(props.placements[h.thread]) || lib.m('ui.search.review_wide')}</small></span>
               {found(h.text, h.span, 16, 80)}
@@ -179,6 +228,7 @@ export function SearchPane(props: SearchPaneProps) {
           })}
         </ol>
       </details>}
+      {total > rows && <div ref={end} class="diffnote-search__more" data-diffnote-search-more>…</div>}
     </div>
   </div>;
 }

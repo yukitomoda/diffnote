@@ -1439,6 +1439,9 @@ impl Server {
             q: String,
             #[serde(default)]
             case: bool,
+            /// Every line, not only the first so many (for as long as it may take).
+            #[serde(default)]
+            all: bool,
             paths: Vec<String>,
         }
         let revision = rev
@@ -1447,17 +1450,18 @@ impl Server {
         let asked: Asked = serde_json::from_slice(body)
             .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
         let loaded = bundle::load(&self.review).map_err(internal)?;
-        let lines = html::search_lines(
+        let (lines, cut) = html::search_lines(
             &loaded,
             revision,
             &asked.paths,
             &asked.q,
             asked.case,
+            asked.all,
             self.git(),
         );
         Ok(Reply::json(
             200,
-            &serde_json::json!({ "ok": true, "lines": lines }),
+            &serde_json::json!({ "ok": true, "lines": lines, "cut": cut }),
         ))
     }
 
@@ -5037,6 +5041,18 @@ mod tests {
         // A file that isn't there (or isn't text) has nothing to give.
         assert!(found("line", false, &["nope.txt", "bin.dat"]).is_empty());
         assert_eq!(f.post("/api/files/0/search", "{}").status, 400);
+        // Up to so many, or, asked for all, every one; and whether some were left out.
+        let cut = |all: bool| {
+            let body = serde_json::json!({ "q": "line", "all": all, "paths": vec!["big.txt"; 5] })
+                .to_string();
+            let answer = json(&f.post("/api/files/0/search", &body));
+            (
+                answer["lines"].as_array().unwrap().len(),
+                answer["cut"].as_bool(),
+            )
+        };
+        assert_eq!(cut(false), (5000, Some(true)));
+        assert_eq!(cut(true), (6000, Some(false)));
     }
 
     #[test]

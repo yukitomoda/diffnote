@@ -6,7 +6,7 @@ import json
 import urllib.parse
 
 import harness
-from harness import BrowserCase, Served, add_settings, entries, make_calc_review, make_gaps_review, make_indent_review, make_login_review, recorded
+from harness import BrowserCase, Served, add_settings, entries, git, write, make_calc_review, make_gaps_review, make_indent_review, make_login_review, recorded
 import os
 import pathlib
 import shutil
@@ -739,6 +739,39 @@ class Search(ServedCase):
     def now_marked(self):
         """How many places the page marks as the one gone to."""
         return self.b.js("CSS.highlights.get('diffnote-search-now') ? CSS.highlights.get('diffnote-search-now').size : 0")
+
+    def test_past_the_most_it_says_so_and_can_be_asked_for_all_which_are_drawn_a_part_at_a_time(self):
+        repo = os.path.join(self.root, "many")
+        os.makedirs(repo)
+        git(repo, "init", "-q", "-b", "main")
+        lines = lambda first: first + "\n" + "".join(f"row {n}\n" for n in range(2, 3001))
+        write(repo, "many.txt", lines("first"))
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "c1")
+        write(repo, "many.txt", lines("FIRST"))
+        git(repo, "commit", "-q", "-am", "c2")
+        review = os.path.join(self.root, "many.diffnote")
+        harness.review_of(repo, review, "HEAD", base="HEAD~1", comments=[{"file": "many.txt", "line": "FIRST", "body": "x"}])
+        self.serve(review)
+        b = self.b
+        self.ctrl_f()
+        self.search("row")
+        self.assertEqual(self.count(), "1000+ 件")
+        self.assertEqual(b.count("[data-diffnote-search-hit]"), 1000)
+        b.click("[data-diffnote-search-all]")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-search-count]').textContent === '2999 件'", timeout=30), self.count())
+        self.assertFalse(b.exists("[data-diffnote-search-capped]"))
+        # Drawn a thousand at a time, more as the list's end is reached.
+        self.assertEqual(b.count("[data-diffnote-search-hit]"), 1000)
+        b.js("document.querySelector('[data-diffnote-search-more]').scrollIntoView()")
+        self.assertTrue(b.wait("document.querySelectorAll('[data-diffnote-search-hit]').length === 2000"))
+        # Going to one not drawn yet draws it (Shift+Enter: the last).
+        b.js("document.querySelector('[data-diffnote-search-input]').dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', shiftKey: true, bubbles: true}))")
+        self.assertTrue(b.wait("!!document.querySelector('[data-diffnote-search-hit=\"2998\"]')"))
+        # Another text is searched for with the most again.
+        self.search("ro")
+        self.assertEqual(self.count(), "1000+ 件")
+        self.assertTrue(b.exists("[data-diffnote-search-all]"))
 
     def test_the_lines_the_diff_leaves_out_are_found_and_shown_when_gone_to(self):
         master, _ = harness.make_gaps_review(self.root, name="search-gaps")

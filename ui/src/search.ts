@@ -76,12 +76,28 @@ export interface SearchResult {
   /** Every hit, in the order the next one is gone to: file by file (its
    * name, then its lines), then the comments. */
   all: Hit[];
-  /** Whether there were more than `SEARCH_MOST`, and the rest left out. */
+  /** Whether there were more, and the rest left out (past the most it
+   * finds, or the time it may take). */
   capped: boolean;
+  /** Whether it was the time that ran out. */
+  timedOut: boolean;
 }
 
-/** The most it finds: past that, the text is too common to be worth listing. */
-export const SEARCH_MOST = 2000;
+/** The most it finds, unless asked for all: past that, the text is too
+ * common to be worth listing. */
+export const SEARCH_MOST = 1000;
+
+/** How long a search for all may take (ms): past that, what it has found is
+ * what there is (so that a text in nearly every line can't hold the page).
+ * The server stops after as long. */
+export const SEARCH_ALL_TIME = 30000;
+
+export interface SearchLimits {
+  /** The most it finds (`SEARCH_MOST` if not said; `Infinity` for all). */
+  most?: number;
+  /** When it stops, as `Date.now()` says (never, if not said). */
+  until?: number;
+}
 
 /** Where `query` is in `text`, each time (not one inside another). */
 export function occurrences(text: string, query: SearchQuery): Span[] {
@@ -125,13 +141,22 @@ export function carriedGapLines(files: FileData[]): GapLine[] {
  * the page has it, between the diff's lines (one the diff has after all is
  * not counted twice).
  */
-export function searchRevision(files: FileData[], threads: ThreadData[], query: SearchQuery, gaps?: GapLine[]): SearchResult {
-  var result: SearchResult = { files: [], comments: [], all: [], capped: false };
+export function searchRevision(files: FileData[], threads: ThreadData[], query: SearchQuery, gaps?: GapLine[], limits?: SearchLimits): SearchResult {
+  var result: SearchResult = { files: [], comments: [], all: [], capped: false, timedOut: false };
   if (!query.text) return result;
+  var most = limits && limits.most != null ? limits.most : SEARCH_MOST;
+  var until = limits && limits.until;
   var byPath: Record<string, GapLine[]> = {};
   (gaps || []).forEach(function (g) { (byPath[g.path] = byPath[g.path] || []).push(g); });
+  // (The time is looked at now and then: every so many lines.)
+  var looked = 0;
   var full = function (): boolean {
-    if (result.all.length < SEARCH_MOST) return false;
+    if (result.capped) return true;
+    if (until != null && ++looked % 256 === 0 && Date.now() > until) {
+      result.capped = result.timedOut = true;
+      return true;
+    }
+    if (result.all.length < most) return false;
     result.capped = true;
     return true;
   };
@@ -151,6 +176,7 @@ export function searchRevision(files: FileData[], threads: ThreadData[], query: 
     (f.hunks || []).forEach(function (h) {
       h.rows.forEach(function (row) {
         if (row.n != null) { inDiff[row.n] = true; lastNew = row.n; }
+        if (full()) return;
         var side: Side = row.k === 'd' ? 'old' : 'new';
         var line = side === 'old' ? row.o : row.n;
         if (line == null) return;
@@ -162,7 +188,7 @@ export function searchRevision(files: FileData[], threads: ThreadData[], query: 
       });
     });
     (byPath[f.path] || []).forEach(function (g) {
-      if (inDiff[g.line]) return;
+      if (inDiff[g.line] || full()) return;
       occurrences(g.text, query).forEach(function (span, nth) {
         found.push({ at: g.line, hit: { kind: 'line', path: f.path, side: 'new', line: g.line, text: g.text, span: span, nth: nth, gap: true } });
       });

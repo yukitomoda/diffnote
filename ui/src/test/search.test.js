@@ -86,3 +86,13 @@ test('an exported page searches what it carries of the lines left out, in pieces
   const f = Object.assign(file('a.ts', []), { gaps: [{ n: 2, o: 1, w: 1, t: [['x'], [['kw', 'let'], ' y']] }, null, { n: 2, o: 9, w: 9, s: ['nine', 'ten'] }, { n: 3, o: 20, w: 20 }] });
   assert.deepEqual(carriedGapLines([f]).map((g) => g.line + ':' + g.text), ['1:x', '2:let y', '9:nine', '10:ten']);
 });
+
+test('asked for all, it finds past the most, and stops when its time is up', () => {
+  const many = file('big.ts', Array.from({ length: SEARCH_MOST + 10 }, (_, i) => row('a', null, i + 1, 'xx')));
+  const all = searchRevision([many], [], q('x'), undefined, { most: Infinity });
+  assert.equal(all.all.length, (SEARCH_MOST + 10) * 2);
+  assert.deepEqual([all.capped, all.timedOut], [false, false]);
+  const late = searchRevision([many], [], q('x'), undefined, { most: Infinity, until: Date.now() - 1 });
+  assert.deepEqual([late.capped, late.timedOut], [true, true]);
+  assert.ok(late.all.length < SEARCH_MOST, 'what it had found by then');
+});
