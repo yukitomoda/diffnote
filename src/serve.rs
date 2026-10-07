@@ -632,10 +632,24 @@ impl Server {
             && path == "/"
             && query_value(query, "t") == Some(self.token.as_str())
         {
-            let mut reply = Reply::new(302, "text/plain", "");
-            // (Where the page is, as the browser has it: a host that forwards
-            // the port may serve it under a path of its own.)
-            reply.headers.push(("Location".into(), "./".into()));
+            // A page that goes on to the review itself, not a redirect: a
+            // visit that started at another site (a link elsewhere, a login
+            // in front of a forwarded port) would carry that over to the
+            // redirect, and a `SameSite=Strict` cookie isn't sent there. A
+            // move the page makes is the page's own; it keeps the place the
+            // address says (`#…`), as a redirect did. (Where the page is, as
+            // the browser has it: a host that forwards the port may serve it
+            // under a path of its own.)
+            let mut reply = Reply::html(
+                200,
+                "<!DOCTYPE html><meta charset=\"utf-8\"><title>diffnote</title>\
+                 <script>location.replace('./' + location.hash);</script>\
+                 <noscript><a href=\"./\">diffnote</a></noscript>"
+                    .to_string(),
+            );
+            reply
+                .headers
+                .push(("Referrer-Policy".into(), "no-referrer".into()));
             reply.headers.push((
                 "Set-Cookie".into(),
                 format!(
@@ -2689,7 +2703,8 @@ mod tests {
             headers: vec![("host".into(), "127.0.0.1:4242".into())],
             body: b"",
         });
-        assert_eq!(reply.status, 302);
+        assert_eq!(reply.status, 200);
+        assert!(text(&reply).contains("location.replace('./' + location.hash)"));
         let get = |name: &str| {
             reply
                 .headers
@@ -2698,7 +2713,6 @@ mod tests {
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default()
         };
-        assert_eq!(get("Location"), "./");
         let cookie = get("Set-Cookie");
         assert!(cookie.starts_with(&f.cookie()), "{cookie}");
         assert!(
@@ -5598,13 +5612,17 @@ mod tests {
         let port: u16 = address.rsplit(':').next().unwrap().parse().unwrap();
         assert!(address.starts_with("127.0.0.1:"), "{address}");
 
-        // No token: refused. The address with it: a cookie and a redirect.
+        // No token: refused. The address with it: a cookie, and a page that
+        // goes on to the review.
         assert_eq!(http(port, "GET", "/", &[], "").0, 403);
-        let (status, head, _) = http(port, "GET", &format!("/?t={token}"), &[], "");
-        assert_eq!(status, 302);
+        let (status, head, body) = http(port, "GET", &format!("/?t={token}"), &[], "");
+        assert_eq!(status, 200);
         let name = format!("diffnote_token_{port}");
         assert!(head.contains(&format!("set-cookie: {name}=")), "{head}");
-        assert!(head.contains("location: ./"), "{head}");
+        assert!(
+            body.contains("location.replace('./' + location.hash)"),
+            "{body}"
+        );
 
         // With the cookie: the page, then a change, whose answer is JSON.
         let cookie = format!("{name}={token}");
