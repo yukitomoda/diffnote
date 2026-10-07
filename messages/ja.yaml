@@ -1140,6 +1140,8 @@ ui:
       時間切れ
     comments: |-
       コメント
+    others: |-
+      差分にないファイル
     review_wide: |-
       レビュー全体
     old_title: |-

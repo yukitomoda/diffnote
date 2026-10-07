@@ -1452,60 +1452,147 @@ pub struct FoundLine {
 /// The most lines a search answers with (unless asked for all).
 const SEARCH_LINES_MOST: usize = 5000;
 
-/// How long a search for all may take: past that, it answers with what it
-/// has found (so that a text in nearly every line can't hold the server).
+/// How long a search may take: past that, it answers with what it has found
+/// (so that a large tree, or a text in nearly every line, can't hold the
+/// server). Asked for all, it may take longer.
+const SEARCH_TIME: std::time::Duration = std::time::Duration::from_secs(5);
 const SEARCH_ALL_TIME: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How many files outside the diff are read at a time (from git, in one go).
+const SEARCH_READ_AT_ONCE: usize = 500;
+
+/// What a search of the files found (see `search_lines`).
+#[derive(Serialize, Debug, Default, PartialEq, Eq)]
+pub struct SearchFound {
+    /// Lines of the files named.
+    pub lines: Vec<FoundLine>,
+    /// Lines of the files the revision has that the page doesn't show (with
+    /// `others`).
+    pub others: Vec<FoundLine>,
+    /// Those files whose path has it in it.
+    pub names: Vec<String>,
+    /// Whether some were left out (past the most, or the time).
+    pub cut: bool,
+}
+
+/// Looks for `q` in the lines of `text` (`lower`: it lower-cased, unless
+/// `case`), adding each line found to `out`: whether there were more than
+/// `most`.
+fn search_text(
+    path: &str,
+    text: &str,
+    q: &str,
+    lower: &str,
+    case: bool,
+    most: usize,
+    out: &mut Vec<FoundLine>,
+) -> bool {
+    for (i, line) in text.lines().enumerate() {
+        let found = if case {
+            line.contains(q)
+        } else {
+            line.to_lowercase().contains(lower)
+        };
+        if found {
+            if out.len() >= most {
+                return true;
+            }
+            out.push(FoundLine {
+                path: path.to_string(),
+                line: i as u32 + 1,
+                text: line.to_string(),
+            });
+        }
+    }
+    false
+}
+
+/// What a search is for, and how far it goes.
+pub struct SearchAsked<'a> {
+    pub q: &'a str,
+    /// Whether `A` and `a` are told apart.
+    pub case: bool,
+    /// Every line, not only the first so many (for as long as it may take).
+    pub all: bool,
+    /// The files the page doesn't show too.
+    pub others: bool,
+}
 
 /// The lines of the files `paths` (as revision `revision` has them, new side)
 /// that have `q` in them (upper and lower case alike, unless `case`): for the
-/// page to search what the diffs leave out. The page says, itself, where in
-/// a line it is (and so whether it is there at all, as it reads case).
-/// Up to `SEARCH_LINES_MOST`, or, with `all`, as many as `SEARCH_ALL_TIME`
-/// finds; and whether some were left out.
+/// page to search what the diffs leave out. With `others`, those of the
+/// files the revision has besides (see `other_files`) too, and which of them
+/// have it in their path. The page says, itself, where in a line it is (and
+/// so whether it is there at all, as it reads case).
+/// Up to `SEARCH_LINES_MOST` lines in all, for as long as `SEARCH_TIME`; or,
+/// with `all`, as many as `SEARCH_ALL_TIME` finds.
 pub fn search_lines(
     loaded: &crate::bundle::Loaded,
     revision: usize,
     paths: &[String],
-    q: &str,
-    case: bool,
-    all: bool,
+    asked: &SearchAsked,
     git: Option<&dyn CommitFiles>,
-) -> (Vec<FoundLine>, bool) {
-    let mut out = Vec::new();
+) -> SearchFound {
+    let SearchAsked {
+        q,
+        case,
+        all,
+        others,
+    } = *asked;
+    let mut out = SearchFound::default();
     if q.is_empty() {
-        return (out, false);
+        return out;
     }
     let Ok(mut files) = FileReader::new(loaded, revision, git) else {
-        return (out, false);
+        return out;
     };
-    let until = std::time::Instant::now() + SEARCH_ALL_TIME;
+    let until = std::time::Instant::now() + if all { SEARCH_ALL_TIME } else { SEARCH_TIME };
+    let most = if all { usize::MAX } else { SEARCH_LINES_MOST };
     let lower = q.to_lowercase();
+    let has = |text: &str| {
+        if case {
+            text.contains(q)
+        } else {
+            text.to_lowercase().contains(&lower)
+        }
+    };
     for path in paths {
-        if all && std::time::Instant::now() > until {
-            return (out, true);
+        if std::time::Instant::now() > until {
+            out.cut = true;
+            return out;
         }
         let Ok(text) = files.text(path) else {
             continue;
         };
-        for (i, line) in text.lines().enumerate() {
-            let found = if case {
-                line.contains(q)
-            } else {
-                line.to_lowercase().contains(&lower)
+        if search_text(path, &text, q, &lower, case, most, &mut out.lines) {
+            out.cut = true;
+            return out;
+        }
+    }
+    if !others {
+        return out;
+    }
+    let Some(rest) = other_files(loaded, revision, git) else {
+        return out;
+    };
+    out.names = rest.iter().filter(|p| has(p)).cloned().collect();
+    for part in rest.chunks(SEARCH_READ_AT_ONCE) {
+        if std::time::Instant::now() > until {
+            out.cut = true;
+            return out;
+        }
+        for (path, bytes) in part.iter().zip(files.read_many(part)) {
+            let Some(text) = bytes.and_then(|b| String::from_utf8(b).ok()) else {
+                continue;
             };
-            if found {
-                if !all && out.len() >= SEARCH_LINES_MOST {
-                    return (out, true);
-                }
-                out.push(FoundLine {
-                    path: path.clone(),
-                    line: i as u32 + 1,
-                    text: line.to_string(),
-                });
+            let left = most.saturating_sub(out.lines.len());
+            if search_text(path, &text, q, &lower, case, left, &mut out.others) {
+                out.cut = true;
+                return out;
             }
         }
     }
-    (out, false)
+    out
 }
 
 /// How much of the lines a diff leaves out an exported page carries as plain

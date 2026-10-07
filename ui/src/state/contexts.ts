@@ -130,6 +130,8 @@ export interface Opened {
   open(rev: number, path: string): Promise<Answer<{ file?: OpenedFile }>>;
   close(rev: number, path: string): void;
   more(rev: number, path: string): Promise<Answer<{ hunk?: Hunk; next?: number | null }>>;
+  /** Opens a file (if it isn't yet), read as far as line `line`. */
+  reach(rev: number, path: string, line: number): Promise<Answer<object>>;
 }
 
 /** Where a jump can go, and what a comment's attachments are. */

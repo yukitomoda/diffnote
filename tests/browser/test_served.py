@@ -773,6 +773,36 @@ class Search(ServedCase):
         self.assertEqual(self.count(), "1000+ 件")
         self.assertTrue(b.exists("[data-diffnote-search-all]"))
 
+    def test_a_file_the_review_does_not_show_is_searched_and_opened_to_what_was_found(self):
+        # The repository has more than the diff: a long file it doesn't touch
+        # (stored with the rest of the tree, so the review has it of itself).
+        repo = os.path.join(self.root, "search-others")
+        os.makedirs(repo)
+        git(repo, "init", "-q", "-b", "main")
+        write(repo, "a.txt", "one\n")
+        write(repo, "notes/other.txt", "".join("needle here\n" if n == 900 else f"line {n}\n" for n in range(1, 1201)))
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "c1")
+        write(repo, "a.txt", "ONE\n")
+        git(repo, "commit", "-q", "-am", "c2")
+        master = os.path.join(self.root, "search-others.diffnote")
+        harness.review_of(repo, master, "HEAD", base="HEAD~1", extra=["--snapshot", "full"],
+                          comments=[{"file": "a.txt", "line": "ONE", "body": "x"}])
+        self.serve(master)
+        b = self.b
+        self.ctrl_f()
+        self.search("needle")
+        self.assertEqual(self.count(), "1 件")
+        self.assertTrue(b.exists("[data-diffnote-search-others]"))
+        b.click("[data-diffnote-search-file='notes/other.txt'] [data-diffnote-search-hit]")
+        row = f"{CUR} section.diffnote-file[data-diffnote-file='notes/other.txt'] [data-diffnote-new='900']"
+        self.assertTrue(b.wait_exists(row), "opened, as far as the line")
+        self.assertTrue(b.wait("decodeURIComponent(location.hash).includes('at=lines:notes/other.txt:R900')"))
+        self.assertTrue(b.wait("CSS.highlights.get('diffnote-search-now') && CSS.highlights.get('diffnote-search-now').size === 1"))
+        # Its name too.
+        self.search("other.txt")
+        self.assertTrue(b.wait("!!document.querySelector(\"[data-diffnote-search-file='notes/other.txt'] .diffnote-search__name\")"))
+
     def test_the_lines_the_diff_leaves_out_are_found_and_shown_when_gone_to(self):
         master, _ = harness.make_gaps_review(self.root, name="search-gaps")
         self.serve(master)

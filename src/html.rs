@@ -321,6 +321,11 @@ pub trait CommitFiles {
     fn tree(&self, repo: &str, commit: &str) -> Option<std::sync::Arc<Vec<crate::git::TreeEntry>>>;
     /// The content of one of those files.
     fn read(&self, repo: &str, entry: &crate::git::TreeEntry) -> Result<Vec<u8>, String>;
+    /// The contents of many of them, in their order (all at once, where it
+    /// can: reading one at a time starts git for each).
+    fn read_many(&self, repo: &str, entries: &[&crate::git::TreeEntry]) -> Vec<Option<Vec<u8>>> {
+        entries.iter().map(|e| self.read(repo, e).ok()).collect()
+    }
 }
 
 /// Files bigger than this are not opened (or stored by a comment).
@@ -642,6 +647,61 @@ impl<'a> FileReader<'a> {
         })
     }
 
+    /// The contents of many files, in their order (`None` for one that can't
+    /// be read, or is too big to open): those from git read all at once, a
+    /// repository at a time.
+    fn read_many(&mut self, paths: &[String]) -> Vec<Option<Vec<u8>>> {
+        let mut out: Vec<Option<Vec<u8>>> = vec![None; paths.len()];
+        // From git: by repository and commit, the place of each in `out`.
+        let mut asked: HashMap<(String, String), Vec<(usize, String)>> = HashMap::new();
+        for (i, path) in paths.iter().enumerate() {
+            if let Some(digest) = self.stored.get(path)
+                && let Some(bytes) = self
+                    .blobs
+                    .get(digest.strip_prefix("sha256:").unwrap_or(digest))
+            {
+                out[i] = Some(bytes.to_vec());
+            } else if let Some((repo, commit, inner)) = in_git(self.rev, path) {
+                asked
+                    .entry((repo.to_string(), commit.to_string()))
+                    .or_default()
+                    .push((i, inner.to_string()));
+            }
+        }
+        let Some(git) = self.git else {
+            return out;
+        };
+        for ((repo, commit), wanted) in asked {
+            let Some(tree) = self
+                .trees
+                .entry((repo.clone(), commit.clone()))
+                .or_insert_with(|| {
+                    git.tree(&repo, &commit).map(|entries| GitTree {
+                        at: entries
+                            .iter()
+                            .enumerate()
+                            .map(|(i, e)| (e.path.clone(), i))
+                            .collect(),
+                        entries,
+                    })
+                })
+                .as_ref()
+            else {
+                continue;
+            };
+            let found: Vec<(usize, &crate::git::TreeEntry)> = wanted
+                .iter()
+                .filter_map(|(i, inner)| Some((*i, &tree.entries[*tree.at.get(inner)?])))
+                .filter(|(_, e)| e.size <= MAX_FILE_BYTES)
+                .collect();
+            let entries: Vec<&crate::git::TreeEntry> = found.iter().map(|(_, e)| *e).collect();
+            for ((i, _), bytes) in found.iter().zip(git.read_many(&repo, &entries)) {
+                out[*i] = bytes;
+            }
+        }
+        out
+    }
+
     fn text(&mut self, path: &str) -> Result<String, String> {
         String::from_utf8(self.read(path)?.bytes).map_err(|_| m("html.not_text").to_string())
     }
@@ -893,9 +953,10 @@ pub(crate) mod tokens;
 mod viewmodel;
 mod words;
 pub use viewmodel::{
-    ExpandLimit, OpenedData, ViewModel, WorkspaceInfo, WorkspaceRepo, bundle_info, chunk_data,
-    compare_data, lines_json, mark_viewed, opened_data, search_lines, served_model_json, stamp,
-    thread_json, tree_json, view_model, view_model_for, view_model_json, view_model_with,
+    ExpandLimit, OpenedData, SearchAsked, ViewModel, WorkspaceInfo, WorkspaceRepo, bundle_info,
+    chunk_data, compare_data, lines_json, mark_viewed, opened_data, search_lines,
+    served_model_json, stamp, thread_json, tree_json, view_model, view_model_for, view_model_json,
+    view_model_with,
 };
 
 #[cfg(test)]

@@ -345,6 +345,14 @@ impl html::CommitFiles for GitFiles {
             .pop()
             .ok_or_else(|| m("serve.git_read_failed_unknown").to_string())
     }
+
+    fn read_many(&self, repo: &str, entries: &[&crate::git::TreeEntry]) -> Vec<Option<Vec<u8>>> {
+        let oids: Vec<&str> = entries.iter().map(|e| e.oid.as_str()).collect();
+        match self.repo(repo).read_blobs(&oids) {
+            Ok(blobs) => blobs.into_iter().map(Some).collect(),
+            Err(_) => vec![None; entries.len()],
+        }
+    }
 }
 
 impl Server {
@@ -1439,6 +1447,9 @@ impl Server {
             /// Every line, not only the first so many (for as long as it may take).
             #[serde(default)]
             all: bool,
+            /// The files the page doesn't show too.
+            #[serde(default)]
+            others: bool,
             paths: Vec<String>,
         }
         let revision = rev
@@ -1447,19 +1458,21 @@ impl Server {
         let asked: Asked = serde_json::from_slice(body)
             .map_err(|_| Failure(400, m("serve.body_unreadable").into()))?;
         let loaded = bundle::load(&self.review).map_err(internal)?;
-        let (lines, cut) = html::search_lines(
+        let found = html::search_lines(
             &loaded,
             revision,
             &asked.paths,
-            &asked.q,
-            asked.case,
-            asked.all,
+            &html::SearchAsked {
+                q: &asked.q,
+                case: asked.case,
+                all: asked.all,
+                others: asked.others,
+            },
             self.git(),
         );
-        Ok(Reply::json(
-            200,
-            &serde_json::json!({ "ok": true, "lines": lines, "cut": cut }),
-        ))
+        let mut answer = serde_json::to_value(found).map_err(|e| internal(e.into()))?;
+        answer["ok"] = true.into();
+        Ok(Reply::json(200, &answer))
     }
 
     /// Runs `action` on the thread with this id, then answers with what the
@@ -5063,6 +5076,46 @@ mod tests {
         };
         assert_eq!(cut(false), (5000, Some(true)));
         assert_eq!(cut(true), (6000, Some(false)));
+    }
+
+    #[test]
+    fn the_files_the_page_does_not_show_are_searched_too_when_asked() {
+        let f = fixture_with_a_tree();
+        let ask = |others: bool, q: &str| {
+            let body = serde_json::json!({ "q": q, "others": others, "paths": [] }).to_string();
+            json(&f.post("/api/files/0/search", &body))
+        };
+        // The lines of the other files, and those whose path has it in it.
+        let found = ask(true, "FN ");
+        let lines: Vec<(String, u64)> = found["others"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| {
+                (
+                    l["path"].as_str().unwrap().to_string(),
+                    l["line"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                ("src/a.rs".to_string(), 1),
+                ("src/a.rs".to_string(), 2),
+                ("src/lib/b.rs".to_string(), 1)
+            ]
+        );
+        assert_eq!(ask(true, "DOCS/")["names"].as_array().unwrap().len(), 2);
+        // A file that isn't text is passed over; not asked, none.
+        assert!(
+            ask(true, "\u{fffd}")["others"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(ask(false, "fn ")["others"].as_array().unwrap().is_empty());
+        assert!(ask(false, "docs/")["names"].as_array().unwrap().is_empty());
     }
 
     #[test]

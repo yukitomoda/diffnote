@@ -7,12 +7,12 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useStore } from '@nanostores/preact';
 import { lib } from '../lib.ts';
-import { LinksContext } from '../state/contexts.ts';
+import { LinksContext, OpenedContext } from '../state/contexts.ts';
 import { searchCase, searchCurrent, searchFocus, searchText, showFiles } from '../state/search.ts';
 import { reveal } from '../state/reveal.ts';
 import { server, transport } from '../transport.ts';
 import { SEARCH_ALL_TIME, carriedGapLines, excerpt, occurrences, placeOf, searchRevision } from '../search.ts';
-import type { GapLine, Hit, SearchQuery, SearchResult, Span } from '../search.ts';
+import type { FileGroup, GapLine, Hit, OtherFound, SearchQuery, SearchResult, Span } from '../search.ts';
 import type { FileData, Placement, ThreadData } from '../model.ts';
 import { Icon } from '../icon.tsx';
 
@@ -33,6 +33,7 @@ var ROWS = 1000;
 
 export function SearchPane(props: SearchPaneProps) {
   var links = useContext(LinksContext);
+  var opened = useContext(OpenedContext);
   var text = useStore(searchText);
   var caseSensitive = useStore(searchCase);
   var current = useStore(searchCurrent);
@@ -58,8 +59,9 @@ export function SearchPane(props: SearchPaneProps) {
   var setWhole = _w[1];
   var asking = wanted ? wanted + (whole ? '\0all' : '') : '';
   // The files' every line: the lines the diffs leave out too -- what an
-  // exported page carries, or, served, what the server finds.
-  var _g = useState<{ for: string; lines: GapLine[]; cut: boolean } | null>(null);
+  // exported page carries, or, served, what the server finds (and, there,
+  // in the files the page doesn't show as well).
+  var _g = useState<{ for: string; lines: GapLine[]; others?: OtherFound; cut: boolean } | null>(null);
   var gaps = _g[0];
   var setGaps = _g[1];
   // (Asked again when the files are others, not when the same are drawn anew.)
@@ -69,8 +71,12 @@ export function SearchPane(props: SearchPaneProps) {
     if (!asking) { setGaps(null); return undefined; }
     if (!transport) { setGaps({ for: asking, lines: carriedGapLines(props.files), cut: false }); return undefined; }
     var stale = false;
-    server().post<{ lines: GapLine[]; cut?: boolean }>('api/files/' + props.rev + '/search', { q: asked, case: caseSensitive, all: !!whole, paths: paths }).then(function (res) {
-      if (!stale) setGaps({ for: asking, lines: res.ok ? res.lines : [], cut: res.ok && !!res.cut });
+    server().post<{ lines: GapLine[]; others: GapLine[]; names: string[]; cut?: boolean }>('api/files/' + props.rev + '/search',
+      { q: asked, case: caseSensitive, all: !!whole, others: true, paths: paths }).then(function (res) {
+      if (stale) return;
+      setGaps(res.ok
+        ? { for: asking, lines: res.lines, others: { lines: res.others || [], names: res.names || [] }, cut: !!res.cut }
+        : { for: asking, lines: [], cut: false });
     });
     return function () { stale = true; };
   }, [asking, pathsKey]);
@@ -81,7 +87,7 @@ export function SearchPane(props: SearchPaneProps) {
     if (waiting && whole && last.current && last.current.for === wanted) return last.current.result;
     var have = gaps && gaps.for === asking ? gaps : null;
     var r = searchRevision(props.files, props.threads, query, have ? have.lines : undefined,
-      whole ? { most: Infinity, until: whole.at + SEARCH_ALL_TIME } : undefined);
+      whole ? { most: Infinity, until: whole.at + SEARCH_ALL_TIME } : undefined, have ? have.others : undefined);
     if (have && have.cut) { r.capped = true; if (whole) r.timedOut = true; }
     last.current = { for: wanted, result: r };
     return r;
@@ -120,13 +126,21 @@ export function SearchPane(props: SearchPaneProps) {
     if (!links) return;
     // As a link goes: the address says where, and back returns from it. A
     // line the diff leaves out is shown first.
+    // A file the page doesn't show is opened (as far as the line) first.
     if (hit.kind === 'line') {
       var line = hit;
-      (line.gap ? reveal(props.rev, line.path, line.line) : Promise.resolve()).then(function () {
+      (line.gap ? reveal(props.rev, line.path, line.line)
+        : line.other && opened ? opened.reach(props.rev, line.path, line.line)
+        : Promise.resolve()).then(function () {
         links!.go({ kind: 'lines', path: line.path, side: line.side, start: line.line, end: line.line });
       });
     }
-    else if (hit.kind === 'name') links.go({ kind: 'file', path: hit.path });
+    else if (hit.kind === 'name') {
+      var name = hit;
+      (name.other && opened ? opened.reach(props.rev, name.path, 0) : Promise.resolve()).then(function () {
+        links!.go({ kind: 'file', path: name.path });
+      });
+    }
     else links.go({ kind: 'thread', id: hit.thread });
   };
   var next = function () { go(current + 1); };
@@ -152,6 +166,31 @@ export function SearchPane(props: SearchPaneProps) {
   var found = function (t: string, span: Span, before: number, most: number) {
     var e = excerpt(t, span, before, most);
     return <span class="diffnote-search__text">{e.head}<mark>{e.found}</mark>{e.tail}</span>;
+  };
+  // One file's hits: its name (or its path, faint), then its lines.
+  var group = function (g: FileGroup) {
+    var count = g.lines.length + (g.name ? 1 : 0);
+    var first = g.name ? index(g.name) : g.lines.length ? index(g.lines[0]) : 0;
+    if (first >= rows) return null;
+    return <details key={g.path} class="diffnote-search__group" open data-diffnote-search-file={g.path}>
+      <summary title={g.path}>
+        {/* The file's own name first, its directory faint after it (the
+            whole path, marked, where that is what was found). */}
+        {g.name ? item(g.name, found(g.path, g.name.span, 1000, 1000), 'diffnote-search__name')
+          : <span class="diffnote-search__path">{lib.baseName(g.path)}<small>{dirOf(g.path)}</small></span>}
+        <span class="diffnote-badge diffnote-search__badge">{count}</span>
+      </summary>
+      {g.lines.length > 0 && <ol>
+        {g.lines.map(function (h, j) {
+          if (index(h) >= rows) return null;
+          return <li key={j}>{item(h, <>
+            <span class={'diffnote-search__line' + (h.side === 'old' ? ' is-old' : '')} title={lib.m(h.side === 'old' ? 'ui.search.old_title' : 'ui.search.new_title')}>
+              {(h.side === 'old' ? '−' : '') + h.line}</span>
+            {found(h.text, h.span, 16, 80)}
+          </>)}</li>;
+        })}
+      </ol>}
+    </details>;
   };
   return <div class="diffnote-search" data-diffnote-search data-diffnote-search-asked={waiting ? undefined : asked}>
     <div class="diffnote-search__box">
@@ -192,30 +231,9 @@ export function SearchPane(props: SearchPaneProps) {
           onClick={function () { setWhole({ for: wanted, at: Date.now() }); }}>{lib.m('ui.search.all')}</button>}
     </p>}
     <div class="diffnote-search__results">
-      {result.files.map(function (g) {
-        var count = g.lines.length + (g.name ? 1 : 0);
-        var first = g.name ? index(g.name) : g.lines.length ? index(g.lines[0]) : 0;
-        if (first >= rows) return null;
-        return <details key={g.path} class="diffnote-search__group" open data-diffnote-search-file={g.path}>
-          <summary title={g.path}>
-            {/* The file's own name first, its directory faint after it (the
-                whole path, marked, where that is what was found). */}
-            {g.name ? item(g.name, found(g.path, g.name.span, 1000, 1000), 'diffnote-search__name')
-              : <span class="diffnote-search__path">{lib.baseName(g.path)}<small>{dirOf(g.path)}</small></span>}
-            <span class="diffnote-badge diffnote-search__badge">{count}</span>
-          </summary>
-          {g.lines.length > 0 && <ol>
-            {g.lines.map(function (h, j) {
-              if (index(h) >= rows) return null;
-              return <li key={j}>{item(h, <>
-                <span class={'diffnote-search__line' + (h.side === 'old' ? ' is-old' : '')} title={lib.m(h.side === 'old' ? 'ui.search.old_title' : 'ui.search.new_title')}>
-                  {(h.side === 'old' ? '−' : '') + h.line}</span>
-                {found(h.text, h.span, 16, 80)}
-              </>)}</li>;
-            })}
-          </ol>}
-        </details>;
-      })}
+      {result.files.map(group)}
+      {result.others.length > 0 && index(result.others[0].name || result.others[0].lines[0]) < rows && <p class="diffnote-search__section" data-diffnote-search-others>{lib.m('ui.search.others')}</p>}
+      {result.others.map(group)}
       {result.comments.length > 0 && index(result.comments[0]) < rows && <details class="diffnote-search__group" open data-diffnote-search-comments>
         <summary><span class="diffnote-search__path">{lib.m('ui.search.comments')}</span><span class="diffnote-badge diffnote-search__badge">{result.comments.length}</span></summary>
         <ol>

@@ -77,6 +77,7 @@ body { font-family: var(--diffnote-font); font-size: 14px; line-height: 1.5; col
 .diffnote-search__case.is-on { color: var(--diffnote-color-accent); border-color: var(--diffnote-color-accent); background: color-mix(in srgb, var(--diffnote-color-accent) 10%, transparent); }
 .diffnote-search__bar { display: flex; align-items: center; gap: 2px; padding: 4px 4px 4px 8px; }
 .diffnote-search__count { flex: 1; min-width: 0; font-size: 12px; color: var(--diffnote-color-muted); }
+.diffnote-search__section { margin: 10px 8px 4px; font-size: 12px; font-weight: 600; color: var(--diffnote-color-muted); }
 .diffnote-search__note { margin: 0 8px 6px; font-size: 12px; color: var(--diffnote-color-muted); }
 .diffnote-search__group > summary { display: flex; align-items: center; gap: 6px; padding: 2px 4px; cursor: pointer; font-family: var(--diffnote-font-mono); font-size: 12.5px; }
 .diffnote-search__path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }

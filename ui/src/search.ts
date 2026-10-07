@@ -40,6 +40,8 @@ export interface LineHit {
   nth: number;
   /** A line the diff leaves out: to be shown before it is gone to. */
   gap?: boolean;
+  /** Of a file the page doesn't show: to be opened before it is gone to. */
+  other?: boolean;
 }
 
 /** A file whose name (its path) it is in. */
@@ -47,6 +49,7 @@ export interface NameHit {
   kind: 'name';
   path: string;
   span: Span;
+  other?: boolean;
 }
 
 /** A comment it was found in: of which thread, the comment's place in it,
@@ -70,11 +73,20 @@ export interface FileGroup {
   lines: LineHit[];
 }
 
+/** What the server found in the files the page doesn't show: their lines,
+ * and which of them have it in their path. */
+export interface OtherFound {
+  lines: GapLine[];
+  names: string[];
+}
+
 export interface SearchResult {
   files: FileGroup[];
+  /** The files the page doesn't show, after its own (by path). */
+  others: FileGroup[];
   comments: CommentHit[];
   /** Every hit, in the order the next one is gone to: file by file (its
-   * name, then its lines), then the comments. */
+   * name, then its lines), the other files the same, then the comments. */
   all: Hit[];
   /** Whether there were more, and the rest left out (past the most it
    * finds, or the time it may take). */
@@ -141,8 +153,8 @@ export function carriedGapLines(files: FileData[]): GapLine[] {
  * the page has it, between the diff's lines (one the diff has after all is
  * not counted twice).
  */
-export function searchRevision(files: FileData[], threads: ThreadData[], query: SearchQuery, gaps?: GapLine[], limits?: SearchLimits): SearchResult {
-  var result: SearchResult = { files: [], comments: [], all: [], capped: false, timedOut: false };
+export function searchRevision(files: FileData[], threads: ThreadData[], query: SearchQuery, gaps?: GapLine[], limits?: SearchLimits, others?: OtherFound): SearchResult {
+  var result: SearchResult = { files: [], others: [], comments: [], all: [], capped: false, timedOut: false };
   if (!query.text) return result;
   var most = limits && limits.most != null ? limits.most : SEARCH_MOST;
   var until = limits && limits.until;
@@ -201,6 +213,34 @@ export function searchRevision(files: FileData[], threads: ThreadData[], query: 
     });
     if (group.name || group.lines.length) result.files.push(group);
   });
+  // The files the page doesn't show, by path: each one's name, then its lines.
+  if (others) {
+    var shown: Record<string, boolean> = {};
+    files.forEach(function (f) { shown[f.path] = true; });
+    var lines: Record<string, GapLine[]> = {};
+    others.lines.forEach(function (g) { if (!shown[g.path]) (lines[g.path] = lines[g.path] || []).push(g); });
+    var paths = Object.keys(lines);
+    others.names.forEach(function (p) { if (!shown[p] && !lines[p]) paths.push(p); });
+    paths.sort();
+    paths.forEach(function (path) {
+      if (full()) return;
+      var group: FileGroup = { path: path, name: null, lines: [] };
+      var inName = others.names.indexOf(path) >= 0 ? occurrences(path, query)[0] : undefined;
+      if (inName) {
+        group.name = { kind: 'name', path: path, span: inName, other: true };
+        result.all.push(group.name);
+      }
+      (lines[path] || []).slice().sort(function (a, b) { return a.line - b.line; }).forEach(function (g) {
+        occurrences(g.text, query).forEach(function (span, nth) {
+          if (full()) return;
+          var hit: LineHit = { kind: 'line', path: path, side: 'new', line: g.line, text: g.text, span: span, nth: nth, other: true };
+          group.lines.push(hit);
+          result.all.push(hit);
+        });
+      });
+      if (group.name || group.lines.length) result.others.push(group);
+    });
+  }
   threads.forEach(function (t) {
     t.comments.forEach(function (c) {
       if (c.deleted || full()) return;

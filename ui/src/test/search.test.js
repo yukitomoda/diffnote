@@ -96,3 +96,17 @@ test('asked for all, it finds past the most, and stops when its time is up', () 
   assert.deepEqual([late.capped, late.timedOut], [true, true]);
   assert.ok(late.all.length < SEARCH_MOST, 'what it had found by then');
 });
+
+test("the files the page doesn't show come after its own, by path: each one's name, then its lines", () => {
+  const others = {
+    lines: [
+      { path: 'z/b.ts', line: 9, text: 'login nine' },
+      { path: 'z/b.ts', line: 2, text: 'login two' },
+      { path: 'a.ts', line: 1, text: 'login' }, // the page shows it: not again
+    ],
+    names: ['m/login.md', 'a.ts'],
+  };
+  const r = searchRevision([file('a.ts', [row('a', null, 1, 'login')])], [thread('t', comment('c', 'login'))], q('login'), undefined, undefined, others);
+  assert.deepEqual(r.others.map((g) => [g.path, !!g.name, g.lines.map((h) => h.line)]), [['m/login.md', true, []], ['z/b.ts', false, [2, 9]]]);
+  assert.deepEqual(r.all.map((h) => h.kind + (h.other ? '*' : '')), ['line', 'name*', 'line*', 'line*', 'comment']);
+});
