@@ -802,6 +802,46 @@ class Search(ServedCase):
         # Its name too.
         self.search("other.txt")
         self.assertTrue(b.wait("!!document.querySelector(\"[data-diffnote-search-file='notes/other.txt'] .diffnote-search__name\")"))
+        # A file the review's settings leave out isn't searched, unless the
+        # search is told not to keep to them. (Not one opened: that one the
+        # page shows. Anew, then.)
+        self.server.api("/api/settings", {"ignore": "notes/\n"})
+        b.reload()
+        self.ctrl_f()
+        self.search("needle")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-search-ignore]').getAttribute('aria-pressed') === 'true'"))
+        self.assertEqual(self.count(), "一致なし")
+        b.click("[data-diffnote-search-ignore]")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-search-count]').textContent === '1 件'"), self.count())
+        b.click("[data-diffnote-search-ignore]")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-search-count]').textContent === '一致なし'"), self.count())
+
+    def test_a_file_of_the_diff_the_settings_leave_out_is_searched_when_told_to(self):
+        repo = os.path.join(self.root, "search-left-out")
+        os.makedirs(repo)
+        git(repo, "init", "-q", "-b", "main")
+        write(repo, "a.txt", "one\n")
+        write(repo, "gen/out.txt", "made\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "c1")
+        write(repo, "a.txt", "ONE\n")
+        write(repo, "gen/out.txt", "made again\n")
+        git(repo, "commit", "-q", "-am", "c2")
+        master = os.path.join(self.root, "search-left-out.diffnote")
+        harness.review_of(repo, master, "HEAD", base="HEAD~1", extra=["--snapshot", "full"],
+                          comments=[{"file": "a.txt", "line": "ONE", "body": "x"}])
+        self.serve(master)
+        b = self.b
+        self.server.api("/api/settings", {"ignore": "gen/\n"})
+        b.reload()
+        self.assertTrue(b.wait_exists("[data-diffnote-ignored]"), "left out of the page")
+        self.ctrl_f()
+        self.search("made again")
+        self.assertEqual(self.count(), "一致なし")
+        b.click("[data-diffnote-search-ignore]")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-search-count]').textContent === '1 件' && !!document.querySelector('[data-diffnote-search-others]')"), self.count())
+        b.click("[data-diffnote-search-file='gen/out.txt'] [data-diffnote-search-hit]")
+        self.assertTrue(b.wait_exists(f"{CUR} section.diffnote-file[data-diffnote-file='gen/out.txt'] [data-diffnote-new='1']"), "opened as a file")
 
     def test_the_lines_the_diff_leaves_out_are_found_and_shown_when_gone_to(self):
         master, _ = harness.make_gaps_review(self.root, name="search-gaps")

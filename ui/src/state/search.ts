@@ -10,6 +10,8 @@ export const sidebarView = atom<SidebarView>('files');
 
 export const searchText = atom('');
 export const searchCase = atom(false);
+/** Whether the files the review's settings leave out stay out of it. */
+export const searchIgnore = atom(true);
 /** Which hit is the one gone to (its place in `SearchResult.all`); -1 for
  * none yet. */
 export const searchCurrent = atom(-1);

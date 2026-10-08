@@ -1124,6 +1124,8 @@ ui:
       検索
     case_title: |-
       大文字と小文字を区別
+    ignore_title: |-
+      無視するファイルを除く
     prev_title: |-
       前へ
     next_title: |-
@@ -1141,7 +1143,7 @@ ui:
     comments: |-
       コメント
     others: |-
-      差分にないファイル
+      その他のファイル
     review_wide: |-
       レビュー全体
     old_title: |-

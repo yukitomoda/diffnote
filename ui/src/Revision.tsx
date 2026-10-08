@@ -116,7 +116,7 @@ export function Revision(props: RevisionProps) {
             aria-selected={view === 'search'} title={lib.m('ui.search.tab_title')} onClick={openSearch}><Icon name="search" />{lib.m('ui.search.tab_search')}</button>
         </div>
         {view === 'search'
-          ? <SearchPane rev={rev} files={files} threads={model.threads} placements={revision.placements} />
+          ? <SearchPane rev={rev} files={files} ignored={revision.ignored || []} threads={model.threads} placements={revision.placements} />
           : <>
             <FileList ctx={listOrder} />
             {model.threads.length > 0 && <ThreadList ctx={listOrder} />}

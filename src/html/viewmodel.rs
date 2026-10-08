@@ -1516,6 +1516,12 @@ pub struct SearchAsked<'a> {
     pub all: bool,
     /// The files the page doesn't show too.
     pub others: bool,
+    /// Whether the files the review's settings leave out (`ignore`) are
+    /// left out of those as well.
+    pub ignore: bool,
+    /// Files of the diff the page left out (as the settings say), to search
+    /// with the others when they aren't left out (`ignore` false).
+    pub also: &'a [String],
 }
 
 /// The lines of the files `paths` (as revision `revision` has them, new side)
@@ -1538,6 +1544,8 @@ pub fn search_lines(
         case,
         all,
         others,
+        ignore,
+        also,
     } = *asked;
     let mut out = SearchFound::default();
     if q.is_empty() {
@@ -1572,9 +1580,20 @@ pub fn search_lines(
     if !others {
         return out;
     }
-    let Some(rest) = other_files(loaded, revision, git) else {
+    let Some(mut rest) = other_files(loaded, revision, git) else {
         return out;
     };
+    // As the review's settings say: the files it leaves out, out; or, asked
+    // not to, in, the diff's own among them.
+    if ignore {
+        if let Some(matcher) = crate::review::ignore_matcher(&loaded.settings) {
+            rest.retain(|p| !crate::review::is_ignored(&matcher, p));
+        }
+    } else {
+        rest.extend(also.iter().cloned());
+        rest.sort();
+        rest.dedup();
+    }
     out.names = rest.iter().filter(|p| has(p)).cloned().collect();
     for part in rest.chunks(SEARCH_READ_AT_ONCE) {
         if std::time::Instant::now() > until {

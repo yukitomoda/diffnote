@@ -1464,6 +1464,12 @@ impl Server {
             /// The files the page doesn't show too.
             #[serde(default)]
             others: bool,
+            /// Whether the files the review's settings leave out stay out.
+            #[serde(default = "yes")]
+            ignore: bool,
+            /// The diff's files the page left out, to search when they don't.
+            #[serde(default)]
+            also: Vec<String>,
             paths: Vec<String>,
         }
         let revision = rev
@@ -1481,6 +1487,8 @@ impl Server {
                 case: asked.case,
                 all: asked.all,
                 others: asked.others,
+                ignore: asked.ignore,
+                also: &asked.also,
             },
             self.git(),
         );
@@ -2393,6 +2401,11 @@ fn attached_name(target: &str) -> Option<String> {
     }
     let name = crate::image::file_name(&asked);
     (name != "image.png").then_some(name)
+}
+
+/// `true`, for a field that is so unless said.
+fn yes() -> bool {
+    true
 }
 
 fn query_param(query: &str, key: &str) -> Option<String> {
@@ -5130,6 +5143,46 @@ mod tests {
         );
         assert!(ask(false, "fn ")["others"].as_array().unwrap().is_empty());
         assert!(ask(false, "docs/")["names"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_files_the_settings_leave_out_are_not_searched_unless_asked() {
+        let f = fixture_with_a_tree();
+        assert_eq!(
+            f.post("/api/settings", r#"{"ignore":"docs/\n"}"#).status,
+            200
+        );
+        let names = |body: serde_json::Value| -> Vec<String> {
+            json(&f.post("/api/files/0/search", &body.to_string()))["names"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|n| n.as_str().unwrap().to_string())
+                .collect()
+        };
+        // As the settings say, unless asked not to: then the diff's own left
+        // out ones (`also`) too.
+        assert!(names(serde_json::json!({ "q": "docs/", "others": true, "paths": [] })).is_empty());
+        assert_eq!(
+            names(
+                serde_json::json!({ "q": "docs/", "others": true, "ignore": false, "paths": [] })
+            )
+            .len(),
+            2
+        );
+        assert_eq!(
+            names(
+                serde_json::json!({ "q": "a.rs", "others": true, "ignore": false, "also": ["left/a.rs"], "paths": [] })
+            ),
+            ["left/a.rs", "src/a.rs"]
+        );
+        assert_eq!(
+            names(
+                serde_json::json!({ "q": "a.rs", "others": true, "also": ["left/a.rs"], "paths": [] })
+            ),
+            ["src/a.rs"],
+            "kept to the settings, not asked for"
+        );
     }
 
     #[test]
