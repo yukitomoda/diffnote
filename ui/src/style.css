@@ -630,8 +630,11 @@ textarea.is-dropping { outline: 2px dashed var(--diffnote-color-accent); outline
    takes in, with its button, kept in view at the bottom. */
 .diffnote-setup__layout { display: grid; grid-template-columns: minmax(0, 44em) minmax(0, 1fr); gap: 0 24px; align-items: start; }
 .diffnote-setup__layout .diffnote-setup__form { max-width: none; }
-.diffnote-setup__side { position: sticky; top: calc(var(--diffnote-topbar-h) + 12px); max-height: calc(100vh - var(--diffnote-topbar-h) - 90px); overflow: auto; border: 1px solid var(--diffnote-color-border); border-radius: 8px; }
+.diffnote-setup__side { position: sticky; top: calc(var(--diffnote-topbar-h) + 12px); max-height: calc(100vh - var(--diffnote-topbar-h) - 76px); overflow: auto; border: 1px solid var(--diffnote-color-border); border-radius: 8px; }
 .diffnote-setup__foot { grid-column: 1 / -1; position: sticky; bottom: 0; z-index: 4; display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; margin-top: 8px; padding: 10px 0; background: var(--diffnote-color-bg); border-top: 1px solid var(--diffnote-color-border); }
+.diffnote-screen.diffnote-setup { padding-bottom: 0; }
+.diffnote-setup__credit { margin-right: auto; font-size: 11px; color: var(--diffnote-color-muted); text-decoration: none; }
+.diffnote-setup__credit:hover { text-decoration: underline; }
 .diffnote-setup__totals { margin-right: auto; font-weight: 600; }
 @media (max-width: 1100px) {
   .diffnote-setup__layout { grid-template-columns: minmax(0, 1fr); }

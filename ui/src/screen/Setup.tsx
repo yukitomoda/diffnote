@@ -434,6 +434,8 @@ export function SetupScreen(props: { setup: SetupData }) {
 
       {/* What the review takes in, and the button that makes it: always in view. */}
       <div class="diffnote-setup__foot">
+        {/* (The page's foot is this bar: the link is at its start.) */}
+        <a class="diffnote-setup__credit" data-diffnote-setup-credit href="https://github.com/yukitomoda/diffnote" target="_blank" rel="noopener noreferrer">{lib.m('ui.footer.github')}</a>
         {error && <p class="diffnote-error" data-diffnote-setup-error role="alert">{error}</p>}
         {state.kind !== 'raw' && totals.repos > 0 && <span class="diffnote-setup__totals" data-diffnote-setup-totals>
           {state.kind === 'workspace'
