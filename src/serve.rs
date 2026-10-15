@@ -1682,7 +1682,9 @@ impl Server {
         };
         let repo = query_param(query, "repo").unwrap_or_default();
         let limit = query_param(query, "limit").and_then(|l| l.parse().ok());
-        match setup.graph(&repo, limit) {
+        // (Where the review is to end: its history is shown too.)
+        let target = query_param(query, "target");
+        match setup.graph(&repo, limit, target.as_deref()) {
             Ok(graph) => Self::answer("graph", graph),
             Err(e) => Reply::error(400, &e.to_string()),
         }

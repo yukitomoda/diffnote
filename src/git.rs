@@ -271,6 +271,18 @@ impl Repo {
     /// first and each before its parents (as `git log --topo-order` has
     /// them): what the first screen draws its graph from.
     pub fn history(&self, limit: usize) -> Result<Vec<LogEntry>> {
+        self.log_of(&["--branches".to_string(), "HEAD".to_string()], limit, None)
+    }
+
+    /// The commits from `revs` (names, or `^name` for what is not to be
+    /// gone into), newest first as `history` has them: up to `limit`, and
+    /// with `since` (a Unix time), only those committed from then on.
+    pub fn log_of(
+        &self,
+        revs: &[String],
+        limit: usize,
+        since: Option<i64>,
+    ) -> Result<Vec<LogEntry>> {
         let mut cmd = self.git();
         cmd.args([
             "log",
@@ -278,8 +290,11 @@ impl Repo {
             "-z",
             "--format=%H\x1f%P\x1f%an\x1f%ct\x1f%s",
         ])
-        .arg(format!("--max-count={limit}"))
-        .args(["--branches", "HEAD", "--"]);
+        .arg(format!("--max-count={limit}"));
+        if let Some(since) = since {
+            cmd.arg(format!("--since={since}"));
+        }
+        cmd.args(revs).arg("--");
         let mut out = Vec::new();
         for record in run_text(cmd)?.split('\0').filter(|r| !r.trim().is_empty()) {
             let mut field = record.trim_start_matches('\n').split('\x1f');
@@ -301,6 +316,28 @@ impl Repo {
             });
         }
         Ok(out)
+    }
+
+    /// The branches, local and remote-tracking, whose last commit is from
+    /// `since` (a Unix time) on: each as (its last commit's id, its full name,
+    /// `refs/remotes/…`, to start the history from). Not a remote's own `HEAD`.
+    pub fn branches_since(&self, since: i64) -> Result<Vec<(String, String)>> {
+        let mut cmd = self.git();
+        cmd.args([
+            "for-each-ref",
+            "--format=%(objectname)\x1f%(committerdate:unix)\x1f%(refname)",
+            "refs/heads",
+            "refs/remotes",
+        ]);
+        Ok(run_text(cmd)?
+            .lines()
+            .filter_map(|line| {
+                let mut field = line.split('\x1f');
+                let (id, at, name) = (field.next()?, field.next()?, field.next()?);
+                (at.trim().parse::<i64>().ok()? >= since && !name.ends_with("/HEAD"))
+                    .then(|| (id.to_string(), name.to_string()))
+            })
+            .collect())
     }
 
     /// The names that point at commits: local branches, remote-tracking

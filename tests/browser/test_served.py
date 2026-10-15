@@ -2978,6 +2978,45 @@ class FirstScreen(ServedCase):
         b.click("[data-diffnote-graph-to-commit]")
         self.assertEqual(b.value("[data-diffnote-setup-repo='x'] [data-diffnote-setup-to]"), middle[:12])
 
+    def test_where_it_ends_off_head_has_its_history_shown_too(self):
+        # A workspace of one repository whose history is a year old: main,
+        # `side` from main's 5th, and HEAD on `feature` from main's tip.
+        project = os.path.join(self.root, "first-ends")
+        repo = os.path.join(project, "app")
+        os.makedirs(repo)
+        git(repo, "init", "-q", "-b", "main")
+        old = "2025-01-01T00:00:00"
+        saved = {k: os.environ.get(k) for k in ("GIT_AUTHOR_DATE", "GIT_COMMITTER_DATE")}
+        os.environ["GIT_AUTHOR_DATE"] = os.environ["GIT_COMMITTER_DATE"] = old
+        try:
+            for n in range(40):
+                write(repo, "a.txt", f"main {n}\n")
+                git(repo, "add", "-A")
+                git(repo, "commit", "-q", "-m", f"main {n}")
+            git(repo, "checkout", "-q", "-b", "side", "HEAD~35")
+            write(repo, "b.txt", "side\n")
+            git(repo, "add", "-A")
+            git(repo, "commit", "-q", "-m", "side")
+            git(repo, "checkout", "-q", "-b", "feature", "main")
+            write(repo, "a.txt", "feature\n")
+            git(repo, "commit", "-q", "-am", "feature")
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        os.makedirs(os.path.join(project, "other"))
+        b = self.start(project, "first")
+        side = harness.git(repo, "rev-parse", "side")
+        graph = "[data-diffnote-graph='app']"
+        self.assertTrue(b.wait_exists(f"{graph} [data-diffnote-graph-commit]"))
+        self.assertFalse(b.exists(f"{graph} [data-diffnote-graph-commit='{side}']"), "off HEAD's line, and old")
+        b.set_value("[data-diffnote-setup-repo='app'] [data-diffnote-setup-to]", "side")
+        self.assertTrue(b.wait_exists(f"{graph} [data-diffnote-graph-commit='{side}']"), "where it ends, with its history")
+        fork = harness.git(repo, "rev-parse", "side~1")
+        self.assertTrue(b.exists(f"{graph} [data-diffnote-graph-commit='{fork}']"))
+
     def test_in_a_project_of_repositories_each_is_a_line_and_the_one_chosen_has_its_range_and_graph(self):
         project = project_of_repos(self.root, "first-ws")
         b = self.start(project, "first")

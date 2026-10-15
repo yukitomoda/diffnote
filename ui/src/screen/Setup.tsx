@@ -426,6 +426,7 @@ export function SetupScreen(props: { setup: SetupData }) {
 
       {activeRow && <aside class="diffnote-setup__side">
         <CommitGraph repo={activeRow.info.path} span={activeRow.span} canTarget={state.kind === 'workspace'}
+          target={targetOf(activeRow)}
           onFrom={function (base) { patchActive({ custom: true, base: MANUAL, manual: base.slice(0, 12) }); }}
           onTo={function (target) { patchActive({ target: /^[0-9a-f]{40}$/.test(target) ? target.slice(0, 12) : target }); }}
           onNames={function (list) { var path = activeRow!.info.path; setNames(function (cur) { return Object.assign({}, cur, { [path]: list }); }); }} />

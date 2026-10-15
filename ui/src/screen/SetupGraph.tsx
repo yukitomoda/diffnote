@@ -62,6 +62,9 @@ function Lines(props: { row: GraphRow; lanes: number }) {
   </svg>;
 }
 
+/** How long typing where it ends has to stop before the graph is asked for anew (ms). */
+var TARGET_SETTLE = 400;
+
 export interface GraphProps {
   /** The repository (its path; empty: the one). */
   repo: string;
@@ -71,6 +74,9 @@ export interface GraphProps {
   /** Whether where it ends can be chosen (a review of one repository goes
    * to `HEAD`, each time). */
   canTarget: boolean;
+  /** Where it ends, as written: a branch or commit off `HEAD`'s line has
+   * its history shown too (so that where it starts can be chosen from it). */
+  target?: string;
   /** A commit chosen as where the review compares from: its snapshot is
    * what the target's is compared with. */
   onFrom(base: string): void;
@@ -112,7 +118,9 @@ export function CommitGraph(props: GraphProps) {
   var load = function (limit: number | null) {
     var n = ++latest.current;
     setLoading(true);
-    server().get<{ graph: SetupGraph }>('api/setup/graph?repo=' + encodeURIComponent(props.repo) + (limit ? '&limit=' + limit : '')).then(function (res) {
+    var target = shownTarget.current;
+    server().get<{ graph: SetupGraph }>('api/setup/graph?repo=' + encodeURIComponent(props.repo) + (limit ? '&limit=' + limit : '')
+      + (target && target !== 'HEAD' ? '&target=' + encodeURIComponent(target) : '')).then(function (res) {
       if (latest.current !== n) return;
       setLoading(false);
       if (res.ok) {
@@ -123,7 +131,19 @@ export function CommitGraph(props: GraphProps) {
       else setError(res.error);
     });
   };
-  useEffect(function () { setGraph(null); load(null); }, [props.repo]);
+  // Anew for another repository; again (what is shown kept meanwhile) for
+  // another end, once typing it stops. (A name that is none is passed over
+  // by the server.)
+  var shownTarget = useRef<string | undefined>(props.target);
+  useEffect(function () { shownTarget.current = props.target; setGraph(null); load(null); }, [props.repo]);
+  useEffect(function () {
+    if (props.target === shownTarget.current) return undefined;
+    var t = setTimeout(function () {
+      shownTarget.current = props.target;
+      load(null);
+    }, TARGET_SETTLE);
+    return function () { clearTimeout(t); };
+  }, [props.target]);
   var span = props.span;
   var inRange: Record<string, boolean> = {};
   (span ? span.ids : []).forEach(function (id) { inRange[id] = true; });

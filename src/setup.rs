@@ -186,6 +186,9 @@ pub struct Graph {
 const GRAPH_BEFORE_FORK: usize = 10;
 /// How far back in time the graph goes at least.
 const GRAPH_DAYS: i64 = 28;
+/// The branches the graph starts from besides the local ones: those (remote
+/// ones too) with a commit in so many days.
+const GRAPH_BRANCH_DAYS: i64 = 30;
 /// What it shows when neither says anything (no default branch, and nothing
 /// lately), and the most it shows unless asked for more.
 const GRAPH_LEAST: usize = 20;
@@ -336,9 +339,9 @@ impl Setup {
     }
 
     /// The history of `path` (empty: the one repository) to choose from.
-    pub fn graph(&self, path: &str, limit: Option<usize>) -> Result<Graph> {
+    pub fn graph(&self, path: &str, limit: Option<usize>, target: Option<&str>) -> Result<Graph> {
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
-        graph_of(&self.repo_of(path)?, limit, now)
+        graph_of(&self.repo_of(path)?, limit, now, target)
     }
 
     /// A repository named by hand (one deeper than they are looked for).
@@ -453,17 +456,21 @@ pub fn span_of(repo: &Repo, base: &str, target: &str) -> Result<Span> {
 
 /// The graph of `repo` (see [`Graph`]): as far as it goes of itself, or, with
 /// a `limit`, that many commits. `now` is the time it is (seconds).
-pub fn graph_of(repo: &Repo, limit: Option<usize>, now: i64) -> Result<Graph> {
+pub fn graph_of(
+    repo: &Repo,
+    limit: Option<usize>,
+    now: i64,
+    target: Option<&str>,
+) -> Result<Graph> {
     let asked = limit.unwrap_or(GRAPH_MOST).clamp(1, 5000);
     let history = repo.history(asked + 1)?;
+    let default = repo.default_branch();
+    let fork_of = |tip: &str| repo.merge_base(default.as_deref()?, tip).ok();
     let shown = match limit {
         Some(n) => n.min(history.len()),
         None => {
             let head = repo.commit_id("HEAD")?;
-            let fork = repo
-                .default_branch()
-                .and_then(|b| repo.merge_base(&b, &head).ok());
-            let to_fork = fork
+            let to_fork = fork_of(&head)
                 .and_then(|f| history.iter().position(|e| e.id == f))
                 .map_or(0, |i| i + 1 + GRAPH_BEFORE_FORK);
             let since = now - GRAPH_DAYS * 24 * 60 * 60;
@@ -478,6 +485,46 @@ pub fn graph_of(repo: &Repo, limit: Option<usize>, now: i64) -> Result<Graph> {
         }
     };
     let more = history.len() > shown;
+    // Besides `HEAD` and the local branches: the branches (remote ones too)
+    // with a commit of late, as far as their commits are of late; and where
+    // the review is to end, if it is somewhere else, down past where it left
+    // the default branch (or, with none, as many as the graph shows at least).
+    let mut entries: Vec<crate::git::LogEntry> = history.into_iter().take(shown).collect();
+    let since = now - GRAPH_BRANCH_DAYS * 24 * 60 * 60;
+    let recent = repo.branches_since(since)?;
+    if !recent.is_empty() {
+        let names: Vec<String> = recent.iter().map(|(_, name)| name.clone()).collect();
+        entries.extend(repo.log_of(&names, GRAPH_MOST, Some(since))?);
+        // (One that a busier one left out, from its tip on its own.)
+        for (tip, name) in &recent {
+            if !entries.iter().any(|e| &e.id == tip) {
+                entries.extend(repo.log_of(
+                    std::slice::from_ref(name),
+                    GRAPH_LEAST,
+                    Some(since),
+                )?);
+            }
+        }
+    }
+    let target = target
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && *t != "HEAD")
+        .and_then(|t| repo.commit_id(t).ok());
+    if let Some(tip) = &target {
+        let mut revs = vec![tip.clone()];
+        let mut most = GRAPH_LEAST;
+        if let Some(fork) = fork_of(tip) {
+            // (Down to the fork, and as many before it as for `HEAD`.)
+            revs.push(format!("^{fork}~{}", GRAPH_BEFORE_FORK + 1));
+            most = GRAPH_MOST;
+        }
+        let part = repo
+            .log_of(&revs, most, None)
+            // (A history shorter than that: from the tip, as many.)
+            .or_else(|_| repo.log_of(&revs[..1], most, None))?;
+        entries.extend(part);
+    }
+    let entries = newest_first(entries);
     let head = repo.commit_id("HEAD").ok();
     let mut names: std::collections::HashMap<String, Vec<GraphRef>> = Default::default();
     if let Some(head) = &head {
@@ -489,8 +536,7 @@ pub fn graph_of(repo: &Repo, limit: Option<usize>, now: i64) -> Result<Graph> {
     for (id, name, kind) in repo.refs()? {
         names.entry(id).or_default().push(GraphRef { name, kind });
     }
-    let entries = &history[..shown];
-    let placed = lay_out(entries);
+    let placed = lay_out(&entries);
     let lanes = placed.iter().map(|p| p.width).max().unwrap_or(0);
     let rows = entries
         .iter()
@@ -517,6 +563,51 @@ pub fn graph_of(repo: &Repo, limit: Option<usize>, now: i64) -> Result<Graph> {
         })
         .collect();
     Ok(Graph { rows, lanes, more })
+}
+
+/// The commits gathered, each once, in an order the graph can be drawn in:
+/// a commit above its parents, and otherwise the newest first.
+fn newest_first(entries: Vec<crate::git::LogEntry>) -> Vec<crate::git::LogEntry> {
+    use std::cmp::Reverse;
+    // Each once, with where it first came (as git ordered it): of two
+    // committed at the same time, that one goes first.
+    let mut by_id: std::collections::HashMap<String, (usize, crate::git::LogEntry)> =
+        Default::default();
+    for (i, e) in entries.into_iter().enumerate() {
+        by_id.entry(e.id.clone()).or_insert((i, e));
+    }
+    // How many of the commits here each one is the parent of: it is ready
+    // once they are all placed.
+    let mut children: std::collections::HashMap<String, usize> = Default::default();
+    for (_, e) in by_id.values() {
+        for p in e.parents.iter().filter(|p| by_id.contains_key(*p)) {
+            *children.entry(p.clone()).or_default() += 1;
+        }
+    }
+    let key = |i: usize, e: &crate::git::LogEntry| (e.at, Reverse(i), e.id.clone());
+    let mut ready: std::collections::BinaryHeap<(i64, Reverse<usize>, String)> = by_id
+        .values()
+        .filter(|(_, e)| !children.contains_key(&e.id))
+        .map(|(i, e)| key(*i, e))
+        .collect();
+    let mut out = Vec::with_capacity(by_id.len());
+    while let Some((_, _, id)) = ready.pop() {
+        let Some((_, e)) = by_id.remove(&id) else {
+            continue;
+        };
+        for p in &e.parents {
+            if let Some(n) = children.get_mut(p) {
+                *n -= 1;
+                if *n == 0
+                    && let Some((i, parent)) = by_id.get(p)
+                {
+                    ready.push(key(*i, parent));
+                }
+            }
+        }
+        out.push(e);
+    }
+    out
 }
 
 /// Where one commit of the graph is drawn (see [`GraphRow`]), and how many
@@ -927,7 +1018,7 @@ mod tests {
             commit_at(&repo_dir, "a.txt", &format!("feature {n}\n"), now - day + n);
         }
         let repo = Repo::at(&repo_dir);
-        let graph = graph_of(&repo, None, now).unwrap();
+        let graph = graph_of(&repo, None, now, None).unwrap();
         // The 3, the fork, and 10 before it; the 4 weeks have only the 3.
         assert_eq!(graph.rows.len(), 3 + 1 + GRAPH_BEFORE_FORK);
         assert!(graph.more);
@@ -943,18 +1034,100 @@ mod tests {
         );
         assert_eq!(graph.rows[3].commit.id, ids[59]);
         // Asked for more: as many as that.
-        let more = graph_of(&repo, Some(40), now).unwrap();
+        let more = graph_of(&repo, Some(40), now, None).unwrap();
         assert_eq!(more.rows.len(), 40);
-        let all = graph_of(&repo, Some(1000), now).unwrap();
+        let all = graph_of(&repo, Some(1000), now, None).unwrap();
         assert_eq!(all.rows.len(), 63);
         assert!(!all.more);
         // Everything lately: four weeks of commits, more than the fork asks for.
-        let busy = graph_of(&repo, None, now - 365 * day + 27 * day).unwrap();
+        let busy = graph_of(&repo, None, now - 365 * day + 27 * day, None).unwrap();
         assert_eq!(
             busy.rows.len(),
             63,
             "all of them are within the four weeks then"
         );
+    }
+
+    #[test]
+    fn the_graph_shows_the_branches_of_late_and_where_the_review_is_to_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("r");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        git(&repo_dir, &["init", "-q", "-b", "main"]);
+        let day = 24 * 60 * 60;
+        let now = 1_800_000_000;
+        // 60 commits on main, a year ago.
+        let mut ids = Vec::new();
+        for n in 0..60 {
+            ids.push(commit_at(
+                &repo_dir,
+                "a.txt",
+                &format!("main {n}\n"),
+                now - 365 * day + n,
+            ));
+        }
+        // `old`, from main's 20th, a year ago too.
+        git(&repo_dir, &["checkout", "-q", "-b", "old", &ids[20]]);
+        let old = commit_at(&repo_dir, "b.txt", "old\n", now - 360 * day);
+        // A branch only the remote has, with a commit of last week (from main's 40th).
+        git(&repo_dir, &["checkout", "-q", "-b", "gone", &ids[40]]);
+        let recent = commit_at(&repo_dir, "c.txt", "recent\n", now - 7 * day);
+        git(
+            &repo_dir,
+            &["update-ref", "refs/remotes/origin/recent", &recent],
+        );
+        git(&repo_dir, &["checkout", "-q", "main"]);
+        git(&repo_dir, &["branch", "-q", "-D", "gone"]);
+        // On a branch of its own, from main's tip.
+        git(&repo_dir, &["checkout", "-q", "-b", "feature"]);
+        commit_at(&repo_dir, "a.txt", "feature\n", now - day);
+        // And a busy history of its own at the remote, of the last few days:
+        // more commits than the graph shows of one history.
+        let mut stream = String::new();
+        for n in 0..(GRAPH_MOST + 20) {
+            let at = now - 3 * day + n as i64;
+            stream.push_str(&format!(
+                "commit refs/remotes/origin/builds\nmark :{m}\ncommitter t <t@example.com> {at} +0000\ndata 2\nb\n{from}M 644 inline built.txt\ndata {len}\n{n}\n\n",
+                m = n + 1,
+                from = if n == 0 { String::new() } else { format!("from :{n}\n") },
+                len = n.to_string().len() + 1,
+            ));
+        }
+        let mut import = Command::new("git")
+            .current_dir(&repo_dir)
+            .args(["fast-import", "--quiet"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write as _;
+        import
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stream.as_bytes())
+            .unwrap();
+        assert!(import.wait().unwrap().success());
+        let repo = Repo::at(&repo_dir);
+        let has = |graph: &Graph, id: &str| graph.rows.iter().any(|r| r.commit.id == id);
+        // The remote's branch of late is there, named.
+        let graph = graph_of(&repo, None, now, None).unwrap();
+        assert!(has(&graph, &recent), "the branch of last week");
+        assert!(graph.rows.iter().any(|r| {
+            r.refs
+                .iter()
+                .any(|n| n.name == "origin/recent" && n.kind == "remote")
+        }));
+        assert!(!has(&graph, &ids[20]), "not as far as old's fork");
+        let head = git(&repo_dir, &["rev-parse", "HEAD"]);
+        assert!(
+            has(&graph, &head) && has(&graph, &ids[59 - GRAPH_BEFORE_FORK]),
+            "HEAD's own, whatever else"
+        );
+        // To end at `old`: it, and down past where it left main.
+        let to_old = graph_of(&repo, None, now, Some("old")).unwrap();
+        assert!(has(&to_old, &old));
+        assert!(has(&to_old, &ids[20]) && has(&to_old, &ids[20 - GRAPH_BEFORE_FORK]));
+        assert!(!has(&to_old, &ids[20 - GRAPH_BEFORE_FORK - 1]));
     }
 
     #[test]
