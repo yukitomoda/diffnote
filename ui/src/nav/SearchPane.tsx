@@ -8,7 +8,7 @@ import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useStore } from '@nanostores/preact';
 import { lib } from '../lib.ts';
 import { LinksContext, OpenedContext } from '../state/contexts.ts';
-import { searchCase, searchCurrent, searchFocus, searchIgnore, searchText, showFiles } from '../state/search.ts';
+import { searchCase, searchCurrent, searchDiffOnly, searchFocus, searchIgnore, searchText, showFiles } from '../state/search.ts';
 import { reveal } from '../state/reveal.ts';
 import { server, transport } from '../transport.ts';
 import { SEARCH_ALL_TIME, carriedGapLines, excerpt, occurrences, placeOf, searchRevision } from '../search.ts';
@@ -40,6 +40,7 @@ export function SearchPane(props: SearchPaneProps) {
   var text = useStore(searchText);
   var caseSensitive = useStore(searchCase);
   var ignore = useStore(searchIgnore);
+  var diffOnly = useStore(searchDiffOnly);
   var current = useStore(searchCurrent);
   var focus = useStore(searchFocus);
   var box = useRef<HTMLInputElement | null>(null);
@@ -55,7 +56,7 @@ export function SearchPane(props: SearchPaneProps) {
     return function () { clearTimeout(t); };
   }, [text]);
   var query: SearchQuery = { text: asked, caseSensitive: caseSensitive };
-  var wanted = asked ? asked + '\0' + caseSensitive + '\0' + ignore + '\0' + props.rev : '';
+  var wanted = asked ? asked + '\0' + caseSensitive + '\0' + ignore + '\0' + diffOnly + '\0' + props.rev : '';
   // Past the most it finds, it can be asked to find them all (for as long as
   // `SEARCH_ALL_TIME`, from when it was asked).
   var _w = useState<{ for: string; at: number } | null>(null);
@@ -76,7 +77,7 @@ export function SearchPane(props: SearchPaneProps) {
     if (!transport) { setGaps({ for: asking, lines: carriedGapLines(props.files), cut: false }); return undefined; }
     var stale = false;
     server().post<{ lines: GapLine[]; others: GapLine[]; names: string[]; cut?: boolean }>('api/files/' + props.rev + '/search',
-      { q: asked, case: caseSensitive, all: !!whole, others: true, ignore: ignore, also: ignore ? [] : props.ignored, paths: paths }).then(function (res) {
+      { q: asked, case: caseSensitive, all: !!whole, others: !diffOnly, ignore: ignore, also: ignore ? [] : props.ignored, paths: paths }).then(function (res) {
       if (stale) return;
       setGaps(res.ok
         ? { for: asking, lines: res.lines, others: { lines: res.others || [], names: res.names || [] }, cut: !!res.cut }
@@ -119,7 +120,7 @@ export function SearchPane(props: SearchPaneProps) {
   });
   // A new search starts before its first hit (Enter goes to it). (Not when
   // the same is found again: the one gone to stays the one.)
-  useEffect(function () { searchCurrent.set(-1); }, [asked, caseSensitive, ignore, props.rev]);
+  useEffect(function () { searchCurrent.set(-1); }, [asked, caseSensitive, ignore, diffOnly, props.rev]);
   var total = result.all.length;
   var go = function (i: number) {
     if (!total) return;
@@ -215,6 +216,8 @@ export function SearchPane(props: SearchPaneProps) {
       <button type="button" class={'diffnote-search__case' + (caseSensitive ? ' is-on' : '')} data-diffnote-search-case aria-pressed={caseSensitive}
         title={lib.m('ui.search.case_title')} onClick={function () { searchCase.set(!caseSensitive); }}>Aa</button>
       {/* (The files left out are only at the server: an exported page has none.) */}
+      {transport && <button type="button" class={'diffnote-search__case diffnote-search__ignore' + (diffOnly ? ' is-on' : '')} data-diffnote-search-diff-only aria-pressed={diffOnly}
+        title={lib.m('ui.search.diff_only_title')} aria-label={lib.m('ui.search.diff_only_title')} onClick={function () { searchDiffOnly.set(!diffOnly); }}><Icon name="diffonly" /></button>}
       {transport && <button type="button" class={'diffnote-search__case diffnote-search__ignore' + (ignore ? ' is-on' : '')} data-diffnote-search-ignore aria-pressed={ignore}
         title={lib.m('ui.search.ignore_title')} aria-label={lib.m('ui.search.ignore_title')} onClick={function () { searchIgnore.set(!ignore); }}><Icon name="ignore" /></button>}
     </div>

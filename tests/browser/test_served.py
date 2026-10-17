@@ -794,6 +794,11 @@ class Search(ServedCase):
         self.search("needle")
         self.assertEqual(self.count(), "1 件")
         self.assertTrue(b.exists("[data-diffnote-search-others]"))
+        # The diff's files only: not that one.
+        b.click("[data-diffnote-search-diff-only]")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-search-count]').textContent === '一致なし'"), self.count())
+        b.click("[data-diffnote-search-diff-only]")
+        self.assertTrue(b.wait("document.querySelector('[data-diffnote-search-count]').textContent === '1 件'"), self.count())
         b.click("[data-diffnote-search-file='notes/other.txt'] [data-diffnote-search-hit]")
         row = f"{CUR} section.diffnote-file[data-diffnote-file='notes/other.txt'] [data-diffnote-new='900']"
         self.assertTrue(b.wait_exists(row), "opened, as far as the line")

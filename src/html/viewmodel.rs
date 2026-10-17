@@ -1520,7 +1520,7 @@ pub struct SearchAsked<'a> {
     /// left out of those as well.
     pub ignore: bool,
     /// Files of the diff the page left out (as the settings say), to search
-    /// with the others when they aren't left out (`ignore` false).
+    /// when they aren't left out (`ignore` false), with the others or not.
     pub also: &'a [String],
 }
 
@@ -1577,14 +1577,15 @@ pub fn search_lines(
             return out;
         }
     }
-    if !others {
-        return out;
-    }
-    let Some(mut rest) = other_files(loaded, revision, git) else {
-        return out;
+    // The files besides (`others`), as the review's settings say: the files
+    // it leaves out, out; or, asked not to, in, and the diff's own left out
+    // among them (those even when the others aren't asked for: they are the
+    // diff's).
+    let mut rest = if others {
+        other_files(loaded, revision, git).unwrap_or_default()
+    } else {
+        Vec::new()
     };
-    // As the review's settings say: the files it leaves out, out; or, asked
-    // not to, in, the diff's own among them.
     if ignore {
         if let Some(matcher) = crate::review::ignore_matcher(&loaded.settings) {
             rest.retain(|p| !crate::review::is_ignored(&matcher, p));

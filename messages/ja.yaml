@@ -1126,6 +1126,8 @@ ui:
       大文字と小文字を区別
     ignore_title: |-
       無視するファイルを除く
+    diff_only_title: |-
+      差分のファイルだけ
     prev_title: |-
       前へ
     next_title: |-

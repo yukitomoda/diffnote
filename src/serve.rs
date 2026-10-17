@@ -5185,6 +5185,13 @@ mod tests {
             ["src/a.rs"],
             "kept to the settings, not asked for"
         );
+        // The diff's own, without the others: those alone.
+        assert_eq!(
+            names(
+                serde_json::json!({ "q": "a.rs", "others": false, "ignore": false, "also": ["left/a.rs"], "paths": [] })
+            ),
+            ["left/a.rs"]
+        );
     }
 
     #[test]

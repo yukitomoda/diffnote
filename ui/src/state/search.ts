@@ -12,6 +12,8 @@ export const searchText = atom('');
 export const searchCase = atom(false);
 /** Whether the files the review's settings leave out stay out of it. */
 export const searchIgnore = atom(true);
+/** Whether only the diff's files are searched (not the others the revision has). */
+export const searchDiffOnly = atom(false);
 /** Which hit is the one gone to (its place in `SearchResult.all`); -1 for
  * none yet. */
 export const searchCurrent = atom(-1);
