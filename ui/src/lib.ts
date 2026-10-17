@@ -464,16 +464,19 @@ lib.plainText = function (nodes) {
   return out;
 };
 
-// The first line of a comment as plain text, short, to tell threads apart in
-// the list.
+// The start of a comment as plain text, short, to tell threads apart in the
+// list: its lines run together, without its images (a picture says nothing
+// there).
 lib.preview = function (nodes) {
-  var line = '';
-  lib.plainText(nodes).split('\n').some(function (l) {
-    line = l.trim();
-    return line !== '';
-  });
-  var chars = Array.from(line);
-  return chars.length > 48 ? chars.slice(0, 48).join('') + '…' : line;
+  var bare = function (list: DocNode[] | null | undefined): DocNode[] {
+    return (list || []).filter(function (n) { return typeof n === 'string' || n.t !== 'image'; }).map(function (n) {
+      return typeof n === 'string' || !n.c ? n : Object.assign({}, n, { c: bare(n.c) });
+    });
+  };
+  var text = lib.plainText(bare(nodes)).split('\n').map(function (l) { return l.trim(); })
+    .filter(function (l) { return l !== ''; }).join(' ').replace(/\s+/g, ' ');
+  var chars = Array.from(text);
+  return chars.length > 48 ? chars.slice(0, 48).join('') + '…' : text;
 };
 
 // A time as `YYYY-MM-DD HH:MM` in the viewer's time zone.

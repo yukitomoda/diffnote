@@ -257,6 +257,9 @@ export function ThreadList(props: ListProps) {
       {ctx.order.map(function (id) {
         var t = ctx.byId[id];
         var p = ctx.placements[id];
+        // (What the thread says: its first comment still there. One that is
+        // only a picture says nothing here.)
+        var first = t.comments.filter(function (c) { return !c.deleted; })[0];
         var color = p && p.kind === 'line' ? lib.color(p.color) : '#8b949e';
         // A review of several repositories: the thread's file's, in its color.
         var file = p && 'file' in p ? p.file : null;
@@ -266,7 +269,7 @@ export function ThreadList(props: ListProps) {
           style={repo ? '--diffnote-repo-color:' + lib.repoColor(repo.color) : undefined}>
           <a href={'#r' + ctx.rev + '-thread-' + id} data-diffnote-jump={id} title={lib.location(p) || lib.m('ui.thread.jump_title_fallback')}
             onClick={function (e) { e.preventDefault(); links.go({ kind: 'thread', id: id }); }}>
-            <span class="diffnote-thread__swatch" style={'background:' + color}></span><span class="diffnote-threadlist__where">{lib.shortLocation(p)}</span>{t.resolved && <span class="diffnote-threadlist__state">{lib.m('ui.thread.resolved')}</span>}<span class="diffnote-threadlist__preview">{lib.withShortcodes(EMOJI, lib.preview((t.comments.filter(function (c) { return !c.deleted; })[0] || t.comments[0]).doc)) || lib.m('ui.thread.deleted_preview')}</span>
+            <span class="diffnote-thread__swatch" style={'background:' + color}></span><span class="diffnote-threadlist__where">{lib.shortLocation(p)}</span>{t.resolved && <span class="diffnote-threadlist__state">{lib.m('ui.thread.resolved')}</span>}<span class="diffnote-threadlist__preview">{first ? lib.withShortcodes(EMOJI, lib.preview(first.doc)) : lib.m('ui.thread.deleted_preview')}</span>
           </a>
         </li>;
       })}

@@ -122,13 +122,18 @@ test('side by side: every row appears once on the side it is on', () => {
   assert.deepEqual(right.map((r) => r.n), rows.filter((r) => r.n != null).map((r) => r.n));
 });
 
-test('a preview is the first line of the comment as plain text, short', () => {
+test('a preview is the start of the comment as plain text, its lines run together, short', () => {
   const p = (...c) => ({ t: 'p', c });
-  assert.equal(lib.preview([p('hello ', { t: 'code', s: 'world' }), p('second')]), 'hello world');
+  assert.equal(lib.preview([p('hello ', { t: 'code', s: 'world' }), p('second')]), 'hello world second');
   assert.equal(lib.preview([{ t: 'p' }, p('  second ')]), 'second');
   assert.equal(lib.preview([p('a & b <c> "d"')]), 'a & b <c> "d"', 'text is text, not HTML');
-  assert.equal(lib.preview([{ t: 'h', l: 2, c: ['Title'] }, p('x')]), 'Title');
-  assert.equal(lib.preview([p('line one', { t: 'br' }, 'line two')]), 'line one');
+  assert.equal(lib.preview([{ t: 'h', l: 2, c: ['Title'] }, p('x')]), 'Title x');
+  assert.equal(lib.preview([p('line one', { t: 'br' }, 'line two')]), 'line one line two');
+  // The images are left out, wherever they are.
+  const image = { t: 'image', id: 'i1', alt: 'スクリーンショット' };
+  assert.equal(lib.preview([p(image), p('見てください')]), '見てください');
+  assert.equal(lib.preview([p('前 ', { t: 'strong', c: [image, '後'] })]), '前 後');
+  assert.equal(lib.preview([p(image)]), '', 'nothing but a picture: nothing to say');
   assert.equal(lib.preview([{ t: 'ul', c: [{ t: 'li', c: ['item ', { t: 'em', c: ['one'] }] }] }]), 'item one');
   assert.equal(lib.preview([{ t: 'pre', s: 'let a = 1;\n' }]), 'let a = 1;');
   assert.equal(lib.preview([]), '');
@@ -442,7 +447,7 @@ test('a size is said roughly, and a picture is put in a text where the cursor wa
   assert.deepEqual(lib.insertAt('abc', 9, 1, '!'), { text: 'abc!', cursor: 4 });
   // An image in a comment is its alt text where only text is wanted.
   assert.equal(lib.plainText([{ t: 'p', c: ['see ', { t: 'image', id, alt: 'a shot' }] }]).trim(), 'see a shot');
-  assert.equal(lib.preview([{ t: 'p', c: [{ t: 'image', id, alt: '' }] }]), '[画像]');
+  assert.equal(lib.plainText([{ t: 'p', c: [{ t: 'image', id, alt: '' }] }]).trim(), '[画像]');
 });
 
 test('a link to another attached file is named by the file, without what would end the name early', () => {
